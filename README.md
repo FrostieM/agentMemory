@@ -120,16 +120,43 @@ pytest -m needs_ollama  # extraction tests against a live Ollama (opt-in)
 
 ## Make agents use this memory persistently
 
-A one-shot prompt does not persist between sessions. Run **one command** and
-every detected AI agent on this machine will load the memory contract every
-session, see the memory tools as native tool calls, and (for Claude Code) get
-memory context auto-injected before every prompt:
+A one-shot prompt does not persist between sessions. Run **one command per
+project** and every AI agent that opens that project will load the memory
+contract, see the memory tools as native tool calls, and (for Claude Code)
+get memory context auto-injected before every prompt.
+
+### Per-project memory (recommended for multiple projects)
+
+Each project gets its own isolated memory — no cross-project leakage.
+
+```bash
+cd /path/to/your/project
+python /path/to/agent-memory-lite/scripts/setup_agent.py --project
+```
+
+Writes:
+- `<project>/.claude/settings.json` — MCP server entry whose `env` pins
+  `MEMORY_DB_PATH` and `VECTOR_DB_PATH` to `<project>/.agent_memory/`.
+- `<project>/CLAUDE.md` and `<project>/AGENTS.md` — the agent contract
+  (Claude Code reads CLAUDE.md, Codex reads AGENTS.md).
+- `<project>/.agent_memory/memory.db` — bootstrapped fresh.
+
+When you open project A in Claude Code, the spawned MCP server has only
+A's memory. Open project B, you get only B's. Same on Codex if you place
+its config per-project.
+
+### Global memory (one shared pool across all projects)
 
 ```bash
 python scripts/setup_agent.py
 ```
 
-The script is idempotent — re-run any time. It:
+Writes to `~/.claude/`, `~/.codex/`, `~/.cursor/`. Useful when you
+explicitly want one memory pool everywhere on the machine. Comes with the
+Claude Code `UserPromptSubmit` hook that auto-injects `<memory_context>`
+before every prompt (see `scripts/inject_memory_context.py`).
+
+The script (either mode) is idempotent. It:
 
 1. Verifies the venv has `agent-memory-lite` + the `[mcp]` extra installed.
 2. Detects Ollama (binary, daemon, `qwen2.5:7b-instruct`) and the memory db.

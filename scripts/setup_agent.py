@@ -286,11 +286,20 @@ def upsert_contract(path: Path) -> str:
 # ---------- runtime configurators ----------
 
 
-def claude_mcp_entry(python_exe: Path) -> dict[str, object]:
+def claude_mcp_entry(
+    python_exe: Path,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, object]:
+    env: dict[str, str] = {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")}
+    if project_root is not None:
+        env["MEMORY_DB_PATH"] = str(project_root / ".agent_memory" / "memory.db")
+        env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
+        env["MEMORY_WORKSPACE_ID"] = project_root.name
     return {
         "command": str(python_exe),
         "args": ["-m", "agent_memory_lite.mcp.stdio_server"],
-        "env": {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")},
+        "env": env,
     }
 
 
@@ -422,6 +431,65 @@ def configure_cursor(diag: Diagnosis) -> None:
     ok(f"contract {status} in {contract}")
 
 
+def configure_project(diag: Diagnosis, project_root: Path) -> None:
+    section(f"Project mode: {project_root}")
+    if project_root == REPO_ROOT:
+        warn(
+            "running --project from inside the agent-memory-lite repo. "
+            "This will create a project-scoped memory at "
+            f"{project_root / '.agent_memory'}, separate from any global one."
+        )
+
+    settings_path = project_root / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings: dict[str, object] = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn(f"{settings_path} is not valid JSON — backing up to .bak")
+            settings_path.with_suffix(".json.bak").write_text(
+                settings_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+
+    servers = settings.setdefault("mcpServers", {})
+    if not isinstance(servers, dict):
+        servers = {}
+        settings["mcpServers"] = servers
+    servers["agent-memory-lite"] = claude_mcp_entry(
+        diag.venv_python, project_root=project_root
+    )
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    ok(f"MCP entry written to {settings_path} with project-scoped MEMORY_DB_PATH")
+
+    contract_path = project_root / "CLAUDE.md"
+    status = upsert_contract(contract_path)
+    ok(f"contract {status} in {contract_path}")
+
+    agents_path = project_root / "AGENTS.md"
+    status_agents = upsert_contract(agents_path)
+    ok(f"contract {status_agents} in {agents_path} (Codex / generic agent fallback)")
+
+    db_path = project_root / ".agent_memory" / "memory.db"
+    if db_path.exists():
+        ok(f"project memory db already at {db_path}")
+    else:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
+        env["MEMORY_DB_PATH"] = str(db_path)
+        env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
+        subprocess.run(
+            [str(diag.venv_python), str(REPO_ROOT / "scripts" / "bootstrap_db.py")],
+            check=True,
+            cwd=str(project_root),
+            env=env,
+        )
+        ok(f"bootstrapped {db_path}")
+
+
 def emit_generic_snippets(diag: Diagnosis) -> None:
     section("Generic snippets (paste anywhere else)")
     print(
@@ -485,6 +553,17 @@ def main() -> int:
     parser.add_argument("--check-only", action="store_true", help="Diagnose, do not write.")
     parser.add_argument("--no-hook", action="store_true", help="Skip Claude Code hook install.")
     parser.add_argument("--yes", action="store_true", help="Non-interactive (assume yes).")
+    parser.add_argument(
+        "--project",
+        nargs="?",
+        const=".",
+        default=None,
+        metavar="PATH",
+        help="Configure per-project memory (default: current directory). "
+        "Writes <project>/.claude/settings.json + <project>/CLAUDE.md + "
+        "<project>/AGENTS.md, and bootstraps <project>/.agent_memory/. "
+        "Each project gets its own MEMORY_DB_PATH so memories stay isolated.",
+    )
     args = parser.parse_args()
 
     diag = diagnose()
@@ -499,14 +578,27 @@ def main() -> int:
         info('  pip install -e ".[dev,mcp]"')
         return 1
 
+    write_env(diag)
+
+    if args.project is not None:
+        project_root = Path(args.project).resolve()
+        configure_project(diag, project_root)
+        section("Done (project mode)")
+        print(
+            f"This project ({project_root.name}) now has its own memory at\n"
+            f"  {project_root / '.agent_memory'}\n"
+            "and its own CLAUDE.md / AGENTS.md contract.\n"
+            "Restart your agent runtime and it will see ONLY this project's memory.\n"
+        )
+        smoke_test_mcp(diag)
+        return 0
+
     section("Bootstrap database")
     if not diag.db_exists:
         bootstrap_db()
         ok("database created")
     else:
         ok("database already present")
-
-    write_env(diag)
 
     if diag.runtimes["claude-code"]:
         configure_claude_code(diag, install_hook=not args.no_hook)

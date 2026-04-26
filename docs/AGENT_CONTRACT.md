@@ -167,13 +167,50 @@ r.raise_for_status()
 print(r.json()["context_text"])
 ```
 
-## If the service is not running
+## If the memory tools are missing or the service is down
 
-Tell the user:
+There are two separate failure modes — handle them differently.
 
-> The memory service at http://127.0.0.1:8765 is unreachable. Start it
-> with `python -m agent_memory_lite` from the agent-memory-lite repo,
-> then I will retry.
+**A. MCP tools are missing from your tool list.**
+The MCP server isn't registered for this session. Tell the user:
+
+> I don't have the agent-memory-lite tools registered for this session.
+> From the agent-memory-lite repo, run:
+>
+>     python scripts/setup_agent.py --project /path/to/this/project
+>
+> for a per-project memory, or
+>
+>     python scripts/setup_agent.py
+>
+> for the shared global memory. Then restart this agent runtime so it
+> picks up the new MCP config.
+
+**B. MCP tools are listed but `memory_get_context` fails with "service unreachable" or "connection refused".**
+The HTTP service that backs the auto-injection hook isn't running. The
+in-process MCP server still works, so the tool calls themselves succeed.
+If the tool error specifically mentions the HTTP service, tell the user:
+
+> The HTTP service at http://127.0.0.1:8765 is down. From the
+> agent-memory-lite repo, in a separate terminal:
+>
+>     python -m agent_memory_lite
+>
+> The MCP tools keep working without it; only the auto-injection hook
+> needs it.
 
 Do not fall back to "internal memory" — the service is the source of
 truth. Without it, you are working blind. Say so.
+
+## How project isolation works
+
+Every project gets its own SQLite + LanceDB pair via `MEMORY_DB_PATH` and
+`VECTOR_DB_PATH` env vars baked into that project's MCP server config.
+When you open project X, the MCP server you talk to has only X's memory.
+When you open project Y, you get only Y's. There is no cross-project
+leakage.
+
+The `workspace_id` field stays `default` per-project; isolation comes
+from separate physical files on disk, not from a workspace identifier.
+You don't need to think about `workspace_id` — just use the tools and
+they hit the right database.
