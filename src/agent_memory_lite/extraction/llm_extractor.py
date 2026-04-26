@@ -16,6 +16,7 @@ pydantic so malformed output is dropped silently.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -47,7 +48,9 @@ def probe_ollama(settings: Settings) -> None:
 
 
 _PROMPT = """You extract durable memory candidates from the agent's recent
-event. Return a JSON array. Each item must be a JSON object with keys:
+event. Reply with ONLY a JSON array — no markdown fences, no prose, no
+explanation, no leading or trailing text. Each item must be a JSON object
+with keys:
   kind: one of constraint, project_fact, decision, task_state, relationship,
         procedural_rule, correction, bug, fix
   subject: short string
@@ -56,10 +59,24 @@ event. Return a JSON array. Each item must be a JSON object with keys:
   evidence: short quote from the event
   confidence: float in [0, 1]
   importance: float in [0, 1]
-Return [] if there is nothing durable to remember.
+If there is nothing durable to remember, reply with exactly: []
 
 Event:
 """
+
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
+
+
+def _strip_fences(content: str) -> str:
+    match = _FENCE_RE.search(content)
+    if match:
+        return match.group(1).strip()
+    # Tolerate prose around the JSON: take from first '[' to last ']'.
+    start = content.find("[")
+    end = content.rfind("]")
+    if 0 <= start < end:
+        return content[start : end + 1]
+    return content.strip()
 
 
 class OllamaExtractor:
@@ -106,8 +123,9 @@ class OllamaExtractor:
     def _parse(self, content: str, episode: Episode) -> list[MemoryCandidate]:
         if not content.strip():
             return []
+        cleaned = _strip_fences(content)
         try:
-            decoded = json.loads(content)
+            decoded = json.loads(cleaned)
         except json.JSONDecodeError:
             return []
         if not isinstance(decoded, list):

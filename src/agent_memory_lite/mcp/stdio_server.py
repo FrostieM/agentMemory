@@ -282,6 +282,7 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
         EpisodeIn(**payload),
         embedding_provider=_runtime.provider(),
         vector_store=_runtime.store(),
+        auto_promote_settings=_runtime.settings,
     )
     return {
         "episode_id": result.episode.id,
@@ -289,6 +290,9 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
         "redacted_text": result.episode.raw_text,
         "redacted_kinds": result.redacted_kinds,
         "embedded": result.embedded,
+        "auto_promoted_decisions": result.auto_promoted_decisions,
+        "auto_promoted_rules": result.auto_promoted_rules,
+        "auto_promoted_core": result.auto_promoted_core,
     }
 
 

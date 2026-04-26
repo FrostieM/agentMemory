@@ -19,6 +19,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
@@ -43,6 +44,9 @@ class EpisodeIngestResult:
     chunk: Chunk
     redacted_kinds: list[str]
     embedded: bool
+    auto_promoted_decisions: int = 0
+    auto_promoted_rules: int = 0
+    auto_promoted_core: int = 0
 
 
 def _persist(
@@ -128,6 +132,7 @@ def ingest_episode(
     *,
     embedding_provider: EmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
+    auto_promote_settings: Settings | None = None,
 ) -> EpisodeIngestResult:
     redacted = redact(episode_in.raw_text)
 
@@ -140,9 +145,24 @@ def ingest_episode(
     if embedding_provider is not None and vector_store is not None:
         embedded = _embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
 
+    decisions = rules = core = 0
+    if auto_promote_settings is not None:
+        from agent_memory_lite.ingestion.auto_promote import auto_promote  # noqa: PLC0415
+
+        try:
+            stats = auto_promote(conn, episode, auto_promote_settings)
+            decisions = stats.decisions_written
+            rules = stats.rules_written
+            core = stats.core_written
+        except Exception as exc:
+            _log.warning("auto_promote_failed", episode_id=episode.id, error=str(exc))
+
     return EpisodeIngestResult(
         episode=episode,
         chunk=chunk,
         redacted_kinds=redacted.kinds_seen,
         embedded=embedded,
+        auto_promoted_decisions=decisions,
+        auto_promoted_rules=rules,
+        auto_promoted_core=core,
     )

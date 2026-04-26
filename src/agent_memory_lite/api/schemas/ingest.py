@@ -32,6 +32,9 @@ class IngestEpisodeResponse(BaseModel):
     redacted_text: str
     redacted_kinds: list[str]
     created_at: str
+    auto_promoted_decisions: int = 0
+    auto_promoted_rules: int = 0
+    auto_promoted_core: int = 0
 
 
 class IngestFileRequest(BaseModel):

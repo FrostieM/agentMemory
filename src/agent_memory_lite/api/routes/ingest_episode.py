@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from agent_memory_lite.api.deps import (
     DbDep,
     EmbeddingProviderDep,
+    SettingsDep,
     VectorStoreDep,
 )
 from agent_memory_lite.api.schemas.ingest import (
@@ -25,6 +26,7 @@ def ingest_episode_route(
     conn: DbDep,
     provider: EmbeddingProviderDep,
     store: VectorStoreDep,
+    settings: SettingsDep,
 ) -> IngestEpisodeResponse:
     episode_in = EpisodeIn(
         workspace_id=body.workspace_id,
@@ -43,6 +45,7 @@ def ingest_episode_route(
         episode_in,
         embedding_provider=provider,
         vector_store=store,
+        auto_promote_settings=settings,
     )
     return IngestEpisodeResponse(
         episode_id=result.episode.id,
@@ -50,4 +53,7 @@ def ingest_episode_route(
         redacted_text=result.episode.raw_text,
         redacted_kinds=result.redacted_kinds,
         created_at=result.episode.created_at,
+        auto_promoted_decisions=result.auto_promoted_decisions,
+        auto_promoted_rules=result.auto_promoted_rules,
+        auto_promoted_core=result.auto_promoted_core,
     )
