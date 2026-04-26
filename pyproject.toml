@@ -24,6 +24,7 @@ dependencies = [
     "httpx>=0.27,<1.0",
     "lancedb>=0.6,<1.0",
     "sentence-transformers>=2.7,<6.0",
+    "PyYAML>=6.0,<7.0",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +51,7 @@ agent-memory-lite = "agent_memory_lite.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_memory_lite = ["py.typed"]
+agent_memory_lite = ["py.typed", "evals/fixtures/*.yaml"]
 
 [tool.ruff]
 line-length = 100

@@ -11,8 +11,10 @@ from fastapi import FastAPI
 
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.routes import (
+    compact,
     context,
     decisions,
+    evals,
     health,
     ingest_episode,
     ingest_file,
@@ -55,4 +57,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(context.router)
     app.include_router(decisions.router)
     app.include_router(task_state.router)
+    app.include_router(compact.router)
+    app.include_router(evals.router)
     return app
