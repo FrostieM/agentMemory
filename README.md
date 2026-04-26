@@ -17,12 +17,17 @@ Agent ──HTTP / MCP / in-process──▶ Memory Service (FastAPI on 127.0.0.
 
 ## Status
 
-Phase 0 (bootstrap). See `SESSION_STATE.md` for the current step.
+v1 feature-complete: all six phases of the spec are landed (episodes + FTS,
+hybrid retrieval, decisions/task/core/procedural, lite temporal graph, file
+ingestion, compaction + evals + MCP tool registry). 246 tests pass; ruff +
+mypy strict are clean. See `SESSION_STATE.md` for details.
 
 ## Requirements
 
 - **Python 3.13 recommended** (3.12 supported, 3.14 supported but `torch` wheels may lag).
-- **Ollama** must be installed and running locally. The service refuses to start otherwise.
+- **Ollama** required for production LLM-driven extraction. The service refuses to start
+  unless Ollama responds at `LLM_BASE_URL`, **or** `OLLAMA_PROBE_SKIP=true` (use the
+  skip flag for tests / first-run smoke checks only).
 - Windows / macOS / Linux. Paths are normalized; tested on Windows.
 
 ## Install
@@ -38,42 +43,104 @@ pip install -e ".[dev]"
 If `torch` wheels are unavailable for your Python version, install Python 3.13 alongside
 (via `pyenv-win`, `rye`, or the official installer) and recreate the venv.
 
-## Set up Ollama
+## Set up Ollama (recommended for full feature set)
 
 ```bash
 # https://ollama.com/download
 ollama pull qwen2.5:7b-instruct
 ```
 
-The default `LLM_BASE_URL` is `http://127.0.0.1:11434`.
+The default `LLM_BASE_URL` is `http://127.0.0.1:11434`. Without Ollama, set
+`OLLAMA_PROBE_SKIP=true` in `.env` and the heuristic extractor still runs;
+LLM-driven candidate extraction is simply disabled until Ollama is reachable.
 
-## Run
+## Quick verification (≈ 2 minutes, no Ollama needed)
+
+This is the end-to-end check the project ships with. It boots the service,
+seeds the workspace with a representative session, exercises every public
+endpoint, and runs the eval harness.
 
 ```bash
-cp .env.example .env          # then edit if needed
+# 1. configure (one-off)
+cp .env.example .env
+# Either install Ollama (see above) or skip the probe:
+sed -i 's/^OLLAMA_PROBE_SKIP=false/OLLAMA_PROBE_SKIP=true/' .env
+
+# 2. unit + property + integration + e2e tests (~3s)
+pytest -q
+
+# 3. start a fresh DB and the service
+rm -rf .agent_memory
 python scripts/bootstrap_db.py
-python -m agent_memory_lite
+python -m agent_memory_lite          # binds 127.0.0.1:8765 in this terminal
+
+# 4. in a second terminal, smoke-test every route end-to-end:
+python scripts/seed_demo_session.py
 ```
 
-The service binds to `http://127.0.0.1:8765`. Health check:
+`scripts/seed_demo_session.py` ingests 10 episodes (one with secrets that get
+redacted in flight), writes 3 architectural decisions, upserts a task state,
+queries `POST /memory/get_context` (the agent-facing surface), runs an exact
+FTS lookup via `POST /memory/search`, and finally runs the eval harness via
+`POST /memory/run_evals`. The expected outcome:
+
+```
+=== POST /memory/run_evals ===
+{
+  "cases_run": 10,
+  "cases_passed": 10,
+  "retrieval_recall_at_10": 1.0,
+  "retrieval_precision_at_10": 0.75,
+  "stale_fact_rate": 0.0,
+  "secret_leak_count": 0,
+  "prompt_injection_failures": 0,
+  "failures": []
+}
+```
+
+Health check at any time:
 
 ```bash
 curl http://127.0.0.1:8765/health
 ```
 
+To start over with a clean memory:
+
+```bash
+rm -rf .agent_memory
+python scripts/bootstrap_db.py
+```
+
 ## Test
 
 ```bash
-pytest                  # unit + property + e2e (most without Ollama)
-pytest -m needs_ollama  # only LLM-extraction tests; requires Ollama running
+pytest                  # unit + property + integration + e2e
+pytest -m needs_ollama  # extraction tests against a live Ollama (opt-in)
+```
+
+## Workspace ingestion
+
+Index a whole project tree (respects `.gitignore` + builtin denylist + optional
+`.memoryignore`):
+
+```bash
+python scripts/ingest_workspace.py --workspace default --path /path/to/repo
+```
+
+## Reindex vectors
+
+When you change the embedding model or restore from a backup that lost LanceDB:
+
+```bash
+python scripts/reindex_vectors.py
 ```
 
 ## Local-only enforcement
 
 At startup, every `*_BASE_URL` setting is parsed and rejected if the host is not
 `127.0.0.1` / `localhost` / `::1`, or if it matches a cloud provider denylist
-(`api.openai.com`, `api.anthropic.com`, `api.cohere.com`, etc.).
-Cloud LLM SDKs (`openai`, `anthropic`, `cohere`, …) are also banned at lint time
+(`api.openai.com`, `api.anthropic.com`, `api.cohere.com`, …).
+Cloud LLM SDKs (`openai`, `anthropic`, `cohere`, …) are banned at lint time
 via `ruff`'s `flake8-tidy-imports`.
 
 To override the guard for a one-off (e.g. local development with a non-loopback host),
@@ -82,8 +149,9 @@ configuration.
 
 ## Project layout
 
-See `docs/architecture.md`. Source files are capped at ~150 SLOC; concerns the spec
-collapses into one file (`retrieval.py`, `graph.py`, `extraction.py`, `chunking.py`,
+See `CLAUDE.md` for the layered architecture and `docs/` for design notes.
+Source files are capped at ~150 SLOC; concerns the spec collapses into one
+file (`retrieval.py`, `graph.py`, `extraction.py`, `chunking.py`,
 `redaction.py`) live as subpackages.
 
 ## License

@@ -232,6 +232,6 @@ def settings_factory(
         for env_var, value in overrides.items():
             monkeypatch.setenv(env_var, str(value))
         reset_settings_cache()
-        return Settings()
+        return Settings(_env_file=None)  # type: ignore[call-arg]
 
     return _factory
