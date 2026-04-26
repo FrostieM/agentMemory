@@ -118,6 +118,50 @@ pytest                  # unit + property + integration + e2e
 pytest -m needs_ollama  # extraction tests against a live Ollama (opt-in)
 ```
 
+## Make agents use this memory persistently
+
+A one-shot prompt does not persist between sessions. Pick one of these so the
+agent loads the contract automatically every chat. The canonical contract
+lives at [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md).
+
+### Option 1 — Claude Code via `CLAUDE.md` (recommended)
+
+Claude Code reads `CLAUDE.md` at session start. Two scopes:
+
+- **Per project**: copy `docs/AGENT_CONTRACT.md` into the project's `CLAUDE.md`
+  (or append to it). Every Claude Code session opened in that repo will follow
+  the contract.
+- **Global**: copy it into `~/.claude/CLAUDE.md`. Every Claude Code session
+  on the machine — across all repos — will follow it.
+
+```bash
+# Per-project (run from the consumer project, not from agent-memory-lite)
+cat /path/to/agent-memory-lite/docs/AGENT_CONTRACT.md >> CLAUDE.md
+
+# Global
+cat /path/to/agent-memory-lite/docs/AGENT_CONTRACT.md >> ~/.claude/CLAUDE.md
+```
+
+### Option 2 — System prompt / developer message
+
+For agents that take a system or developer prompt (Claude API, OpenAI-compatible
+clients, custom loops): paste the contents of `docs/AGENT_CONTRACT.md` into the
+system message at session start.
+
+### Option 3 — MCP (future, partially shipped)
+
+`agent_memory_lite.mcp.tools.TOOLS` is the canonical tool registry; the
+`dispatch(name, **kwargs)` helper executes a tool against a live SQLite
+connection. A real stdio JSON-RPC transport is not bundled yet — wire the
+registry into your preferred MCP runtime when you want first-class tool
+discovery in Claude Code or Cursor. For now Option 1 is the path of least
+resistance.
+
+### Option 4 — Manual paste (one-off)
+
+For a single chat: paste the contract into the first user message. The agent
+will follow it for that session and forget on the next one.
+
 ## Workspace ingestion
 
 Index a whole project tree (respects `.gitignore` + builtin denylist + optional
