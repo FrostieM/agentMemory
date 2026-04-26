@@ -42,8 +42,9 @@ EPISODES: list[dict[str, object]] = [
     {
         "raw_text": (
             "Phase 0 shipped: pyproject (Python 3.12-3.14), forward-only SQL "
-            "migrations, FastAPI app on 127.0.0.1:8765, local-only guard with "
-            "cloud denylist + telemetry kill list."
+            "migrations 0001_init (12 tables + indexes) and 0002_chunks_fts "
+            "(FTS5 virtual table), FastAPI app on 127.0.0.1:8765, local-only "
+            "guard with cloud denylist + telemetry kill list, 49 tests."
         ),
         "trust_level": "agent_observed",
         "importance": 0.8,
