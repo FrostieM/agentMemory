@@ -7,17 +7,19 @@ Produces the XML-like envelope the agent consumes:
       <task_state>...</task_state>
       <active_decisions>...</active_decisions>
       <procedural_rules>...</procedural_rules>
+      <retrieved_facts>...</retrieved_facts>
       <retrieved_chunks>...</retrieved_chunks>
     </memory_context>
 
-Sections appear in priority order. Phase 4 will append `<retrieved_facts>`
-once the temporal graph lands.
+Sections appear in priority order. The chunk pipeline runs the FTS + vector
+RRF fusion; graph facts get a separate section so their relation/temporal
+metadata stays first-class in the agent's context.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from xml.sax.saxutils import escape, quoteattr
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -38,6 +40,7 @@ from agent_memory_lite.repositories.decisions_repo import (
 from agent_memory_lite.repositories.procedural_repo import list_active_rules
 from agent_memory_lite.repositories.task_state_repo import get_task_state
 from agent_memory_lite.retrieval.candidates_fts import collect_fts
+from agent_memory_lite.retrieval.candidates_graph import collect_graph
 from agent_memory_lite.retrieval.candidates_vector import collect_vector
 from agent_memory_lite.retrieval.filters import filter_active
 from agent_memory_lite.retrieval.fusion_rrf import reciprocal_rank_fusion
@@ -48,20 +51,22 @@ from agent_memory_lite.vector_store.base import VectorStore
 
 MAX_FTS_HITS = 30
 MAX_VECTOR_HITS = 30
+MAX_GRAPH_HITS = 40
 
 
 @dataclass(frozen=True, slots=True)
 class BuiltContext:
     text: str
     hits: list[ScoredHit]
+    facts: list[RetrievalCandidate]
     normalized: NormalizedQuery
-    core: list[CoreMemory]
-    task_state: TaskState | None
-    decisions: list[Decision]
-    rules: list[ProceduralRule]
+    core: list[CoreMemory] = field(default_factory=list)
+    task_state: TaskState | None = None
+    decisions: list[Decision] = field(default_factory=list)
+    rules: list[ProceduralRule] = field(default_factory=list)
 
 
-def _gather_candidates(
+def _gather_chunk_candidates(
     conn: sqlite3.Connection,
     query: RetrievalQuery,
     *,
@@ -152,6 +157,24 @@ def _render_rules(items: list[ProceduralRule]) -> list[str]:
     return lines
 
 
+def _render_facts(items: list[RetrievalCandidate]) -> list[str]:
+    if not items:
+        return ["  <retrieved_facts/>"]
+    lines = ["  <retrieved_facts>"]
+    for item in items:
+        valid_to = item.metadata.get("valid_to")
+        attrs = (
+            f"id={quoteattr(item.id)} "
+            f"relation={quoteattr(str(item.metadata.get('relation', '')))} "
+            f"confidence={quoteattr(f'{item.raw_score:.2f}')} "
+            f"valid_from={quoteattr(str(item.metadata.get('valid_from', '')))} "
+            f"valid_to={quoteattr(str(valid_to or ''))}"
+        )
+        lines.append(f"    <fact {attrs}>{escape(item.text)}</fact>")
+    lines.append("  </retrieved_facts>")
+    return lines
+
+
 def _render_chunks(hits: list[ScoredHit]) -> list[str]:
     if not hits:
         return ["  <retrieved_chunks/>"]
@@ -176,6 +199,7 @@ def _render(
     task: TaskState | None,
     decisions: list[Decision],
     rules: list[ProceduralRule],
+    facts: list[RetrievalCandidate],
     hits: list[ScoredHit],
 ) -> str:
     lines = ["<memory_context>"]
@@ -183,6 +207,7 @@ def _render(
     lines.extend(_render_task(task))
     lines.extend(_render_decisions(decisions))
     lines.extend(_render_rules(rules))
+    lines.extend(_render_facts(facts))
     lines.extend(_render_chunks(hits))
     lines.append("</memory_context>")
     return "\n".join(lines)
@@ -196,7 +221,7 @@ def build_context(
     vector_store: VectorStore | None = None,
 ) -> BuiltContext:
     normalized = normalize(query.query)
-    rankings = _gather_candidates(
+    rankings = _gather_chunk_candidates(
         conn,
         query,
         embedding_provider=embedding_provider,
@@ -205,7 +230,15 @@ def build_context(
     fused = reciprocal_rank_fusion(rankings)
     scored = score_candidates(fused)
     filtered = filter_active(scored, historical=query.historical)
-    fit = fit_within_budget(filtered, max_tokens=query.max_tokens)
+    chunks_fit = fit_within_budget(filtered, max_tokens=query.max_tokens)
+
+    facts = collect_graph(
+        conn,
+        workspace_id=query.workspace_id,
+        query=query.query,
+        limit=MAX_GRAPH_HITS,
+        historical=query.historical,
+    )
 
     core = list_active_core(conn, query.workspace_id)
     rules = list_active_rules(conn, query.workspace_id)
@@ -220,11 +253,13 @@ def build_context(
         task=task,
         decisions=decisions,
         rules=rules,
-        hits=fit,
+        facts=facts,
+        hits=chunks_fit,
     )
     return BuiltContext(
         text=text,
-        hits=fit,
+        hits=chunks_fit,
+        facts=facts,
         normalized=normalized,
         core=core,
         task_state=task,
