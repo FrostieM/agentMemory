@@ -22,16 +22,29 @@ ambiguous, choose the safest default and document it in the final report.
 # Step 1 — ensure memory is set up
 
 Follow `AGENT_SETUP/01_FRESH_PROJECT.md` Steps 1–4 exactly. If the
-project's memory was missing, run setup. If MCP tools end up still not
-visible (Claude Code not restarted), STOP and tell the user:
+project's memory was missing, run setup.
 
-> Memory needs Claude Code to restart to pick up the new MCP config. Once
-> you restart and re-paste this prompt, I'll capture the session.
+If MCP tools end up still not visible after setup (because the runtime
+loaded its config before setup wrote it), STOP and tell the user — name
+the actual runtime hosting you (Claude Code / Codex / Cursor / "your AI
+runtime" if unsure):
 
-Do not attempt to write to memory via curl/HTTP as a workaround unless the
-user already had the HTTP service running (you can probe `GET
-http://127.0.0.1:8765/health`). If neither MCP nor HTTP is reachable, stop
-and report.
+> Memory needs <RUNTIME_NAME> to restart to pick up the new MCP config.
+> Close and reopen <RUNTIME_NAME>, then re-paste this prompt and I will
+> capture the session.
+
+Codex caveat: Codex reads MCP servers from `~/.codex/config.toml`, not
+from the project directory. If the user is on Codex, recommend running
+`python <REPO_ROOT>/scripts/setup_agent.py` (no `--project`) once so the
+global Codex config gets the entry, then restart Codex.
+
+Fallback path when MCP is not yet live but you still want to capture:
+probe `GET http://127.0.0.1:8765/health`. If the HTTP service answers,
+you can call the same operations as REST endpoints
+(`POST /memory/ingest_episode`, `POST /memory/write_decision`,
+`POST /memory/update_task_state`, `POST /memory/get_context`) using
+`workspace_id="default"`. Otherwise stop and report — do not silently
+drop the chat into the void.
 
 # Step 2 — review THIS conversation
 

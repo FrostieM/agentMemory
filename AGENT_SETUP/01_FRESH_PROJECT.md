@@ -87,9 +87,14 @@ Three outcomes:
 a) The tool returns a JSON envelope with a `context_text` field — success.
    Move to Step 5.
 
-b) The tool is not in your tool list (you cannot call it) — Claude Code
-   reads settings.json at startup, so the new MCP entry won't appear until
-   the user restarts. Report this to the user as the only required manual
+b) The tool is not in your tool list (you cannot call it) — every MCP
+   client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
+   reads its MCP config file at startup, not on every prompt. The new
+   entry will not be visible until the user restarts the runtime they
+   are using. Identify which runtime is hosting you (Claude Code / Codex /
+   Cursor / other — infer from the system prompt, available tools, or
+   environment if you can; if unsure, say "the AI runtime you are using"
+   in plain language). Report this restart as the only required manual
    step. Skip Step 5.
 
 c) The tool exists but returns an error — capture the error text. If it
@@ -122,7 +127,7 @@ memory db:  <absolute path to .agent_memory/memory.db>
 contract:   <PROJECT_ROOT>/CLAUDE.md, <PROJECT_ROOT>/AGENTS.md
 mcp config: <PROJECT_ROOT>/.claude/settings.json
 ollama:     <ok | not running | not installed — LLM extraction is no-op>
-mcp tools:  <verified | NOT VISIBLE — please restart Claude Code>
+mcp tools:  <verified | NOT VISIBLE — please restart your runtime (<runtime name>)>
 
 What this means for our future chats in this project:
 - Before non-trivial work I will call memory_get_context to load prior context.
@@ -135,9 +140,26 @@ cross-project leakage.
 Now tell me what you would like to do.
 ```
 
-If MCP tools were not visible in Step 4, append:
+If MCP tools were not visible in Step 4, append (substitute the actual
+runtime name — Claude Code / Codex / Cursor / "your AI runtime" if unsure):
 
 ```
-ACTION REQUIRED: close and reopen Claude Code so it picks up the new
-.claude/settings.json. After restart, the memory tools will be live.
+ACTION REQUIRED: close and reopen <RUNTIME_NAME> so it picks up the new
+MCP config. The config file you wrote is:
+  - <PROJECT_ROOT>/.claude/settings.json    (Claude Code reads this)
+  - <PROJECT_ROOT>/AGENTS.md                (Codex reads cwd AGENTS.md)
+  - any per-project MCP config your runtime expects (check its docs)
+After restart, the memory tools will be live.
 ```
+
+Note on Codex specifically: Codex reads MCP servers from
+`~/.codex/config.toml`, not from the project directory. If the user is on
+Codex and you have not yet seen `agent-memory-lite` in your tool list,
+recommend that they run from the agent-memory-lite repo:
+
+```
+python scripts/setup_agent.py
+```
+
+(without `--project`) so the global Codex config gets the entry. Then
+restart Codex.
