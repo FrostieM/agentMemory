@@ -38,6 +38,7 @@ dev = [
     "types-requests",
 ]
 sqlite-vec = ["sqlite-vec>=0.1,<1.0"]
+mcp = ["mcp>=1.20,<2.0"]
 tree-sitter = [
     "tree-sitter>=0.22,<1.0",
     "tree-sitter-python>=0.21,<1.0",
@@ -46,6 +47,7 @@ tree-sitter = [
 
 [project.scripts]
 agent-memory-lite = "agent_memory_lite.__main__:main"
+agent-memory-lite-mcp = "agent_memory_lite.mcp.stdio_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -90,7 +92,7 @@ explicit_package_bases = true
 namespace_packages = true
 
 [[tool.mypy.overrides]]
-module = ["lancedb.*", "sentence_transformers.*", "sqlite_vec.*", "tree_sitter.*"]
+module = ["lancedb.*", "sentence_transformers.*", "sqlite_vec.*", "tree_sitter.*", "mcp.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

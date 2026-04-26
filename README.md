@@ -148,14 +148,38 @@ For agents that take a system or developer prompt (Claude API, OpenAI-compatible
 clients, custom loops): paste the contents of `docs/AGENT_CONTRACT.md` into the
 system message at session start.
 
-### Option 3 — MCP (future, partially shipped)
+### Option 3 — Real MCP stdio server (most automatic for Claude Code / Cursor)
 
-`agent_memory_lite.mcp.tools.TOOLS` is the canonical tool registry; the
-`dispatch(name, **kwargs)` helper executes a tool against a live SQLite
-connection. A real stdio JSON-RPC transport is not bundled yet — wire the
-registry into your preferred MCP runtime when you want first-class tool
-discovery in Claude Code or Cursor. For now Option 1 is the path of least
-resistance.
+The package ships a real MCP stdio server. After
+`pip install -e ".[mcp]"`, register it in Claude Code's settings —
+`~/.claude/settings.json` (global) or `<project>/.claude/settings.json`
+(per-project):
+
+```json
+{
+  "mcpServers": {
+    "agent-memory-lite": {
+      "command": "C:/Users/Osino/Desktop/work/agent-memory-lite/.venv/Scripts/python.exe",
+      "args": ["-m", "agent_memory_lite.mcp.stdio_server"],
+      "env": {"OLLAMA_PROBE_SKIP": "true"}
+    }
+  }
+}
+```
+
+Restart Claude Code. The agent now sees `memory_get_context`,
+`memory_search`, `memory_ingest_episode`, `memory_write_decision`,
+`memory_update_task_state`, `memory_ingest_file` as native tool calls —
+no curl, no system prompt. The HTTP service is **not** required when MCP
+is wired this way; the server runs in-process and shares
+`MEMORY_DB_PATH` + `VECTOR_DB_PATH` with the HTTP service if both are
+running (SQLite WAL handles the concurrency).
+
+Run it manually for a smoke check:
+
+```bash
+python -m agent_memory_lite.mcp.stdio_server   # waits on stdin for MCP frames
+```
 
 ### Option 4 — Manual paste (one-off)
 
