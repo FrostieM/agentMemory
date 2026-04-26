@@ -1,7 +1,16 @@
-"""structlog configuration for the service.
+"""structlog + stdlib logging configuration.
 
-Production logs go to stdout as JSON; in dev we render a compact key=value line.
-The choice is driven by `LOG_FORMAT` (default `console`).
+Logs go to **stderr**. This is non-negotiable for the MCP stdio server:
+its stdout is owned by the JSON-RPC framing protocol, and any byte that
+isn't a valid frame breaks the connection (e.g. sentence-transformers
+prints "No device provided, using cpu" on first model load — that
+single line is enough to make Claude Code report
+"could not connect to MCP server").
+
+stderr is also the 12-factor convention for logs, so it's the right
+default for the HTTP service too. `LOG_FORMAT=json` switches the
+structlog renderer; `LOG_FORMAT=console` (default) renders compact
+key=value lines.
 """
 
 from __future__ import annotations
@@ -17,10 +26,13 @@ def configure_logging(level: str = "INFO") -> None:
     log_format = os.getenv("LOG_FORMAT", "console").lower()
     log_level = getattr(logging, level.upper(), logging.INFO)
 
+    # `force=True` so this overrides any earlier handler third-party
+    # libraries may have installed on the root logger before we got here.
     logging.basicConfig(
         format="%(message)s",
-        stream=sys.stdout,
+        stream=sys.stderr,
         level=log_level,
+        force=True,
     )
 
     shared_processors: list[structlog.types.Processor] = [
@@ -39,7 +51,7 @@ def configure_logging(level: str = "INFO") -> None:
         processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
         cache_logger_on_first_use=True,
     )
 

@@ -82,9 +82,7 @@ def _resolve_paths_from_cwd(settings: Settings) -> Settings:
     candidate_vec = cwd / ".agent_memory" / "vectors.lance"
     if not candidate_db.parent.exists():
         return settings
-    return settings.model_copy(
-        update={"db_path": candidate_db, "vector_db_path": candidate_vec}
-    )
+    return settings.model_copy(update={"db_path": candidate_db, "vector_db_path": candidate_vec})
 
 
 class _Runtime:

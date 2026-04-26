@@ -459,9 +459,7 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
     if not isinstance(servers, dict):
         servers = {}
         settings["mcpServers"] = servers
-    servers["agent-memory-lite"] = claude_mcp_entry(
-        diag.venv_python, project_root=project_root
-    )
+    servers["agent-memory-lite"] = claude_mcp_entry(diag.venv_python, project_root=project_root)
 
     db_path = project_root / ".agent_memory" / "memory.db"
     vector_path = project_root / ".agent_memory" / "vectors.lance"
@@ -475,8 +473,7 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
         hooks["UserPromptSubmit"] = ups
     marker = "agent-memory-lite-inject"
     hook_command = (
-        f'"{diag.venv_python}" "{HOOK_SCRIPT}" '
-        f'--db-path "{db_path}" --vector-path "{vector_path}"'
+        f'"{diag.venv_python}" "{HOOK_SCRIPT}" --db-path "{db_path}" --vector-path "{vector_path}"'
     )
     new_hook = {"type": "command", "command": hook_command + f" # {marker}"}
     existing = next(
@@ -486,8 +483,7 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
             if isinstance(entry, dict)
             and isinstance(entry.get("hooks"), list)
             and any(
-                isinstance(h, dict) and marker in str(h.get("command", ""))
-                for h in entry["hooks"]
+                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
             )
         ),
         None,

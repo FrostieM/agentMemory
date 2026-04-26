@@ -80,9 +80,7 @@ def _emit_context(context_text: str) -> None:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--db-path", default=os.environ.get("AGENT_MEMORY_DB_PATH"))
-    parser.add_argument(
-        "--vector-path", default=os.environ.get("AGENT_MEMORY_VECTOR_PATH")
-    )
+    parser.add_argument("--vector-path", default=os.environ.get("AGENT_MEMORY_VECTOR_PATH"))
     parser.add_argument(
         "--workspace", default=os.environ.get("AGENT_MEMORY_WORKSPACE", DEFAULT_WORKSPACE)
     )
