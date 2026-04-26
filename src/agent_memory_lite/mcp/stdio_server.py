@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 import mcp.server.stdio
@@ -39,7 +41,7 @@ from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-from agent_memory_lite.config.settings import get_settings
+from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -62,11 +64,34 @@ from agent_memory_lite.version import __version__
 _log = get_logger("mcp.stdio_server")
 
 
+def _resolve_paths_from_cwd(settings: Settings) -> Settings:
+    """Override settings.db_path / settings.vector_db_path from the cwd.
+
+    Precedence (highest first):
+    1. Explicit env vars `MEMORY_DB_PATH` / `VECTOR_DB_PATH` (already
+       baked into Settings via pydantic-settings).
+    2. `<cwd>/.agent_memory/memory.db` if present — lets any runtime
+       isolate per-project memory by spawning the MCP server in the
+       project's working directory.
+    3. Whatever the .env / built-in default produced.
+    """
+    if os.environ.get("MEMORY_DB_PATH"):
+        return settings
+    cwd = Path.cwd()
+    candidate_db = cwd / ".agent_memory" / "memory.db"
+    candidate_vec = cwd / ".agent_memory" / "vectors.lance"
+    if not candidate_db.parent.exists():
+        return settings
+    return settings.model_copy(
+        update={"db_path": candidate_db, "vector_db_path": candidate_vec}
+    )
+
+
 class _Runtime:
     """Lazy holders for the per-process SQLite + provider + store."""
 
     def __init__(self) -> None:
-        self.settings = get_settings()
+        self.settings = _resolve_paths_from_cwd(get_settings())
         self.conn: sqlite3.Connection | None = None
         self._provider: EmbeddingProvider | None = None
         self._store: VectorStore | None = None

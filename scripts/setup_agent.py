@@ -431,7 +431,7 @@ def configure_cursor(diag: Diagnosis) -> None:
     ok(f"contract {status} in {contract}")
 
 
-def configure_project(diag: Diagnosis, project_root: Path) -> None:
+def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR0915
     section(f"Project mode: {project_root}")
     if project_root == REPO_ROOT:
         warn(
@@ -462,8 +462,42 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:
     servers["agent-memory-lite"] = claude_mcp_entry(
         diag.venv_python, project_root=project_root
     )
+
+    db_path = project_root / ".agent_memory" / "memory.db"
+    vector_path = project_root / ".agent_memory" / "vectors.lance"
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings["hooks"] = hooks
+    ups = hooks.setdefault("UserPromptSubmit", [])
+    if not isinstance(ups, list):
+        ups = []
+        hooks["UserPromptSubmit"] = ups
+    marker = "agent-memory-lite-inject"
+    hook_command = (
+        f'"{diag.venv_python}" "{HOOK_SCRIPT}" '
+        f'--db-path "{db_path}" --vector-path "{vector_path}"'
+    )
+    new_hook = {"type": "command", "command": hook_command + f" # {marker}"}
+    existing = next(
+        (
+            entry
+            for entry in ups
+            if isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(
+                isinstance(h, dict) and marker in str(h.get("command", ""))
+                for h in entry["hooks"]
+            )
+        ),
+        None,
+    )
+    if existing is None:
+        ups.append({"hooks": [new_hook]})
+    else:
+        existing["hooks"] = [new_hook]
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    ok(f"MCP entry written to {settings_path} with project-scoped MEMORY_DB_PATH")
+    ok(f"MCP entry + project-scoped hook written to {settings_path}")
 
     contract_path = project_root / "CLAUDE.md"
     status = upsert_contract(contract_path)

@@ -157,12 +157,23 @@ Writes:
   (Claude Code reads CLAUDE.md, Codex reads AGENTS.md).
 - `<project>/.agent_memory/memory.db` — bootstrapped fresh.
 
-When you open project A in any MCP-aware runtime, the spawned MCP server
-has only A's memory. Open project B, you get only B's. Per-project
-isolation works as long as the runtime supports per-project MCP config
-(Claude Code does via `<project>/.claude/settings.json`; Cursor's
-behavior depends on its build; Codex reads MCP only globally — see the
-project-mode caveat in `AGENT_SETUP/README.md`).
+**Project isolation works on any runtime.** The MCP server has three
+ways to find the right database, in this order of precedence:
+
+1. **`MEMORY_DB_PATH` env var** in the MCP server config — Claude Code
+   project mode uses this (written by `setup_agent.py --project` into
+   `<project>/.claude/settings.json`). Highest precedence.
+2. **`<cwd>/.agent_memory/memory.db` auto-detect** — works on every
+   runtime that spawns the MCP server with the project as cwd. Codex,
+   Cursor, custom IDE plugins, anything — no per-runtime config file
+   needed, just bootstrap `.agent_memory/` in each project.
+3. **Defaults from `.env`** in the agent-memory-lite repo. Used when the
+   MCP server is launched outside any project.
+
+So when you open project A in any runtime, the spawned MCP server sees
+only A's memory. Open project B, you get only B's. The optional HTTP
+hook (Claude Code) carries the same isolation via the
+`X-Memory-DB-Path` header that the project-scoped hook command sends.
 
 ### Global memory (one shared pool across all projects)
 

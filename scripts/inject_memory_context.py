@@ -41,6 +41,7 @@ Configure in `~/.claude/settings.json`:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -76,14 +77,27 @@ def _emit_context(context_text: str) -> None:
     sys.stdout.write("</agent-memory>\n")
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--db-path", default=os.environ.get("AGENT_MEMORY_DB_PATH"))
+    parser.add_argument(
+        "--vector-path", default=os.environ.get("AGENT_MEMORY_VECTOR_PATH")
+    )
+    parser.add_argument(
+        "--workspace", default=os.environ.get("AGENT_MEMORY_WORKSPACE", DEFAULT_WORKSPACE)
+    )
+    return parser.parse_known_args()[0]
+
+
 def main() -> int:
+    args = _parse_args()
     event = _read_event()
     prompt = str(event.get("prompt", "")).strip()
     if not prompt:
         return 0
 
     payload: dict[str, object] = {
-        "workspace_id": str(event.get("workspace_id") or DEFAULT_WORKSPACE),
+        "workspace_id": str(event.get("workspace_id") or args.workspace),
         "query": prompt[:1000],
         "max_tokens": DEFAULT_MAX_TOKENS,
     }
@@ -91,10 +105,17 @@ def main() -> int:
     if task_id:
         payload["task_id"] = str(task_id)
 
+    headers: dict[str, str] = {}
+    if args.db_path:
+        headers["X-Memory-DB-Path"] = args.db_path
+    if args.vector_path:
+        headers["X-Memory-Vector-Path"] = args.vector_path
+
     try:
         response = httpx.post(
             f"{DEFAULT_BASE}/memory/get_context",
             json=payload,
+            headers=headers,
             timeout=DEFAULT_TIMEOUT,
         )
         response.raise_for_status()

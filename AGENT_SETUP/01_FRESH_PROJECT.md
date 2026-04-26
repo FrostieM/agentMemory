@@ -59,14 +59,35 @@ VENV_PYTHON = `<REPO_ROOT>/.venv/Scripts/python.exe` on Windows, or
 back to whichever `python` is on PATH and note the deviation in the final
 report.
 
-# Step 2 — check whether memory is already wired for THIS project
+# Step 2 — understand the three isolation layers
 
-If `<PROJECT_ROOT>/.agent_memory/memory.db` exists AND
-`<PROJECT_ROOT>/.claude/settings.json` contains an `mcpServers.agent-memory-lite`
-entry whose `env.MEMORY_DB_PATH` points at that exact db file, the project
-is already configured. Skip to Step 4 (verify).
+agent-memory-lite isolates per-project memory through three independent
+mechanisms. Knowing which one applies depends on your runtime:
 
-# Step 3 — run the project-scoped setup
+a) **MCP env vars** (used by Claude Code in project mode) — the spawned
+   MCP server reads `MEMORY_DB_PATH` from its env. Set in
+   `<project>/.claude/settings.json`. Highest precedence.
+b) **MCP cwd auto-detect** (works in ANY runtime that spawns the MCP
+   server with `cwd=<project root>`) — if `<cwd>/.agent_memory/memory.db`
+   exists, the MCP server uses it. This is the universal path: Codex,
+   Cursor, custom IDE plugins, anything that opens a project as cwd.
+   You don't need a config file for this — just bootstrap the project's
+   `.agent_memory/` directory.
+c) **HTTP header** (used by the optional UserPromptSubmit hook) — the
+   hook sends `X-Memory-DB-Path: <project>/.agent_memory/memory.db` so
+   the global HTTP service serves the right DB per request.
+
+For most agents you only need (a) and (b). Continue.
+
+# Step 3 — check whether memory is already wired for THIS project
+
+If `<PROJECT_ROOT>/.agent_memory/memory.db` exists, the project already
+has a memory file. The MCP cwd auto-detect (path b above) will pick it up
+on its own — you might not need any config file at all. Skip to Step 5
+(verify), and only fall back to Step 4 if the verify step shows the tool
+is not connected to the right database.
+
+# Step 4 — run the project-scoped setup
 
 Execute exactly:
 
@@ -94,7 +115,7 @@ extra missing, Ollama unreachable), follow its `[!]` hints exactly:
 Do NOT install Ollama itself — that requires a GUI installer. If Ollama
 isn't installed, just continue without it.
 
-# Step 4 — verify the MCP tools are reachable in THIS turn
+# Step 5 — verify the MCP tools are reachable in THIS turn
 
 Try to call `memory_get_context` with this payload:
 
@@ -105,7 +126,7 @@ Try to call `memory_get_context` with this payload:
 Three outcomes:
 
 a) The tool returns a JSON envelope with a `context_text` field — success.
-   Move to Step 5.
+   Move to Step 6.
 
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
@@ -115,16 +136,16 @@ b) The tool is not in your tool list (you cannot call it) — every MCP
    Cursor / other — infer from the system prompt, available tools, or
    environment if you can; if unsure, say "the AI runtime you are using"
    in plain language). Report this restart as the only required manual
-   step. Skip Step 5.
+   step. Skip Step 6.
 
 c) The tool exists but returns an error — capture the error text. If it
    mentions "service unreachable" or port 8765, the project mode does not
    need the HTTP service so this should not happen. If it does, report the
    error verbatim and stop.
 
-# Step 5 — leave a setup-complete episode in the project's memory
+# Step 6 — leave a setup-complete episode in the project's memory
 
-If Step 4 succeeded, write one episode to mark the install:
+If Step 5 succeeded, write one episode to mark the install:
 
 ```json
 {
@@ -136,7 +157,7 @@ If Step 4 succeeded, write one episode to mark the install:
 }
 ```
 
-# Step 6 — final report to the user
+# Step 7 — final report to the user
 
 Print exactly this structure (fill in the blanks):
 
@@ -160,7 +181,7 @@ cross-project leakage.
 Now tell me what you would like to do.
 ```
 
-If MCP tools were not visible in Step 4, append (substitute the actual
+If MCP tools were not visible in Step 5, append (substitute the actual
 runtime name — Claude Code / Codex / Cursor / "your AI runtime" if unsure):
 
 ```
