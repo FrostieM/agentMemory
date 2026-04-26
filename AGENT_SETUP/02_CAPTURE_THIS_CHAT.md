@@ -154,8 +154,11 @@ episodes:      <count> written
 verification:  <ok | partial — context query returned no overlap; wrote a fallback summary>
 
 How a future chat will find this:
-- Open Claude Code in this project, ask any question that mentions the
-  task or the files we touched.
-- The auto-injection hook (if installed) will prepend the relevant
-  context. Otherwise the agent will call memory_get_context itself.
+- Open this project in any MCP-aware agent runtime (Claude Code, Codex,
+  Cursor, …) and ask any question that mentions the task or the files we
+  touched.
+- The agent will call `memory_get_context` itself (per the contract in
+  `<PROJECT_ROOT>/CLAUDE.md` and `<PROJECT_ROOT>/AGENTS.md`). On runtimes
+  that support a UserPromptSubmit hook and have it installed, the context
+  will be auto-injected before each prompt.
 ```

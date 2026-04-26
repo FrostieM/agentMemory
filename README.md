@@ -157,9 +157,12 @@ Writes:
   (Claude Code reads CLAUDE.md, Codex reads AGENTS.md).
 - `<project>/.agent_memory/memory.db` — bootstrapped fresh.
 
-When you open project A in Claude Code, the spawned MCP server has only
-A's memory. Open project B, you get only B's. Same on Codex if you place
-its config per-project.
+When you open project A in any MCP-aware runtime, the spawned MCP server
+has only A's memory. Open project B, you get only B's. Per-project
+isolation works as long as the runtime supports per-project MCP config
+(Claude Code does via `<project>/.claude/settings.json`; Cursor's
+behavior depends on its build; Codex reads MCP only globally — see the
+project-mode caveat in `AGENT_SETUP/README.md`).
 
 ### Global memory (one shared pool across all projects)
 
