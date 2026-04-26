@@ -5,54 +5,66 @@ Rolling state for cross-session work. Updated at every phase boundary. Pair-read
 
 ## Current phase
 
-**Phase 0 — Bootstrap (complete).** Ready to start Phase 1 (episodes + FTS + redaction).
+**Phase 1 — episodes + FTS + redaction + embeddings (complete).** Ready to start
+Phase 2 (vector search + hybrid retrieval).
 
 ## Last verified
 
-`pip install -e ".[dev]"` succeeds on Python 3.14.3 (Windows). All gates green:
+All gates green on Python 3.14.3 (Windows):
 
-- `pytest` — 49 passed, 0 failed.
+- `pytest` — **110 passed**, 0 failed.
 - `ruff check src tests scripts` — clean.
 - `ruff format --check` — clean.
-- `mypy src` (strict) — clean across 26 source files.
-- `python scripts/bootstrap_db.py` — creates `./.agent_memory/memory.db` and applies
-  both migrations.
-- `python -m agent_memory_lite` — binds `127.0.0.1:8765`. `GET /health` returns the
-  expected JSON; `POST /health` returns 405.
-- Local-only guard rejects `https://api.openai.com` etc.; `OPENAI_API_KEY` in env is
-  also rejected.
+- `mypy src` (strict) — clean across **60 source files**.
+- `python -m agent_memory_lite` boots; `POST /memory/ingest_episode` redacts +
+  persists episode + chunk + FTS row; `POST /memory/search` (mode=fts) finds
+  it by token; `GET /health` reports both migrations applied.
 
-## Phase 0 deliverables landed
+## Phase 1 deliverables landed
 
-- Top-level: `pyproject.toml`, `.env.example`, `.gitignore`, `Makefile`, `run.bat`,
-  `run.sh`, `README.md`, `CLAUDE.md`, `SESSION_STATE.md`.
-- Migrations: `0001_init.sql` (12 tables + indexes), `0002_chunks_fts.sql` (FTS5),
-  `migrations/README.md`.
-- Source modules: `version.py`, `__init__.py`, `__main__.py`, `logging_setup.py`,
-  `config/{settings,workspace_meta,local_only_guard}.py`,
-  `db/{connection,migrations,transactions,pragmas}.py`, `models/enums.py`,
-  `utils/{ids,time,hashing,pathing}.py`, `api/{app,deps,errors}.py`,
-  `api/routes/health.py`, `scripts/bootstrap_db.py`.
-- Tests: 49 cases under `tests/unit/{config,db,utils}/`, `tests/property/`,
-  `tests/e2e/`. `conftest.py` provides `tmp_db_path`, `applied_conn`, `settings_factory`.
+Source:
+- Models: `episodes.py`, `chunks.py`, `audit.py`, `candidates.py`.
+- Repositories: `episodes_repo.py`, `chunks_repo.py`, `audit_repo.py`.
+- `redaction/{patterns,secret_keywords,pii,redactor}.py` with the public
+  `redact(text)` returning `RedactedText`.
+- `chunking/{line_ranges,text}.py` with paragraph-by-token packing.
+- `fts/{chunks_fts,query}.py` — application-managed FTS5 sync + BM25 query.
+- `embeddings/{base,batching,dimension_check,factory,
+  sentence_transformers_provider,ollama_provider}.py` (ST default, Ollama opt-in).
+- `ingestion/episode_pipeline.py` — redact → save episode → save chunk → FTS row → audit.
+- `api/schemas/{ingest,search}.py` + `api/routes/{ingest_episode,search}.py`.
+- `utils/tokens.py` — chars/4 token estimator with override hook.
 
-## Next phase — Phase 1: episodes + FTS + redaction + ST embeddings
+Tests added (61 new cases, 110 total):
+- `tests/unit/redaction/test_redactor.py` — 14 cases.
+- `tests/property/test_redaction_invariants.py` — idempotence + secret coverage
+  (hypothesis).
+- `tests/unit/chunking/{test_line_ranges,test_text}.py` — 14 cases.
+- `tests/property/test_chunking_invariants.py` — non-overlap, in-order, lossless
+  re-assembly (hypothesis).
+- `tests/unit/embeddings/{test_base_contract,test_batching,test_dimension_check}.py`.
+- `tests/unit/fts/test_chunks_fts.py` — 7 cases.
+- `tests/integration/test_episode_pipeline_e2e.py` — 4 cases including rollback.
+- `tests/e2e/test_ingest_routes.py` — 4 cases over HTTP.
+- `FakeEmbeddingProvider` added to `conftest.py` (hashes input → fixed-dim
+  normalized vector; no model download in tests).
+
+## Next phase — Phase 2: vector search + hybrid retrieval
 
 Focus areas:
-- `redaction/` subpackage (`patterns.py`, `secret_keywords.py`, `pii.py`, `redactor.py`)
-  with property tests on idempotence and corpus coverage.
-- `chunking/{text.py, line_ranges.py}` with property tests on reassembly +
-  monotonic line numbers.
-- `fts/{chunks_fts.py, query.py}` for FTS5 sync + bm25 ordered queries.
-- `embeddings/{base.py, sentence_transformers_provider.py, ollama_provider.py,
-  batching.py, dimension_check.py}`. ST is wired now; Ollama is a scaffold for
-  Phase 3.
-- Repositories: `episodes_repo.py`, `chunks_repo.py`, `audit_repo.py`.
-- `ingestion/episode_pipeline.py` orchestrates redact → save → chunk → embed → FTS.
-- `api/routes/{ingest_episode.py, search.py}` + matching `api/schemas/`.
+- `vector_store/{base,lancedb_store,sqlite_vec_store,namespaces,reindex}.py` —
+  LanceDB default, sqlite-vec opt-in, factory falls back gracefully.
+- `retrieval/{normalize,candidates_fts,candidates_vector,fusion_rrf,scoring,
+  filters,token_budget,context_builder}.py` — first end-to-end retrieval pass.
+- `models/retrieval.py`.
+- `api/schemas/context.py`, `api/routes/context.py` for `POST /memory/get_context`.
+- `scripts/reindex_vectors.py`.
+- Wire `embedding_provider` into the episode pipeline so vectors land in LanceDB
+  alongside the chunk insert.
 
-Acceptance: `POST /memory/ingest_episode` writes a redacted episode + chunk + FTS
-row; `POST /memory/search` (mode=fts) finds it by exact path/symbol/error string.
+Acceptance: `POST /memory/get_context` returns an XML-like block within the token
+budget mixing FTS and vector hits with sources/confidence; `scripts/reindex_vectors.py`
+rebuilds LanceDB from `chunks` table.
 
 ## Locked-in decisions
 
