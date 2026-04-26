@@ -1,7 +1,8 @@
 """FastAPI application factory.
 
-`create_app` runs the local-only guard, applies any pending migrations against the
-configured database, registers exception handlers, and wires the route modules.
+`create_app` runs the local-only guard, applies any pending migrations against
+the configured database, probes the LLM provider (unless skipped), registers
+exception handlers, and wires the route modules.
 """
 
 from __future__ import annotations
@@ -9,11 +10,19 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from agent_memory_lite.api.errors import install_handlers
-from agent_memory_lite.api.routes import context, health, ingest_episode, search
+from agent_memory_lite.api.routes import (
+    context,
+    decisions,
+    health,
+    ingest_episode,
+    search,
+    task_state,
+)
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
+from agent_memory_lite.extraction.llm_extractor import probe_ollama
 from agent_memory_lite.version import __version__
 
 
@@ -24,6 +33,7 @@ def _bootstrap(settings: Settings) -> None:
         apply_migrations(conn)
     finally:
         close_connection(conn)
+    probe_ollama(settings)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -41,4 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ingest_episode.router)
     app.include_router(search.router)
     app.include_router(context.router)
+    app.include_router(decisions.router)
+    app.include_router(task_state.router)
     return app

@@ -5,84 +5,88 @@ Rolling state for cross-session work. Updated at every phase boundary. Pair-read
 
 ## Current phase
 
-**Phase 2 — vector search + hybrid retrieval (complete).** Ready to start
-Phase 3 (decisions, task state, core memory, procedural rules, full context).
+**Phase 3 — decisions, task state, core memory, procedural rules + extraction
+scaffold (complete).** Ready to start Phase 4 (lite temporal graph).
 
 ## Last verified
 
 All gates green on Python 3.14.3 (Windows):
 
-- `pytest` — **147 passed**, 0 failed.
+- `pytest` — **182 passed**, 0 failed.
 - `ruff check src tests scripts` — clean.
 - `ruff format --check` — clean.
-- `mypy src` (strict) — clean across **79 source files**.
-- e2e: `POST /memory/ingest_episode` writes redacted episode + chunk + FTS row +
-  vector upsert; `POST /memory/get_context` returns an XML envelope with
-  retrieved chunks pulled from FTS + vector via RRF; `POST /memory/search`
-  (FTS mode) still works; `GET /health` unaffected.
+- `mypy src` (strict) — clean across **101 source files**.
+- e2e: `POST /memory/write_decision` (with `supersedes_id` chain),
+  `POST /memory/update_task_state`, `POST /memory/get_context` (now emits
+  `<core_memory>`, `<task_state>`, `<active_decisions>`, `<procedural_rules>`,
+  `<retrieved_chunks>`), `POST /memory/ingest_episode`, `POST /memory/search`.
+- Ollama probe runs at startup unless `OLLAMA_PROBE_SKIP=true` (set in tests).
 
-## Phase 2 deliverables landed
+## Phase 3 deliverables landed
 
 Source:
-- `vector_store/{base,lancedb_store,sqlite_vec_store,namespaces,factory,reindex}.py`.
-  - `VectorStore` Protocol; LanceDB is default; `sqlite-vec` opt-in with graceful
-    fallback. `reindex_chunks` rebuilds `chunks` namespace from SQLite.
-- `retrieval/{normalize,candidates_fts,candidates_vector,fusion_rrf,scoring,
-  filters,token_budget,context_builder}.py`.
-  - Pipeline: normalize → FTS + vector candidates → RRF fusion → score (weights
-    from spec, semantic + keyword + RRF presence boost wired; graph/recency/
-    importance/confidence default neutral until Phases 3 & 4) → filter
-    (pass-through in Phase 2) → token budget → XML envelope.
-- `models/retrieval.py` — `RetrievalQuery`, `RetrievalCandidate`, `ScoredHit`.
-- `api/schemas/context.py` + `api/routes/context.py` for `POST /memory/get_context`.
-- `api/deps.py` extended with `EmbeddingProviderDep` and `VectorStoreDep`
-  singletons + reset hook for tests.
-- `ingestion/episode_pipeline.py` now calls `pin_or_check`, embeds the chunk,
-  and upserts into the `chunks` vector namespace after the SQLite commit;
-  vector failures log + leave the chunk durable for `scripts/reindex_vectors.py`.
-- `scripts/reindex_vectors.py` — CLI to rebuild LanceDB from SQLite.
+- Models + repos for `decisions`, `task_state`, `core_memory`, `procedural_rules`.
+  Each repo is thin SQL only; the writers handle business rules.
+- Ingestion writers (in `ingestion/`):
+  - `decision_writer.write_decision` — supersedes-chain handling: closes prior
+    `valid_to`, flips `status='superseded'`, atomic with the new insert.
+    Cross-workspace supersedes rejected (`ValidationError`); unknown supersedes
+    id → `NotFoundError` (404).
+  - `task_state_writer.write_task_state` — upsert keyed by
+    `(workspace_id, task_id)`; before/after state captured in audit.
+  - `core_memory_writer.write_core_memory` — deactivate prior active row for
+    the same `key`, insert new active row.
+  - `procedural_writer.{write_procedural_rule, archive_procedural_rule}`.
+- Extraction layer:
+  - `extraction/base.py` — `Extractor` Protocol.
+  - `heuristic_extractor.py` — regex cues for `Decision:` / `Решение:` /
+    `Rule:` / `Правило:` lines. Always available.
+  - `llm_extractor.py` — Ollama-backed; structured JSON prompt; failures log
+    and return `[]` rather than raising into the ingest path.
+  - `probe_ollama(settings)` — startup-time reachability check; raises
+    `ExtractorUnavailableError` unless `OLLAMA_PROBE_SKIP=true`.
+  - `thresholds.py` — per-kind confidence + importance minima from spec.
+  - `trust_gate.py` — `untrusted_doc` cannot become a constraint or procedural
+    rule; promotable kinds also require `user_asserted` / `verified_by_tool`
+    / `explicit_decision` trust.
+- `retrieval/context_builder.py` extended to render the four new sections.
+  `historical=True` surfaces all decisions including superseded ones.
+- API: `api/schemas/{decisions,task_state}.py` + `api/routes/{decisions,
+  task_state}.py` for `POST /memory/write_decision` and
+  `POST /memory/update_task_state`.
+- `api/app.py` runs `probe_ollama` after migrations.
 
-Tests added (37 new cases, 147 total):
-- `tests/unit/retrieval/{test_normalize,test_fusion_rrf,test_scoring,
-  test_filters,test_token_budget}.py`.
-- `tests/property/{test_rrf_correctness,test_scoring_monotonicity}.py` (hypothesis).
-- `tests/unit/vector_store/{test_namespaces,test_fake_store_contract}.py`.
-- `tests/integration/test_retrieval_pipeline_e2e.py` — full hybrid pipeline +
-  workspace isolation + FTS-only fallback.
-- `tests/e2e/test_get_context_route.py`.
-- `FakeVectorStore` + `app_factory` fixture added to `conftest.py` so e2e tests
-  override the embedding provider and vector store with deterministic in-memory
-  fakes (no model download, no LanceDB on-disk dependency).
+Tests added (35 new cases, 182 total):
+- `tests/unit/ingestion/{test_decision_writer, test_task_state_writer,
+  test_core_memory_writer, test_procedural_writer}.py`.
+- `tests/unit/extraction/{test_thresholds, test_trust_gate,
+  test_heuristic_extractor}.py`.
+- `tests/e2e/{test_decisions_route, test_task_state_route}.py` — including
+  decision + task state visibility through `POST /memory/get_context`.
 
-## Next phase — Phase 3: decisions, task state, core memory, procedural rules
+## Next phase — Phase 4: lite temporal graph
 
 Focus areas:
-- Domain models + repositories: `decisions.py`, `core_memory.py`, `task_state.py`,
-  `procedural.py` and matching `repositories/*`.
-- Ingestion writers: `decision_writer.py` (with supersedes-chain handling and
-  audit), `task_state_writer.py`, `core_memory_writer.py`, `procedural_writer.py`.
-- Extraction: `extraction/{base, heuristic_extractor, llm_extractor, thresholds,
-  trust_gate}.py`. **Wire the mandatory Ollama probe at startup** (planned for
-  this phase per locked-in decisions). Heuristic extractor always on; LLM
-  extractor hits Ollama if reachable.
-- Extend `retrieval/context_builder.py` to emit `<core_memory>`, `<task_state>`,
-  `<active_decisions>`, and `<procedural_rules>` sections in priority order.
-- New API routes: `POST /memory/write_decision`, `POST /memory/update_task_state`,
-  matching `api/schemas/`.
-- Snapshot test on the rendered XML envelope (`syrupy`).
+- Models + repos: `entities.py`, `facts.py`.
+- `graph/{upsert_entity, write_fact, conflict_detector, invalidate, traversal,
+  canonicalize}.py`.
+- Wire entity upsert + fact write into `ingestion/episode_pipeline.py` after
+  candidate extraction passes the trust gate + thresholds.
+- `retrieval/candidates_graph.py` for graph hits; extend `context_builder.py`
+  with `<retrieved_facts>`.
+- Property tests: conflict detection (no cycles, exactly one open fact per
+  subject+predicate), traversal bounds (≤ 40 facts, ≤ 2 hops, deterministic).
+- Integration test: two contradicting episodes → exactly one open fact in the
+  default view, both visible in historical mode.
 
-Acceptance: writing a decision with `supersedes_id` closes the prior decision
-(sets `valid_to`, `status='superseded'`). `get_context` includes core, task,
-decisions, rules. `trust_gate` blocks promotion of `untrusted_doc` candidates
-to core or procedural.
+Acceptance: graph hits flow through retrieval; default search hides invalidated
+facts; historical mode surfaces them with `valid_to` and `invalidated_by_fact_id`.
 
 ## Locked-in decisions
 
 - Embedding model: `intfloat/multilingual-e5-small` via sentence-transformers.
 - LLM extraction: heuristic always on; Ollama (`qwen2.5:7b-instruct`) **mandatory**
-  for LLM-driven extraction in Phase 3 (startup probe will fail loudly if
-  unreachable). Auto-promotion to core/procedural is gated by `trust_gate`
-  regardless of extractor.
+  with a startup probe (skippable via `OLLAMA_PROBE_SKIP=true` for CI/tests).
 - Workspace ingest excludes: `.gitignore` + builtin denylist + optional `.memoryignore`.
 - v1 single-workspace, hard-coded `workspace_id="default"`.
 
@@ -92,6 +96,6 @@ None right now.
 
 ## How to resume
 
-Read this file and `CLAUDE.md` in parallel. Pick up at the Phase 3 focus list
-above. Existing test fixtures (`applied_conn`, `fake_embedding_provider`,
+Read this file and `CLAUDE.md` in parallel. Pick up at the Phase 4 focus list
+above. Existing fixtures (`applied_conn`, `fake_embedding_provider`,
 `fake_vector_store`, `app_factory`) cover the new code's needs.

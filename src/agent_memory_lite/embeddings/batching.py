@@ -8,12 +8,9 @@ type so the same helper works for `list[str]` (provider input) and
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
-def iter_batches(items: list[T], batch_size: int) -> Iterator[list[T]]:
+def iter_batches[T](items: list[T], batch_size: int) -> Iterator[list[T]]:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
     for start in range(0, len(items), batch_size):
