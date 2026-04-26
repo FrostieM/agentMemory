@@ -6,9 +6,12 @@ Steps:
 3. Create a single episode-kind chunk that mirrors the redacted text.
 4. Insert the FTS row for that chunk.
 5. Append an audit log entry.
+6. (Optional) Embed the chunk and upsert into the vector store.
 
-Vector embedding is intentionally NOT computed here — that lands in Phase 2 when
-the vector store is wired. The chunk record carries `embedding_id=None` until then.
+When `embedding_provider` is supplied, dimension drift is checked first via
+`pin_or_check`. Vector upsert happens *after* the SQLite transaction commits;
+a vector-store failure logs a warning but does not roll the chunk back. Run
+`scripts/reindex_vectors.py` to repair drift.
 """
 
 from __future__ import annotations
@@ -17,7 +20,10 @@ import sqlite3
 from dataclasses import dataclass
 
 from agent_memory_lite.db.transactions import with_tx
+from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.fts.chunks_fts import insert_chunk_fts
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.chunks import Chunk, ChunkIn
 from agent_memory_lite.models.enums import ChunkKind
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
@@ -25,6 +31,10 @@ from agent_memory_lite.redaction import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.chunks_repo import insert_chunk
 from agent_memory_lite.repositories.episodes_repo import insert_episode
+from agent_memory_lite.vector_store.base import VectorRow, VectorStore
+from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
+
+_log = get_logger("ingestion.episode_pipeline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,29 +42,27 @@ class EpisodeIngestResult:
     episode: Episode
     chunk: Chunk
     redacted_kinds: list[str]
+    embedded: bool
 
 
-def ingest_episode(
-    conn: sqlite3.Connection,
-    episode_in: EpisodeIn,
-) -> EpisodeIngestResult:
-    redacted = redact(episode_in.raw_text)
-
+def _persist(
+    conn: sqlite3.Connection, episode_in: EpisodeIn, redacted_text: str, redacted_kinds: list[str]
+) -> tuple[Episode, Chunk]:
     with with_tx(conn):
-        episode = insert_episode(conn, episode_in, redacted_text=redacted.text)
-
-        chunk_in = ChunkIn(
-            workspace_id=episode.workspace_id,
-            episode_id=episode.id,
-            kind=ChunkKind.EPISODE,
-            text=redacted.text,
-            summary=episode.summary,
-            importance=episode.importance,
-            confidence=episode.confidence,
-            metadata={"source_type": episode.source_type.value},
+        episode = insert_episode(conn, episode_in, redacted_text=redacted_text)
+        chunk = insert_chunk(
+            conn,
+            ChunkIn(
+                workspace_id=episode.workspace_id,
+                episode_id=episode.id,
+                kind=ChunkKind.EPISODE,
+                text=redacted_text,
+                summary=episode.summary,
+                importance=episode.importance,
+                confidence=episode.confidence,
+                metadata={"source_type": episode.source_type.value},
+            ),
         )
-        chunk = insert_chunk(conn, chunk_in)
-
         insert_chunk_fts(
             conn,
             chunk_id=chunk.id,
@@ -64,7 +72,6 @@ def ingest_episode(
             text=chunk.text,
             summary=chunk.summary,
         )
-
         insert_audit(
             conn,
             workspace_id=episode.workspace_id,
@@ -74,13 +81,68 @@ def ingest_episode(
             source_episode_id=episode.id,
             after={
                 "chunk_id": chunk.id,
-                "redacted_kinds": redacted.kinds_seen,
+                "redacted_kinds": redacted_kinds,
                 "trust_level": episode.trust_level.value,
             },
         )
+    return episode, chunk
+
+
+def _embed_and_upsert(
+    chunk: Chunk,
+    text: str,
+    provider: EmbeddingProvider,
+    store: VectorStore,
+) -> bool:
+    try:
+        vectors = provider.embed_batch([text], kind="doc")
+        store.upsert(
+            NAMESPACE_CHUNKS,
+            [
+                VectorRow(
+                    id=chunk.id,
+                    workspace_id=chunk.workspace_id,
+                    vector=vectors[0],
+                    metadata={
+                        "chunk_id": chunk.id,
+                        "kind": chunk.kind.value,
+                        "episode_id": chunk.episode_id,
+                        "path": None,
+                    },
+                )
+            ],
+        )
+    except Exception as exc:
+        _log.warning(
+            "vector_upsert_failed",
+            chunk_id=chunk.id,
+            error=str(exc),
+        )
+        return False
+    return True
+
+
+def ingest_episode(
+    conn: sqlite3.Connection,
+    episode_in: EpisodeIn,
+    *,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
+) -> EpisodeIngestResult:
+    redacted = redact(episode_in.raw_text)
+
+    if embedding_provider is not None:
+        pin_or_check(conn, episode_in.workspace_id, embedding_provider)
+
+    episode, chunk = _persist(conn, episode_in, redacted.text, redacted.kinds_seen)
+
+    embedded = False
+    if embedding_provider is not None and vector_store is not None:
+        embedded = _embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
 
     return EpisodeIngestResult(
         episode=episode,
         chunk=chunk,
         redacted_kinds=redacted.kinds_seen,
+        embedded=embedded,
     )

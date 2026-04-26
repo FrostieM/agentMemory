@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from agent_memory_lite.api.errors import install_handlers
-from agent_memory_lite.api.routes import health, ingest_episode, search
+from agent_memory_lite.api.routes import context, health, ingest_episode, search
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
@@ -40,4 +40,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(ingest_episode.router)
     app.include_router(search.router)
+    app.include_router(context.router)
     return app

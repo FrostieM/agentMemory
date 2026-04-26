@@ -1,10 +1,14 @@
-"""POST /memory/ingest_episode — write an episode + chunk + FTS row."""
+"""POST /memory/ingest_episode — write an episode + chunk + FTS row + vector."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import (
+    DbDep,
+    EmbeddingProviderDep,
+    VectorStoreDep,
+)
 from agent_memory_lite.api.schemas.ingest import (
     IngestEpisodeRequest,
     IngestEpisodeResponse,
@@ -15,13 +19,12 @@ from agent_memory_lite.models.episodes import EpisodeIn
 router = APIRouter()
 
 
-@router.post(
-    "/memory/ingest_episode",
-    response_model=IngestEpisodeResponse,
-)
+@router.post("/memory/ingest_episode", response_model=IngestEpisodeResponse)
 def ingest_episode_route(
     body: IngestEpisodeRequest,
     conn: DbDep,
+    provider: EmbeddingProviderDep,
+    store: VectorStoreDep,
 ) -> IngestEpisodeResponse:
     episode_in = EpisodeIn(
         workspace_id=body.workspace_id,
@@ -35,7 +38,12 @@ def ingest_episode_route(
         confidence=body.confidence,
         metadata=body.metadata,
     )
-    result = ingest_episode(conn, episode_in)
+    result = ingest_episode(
+        conn,
+        episode_in,
+        embedding_provider=provider,
+        vector_store=store,
+    )
     return IngestEpisodeResponse(
         episode_id=result.episode.id,
         chunk_id=result.chunk.id,

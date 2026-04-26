@@ -7,13 +7,10 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_memory_lite.api.app import create_app
-
 
 @pytest.fixture
-def client(settings_factory) -> Iterator[TestClient]:
-    settings = settings_factory()
-    app = create_app(settings)
+def client(app_factory) -> Iterator[TestClient]:
+    app = app_factory()
     with TestClient(app) as c:
         yield c
 

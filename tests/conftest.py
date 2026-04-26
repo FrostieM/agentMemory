@@ -19,6 +19,7 @@ from agent_memory_lite.config.settings import Settings, reset_settings_cache
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import MIGRATION_DIR, apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingKind
+from agent_memory_lite.vector_store.base import VectorHit, VectorRow
 
 
 class FakeEmbeddingProvider:
@@ -94,9 +95,102 @@ def applied_conn(fresh_conn: sqlite3.Connection) -> sqlite3.Connection:
     return fresh_conn
 
 
+class FakeVectorStore:
+    """In-memory vector store. Cosine similarity, namespace-keyed dicts."""
+
+    backend = "fake"
+
+    def __init__(self) -> None:
+        self._tables: dict[str, dict[str, VectorRow]] = {}
+
+    def open(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    def upsert(self, namespace: str, rows: list[VectorRow]) -> None:
+        bucket = self._tables.setdefault(namespace, {})
+        for row in rows:
+            bucket[row.id] = row
+
+    def query(
+        self,
+        namespace: str,
+        vector: np.ndarray,
+        *,
+        workspace_id: str,
+        k: int = 10,
+    ) -> list[VectorHit]:
+        bucket = self._tables.get(namespace, {})
+        norm_query = float(np.linalg.norm(vector)) or 1.0
+        scored: list[VectorHit] = []
+        for row in bucket.values():
+            if row.workspace_id != workspace_id:
+                continue
+            row_norm = float(np.linalg.norm(row.vector)) or 1.0
+            similarity = float(np.dot(vector, row.vector)) / (norm_query * row_norm)
+            scored.append(
+                VectorHit(
+                    id=row.id,
+                    workspace_id=row.workspace_id,
+                    score=similarity,
+                    metadata=dict(row.metadata),
+                )
+            )
+        scored.sort(key=lambda hit: hit.score, reverse=True)
+        return scored[:k]
+
+    def delete(self, namespace: str, ids: list[str]) -> int:
+        bucket = self._tables.get(namespace, {})
+        removed = 0
+        for row_id in ids:
+            if row_id in bucket:
+                del bucket[row_id]
+                removed += 1
+        return removed
+
+    def drop_namespace(self, namespace: str) -> None:
+        self._tables.pop(namespace, None)
+
+    def count(self, namespace: str, *, workspace_id: str | None = None) -> int:
+        bucket = self._tables.get(namespace, {})
+        if workspace_id is None:
+            return len(bucket)
+        return sum(1 for row in bucket.values() if row.workspace_id == workspace_id)
+
+
 @pytest.fixture
 def fake_embedding_provider() -> FakeEmbeddingProvider:
     return FakeEmbeddingProvider()
+
+
+@pytest.fixture
+def fake_vector_store() -> FakeVectorStore:
+    return FakeVectorStore()
+
+
+@pytest.fixture
+def app_factory(
+    settings_factory,
+    fake_embedding_provider: FakeEmbeddingProvider,
+    fake_vector_store: FakeVectorStore,
+):
+    """Build a FastAPI app with embedding + vector deps overridden by fakes."""
+
+    from agent_memory_lite.api import deps  # noqa: PLC0415
+    from agent_memory_lite.api.app import create_app  # noqa: PLC0415
+
+    def _build(**settings_overrides: object):
+        settings = settings_factory(**settings_overrides)
+        deps.reset_dependency_singletons()
+        app = create_app(settings)
+        app.dependency_overrides[deps.get_embedding_provider_dep] = lambda: fake_embedding_provider
+        app.dependency_overrides[deps.get_vector_store_dep] = lambda: fake_vector_store
+        return app
+
+    yield _build
+    deps.reset_dependency_singletons()
 
 
 @pytest.fixture
