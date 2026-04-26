@@ -120,71 +120,70 @@ pytest -m needs_ollama  # extraction tests against a live Ollama (opt-in)
 
 ## Make agents use this memory persistently
 
-A one-shot prompt does not persist between sessions. Pick one of these so the
-agent loads the contract automatically every chat. The canonical contract
-lives at [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md).
-
-### Option 1 — Claude Code via `CLAUDE.md` (recommended)
-
-Claude Code reads `CLAUDE.md` at session start. Two scopes:
-
-- **Per project**: copy `docs/AGENT_CONTRACT.md` into the project's `CLAUDE.md`
-  (or append to it). Every Claude Code session opened in that repo will follow
-  the contract.
-- **Global**: copy it into `~/.claude/CLAUDE.md`. Every Claude Code session
-  on the machine — across all repos — will follow it.
+A one-shot prompt does not persist between sessions. Run **one command** and
+every detected AI agent on this machine will load the memory contract every
+session, see the memory tools as native tool calls, and (for Claude Code) get
+memory context auto-injected before every prompt:
 
 ```bash
-# Per-project (run from the consumer project, not from agent-memory-lite)
-cat /path/to/agent-memory-lite/docs/AGENT_CONTRACT.md >> CLAUDE.md
-
-# Global
-cat /path/to/agent-memory-lite/docs/AGENT_CONTRACT.md >> ~/.claude/CLAUDE.md
+python scripts/setup_agent.py
 ```
 
-### Option 2 — System prompt / developer message
+The script is idempotent — re-run any time. It:
 
-For agents that take a system or developer prompt (Claude API, OpenAI-compatible
-clients, custom loops): paste the contents of `docs/AGENT_CONTRACT.md` into the
-system message at session start.
+1. Verifies the venv has `agent-memory-lite` + the `[mcp]` extra installed.
+2. Detects Ollama (binary, daemon, `qwen2.5:7b-instruct`) and the memory db.
+3. Bootstraps the database if missing.
+4. Sets `OLLAMA_PROBE_SKIP` based on whether Ollama is reachable.
+5. For every agent runtime present on the machine, writes:
+   - **Claude Code** (`~/.claude/`):
+     `settings.json` MCP server entry + `CLAUDE.md` contract +
+     `UserPromptSubmit` hook (calls `scripts/inject_memory_context.py`,
+     which prepends `<memory_context>` to every user prompt).
+   - **Codex** (`~/.codex/`):
+     `config.toml` MCP server entry + `AGENTS.md` contract.
+   - **Cursor** (`~/.cursor/`):
+     `mcp.json` MCP server entry + `rules/agent-memory-lite.md` contract.
+6. Emits a generic JSON snippet for any other MCP-aware agent.
+7. Smoke-tests the MCP stdio server (initialize + tools/list).
 
-### Option 3 — Real MCP stdio server (most automatic for Claude Code / Cursor)
+After this, in any new chat the agent has three layers of "don't forget":
 
-The package ships a real MCP stdio server. After
-`pip install -e ".[mcp]"`, register it in Claude Code's settings —
-`~/.claude/settings.json` (global) or `<project>/.claude/settings.json`
-(per-project):
+- **Tools layer**: `memory_get_context`, `memory_search`,
+  `memory_ingest_episode`, `memory_write_decision`,
+  `memory_update_task_state`, `memory_ingest_file` appear in the tool list
+  natively (via MCP), no system prompt required.
+- **Instructions layer**: the contract markdown is auto-loaded into the
+  agent's system context every session.
+- **Auto-injection layer** (Claude Code only): the hook calls the HTTP
+  service for every user prompt and prepends a `<memory_context>` block,
+  so the agent sees relevant memory **before** it decides whether to call
+  any tools.
 
-```json
-{
-  "mcpServers": {
-    "agent-memory-lite": {
-      "command": "C:/Users/Osino/Desktop/work/agent-memory-lite/.venv/Scripts/python.exe",
-      "args": ["-m", "agent_memory_lite.mcp.stdio_server"],
-      "env": {"OLLAMA_PROBE_SKIP": "true"}
-    }
-  }
-}
-```
+Re-run `python scripts/status.py` at any time to see the current state.
 
-Restart Claude Code. The agent now sees `memory_get_context`,
-`memory_search`, `memory_ingest_episode`, `memory_write_decision`,
-`memory_update_task_state`, `memory_ingest_file` as native tool calls —
-no curl, no system prompt. The HTTP service is **not** required when MCP
-is wired this way; the server runs in-process and shares
-`MEMORY_DB_PATH` + `VECTOR_DB_PATH` with the HTTP service if both are
-running (SQLite WAL handles the concurrency).
+Flags:
+- `--check-only` — diagnose only, no writes.
+- `--no-hook` — skip the Claude Code hook (tools + contract still installed).
 
-Run it manually for a smoke check:
+### What you still need to start manually
+
+The MCP stdio server boots per agent session — no separate process required
+for tools to work. The **HTTP service** is what backs the auto-injection
+hook and any non-MCP client. Start it once per machine:
 
 ```bash
-python -m agent_memory_lite.mcp.stdio_server   # waits on stdin for MCP frames
+python -m agent_memory_lite     # binds 127.0.0.1:8765
 ```
 
-### Option 4 — Manual paste (one-off)
+To keep it running across reboots: put it in a Windows startup folder, a
+launchd plist, a systemd user service, or whatever your OS prefers.
 
-For a single chat: paste the contract into the first user message. The agent
-will follow it for that session and forget on the next one.
+### The contract behind it all
+
+`docs/AGENT_CONTRACT.md` is the canonical instruction text. Setup writes
+it into each runtime's "always-loaded" file — you can edit it once and
+rerun setup to push the new version everywhere.
 
 ## Workspace ingestion
 

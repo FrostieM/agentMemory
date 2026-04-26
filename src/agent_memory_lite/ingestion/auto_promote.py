@@ -121,6 +121,10 @@ def _promote_core(conn: sqlite3.Connection, candidate: MemoryCandidate) -> bool:
     return True
 
 
+def _normalize(text: str) -> str:
+    return " ".join(text.lower().split())[:80]
+
+
 def auto_promote(
     conn: sqlite3.Connection,
     episode: Episode,
@@ -136,18 +140,19 @@ def auto_promote(
     survivors = _filter(candidates)
     decisions = rules = core = 0
     skipped: list[str] = []
+    seen: set[tuple[str, str]] = set()
     for candidate in survivors:
+        dedup_key = (candidate.kind.value, _normalize(candidate.subject))
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
         if candidate.kind == MemoryCandidateKind.DECISION and _promote_decision(conn, candidate):
             decisions += 1
-        elif (
-            candidate.kind == MemoryCandidateKind.PROCEDURAL_RULE
-            and _promote_rule(conn, candidate)
+        elif candidate.kind == MemoryCandidateKind.PROCEDURAL_RULE and _promote_rule(
+            conn, candidate
         ):
             rules += 1
-        elif (
-            candidate.kind == MemoryCandidateKind.CONSTRAINT
-            and _promote_core(conn, candidate)
-        ):
+        elif candidate.kind == MemoryCandidateKind.CONSTRAINT and _promote_core(conn, candidate):
             core += 1
         else:
             skipped.append(candidate.kind.value)
