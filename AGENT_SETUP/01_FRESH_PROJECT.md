@@ -24,20 +24,40 @@ The only acceptable user-facing message is the final report at the end.
 PROJECT_ROOT = your current working directory (or the git toplevel if you
 can determine it via `git rev-parse --show-toplevel`).
 
-REPO_ROOT = the agent-memory-lite checkout. Search in this order:
-1. `C:/Users/Osino/Desktop/work/agent-memory-lite`
-2. `~/agent-memory-lite`
-3. `~/work/agent-memory-lite`
-4. `~/Documents/agent-memory-lite`
-5. The result of `git -C ~ -C C:/Users/Osino -C "$HOME" --no-pager grep -l "agent-memory-lite" 2>/dev/null` style search.
+REPO_ROOT = the agent-memory-lite checkout. Try these in order, stop at
+the first hit:
+
+1. The `AGENT_MEMORY_LITE_HOME` environment variable, if set.
+2. Whatever Python reports as the install location of the package:
+   ```
+   python -c "import agent_memory_lite, pathlib; print(pathlib.Path(agent_memory_lite.__file__).resolve().parents[2])"
+   ```
+   (The package layout is `<repo>/src/agent_memory_lite/__init__.py`, so
+   `parents[2]` is the repo root. This works only if the venv with
+   `pip install -e .` is on PATH or you can find one.)
+3. Common workspace folders the user is likely to have, expanded with
+   `os.path.expanduser` / `pathlib.Path.home()`:
+   `~/agent-memory-lite`, `~/work/agent-memory-lite`,
+   `~/code/agent-memory-lite`, `~/projects/agent-memory-lite`,
+   `~/Documents/agent-memory-lite`, `~/src/agent-memory-lite`.
+   On Windows also try `~/Desktop/work/agent-memory-lite` and
+   `~/Desktop/agent-memory-lite`.
+4. A bounded `find ~ -name "agent-memory-lite" -type d -maxdepth 5`
+   (or PowerShell `Get-ChildItem -Path $HOME -Recurse -Directory -Depth 5
+   -Filter "agent-memory-lite" -ErrorAction SilentlyContinue`).
 
 If REPO_ROOT cannot be found, stop and report:
-"agent-memory-lite repo not found in standard locations. Tell me its path
-and re-run." — then exit. Do not improvise a partial setup.
+
+> I cannot locate the agent-memory-lite checkout. Set the
+> `AGENT_MEMORY_LITE_HOME` environment variable to its path, or tell me
+> the absolute path here, and I will re-run.
+
+Do not improvise a partial setup.
 
 VENV_PYTHON = `<REPO_ROOT>/.venv/Scripts/python.exe` on Windows, or
-`<REPO_ROOT>/.venv/bin/python` elsewhere. If neither exists, fall back to
-`python` and note the deviation.
+`<REPO_ROOT>/.venv/bin/python` on macOS/Linux. If neither exists, fall
+back to whichever `python` is on PATH and note the deviation in the final
+report.
 
 # Step 2 — check whether memory is already wired for THIS project
 

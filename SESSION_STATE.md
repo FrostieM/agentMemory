@@ -85,7 +85,8 @@ Tests added (22 new cases, 246 total):
 
 ## How to resume
 
-The plan file at `C:\Users\Osino\.claude\plans\async-moseying-sutton.md`
-remains the canonical implementation reference. For a fresh session, read
-this `SESSION_STATE.md` and `CLAUDE.md` in parallel; everything else is
-discoverable from the code and the eval suite.
+For a fresh session, read this `SESSION_STATE.md` and `CLAUDE.md` in
+parallel; everything else is discoverable from the code and the eval
+suite. The original implementation plan lives in the runtime's plans
+directory (Claude Code: `~/.claude/plans/`) and is referenced by the
+agent that did the build.

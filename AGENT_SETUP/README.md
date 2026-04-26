@@ -9,9 +9,13 @@ rest autonomously.
 | [`01_FRESH_PROJECT.md`](01_FRESH_PROJECT.md) | New chat. The agent is in a project but has never used memory here. It will detect, bootstrap, and verify everything. |
 | [`02_CAPTURE_THIS_CHAT.md`](02_CAPTURE_THIS_CHAT.md) | Active chat. You've already done work in this conversation and want it persisted to memory before the chat closes. |
 
-Both prompts assume the `agent-memory-lite` repo is checked out somewhere on
-this machine. They tell the agent to find it (common locations + git
-search). Default: `C:/Users/Osino/Desktop/work/agent-memory-lite`.
+Both prompts assume the `agent-memory-lite` repo is checked out somewhere
+on this machine and `pip install -e ".[mcp]"` has been done in its venv.
+The prompts walk the agent through detection: it tries the
+`AGENT_MEMORY_LITE_HOME` env var first, then asks Python where the
+installed package lives (`python -c "import agent_memory_lite, pathlib;
+print(pathlib.Path(agent_memory_lite.__file__).parents[2])"`), then
+common workspace locations, and finally falls back to asking you.
 
 After either prompt finishes, the agent should:
 1. Tell you what it set up (paths, files written).
