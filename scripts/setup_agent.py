@@ -291,11 +291,15 @@ def claude_mcp_entry(
     *,
     project_root: Path | None = None,
 ) -> dict[str, object]:
+    # Project isolation comes from the physical path (MEMORY_DB_PATH +
+    # VECTOR_DB_PATH), NOT from the workspace_id string. Every row keeps
+    # workspace_id="default" — different projects live in different files.
+    # Setting MEMORY_WORKSPACE_ID per project would create a misleading
+    # mismatch (env says one thing, rows say another) so we don't.
     env: dict[str, str] = {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")}
     if project_root is not None:
         env["MEMORY_DB_PATH"] = str(project_root / ".agent_memory" / "memory.db")
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
-        env["MEMORY_WORKSPACE_ID"] = project_root.name
     return {
         "command": str(python_exe),
         "args": ["-m", "agent_memory_lite.mcp.stdio_server"],
