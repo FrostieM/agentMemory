@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from agent_memory_lite.ingestion.exclude_rules import (
+    BUILTIN_DENYLIST,
+    collect_patterns,
+    is_excluded,
+)
+
+
+def test_builtin_denylist_blocks_node_modules() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert is_excluded("node_modules/foo.js", is_dir=False, patterns=patterns)
+
+
+def test_builtin_denylist_blocks_dot_git() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert is_excluded(".git/HEAD", is_dir=False, patterns=patterns)
+
+
+def test_unmatched_path_passes() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert not is_excluded("src/main.py", is_dir=False, patterns=patterns)
+
+
+def test_gitignore_loaded(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("secret/\n*.log\n")
+    patterns = collect_patterns(tmp_path)
+    assert is_excluded("secret/data.txt", is_dir=False, patterns=patterns)
+    assert is_excluded("trace.log", is_dir=False, patterns=patterns)
+
+
+def test_memoryignore_overrides(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("docs/\n")
+    (tmp_path / ".memoryignore").write_text("!docs/important.md\n")
+    patterns = collect_patterns(tmp_path)
+    assert is_excluded("docs/notes.md", is_dir=False, patterns=patterns)
+    assert not is_excluded("docs/important.md", is_dir=False, patterns=patterns)
+
+
+def test_extra_patterns_stack() -> None:
+    patterns = collect_patterns(Path("/tmp"), extra=["temp/"])
+    assert is_excluded("temp/foo.txt", is_dir=False, patterns=patterns)
+
+
+def test_min_js_pattern_blocks() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert is_excluded("static/app.min.js", is_dir=False, patterns=patterns)
+    assert "*.min.js" in BUILTIN_DENYLIST

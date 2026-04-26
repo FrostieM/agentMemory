@@ -1,4 +1,4 @@
-"""Wire-side schemas for episode ingestion."""
+"""Wire-side schemas for episode and file ingestion."""
 
 from __future__ import annotations
 
@@ -32,3 +32,22 @@ class IngestEpisodeResponse(BaseModel):
     redacted_text: str
     redacted_kinds: list[str]
     created_at: str
+
+
+class IngestFileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: str = "default"
+    path: str = Field(min_length=1)
+    content: str = Field(min_length=0)
+    language: str | None = None
+
+
+class IngestFileResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_id: str
+    path: str
+    chunks_written: int
+    skipped: bool
+    last_indexed_at: str

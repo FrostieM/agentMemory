@@ -40,6 +40,12 @@ from agent_memory_lite.repositories.facts_repo import (
     list_active_facts,
     list_all_facts_for_subjects,
 )
+from agent_memory_lite.repositories.files_repo import (
+    delete_file,
+    get_file_by_path,
+    list_files,
+    upsert_file_row,
+)
 from agent_memory_lite.repositories.procedural_repo import (
     deactivate_rule,
     insert_procedural_rule_row,
@@ -58,6 +64,7 @@ __all__ = [
     "deactivate_rule",
     "delete_chunks_by_episode",
     "delete_chunks_by_file",
+    "delete_file",
     "find_entity_by_name",
     "find_open_facts",
     "get_active_by_key",
@@ -66,6 +73,7 @@ __all__ = [
     "get_entity",
     "get_episode",
     "get_fact",
+    "get_file_by_path",
     "get_task_state",
     "insert_audit",
     "insert_chunk",
@@ -82,8 +90,10 @@ __all__ = [
     "list_all_decisions",
     "list_all_facts_for_subjects",
     "list_entities",
+    "list_files",
     "list_recent_episodes",
     "update_entity_meta",
     "upsert_core_memory_row",
+    "upsert_file_row",
     "upsert_task_state_row",
 ]
