@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local data — never commit a real memory database
+.agent_memory/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# LanceDB
+*.lance/
+
+# Env files (only the example is tracked)
+.env
+.env.local
+.env.*.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/

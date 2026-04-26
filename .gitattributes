@@ -1,0 +1,21 @@
+# Normalize line endings: text files use LF in the repo; Windows users get CRLF in
+# their working tree. Binary files are left alone.
+* text=auto eol=lf
+
+# Force LF for shell scripts (executable on Unix)
+*.sh text eol=lf
+
+# Windows batch must stay CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Treat these as binary (no line-ending normalization, no diff)
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.lance binary
+*.db binary
+*.sqlite binary
+*.safetensors binary

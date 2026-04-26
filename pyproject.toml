@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-memory-lite"
+version = "0.0.1"
+description = "Local memory subsystem for an AI agent (SQLite + FTS5 + LanceDB + local providers)."
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+license = { text = "MIT" }
+authors = [{ name = "agent-memory-lite contributors" }]
+keywords = ["memory", "rag", "agent", "sqlite", "lancedb", "local-first"]
+
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.27,<1.0",
+    "pydantic>=2.6,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "orjson>=3.9,<4.0",
+    "structlog>=24.1,<26.0",
+    "numpy>=1.26,<3.0",
+    "httpx>=0.27,<1.0",
+    "lancedb>=0.6,<1.0",
+    "sentence-transformers>=2.7,<6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+    "pytest-asyncio>=0.23,<2.0",
+    "hypothesis>=6.100,<7.0",
+    "syrupy>=4.6,<5.0",
+    "ruff>=0.4,<1.0",
+    "mypy>=1.10,<2.0",
+    "types-requests",
+]
+sqlite-vec = ["sqlite-vec>=0.1,<1.0"]
+tree-sitter = [
+    "tree-sitter>=0.22,<1.0",
+    "tree-sitter-python>=0.21,<1.0",
+    "tree-sitter-javascript>=0.21,<1.0",
+]
+
+[project.scripts]
+agent-memory-lite = "agent_memory_lite.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_memory_lite = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PIE", "PT", "RET", "SIM",
+    "TID", "PL", "RUF",
+]
+ignore = ["PLR0913", "PLR2004", "E501"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"openai".msg = "Cloud LLM SDK forbidden by local-only policy."
+"anthropic".msg = "Cloud LLM SDK forbidden by local-only policy."
+"cohere".msg = "Cloud LLM SDK forbidden by local-only policy."
+"google.generativeai".msg = "Cloud LLM SDK forbidden by local-only policy."
+"mistralai".msg = "Cloud LLM SDK forbidden by local-only policy."
+"groq".msg = "Cloud LLM SDK forbidden by local-only policy."
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0915", "S101", "PLR2004"]
+"scripts/**" = ["T201"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = ["lancedb.*", "sentence_transformers.*", "sqlite_vec.*", "tree_sitter.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-q", "--strict-markers", "--tb=short"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests using real on-disk SQLite/LanceDB (tmp_path)",
+    "e2e: tests exercising the FastAPI HTTP surface via TestClient",
+    "property: hypothesis-driven property tests",
+    "needs_ollama: tests that require a reachable local Ollama instance",
+    "needs_st_model: tests that require a locally cached sentence-transformers model",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:passlib.*",
+]
