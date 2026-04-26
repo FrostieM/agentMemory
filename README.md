@@ -118,6 +118,22 @@ pytest                  # unit + property + integration + e2e
 pytest -m needs_ollama  # extraction tests against a live Ollama (opt-in)
 ```
 
+## Paste-and-forget agent prompts
+
+For the laziest possible setup, hand the agent one of two prompts and it
+does the rest itself. See [`AGENT_SETUP/`](AGENT_SETUP/):
+
+- [`01_FRESH_PROJECT.md`](AGENT_SETUP/01_FRESH_PROJECT.md) — paste in a new
+  chat. Agent locates the agent-memory-lite repo, runs
+  `setup_agent.py --project`, verifies MCP tools, leaves a setup-complete
+  episode. No follow-up questions to you.
+- [`02_CAPTURE_THIS_CHAT.md`](AGENT_SETUP/02_CAPTURE_THIS_CHAT.md) — paste
+  in a chat that already has work in it. Agent ensures memory is wired,
+  walks the conversation, persists task state + decisions + episodes, and
+  verifies by querying back.
+
+For the manual setup commands behind those prompts, see below.
+
 ## Make agents use this memory persistently
 
 A one-shot prompt does not persist between sessions. Run **one command per
