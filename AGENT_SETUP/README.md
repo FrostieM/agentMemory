@@ -20,7 +20,13 @@ common workspace locations, and finally falls back to asking you.
 After either prompt finishes, the agent should:
 1. Tell you what it set up (paths, files written).
 2. Confirm the memory tools are working (a quick `memory_get_context` round-trip).
-3. Continue with whatever you wanted to do.
+3. Use the project's established workspace id, or `default` only when none is
+   established.
+4. Continue with whatever you wanted to do.
+
+For research-heavy projects, the capture prompt also tells the agent to preserve
+research hypotheses, snapshots, experiments, results, and insights with the
+first-class research tools instead of burying them inside raw episodes.
 
 If the agent reports that MCP tools aren't visible in its tool list, you
 need to **restart whichever runtime is hosting it**:

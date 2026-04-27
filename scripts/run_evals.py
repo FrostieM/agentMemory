@@ -1,10 +1,10 @@
 """Run the eval harness against a temp DB and print + persist a JSON report.
 
 Each eval case runs against a fresh in-memory SQLite database so cases stay
-isolated. The vector store falls back to LanceDB on disk; tests usually
-override this with a fake. Standalone use:
+isolated. Use --no-vector for a fast FTS-only run that does not load an
+embedding model or vector store. Standalone use:
 
-    python scripts/run_evals.py --workspace default
+    python scripts/run_evals.py --workspace default --no-vector
 """
 
 from __future__ import annotations
@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run agent-memory-lite evals.")
     parser.add_argument("--workspace", default=None)
     parser.add_argument("--output", default=None, help="Write JSON report here.")
+    parser.add_argument(
+        "--no-vector",
+        action="store_true",
+        help="Run with SQLite FTS only; no embedding model or vector store is loaded.",
+    )
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -44,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"local_only_violation: {exc}", file=sys.stderr)
         return 2
 
-    provider = get_embedding_provider(settings)
-    store = get_vector_store(settings)
+    provider = None if args.no_vector else get_embedding_provider(settings)
+    store = None if args.no_vector else get_vector_store(settings)
 
     @contextmanager
     def _conn_factory() -> Iterator:
@@ -64,7 +69,8 @@ def main(argv: list[str] | None = None) -> int:
             vector_store=store,
         )
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
     print(to_console(report))
     if args.output:

@@ -18,8 +18,10 @@ from agent_memory_lite.api.routes import (
     health,
     ingest_episode,
     ingest_file,
+    research,
     search,
     task_state,
+    theories,
 )
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
@@ -57,6 +59,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(context.router)
     app.include_router(decisions.router)
     app.include_router(task_state.router)
+    app.include_router(theories.router)
+    app.include_router(research.router)
     app.include_router(compact.router)
     app.include_router(evals.router)
     return app

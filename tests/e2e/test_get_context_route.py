@@ -71,3 +71,37 @@ def test_get_context_empty_when_workspace_unknown(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.json()["sources"] == []
+
+
+def test_get_context_limits_decisions_by_query(client: TestClient) -> None:
+    for index in range(12):
+        response = client.post(
+            "/memory/write_decision",
+            json={
+                "workspace_id": "default",
+                "title": f"General operating decision {index}",
+                "decision_text": "Routine operational preference.",
+                "importance": 0.9,
+            },
+        )
+        assert response.status_code == 200, response.text
+    target = client.post(
+        "/memory/write_decision",
+        json={
+            "workspace_id": "default",
+            "title": "Research agenda stays visible",
+            "decision_text": "Research agenda and active theories must not be buried by old decisions.",
+            "importance": 0.5,
+        },
+    )
+    assert target.status_code == 200, target.text
+
+    response = client.post(
+        "/memory/get_context",
+        json={"workspace_id": "default", "query": "research agenda active theories"},
+    )
+
+    assert response.status_code == 200, response.text
+    text = response.json()["context_text"]
+    assert "Research agenda stays visible" in text
+    assert text.count("<decision ") <= 8

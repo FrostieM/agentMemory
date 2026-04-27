@@ -8,7 +8,7 @@ Agent ──HTTP / MCP / in-process──▶ Memory Service (FastAPI on 127.0.0.
                                     │
                                     ├─ SQLite (WAL, FTS5)   ── episodes, chunks, decisions,
                                     │                          task_state, core_memory,
-                                    │                          procedural_rules, entities,
+                                    │                          theories, procedural_rules, entities,
                                     │                          facts, audit_log
                                     ├─ LanceDB              ── embedded vector store
                                     ├─ sentence-transformers── intfloat/multilingual-e5-small (default)
@@ -19,8 +19,10 @@ Agent ──HTTP / MCP / in-process──▶ Memory Service (FastAPI on 127.0.0.
 
 v1 feature-complete: all six phases of the spec are landed (episodes + FTS,
 hybrid retrieval, decisions/task/core/procedural, lite temporal graph, file
-ingestion, compaction + evals + MCP tool registry). 246 tests pass; ruff +
-mypy strict are clean. See `SESSION_STATE.md` for details.
+ingestion, compaction + evals + MCP tool registry). The research-lab extension
+adds theories, snapshots, experiments, results, concepts, insights, query-ranked
+context sections, and a status CLI. See `SESSION_STATE.md` for current
+verification counts.
 
 ## Requirements
 
@@ -60,6 +62,92 @@ This is the end-to-end check the project ships with. It boots the service,
 seeds the workspace with a representative session, exercises every public
 endpoint, and runs the eval harness.
 
+## Theory memory
+
+Episodes are the audit log: what happened, when, and with what evidence. They
+should not be the only place where learning lives. Use **theories** for working
+claims that need evidence and experiments:
+
+- `POST /memory/write_theory` records a hypothesis with `claim`, `mechanism`,
+  `predictions`, `experiment_plan`, `tags`, `status`, `confidence`, and
+  `importance`.
+- `POST /memory/add_theory_evidence` attaches supporting, refuting, mixed,
+  neutral, or experiment evidence to a theory.
+- `POST /memory/list_theories` retrieves the relevant theory set, optionally
+  including recent evidence.
+- `POST /memory/get_context` includes an `<active_theories>` section ahead of
+  retrieved chunks, so agents see the current research agenda instead of
+  rediscovering it from hundreds of episodes.
+
+## Research-lab memory
+
+Theories say what might be true. The research-lab layer tracks the work needed
+to test those theories:
+
+- `POST /memory/register_snapshot` catalogs a data snapshot with SQLite/DuckDB
+  paths, table counts, row totals, source, build metadata, and time windows.
+- `POST /memory/write_experiment` creates a planned/running test linked to a
+  `theory_id` and/or `snapshot_id`, including cohort definition, command, and
+  success criteria.
+- `POST /memory/add_experiment_result` records the result, marks the experiment
+  completed, attaches evidence to the linked theory, updates theory
+  confidence/status, and creates a contradiction insight for high-confidence
+  refuting or mixed evidence.
+- `POST /memory/upsert_concept` stores shared vocabulary for metrics, gates,
+  cohorts, and artifacts.
+- `POST /memory/distill_insight` promotes lessons from raw episodes into an
+  actionable backlog.
+- `POST /memory/list_research_agenda` returns the current snapshots, open
+  experiments, insights, and concepts for a query.
+- `POST /memory/get_context` includes a `<research_agenda>` section after
+  `<active_theories>`, so agents see the lab backlog before raw retrieved
+  chunks.
+- `scripts/research_status.py` prints a one-command report for active theories,
+  snapshots, open experiments, insights, concepts, and whether
+  `memory_get_context` is surfacing the research sections.
+
+`memory_get_context` query-ranks and caps active decisions before rendering
+theories and agenda, so old architectural choices do not bury current research
+work as the memory grows.
+
+Recommended flow:
+
+```text
+register_snapshot -> write_theory -> write_experiment -> add_experiment_result
+                                      -> confidence/status update
+                                      -> contradiction insight if needed
+```
+
+Example experiment result:
+
+```json
+{
+  "workspace_id": "default",
+  "experiment_id": "exp_...",
+  "kind": "supporting",
+  "summary": "Favorite-side source flips stayed positive after fee assumptions.",
+  "metrics": {"n": 144, "net_edge_bps": 31.2},
+  "artifact_path": "reports/analitic/source_flip_replay.md",
+  "confidence": 0.8
+}
+```
+
+Example theory:
+
+```json
+{
+  "workspace_id": "default",
+  "title": "Source-flip tennis favorites",
+  "domain": "trading.paper.edge",
+  "claim": "Source-flip trades on tennis favorites may carry short-lived edge.",
+  "mechanism": "The source wallet may react before public odds fully adjust.",
+  "predictions": ["favorite-side flips outperform underdog-side flips"],
+  "experiment_plan": "Replay source-flip fills by sport and side on the latest VPS snapshot.",
+  "tags": ["trading-bot", "source-flip", "tennis", "favorite"],
+  "status": "testing"
+}
+```
+
 ```bash
 # 1. configure (one-off)
 cp .env.example .env
@@ -87,10 +175,10 @@ FTS lookup via `POST /memory/search`, and finally runs the eval harness via
 ```
 === POST /memory/run_evals ===
 {
-  "cases_run": 10,
-  "cases_passed": 10,
+  "cases_run": 11,
+  "cases_passed": 11,
   "retrieval_recall_at_10": 1.0,
-  "retrieval_precision_at_10": 0.75,
+  "retrieval_precision_at_10": 1.0,
   "stale_fact_rate": 0.0,
   "secret_leak_count": 0,
   "prompt_injection_failures": 0,
@@ -206,10 +294,11 @@ The script (either mode) is idempotent. It:
 
 After this, in any new chat the agent has three layers of "don't forget":
 
-- **Tools layer**: `memory_get_context`, `memory_search`,
-  `memory_ingest_episode`, `memory_write_decision`,
-  `memory_update_task_state`, `memory_ingest_file` appear in the tool list
-  natively (via MCP), no system prompt required.
+- **Tools layer**: base memory tools plus theory/research tools
+  (`memory_write_theory`, `memory_register_snapshot`,
+  `memory_write_experiment`, `memory_add_experiment_result`,
+  `memory_list_research_agenda`, and related concept/insight tools) appear in
+  the tool list natively (via MCP), no system prompt required.
 - **Instructions layer**: the contract markdown is auto-loaded into the
   agent's system context every session.
 - **Auto-injection layer** (Claude Code only): the hook calls the HTTP
@@ -218,6 +307,10 @@ After this, in any new chat the agent has three layers of "don't forget":
   any tools.
 
 Re-run `python scripts/status.py` at any time to see the current state.
+Use `python scripts/research_status.py --workspace <WORKSPACE_ID>` to inspect
+the research memory backlog. Use
+`python scripts/run_evals.py --workspace <WORKSPACE_ID> --no-vector` for a fast
+offline eval run that does not load an embedding model or vector store.
 
 Flags:
 - `--check-only` — diagnose only, no writes.

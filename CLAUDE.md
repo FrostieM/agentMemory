@@ -8,8 +8,10 @@ in parallel before responding.
 
 Local memory subsystem for an AI agent: SQLite (WAL, FTS5) as source-of-record, LanceDB
 for embedded vector search, sentence-transformers for embeddings, Ollama for LLM-driven
-candidate extraction. FastAPI on `127.0.0.1:8765`. Single-workspace v1 (`workspace_id="default"`),
-schema is multi-workspace-ready.
+candidate extraction. FastAPI on `127.0.0.1:8765`. Each physical project memory
+is isolated by `MEMORY_DB_PATH` and `VECTOR_DB_PATH`; `workspace_id` is the
+logical namespace inside that database and defaults to `default` when a project
+has not established a specific value.
 
 ## Hard rules
 
@@ -51,6 +53,10 @@ utils/           ← ids, time, hashing, pathing, tokens
 A module never imports across the boundary "down to up" (e.g. `db/` does not import
 `api/`). Repositories are the only layer that runs SQL. Services compose repositories.
 Routes call services.
+
+The learning layer has first-class theory and research-lab objects. Episodes are
+the audit log; theories hold claims and predictions; snapshots, experiments,
+results, concepts, and insights form the reusable research backlog.
 
 ## Shared contracts (lock these early)
 

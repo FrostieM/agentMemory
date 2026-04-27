@@ -12,14 +12,40 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.file_pipeline import ingest_file
+from agent_memory_lite.ingestion.research_writer import (
+    add_experiment_result,
+    distill_insight,
+    register_snapshot,
+    upsert_domain_concept,
+    write_experiment,
+)
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
+from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
+from agent_memory_lite.models.research import (
+    DomainConceptIn,
+    ExperimentIn,
+    ExperimentResultIn,
+    MemorySnapshotIn,
+    ResearchInsightIn,
+)
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
+from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.research_repo import (
+    build_research_agenda,
+    list_concepts,
+    list_insights,
+)
+from agent_memory_lite.repositories.theories_repo import (
+    list_evidence_for_theory,
+    list_theories,
+)
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.vector_store.base import VectorStore
 
@@ -85,6 +111,35 @@ def _memory_ingest_episode(
     }
 
 
+def _memory_search(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str,
+    limit: int = 10,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    hits = search_chunks_fts(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        limit=limit,
+    )
+    return {
+        "mode": "fts",
+        "hits": [
+            {
+                "chunk_id": hit.chunk_id,
+                "score": hit.score,
+                "path": hit.path,
+                "text": hit.text,
+                "summary": hit.summary,
+            }
+            for hit in hits
+        ],
+    }
+
+
 def _memory_ingest_file(
     *,
     conn: sqlite3.Connection,
@@ -126,6 +181,288 @@ def _memory_update_task_state(
     return {"state_id": state.id, "task_id": state.task_id, "status": state.status}
 
 
+def _memory_write_theory(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    theory = write_theory(conn, TheoryIn(**payload))
+    return {
+        "theory_id": theory.id,
+        "status": theory.status.value,
+        "confidence": theory.confidence,
+        "importance": theory.importance,
+    }
+
+
+def _memory_add_theory_evidence(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    evidence = add_theory_evidence(conn, TheoryEvidenceIn(**payload))
+    return {
+        "evidence_id": evidence.id,
+        "theory_id": evidence.theory_id,
+        "kind": evidence.kind.value,
+        "observed_at": evidence.observed_at,
+    }
+
+
+def _memory_list_theories(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    limit: int = 20,
+    include_archived: bool = False,
+    include_evidence: bool = False,
+    evidence_limit: int = 3,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    theories = list_theories(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        limit=limit,
+        include_archived=include_archived,
+    )
+    return {
+        "theories": [
+            {
+                "theory_id": theory.id,
+                "title": theory.title,
+                "domain": theory.domain,
+                "claim": theory.claim,
+                "status": theory.status.value,
+                "confidence": theory.confidence,
+                "importance": theory.importance,
+                "tags": theory.tags,
+                "evidence": [
+                    {
+                        "evidence_id": evidence.id,
+                        "kind": evidence.kind.value,
+                        "summary": evidence.summary,
+                        "confidence": evidence.confidence,
+                        "observed_at": evidence.observed_at,
+                    }
+                    for evidence in (
+                        list_evidence_for_theory(conn, theory.id, limit=evidence_limit)
+                        if include_evidence
+                        else []
+                    )
+                ],
+            }
+            for theory in theories
+        ],
+    }
+
+
+def _memory_register_snapshot(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    snapshot = register_snapshot(conn, MemorySnapshotIn(**payload))
+    return {
+        "snapshot_id": snapshot.id,
+        "snapshot_key": snapshot.snapshot_key,
+        "total_rows": snapshot.total_rows,
+        "duckdb_path": snapshot.duckdb_path,
+        "updated_at": snapshot.updated_at,
+    }
+
+
+def _memory_write_experiment(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    experiment = write_experiment(conn, ExperimentIn(**payload))
+    return {
+        "experiment_id": experiment.id,
+        "theory_id": experiment.theory_id,
+        "snapshot_id": experiment.snapshot_id,
+        "status": experiment.status.value,
+        "priority": experiment.priority,
+    }
+
+
+def _memory_add_experiment_result(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    result = add_experiment_result(conn, ExperimentResultIn(**payload))
+    return {
+        "result_id": result.id,
+        "experiment_id": result.experiment_id,
+        "theory_id": result.theory_id,
+        "kind": result.kind.value,
+        "observed_at": result.observed_at,
+    }
+
+
+def _memory_upsert_concept(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    concept = upsert_domain_concept(conn, DomainConceptIn(**payload))
+    return {
+        "concept_id": concept.id,
+        "name": concept.name,
+        "kind": concept.kind.value,
+        "confidence": concept.confidence,
+        "active": concept.active,
+    }
+
+
+def _memory_distill_insight(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    insight = distill_insight(conn, ResearchInsightIn(**payload))
+    return {
+        "insight_id": insight.id,
+        "insight_type": insight.insight_type.value,
+        "status": insight.status.value,
+        "target_type": insight.target_type,
+        "target_id": insight.target_id,
+    }
+
+
+def _memory_list_research_agenda(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    limit: int = 10,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    agenda = build_research_agenda(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        limit=limit,
+    )
+    return {
+        "snapshots": [
+            {
+                "snapshot_id": item.id,
+                "snapshot_key": item.snapshot_key,
+                "title": item.title,
+                "total_rows": item.total_rows,
+                "duckdb_path": item.duckdb_path,
+            }
+            for item in agenda.snapshots
+        ],
+        "experiments": [
+            {
+                "experiment_id": item.id,
+                "title": item.title,
+                "theory_id": item.theory_id,
+                "snapshot_id": item.snapshot_id,
+                "status": item.status.value,
+                "priority": item.priority,
+                "hypothesis": item.hypothesis,
+            }
+            for item in agenda.experiments
+        ],
+        "insights": [
+            {
+                "insight_id": item.id,
+                "insight_type": item.insight_type.value,
+                "summary": item.summary,
+                "status": item.status.value,
+                "confidence": item.confidence,
+                "target_type": item.target_type,
+                "target_id": item.target_id,
+            }
+            for item in agenda.insights
+        ],
+        "concepts": [
+            {
+                "concept_id": item.id,
+                "name": item.name,
+                "kind": item.kind.value,
+                "definition": item.definition,
+                "confidence": item.confidence,
+            }
+            for item in agenda.concepts
+        ],
+    }
+
+
+def _memory_list_concepts(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    include_inactive: bool = False,
+    limit: int = 20,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    concepts = list_concepts(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+    return {
+        "concepts": [
+            {
+                "concept_id": item.id,
+                "name": item.name,
+                "kind": item.kind.value,
+                "definition": item.definition,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in concepts
+        ],
+    }
+
+
+def _memory_list_insights(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    limit: int = 20,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    insights = list_insights(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        limit=limit,
+    )
+    return {
+        "insights": [
+            {
+                "insight_id": item.id,
+                "insight_type": item.insight_type.value,
+                "summary": item.summary,
+                "status": item.status.value,
+                "confidence": item.confidence,
+                "target_type": item.target_type,
+                "target_id": item.target_id,
+            }
+            for item in insights
+        ],
+    }
+
+
 TOOLS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="memory_get_context",
@@ -136,6 +473,11 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_ingest_episode",
         description="Persist an event into episodic memory with redaction.",
         handler=_memory_ingest_episode,
+    ),
+    ToolDefinition(
+        name="memory_search",
+        description="Exact FTS lookup over chunks (BM25 ordered).",
+        handler=_memory_search,
     ),
     ToolDefinition(
         name="memory_ingest_file",
@@ -151,6 +493,61 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_update_task_state",
         description="Upsert task state for (workspace_id, task_id).",
         handler=_memory_update_task_state,
+    ),
+    ToolDefinition(
+        name="memory_write_theory",
+        description="Record a working research theory or hypothesis with claim, mechanism, predictions, and experiment plan.",
+        handler=_memory_write_theory,
+    ),
+    ToolDefinition(
+        name="memory_add_theory_evidence",
+        description="Attach supporting, refuting, mixed, neutral, or experiment evidence to a theory.",
+        handler=_memory_add_theory_evidence,
+    ),
+    ToolDefinition(
+        name="memory_list_theories",
+        description="List relevant theory/hypothesis memory items, optionally including recent evidence.",
+        handler=_memory_list_theories,
+    ),
+    ToolDefinition(
+        name="memory_register_snapshot",
+        description="Register or update a research data snapshot with paths, build metadata, and table counts.",
+        handler=_memory_register_snapshot,
+    ),
+    ToolDefinition(
+        name="memory_write_experiment",
+        description="Create a planned/running research experiment linked to a theory and/or data snapshot.",
+        handler=_memory_write_experiment,
+    ),
+    ToolDefinition(
+        name="memory_add_experiment_result",
+        description="Record an experiment result; linked theory confidence/status is updated automatically.",
+        handler=_memory_add_experiment_result,
+    ),
+    ToolDefinition(
+        name="memory_upsert_concept",
+        description="Create or update a domain concept so research vocabulary is explicit and reusable.",
+        handler=_memory_upsert_concept,
+    ),
+    ToolDefinition(
+        name="memory_distill_insight",
+        description="Promote raw episode learnings into actionable insights or open questions.",
+        handler=_memory_distill_insight,
+    ),
+    ToolDefinition(
+        name="memory_list_research_agenda",
+        description="List current snapshots, open experiments, insights, and concepts relevant to a research query.",
+        handler=_memory_list_research_agenda,
+    ),
+    ToolDefinition(
+        name="memory_list_concepts",
+        description="List domain concepts in the project memory.",
+        handler=_memory_list_concepts,
+    ),
+    ToolDefinition(
+        name="memory_list_insights",
+        description="List distilled research insights and open questions.",
+        handler=_memory_list_insights,
     ),
 )
 

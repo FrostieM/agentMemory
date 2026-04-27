@@ -1,164 +1,146 @@
 # Prompt: capture THIS active chat into project memory
 
-Paste this into a chat where work has already happened. The agent will
-ensure memory is set up for the current project, then go back through the
-conversation and persist what we did. Use it any time you want to
-"snapshot" a session before closing it, or when you realize mid-chat you
-forgot to wire memory.
+Paste this into a chat where work has already happened. The agent will ensure
+agent-memory-lite is configured for the current project, then persist a faithful
+summary of this conversation into that project's memory.
 
 ---
 
 You are an autonomous archivist. Your job in this turn is to make sure
 agent-memory-lite is configured for the current project and then write a
-faithful summary of THIS conversation into that project's memory. After
-this turn, future chats in this project should be able to ask about today's
-session and get accurate answers.
+faithful summary of THIS conversation into that project's memory. After this
+turn, future chats in this project should be able to ask about today's session
+and get accurate answers.
 
-# Step 0 — silent failure mode
+# Step 0 - silent failure mode
 
-You may NOT ask the user any clarifying questions. If something is
-ambiguous, choose the safest default and document it in the final report.
+You may NOT ask the user clarifying questions. If something is ambiguous,
+choose the safest default and document it in the final report.
 
-# Step 1 — ensure memory is set up
+# Step 1 - ensure memory is set up
 
-Follow `AGENT_SETUP/01_FRESH_PROJECT.md` Steps 1–4 exactly. If the
-project's memory was missing, run setup.
+Follow `AGENT_SETUP/01_FRESH_PROJECT.md` Steps 1-4 exactly. If the project's
+memory was missing, run setup.
 
-If MCP tools end up still not visible after setup (because the runtime
-loaded its config before setup wrote it), STOP and tell the user — name
-the actual runtime hosting you (Claude Code / Codex / Cursor / "your AI
-runtime" if unsure):
+If MCP tools are still not visible after setup because the runtime loaded its
+config before setup wrote it, STOP and tell the user:
 
-> Memory needs <RUNTIME_NAME> to restart to pick up the new MCP config.
-> Close and reopen <RUNTIME_NAME>, then re-paste this prompt and I will
-> capture the session.
+> Memory needs <RUNTIME_NAME> to restart to pick up the new MCP config. Close
+> and reopen <RUNTIME_NAME>, then re-paste this prompt and I will capture the
+> session.
 
-Codex caveat: Codex reads MCP servers from `~/.codex/config.toml`, not
-from the project directory. If the user is on Codex, recommend running
-`python <REPO_ROOT>/scripts/setup_agent.py` (no `--project`) once so the
-global Codex config gets the entry, then restart Codex.
+Codex caveat: Codex reads MCP servers from `~/.codex/config.toml`, not from the
+project directory. If the user is on Codex, recommend running
+`python <REPO_ROOT>/scripts/setup_agent.py` once without `--project`, then
+restart Codex.
 
-Fallback path when MCP is not yet live but you still want to capture:
-probe `GET http://127.0.0.1:8765/health`. If the HTTP service answers,
-you can call the same operations as REST endpoints
-(`POST /memory/ingest_episode`, `POST /memory/write_decision`,
-`POST /memory/update_task_state`, `POST /memory/get_context`) using
-`workspace_id="default"`. Otherwise stop and report — do not silently
+Fallback path when MCP is not yet live but the HTTP service answers at
+`GET http://127.0.0.1:8765/health`: call the same operations as REST endpoints
+using the project `WORKSPACE_ID`. Otherwise stop and report; do not silently
 drop the chat into the void.
 
-# Step 2 — review THIS conversation
+Before any memory write, determine `WORKSPACE_ID`:
+- If the user or existing project instructions name a workspace id, use that
+  exact value.
+- Else if existing memory clearly already uses one workspace id, keep it.
+- Otherwise use `default`.
 
-Scroll back through the entire conversation that has already happened in
-this chat. Build an internal list of:
-- **Tasks** the user gave you and whether you finished them.
-- **Decisions** taken (architectural choices, library choices, "let's do
-  X instead of Y", "we'll skip this for now"). Include both your decisions
-  and the user's confirmations.
-- **Discoveries** about the codebase or the problem (file structure,
-  invariants, gotchas, surprising behavior).
-- **Bugs found** and **fixes applied**.
-- **Open questions** that remain.
-- **Files touched**, in what way (created / edited / deleted).
+# Step 2 - review THIS conversation
 
-If the conversation is short or there is nothing meaningful, write one
-single summary episode and stop after Step 6 — do not pad.
+Scroll back through the entire conversation. Build an internal list of:
+- Tasks the user gave you and whether you finished them.
+- Decisions taken, including architectural choices and user confirmations.
+- Discoveries about the codebase or problem.
+- Bugs found and fixes applied.
+- Open questions that remain.
+- Files touched and whether each was created, edited, or deleted.
 
-# Step 3 — write task state
+If the conversation is short or there is nothing meaningful, write one single
+summary episode and stop after Step 6. Do not pad.
 
-For the most recent / current task, call `memory_update_task_state`:
+# Step 3 - write task state
+
+For the most recent/current task, call `memory_update_task_state`:
 
 ```json
 {
-  "workspace_id": "default",
+  "workspace_id": "<WORKSPACE_ID>",
   "task_id": "<short kebab-case slug from the task>",
   "goal": "<one-sentence goal>",
   "status": "in_progress | blocked | done",
-  "current_plan": ["<step>", ...],
-  "completed_steps": ["<step>", ...],
+  "current_plan": ["<step>", "..."],
+  "completed_steps": ["<step>", "..."],
   "next_action": "<what should happen next, or null if done>",
-  "blockers": ["<blocker>", ...],
+  "blockers": ["<blocker>", "..."],
   "files_in_scope": ["<relative paths>"]
 }
 ```
 
-If multiple distinct tasks happened in this chat, pick the most recent and
-write its state. The others should appear as episodes (Step 5) — not every
-task needs its own row.
+If multiple distinct tasks happened in this chat, pick the most recent and write
+its state. The others should appear as episodes, not separate task rows.
 
-# Step 4 — write decisions
+# Step 4 - write decisions and theories
 
 For each architectural decision, call `memory_write_decision`. One call per
-decision. Include rationale.
+decision, with rationale.
+
+If the conversation formed a research hypothesis or edge theory, call
+`memory_write_theory`. If the conversation used a database export or replay
+dataset, call `memory_register_snapshot`. If the conversation planned or ran a
+research test, call `memory_write_experiment` and, when results exist,
+`memory_add_experiment_result`.
+
+# Step 5 - write episodes
+
+Walk the conversation chronologically and call `memory_ingest_episode` for each
+meaningful event. Group small steps; one call per logical unit. Aim for 5-20
+episodes per chat, fewer if it was short, never more than 30.
 
 ```json
 {
-  "workspace_id": "default",
-  "title": "<short title>",
-  "decision_text": "<one paragraph>",
-  "rationale": "<why this and not alternative>",
-  "confidence": 0.85,
-  "importance": 0.75
-}
-```
-
-If a decision in this chat clearly replaces an earlier decision in the
-project's memory, first call `memory_get_context` with a relevant query to
-find the earlier decision's id, then pass it as
-`supersedes_decision_id`.
-
-# Step 5 — write episodes
-
-Walk the conversation chronologically and call `memory_ingest_episode`
-for each meaningful event. Group small steps; one call per logical unit.
-Aim for 5–20 episodes per chat — fewer if it was short, never more than 30.
-
-```json
-{
-  "workspace_id": "default",
+  "workspace_id": "<WORKSPACE_ID>",
   "task_id": "<same slug as Step 3 if related>",
   "source_type": "agent_action",
   "raw_text": "<plain-text recap of one logical step: what you did, what worked, what surprised you>",
   "trust_level": "agent_observed",
-  "importance": <0.3 to 0.8 by significance>
+  "importance": 0.6
 }
 ```
 
-Important rules for raw_text:
-- Self-contained. A future agent reading this episode in isolation must
-  understand it without scrolling back.
+Important rules for `raw_text`:
+- Make it self-contained.
 - Reference file paths exactly as they appear in the project.
 - Quote error messages verbatim if relevant.
-- Do not redact secrets manually — the server does it.
-- Do not write opinions ("this was a good idea") — write facts ("decided
-  to use X because Y").
+- Do not manually redact secrets; the server handles redaction.
+- Do not write opinions. Write facts and evidence.
 
-# Step 6 — verify by querying
+# Step 6 - verify by querying
 
-Call `memory_get_context` with a representative query about this chat
-(use a few keywords from the actual work). Confirm at least one of your
-just-written episodes / decisions appears in the response.
+Call `memory_get_context` with a representative query about this chat. Confirm
+that at least one just-written episode, decision, theory, experiment, or insight
+appears in the response.
 
-If the query returns nothing relevant, write ONE more summary episode
-that explicitly mentions the keywords, then stop. Do not loop.
+If the query returns nothing relevant, write one more summary episode that
+explicitly mentions the keywords, then stop. Do not loop.
 
-# Step 7 — final report
+# Step 7 - final report
 
 Print exactly this structure:
 
-```
+```text
 captured this chat into <project>/.agent_memory/memory.db
 
+workspace_id:   <WORKSPACE_ID>
 task_state:    <task_id> = <status>
 decisions:     <count> written  (titles: <title 1>; <title 2>; ...)
+theories:      <count> written
+experiments:   <count> written
 episodes:      <count> written
-verification:  <ok | partial — context query returned no overlap; wrote a fallback summary>
+verification:  <ok | partial - context query returned no overlap; wrote a fallback summary>
 
 How a future chat will find this:
-- Open this project in any MCP-aware agent runtime (Claude Code, Codex,
-  Cursor, …) and ask any question that mentions the task or the files we
-  touched.
-- The agent will call `memory_get_context` itself (per the contract in
-  `<PROJECT_ROOT>/CLAUDE.md` and `<PROJECT_ROOT>/AGENTS.md`). On runtimes
-  that support a UserPromptSubmit hook and have it installed, the context
-  will be auto-injected before each prompt.
+- Open this project in any MCP-aware agent runtime and ask about the task or
+  files we touched.
+- The agent will call `memory_get_context` itself per the contract in
+  `<PROJECT_ROOT>/CLAUDE.md` and `<PROJECT_ROOT>/AGENTS.md`.
 ```

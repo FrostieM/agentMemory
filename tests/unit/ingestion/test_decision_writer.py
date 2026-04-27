@@ -60,3 +60,28 @@ def test_supersedes_cross_workspace_rejected(applied_conn: sqlite3.Connection) -
             applied_conn,
             _decision(workspace_id="default", supersedes_decision_id=first.id),
         )
+
+
+def test_list_active_decisions_can_rank_by_query_and_limit(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    sqlite_decision = write_decision(
+        applied_conn,
+        _decision(
+            title="Use SQLite for storage",
+            decision_text="SQLite is the default durable store.",
+            importance=0.5,
+        ),
+    )
+    write_decision(
+        applied_conn,
+        _decision(
+            title="Use HTTP health checks",
+            decision_text="Health checks should stay lightweight.",
+            importance=1.0,
+        ),
+    )
+
+    matches = list_active_decisions(applied_conn, "default", query="SQLite durable", limit=1)
+
+    assert [item.id for item in matches] == [sqlite_decision.id]

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from agent_memory_lite.models.decisions import Decision
 from agent_memory_lite.models.enums import DecisionStatus
+
+_TOKEN_RE = re.compile(r"[\w.-]+", re.UNICODE)
 
 
 def _row_to_decision(row: sqlite3.Row) -> Decision:
@@ -88,7 +91,41 @@ def get_decision(conn: sqlite3.Connection, decision_id: str) -> Decision | None:
     return _row_to_decision(row) if row is not None else None
 
 
-def list_active_decisions(conn: sqlite3.Connection, workspace_id: str) -> list[Decision]:
+def _tokens(query: str | None) -> list[str]:
+    if not query:
+        return []
+    return [token.lower() for token in _TOKEN_RE.findall(query) if len(token) > 1]
+
+
+def _searchable_text(decision: Decision) -> str:
+    return " ".join([decision.title, decision.decision_text, decision.rationale or ""]).lower()
+
+
+def _rank(decision: Decision, tokens: list[str]) -> tuple[float, str]:
+    text = _searchable_text(decision)
+    token_score = sum(1.0 for token in tokens if token in text)
+    score = token_score + decision.importance + (decision.confidence * 0.25)
+    return score, decision.updated_at
+
+
+def _filter_rank_limit(
+    decisions: list[Decision],
+    *,
+    query: str | None,
+    limit: int | None,
+) -> list[Decision]:
+    terms = _tokens(query)
+    decisions.sort(key=lambda decision: _rank(decision, terms), reverse=True)
+    return decisions if limit is None else decisions[:limit]
+
+
+def list_active_decisions(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    *,
+    query: str | None = None,
+    limit: int | None = None,
+) -> list[Decision]:
     rows = conn.execute(
         """
         SELECT * FROM decisions
@@ -97,12 +134,26 @@ def list_active_decisions(conn: sqlite3.Connection, workspace_id: str) -> list[D
         """,
         (workspace_id,),
     ).fetchall()
-    return [_row_to_decision(r) for r in rows]
+    return _filter_rank_limit(
+        [_row_to_decision(r) for r in rows],
+        query=query,
+        limit=limit,
+    )
 
 
-def list_all_decisions(conn: sqlite3.Connection, workspace_id: str) -> list[Decision]:
+def list_all_decisions(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    *,
+    query: str | None = None,
+    limit: int | None = None,
+) -> list[Decision]:
     rows = conn.execute(
         "SELECT * FROM decisions WHERE workspace_id = ? ORDER BY created_at DESC",
         (workspace_id,),
     ).fetchall()
-    return [_row_to_decision(r) for r in rows]
+    return _filter_rank_limit(
+        [_row_to_decision(r) for r in rows],
+        query=query,
+        limit=limit,
+    )

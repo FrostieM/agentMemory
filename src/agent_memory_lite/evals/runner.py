@@ -28,10 +28,24 @@ from agent_memory_lite.evals.metrics import EvalReport, precision_at_k, recall_a
 from agent_memory_lite.extraction.thresholds import meets_thresholds
 from agent_memory_lite.extraction.trust_gate import passes_trust_gate
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
+from agent_memory_lite.ingestion.research_writer import (
+    distill_insight,
+    register_snapshot,
+    upsert_domain_concept,
+    write_experiment,
+)
+from agent_memory_lite.ingestion.theory_writer import write_theory
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
 from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
+from agent_memory_lite.models.research import (
+    DomainConceptIn,
+    ExperimentIn,
+    MemorySnapshotIn,
+    ResearchInsightIn,
+)
 from agent_memory_lite.models.retrieval import RetrievalQuery
+from agent_memory_lite.models.theories import TheoryIn
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
@@ -140,6 +154,143 @@ def _run_retrieval(
     return recall, precision, failures
 
 
+def _seed_research_setup(
+    conn: sqlite3.Connection,
+    case: dict[str, Any],
+    workspace_id: str,
+) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for entry in list(case.get("setup", [])):
+        _seed_research_entry(conn, entry, workspace_id=workspace_id, labels=labels)
+    return labels
+
+
+def _store_label(labels: dict[str, str], entry: dict[str, Any], item_id: str) -> None:
+    label = str(entry.get("label", ""))
+    if label:
+        labels[label] = item_id
+
+
+def _seed_research_entry(
+    conn: sqlite3.Connection,
+    entry: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> None:
+    handlers = {
+        "theory": _seed_theory,
+        "snapshot": _seed_snapshot,
+        "concept": _seed_concept,
+        "experiment": _seed_experiment,
+        "insight": _seed_insight,
+    }
+    for key, handler in handlers.items():
+        if key in entry:
+            item_id = handler(conn, dict(entry[key]), workspace_id=workspace_id, labels=labels)
+            _store_label(labels, entry, item_id)
+            return
+
+
+def _seed_theory(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return write_theory(conn, TheoryIn.model_validate(payload)).id
+
+
+def _seed_snapshot(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return register_snapshot(conn, MemorySnapshotIn.model_validate(payload)).id
+
+
+def _seed_concept(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return upsert_domain_concept(conn, DomainConceptIn.model_validate(payload)).id
+
+
+def _seed_experiment(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    payload.setdefault("workspace_id", workspace_id)
+    theory_label = payload.pop("theory_label", None)
+    snapshot_label = payload.pop("snapshot_label", None)
+    if theory_label is not None:
+        payload["theory_id"] = labels[str(theory_label)]
+    if snapshot_label is not None:
+        payload["snapshot_id"] = labels[str(snapshot_label)]
+    return write_experiment(conn, ExperimentIn.model_validate(payload)).id
+
+
+def _seed_insight(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    payload.setdefault("workspace_id", workspace_id)
+    target_label = payload.pop("target_label", None)
+    if target_label is not None:
+        payload["target_id"] = labels[str(target_label)]
+    return distill_insight(conn, ResearchInsightIn.model_validate(payload)).id
+
+
+def _run_research_context(
+    conn: sqlite3.Connection,
+    case: dict[str, Any],
+    workspace_id: str,
+    *,
+    embedding_provider: EmbeddingProvider | None,
+    vector_store: VectorStore | None,
+) -> list[str]:
+    _seed_research_setup(conn, case, workspace_id)
+    query = RetrievalQuery(
+        workspace_id=workspace_id,
+        query=str(case["query"]),
+        max_tokens=int(case.get("max_tokens", 2500)),
+    )
+    built = build_context(
+        conn,
+        query,
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+    )
+    failures: list[str] = []
+    rendered = built.text
+    for section in case.get("expect_sections", []):
+        section_name = str(section)
+        if f"<{section_name}" not in rendered:
+            failures.append(f"missing section <{section_name}>")
+    for needle in case.get("expect_substrings", []):
+        if str(needle) not in rendered:
+            failures.append(f"missing substring {needle!r}")
+    return failures
+
+
 def _run_redaction(
     conn: sqlite3.Connection,
     case: dict[str, Any],
@@ -227,6 +378,18 @@ def _process_case(  # noqa: PLR0912
             report.cases_passed += 1
         else:
             report.failures.append(f"{name}: secret leaked")
+    elif kind == "research_context":
+        failures = _run_research_context(
+            conn,
+            case,
+            workspace_id,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+        )
+        if failures:
+            report.failures.extend(f"{name}: {failure}" for failure in failures)
+        else:
+            report.cases_passed += 1
     elif kind == "trust_gating":
         if _run_trust_gating(case):
             report.cases_passed += 1

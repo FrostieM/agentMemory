@@ -290,13 +290,13 @@ def claude_mcp_entry(
     python_exe: Path,
     *,
     project_root: Path | None = None,
+    workspace_id: str | None = None,
 ) -> dict[str, object]:
-    # Project isolation comes from the physical path (MEMORY_DB_PATH +
-    # VECTOR_DB_PATH), NOT from the workspace_id string. Every row keeps
-    # workspace_id="default" — different projects live in different files.
-    # Setting MEMORY_WORKSPACE_ID per project would create a misleading
-    # mismatch (env says one thing, rows say another) so we don't.
+    # Project isolation comes primarily from the physical path (MEMORY_DB_PATH +
+    # VECTOR_DB_PATH). workspace_id is the logical namespace inside that database.
     env: dict[str, str] = {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")}
+    if workspace_id:
+        env["MEMORY_WORKSPACE_ID"] = workspace_id
     if project_root is not None:
         env["MEMORY_DB_PATH"] = str(project_root / ".agent_memory" / "memory.db")
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
@@ -435,7 +435,12 @@ def configure_cursor(diag: Diagnosis) -> None:
     ok(f"contract {status} in {contract}")
 
 
-def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR0915
+def configure_project(  # noqa: PLR0915
+    diag: Diagnosis,
+    project_root: Path,
+    *,
+    workspace_id: str,
+) -> None:
     section(f"Project mode: {project_root}")
     if project_root == REPO_ROOT:
         warn(
@@ -463,7 +468,11 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
     if not isinstance(servers, dict):
         servers = {}
         settings["mcpServers"] = servers
-    servers["agent-memory-lite"] = claude_mcp_entry(diag.venv_python, project_root=project_root)
+    servers["agent-memory-lite"] = claude_mcp_entry(
+        diag.venv_python,
+        project_root=project_root,
+        workspace_id=workspace_id,
+    )
 
     db_path = project_root / ".agent_memory" / "memory.db"
     vector_path = project_root / ".agent_memory" / "vectors.lance"
@@ -477,7 +486,8 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
         hooks["UserPromptSubmit"] = ups
     marker = "agent-memory-lite-inject"
     hook_command = (
-        f'"{diag.venv_python}" "{HOOK_SCRIPT}" --db-path "{db_path}" --vector-path "{vector_path}"'
+        f'"{diag.venv_python}" "{HOOK_SCRIPT}" --db-path "{db_path}" '
+        f'--vector-path "{vector_path}" --workspace "{workspace_id}"'
     )
     new_hook = {"type": "command", "command": hook_command + f" # {marker}"}
     existing = next(
@@ -515,6 +525,7 @@ def configure_project(diag: Diagnosis, project_root: Path) -> None:  # noqa: PLR
         env = dict(os.environ)
         env["MEMORY_DB_PATH"] = str(db_path)
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
+        env["MEMORY_WORKSPACE_ID"] = workspace_id
         subprocess.run(
             [str(diag.venv_python), str(REPO_ROOT / "scripts" / "bootstrap_db.py")],
             check=True,
@@ -575,7 +586,7 @@ def smoke_test_mcp(diag: Diagnosis) -> bool:
         fail("MCP server response missing expected fields")
         info(f"stderr tail: {proc.stderr[-500:]}")
         return False
-    ok("initialize + tools/list returned 6 tools")
+    ok("initialize + tools/list returned the memory tool registry")
     return True
 
 
@@ -587,6 +598,11 @@ def main() -> int:
     parser.add_argument("--check-only", action="store_true", help="Diagnose, do not write.")
     parser.add_argument("--no-hook", action="store_true", help="Skip Claude Code hook install.")
     parser.add_argument("--yes", action="store_true", help="Non-interactive (assume yes).")
+    parser.add_argument(
+        "--workspace",
+        default="default",
+        help="Logical workspace_id to use inside the selected memory database.",
+    )
     parser.add_argument(
         "--project",
         nargs="?",
@@ -616,12 +632,12 @@ def main() -> int:
 
     if args.project is not None:
         project_root = Path(args.project).resolve()
-        configure_project(diag, project_root)
+        configure_project(diag, project_root, workspace_id=args.workspace)
         section("Done (project mode)")
         print(
             f"This project ({project_root.name}) now has its own memory at\n"
             f"  {project_root / '.agent_memory'}\n"
-            "and its own CLAUDE.md / AGENTS.md contract.\n"
+            f"using workspace_id={args.workspace!r}, and its own CLAUDE.md / AGENTS.md contract.\n"
             "Restart your agent runtime and it will see ONLY this project's memory.\n"
         )
         smoke_test_mcp(diag)

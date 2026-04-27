@@ -13,12 +13,32 @@ def test_tool_names_unique() -> None:
 def test_known_tools_present() -> None:
     expected = {
         "memory_get_context",
+        "memory_search",
         "memory_ingest_episode",
         "memory_ingest_file",
         "memory_write_decision",
         "memory_update_task_state",
+        "memory_write_theory",
+        "memory_add_theory_evidence",
+        "memory_list_theories",
+        "memory_register_snapshot",
+        "memory_write_experiment",
+        "memory_add_experiment_result",
+        "memory_upsert_concept",
+        "memory_distill_insight",
+        "memory_list_research_agenda",
+        "memory_list_concepts",
+        "memory_list_insights",
     }
     assert expected.issubset({tool.name for tool in TOOLS})
+
+
+def test_stdio_server_exposes_registry_tools() -> None:
+    from agent_memory_lite.mcp.stdio_server import _TOOLS as STDIO_TOOLS  # noqa: PLC0415
+
+    registry_names = {tool.name for tool in TOOLS}
+    stdio_names = {tool.name for tool in STDIO_TOOLS}
+    assert registry_names.issubset(stdio_names)
 
 
 def test_dispatch_unknown_tool_raises() -> None:

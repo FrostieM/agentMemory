@@ -1,0 +1,64 @@
+- name: research_lab_context_returns_theory_agenda_and_insight
+  type: research_context
+  setup:
+    - label: sparse-paper-theory
+      theory:
+        title: "Sparse paper opens"
+        domain: "trading-research"
+        claim: "Sparse paper opens are a learning bottleneck for policy iteration."
+        mechanism: "When selector gates are too strict, the system records many shadow observations but too few paper outcomes."
+        predictions:
+          - "Relaxing a selector gate should increase the observable paper-open-rate."
+        experiment_plan: "Replay a preserved snapshot with current and softened selector thresholds."
+        tags: ["paper", "selector", "open-rate"]
+        status: "testing"
+        confidence: 0.45
+        importance: 0.9
+    - label: preserved-snapshot
+      snapshot:
+        snapshot_key: "server_20260427T105823"
+        title: "Preserved database snapshot before reset"
+        source: "vps"
+        duckdb_path: "research/snapshots/server_20260427T105823/research.duckdb"
+        table_counts:
+          trade_decision_fact: 49452
+          paper_positions: 191
+        total_rows: 499141
+    - label: selector-gate
+      concept:
+        name: "selector-gate"
+        kind: "gate"
+        definition: "Admission rule that decides whether a candidate can reach paper simulation."
+        aliases: ["admission gate"]
+        tags: ["selector", "paper"]
+        confidence: 0.9
+    - label: soft-gate-replay
+      experiment:
+        theory_label: sparse-paper-theory
+        snapshot_label: preserved-snapshot
+        title: "Soft-gate replay for paper-open-rate"
+        hypothesis: "A softer selector gate increases observable paper learning data."
+        cohort_definition: "shadow candidates rejected by selector gates"
+        success_criteria:
+          paper_open_rate_gt: 0.02
+          max_drawdown_bps_lt: 120
+        priority: 0.95
+        status: "planned"
+    - label: wait-is-low-information
+      insight:
+        insight_type: "bottleneck"
+        summary: "Waiting longer is low-information when open-rate remains sparse."
+        proposed_action: "Replay preserved snapshots before another long live wait."
+        target_type: "experiment"
+        target_label: soft-gate-replay
+        confidence: 0.82
+        status: "accepted"
+        tags: ["paper", "selector", "research-loop"]
+  query: "paper selector gate open-rate research agenda"
+  expect_sections: ["active_theories", "research_agenda"]
+  expect_substrings:
+    - "Sparse paper opens"
+    - "Soft-gate replay for paper-open-rate"
+    - "selector-gate"
+    - "Waiting longer is low-information"
+    - "server_20260427T105823"

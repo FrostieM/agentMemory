@@ -89,10 +89,23 @@ is not connected to the right database.
 
 # Step 4 — run the project-scoped setup
 
-Execute exactly:
+Determine `WORKSPACE_ID` before running setup or making any memory call:
+- If the user or existing project instructions name a workspace id, use that
+  exact value.
+- Else if an existing project memory clearly already uses one workspace id, keep
+  it.
+- Otherwise use `default`.
+
+If `WORKSPACE_ID` is `default`, execute:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/setup_agent.py --project <PROJECT_ROOT>
+```
+
+If `WORKSPACE_ID` is not `default`, execute:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/setup_agent.py --project <PROJECT_ROOT> --workspace <WORKSPACE_ID>
 ```
 
 Capture stdout and stderr. The script is idempotent — safe to re-run if it
@@ -120,13 +133,22 @@ isn't installed, just continue without it.
 Try to call `memory_get_context` with this payload:
 
 ```json
-{"workspace_id": "default", "query": "self-test from setup", "max_tokens": 500}
+{"workspace_id": "<WORKSPACE_ID>", "query": "self-test from setup", "max_tokens": 500}
 ```
 
 Three outcomes:
 
 a) The tool returns a JSON envelope with a `context_text` field — success.
    Move to Step 6.
+
+If the project already has research memory, also run:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/research_status.py --workspace <WORKSPACE_ID>
+```
+
+This confirms that active theories, snapshots, experiments, insights, and
+concepts are visible from the same service the agent will use.
 
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
@@ -149,7 +171,7 @@ If Step 5 succeeded, write one episode to mark the install:
 
 ```json
 {
-  "workspace_id": "default",
+  "workspace_id": "<WORKSPACE_ID>",
   "source_type": "system",
   "raw_text": "agent-memory-lite configured for project '<PROJECT_NAME>' on <ISO_DATE>. MCP tools verified.",
   "trust_level": "verified_by_tool",
@@ -165,10 +187,13 @@ Print exactly this structure (fill in the blanks):
 agent-memory-lite is set up for <PROJECT_NAME>.
 
 memory db:  <absolute path to .agent_memory/memory.db>
+workspace:  <WORKSPACE_ID>
 contract:   <PROJECT_ROOT>/CLAUDE.md, <PROJECT_ROOT>/AGENTS.md
 mcp config: <PROJECT_ROOT>/.claude/settings.json
 ollama:     <ok | not running | not installed — LLM extraction is no-op>
 mcp tools:  <verified | NOT VISIBLE — please restart your runtime (<runtime name>)>
+
+research:   <empty | theories=N snapshots=N open_experiments=N insights=N>
 
 What this means for our future chats in this project:
 - Before non-trivial work I will call memory_get_context to load prior context.

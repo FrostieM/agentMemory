@@ -90,6 +90,66 @@ def test_runner_handles_retrieval_case(fake_embedding_provider, fake_vector_stor
     assert report.retrieval_recall_at_10 >= 0.5
 
 
+def test_runner_handles_research_context_case(fake_embedding_provider, fake_vector_store) -> None:
+    cases = [
+        {
+            "name": "research_context_basic",
+            "type": "research_context",
+            "setup": [
+                {
+                    "label": "theory",
+                    "theory": {
+                        "title": "Sparse paper opens",
+                        "claim": "Sparse paper opens are a learning bottleneck.",
+                        "domain": "trading-research",
+                        "tags": ["paper", "selector"],
+                        "status": "testing",
+                    },
+                },
+                {
+                    "label": "snapshot",
+                    "snapshot": {
+                        "snapshot_key": "server_20260427T105823",
+                        "title": "Preserved database snapshot",
+                        "source": "vps",
+                        "total_rows": 100,
+                    },
+                },
+                {
+                    "label": "concept",
+                    "concept": {
+                        "name": "selector-gate",
+                        "kind": "gate",
+                        "definition": "Admission rule before paper simulation.",
+                    },
+                },
+                {
+                    "label": "experiment",
+                    "experiment": {
+                        "theory_label": "theory",
+                        "snapshot_label": "snapshot",
+                        "title": "Soft-gate replay",
+                        "hypothesis": "Softer selector gates increase paper-open-rate.",
+                    },
+                },
+            ],
+            "query": "paper selector research agenda",
+            "expect_sections": ["active_theories", "research_agenda"],
+            "expect_substrings": ["Sparse paper opens", "Soft-gate replay", "selector-gate"],
+        }
+    ]
+    report = run_evals(
+        _fresh_factory(),
+        workspace_id="default",
+        cases=cases,
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    assert report.cases_run == 1
+    assert report.cases_passed == 1
+    assert report.failures == []
+
+
 def test_runner_handles_default_yaml(fake_embedding_provider, fake_vector_store) -> None:
     report = run_evals(
         _fresh_factory(),

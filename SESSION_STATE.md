@@ -1,92 +1,92 @@
-# SESSION_STATE.md — agent-memory-lite
+# SESSION_STATE.md - agent-memory-lite
 
-Rolling state for cross-session work. Updated at every phase boundary. Pair-read with
-`CLAUDE.md` (stable invariants).
+Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
 ## Current phase
 
-**Phase 6 — compaction + eval harness + MCP (complete).** All six phases of
-the plan have landed. The lite memory subsystem is feature-complete for v1.
+**Research-lab memory layer complete.** The original v1 memory subsystem is
+feature-complete and now includes first-class theory and research workflow
+objects, query-ranked context sections, offline research evals, and a
+human-readable research status CLI.
 
 ## Last verified
 
 All gates green on Python 3.14.3 (Windows):
 
-- `pytest` — **246 passed**, 0 failed.
-- `ruff check src tests scripts` — clean.
-- `ruff format --check` — clean.
-- `mypy src` (strict) — clean across **136 source files**.
-- `POST /memory/compact`, `POST /memory/run_evals`, and the matching
-  `scripts/run_evals.py` script all run end-to-end.
-- The MCP tool registry (`agent_memory_lite.mcp.tools.TOOLS` + `dispatch`)
-  exposes `memory_get_context`, `memory_ingest_episode`, `memory_ingest_file`,
-  `memory_write_decision`, `memory_update_task_state`.
+- `pytest` - **260 passed**, 0 failed.
+- `ruff check src tests scripts` - clean.
+- `mypy src` - clean across **148 source files**.
+- `python scripts/run_evals.py --workspace default --no-vector` - 11/11 cases
+  passed with recall@10=1.0 and precision@10=1.0.
+- HTTP health on a project memory reported migrations `0001_init`,
+  `0002_chunks_fts`, `0003_theories`, and `0004_research_lab`.
 
-## Phase 6 deliverables landed
+## Research-lab deliverables landed
 
 Source:
-- `compaction/{summarize_old, invalidate_stale, promote_durable}.py` plus the
-  `compaction/__init__.py` re-exports. `summarize_old_episodes` writes one
-  `EpisodeSource.SUMMARY` episode per period; original episodes stay intact.
-  `archive_stale_facts` tags long-closed facts with `metadata.stale=True`
-  without deleting (so historical mode still surfaces them).
-  `promote_durable_candidates` runs trust-gated, threshold-passing candidates
-  into `core_memory`.
-- `api/schemas/compact.py` + `api/routes/compact.py` (`POST /memory/compact`).
-- `evals/{runner, metrics, reporters}.py` with shared `EvalReport` + recall@K
-  + precision@K helpers.
-- `evals/fixtures/{retrieval_basic, redaction_basic, trust_gating,
-  prompt_injection}.yaml` — first set of canonical eval cases.
-- `api/schemas/evals.py` + `api/routes/evals.py` (`POST /memory/run_evals`).
-- `scripts/run_evals.py` — CLI driver with both console and JSON output.
-- `mcp/{server, tools}.py` — tool registry + dispatcher reusing the same
-  service functions used by the HTTP routes.
-- `pyproject.toml` declares `PyYAML` as a dep and ships the eval YAML fixtures
-  via `[tool.setuptools.package-data]`.
 
-Tests added (22 new cases, 246 total):
-- `tests/unit/compaction/{test_summarize_old, test_promote_durable}.py`.
-- `tests/integration/test_compaction_e2e.py` — end-to-end summarization +
-  stale-fact archival against tmp DBs (uses time-provider override).
-- `tests/unit/evals/{test_metrics, test_runner}.py` — recall/precision math
-  and YAML-driven runner across all four case types.
-- `tests/unit/mcp/test_tools.py` — tool registry shape + unknown-tool dispatch.
+- `migrations/0003_theories.sql` with `theories` and `theory_evidence`.
+- `migrations/0004_research_lab.sql` with `memory_snapshots`,
+  `research_experiments`, `experiment_results`, `domain_concepts`, and
+  `research_insights`.
+- Theory models, repository, writer, routes, schemas, MCP registry tools, and
+  `<active_theories>` context rendering.
+- Research models, repository, writer, routes, schemas, MCP registry tools, and
+  `<research_agenda>` context rendering.
+- `memory_add_experiment_result` links experiment results to theory evidence,
+  updates theory confidence/status, and creates contradiction insights for
+  high-confidence refuting or mixed results.
+- `memory_get_context` query-ranks and caps active decisions so current
+  theories and research agenda stay visible as decision history grows.
+- `scripts/research_status.py` reports theories, snapshots, open experiments,
+  insights, concepts, and section visibility from a running service.
+- `scripts/run_evals.py --no-vector` runs the eval harness without loading an
+  embedding model or vector store.
+- The real MCP stdio server exposes the expanded tool surface, not just the old
+  base tools.
 
-## v1 scope (all phases)
+Docs:
+
+- `README.md` documents theory memory and the research-lab flow.
+- `docs/AGENT_CONTRACT.md` describes snapshots, experiments, results, concepts,
+  insights, and workspace-id handling.
+- `AGENT_SETUP/` prompts now tell agents to preserve research objects and to use
+  the project's established workspace id instead of hard-coding a foreign one.
+
+Tests:
+
+- `tests/unit/ingestion/test_theory_writer.py`.
+- `tests/e2e/test_theories_route.py`.
+- `tests/unit/ingestion/test_research_writer.py`.
+- `tests/e2e/test_research_routes.py`.
+- `tests/unit/mcp/test_tools.py` now checks both the registry and stdio server
+  tool exposure.
+- `tests/unit/evals/test_runner.py` covers `research_context` eval cases.
+- `tests/e2e/test_get_context_route.py` covers decision capping/query ranking.
+
+## v1 base scope
 
 - Phase 0: bootstrap (config + migrations + FastAPI + local-only guard).
-- Phase 1: episodes + FTS + redaction + ST embeddings.
+- Phase 1: episodes + FTS + redaction + sentence-transformers embeddings.
 - Phase 2: vector store + hybrid retrieval + `/memory/get_context`.
 - Phase 3: decisions + task state + core/procedural + extraction layer.
 - Phase 4: lite temporal graph (entities, facts, conflict invalidation).
-- Phase 5: file / project ingestion (idempotent re-ingest, exclude rules).
-- Phase 6: compaction + eval harness + MCP tool surface.
-
-## Out of scope (would land in v2)
-
-- Multi-workspace API surface (the column is in every table; only the API
-  hard-codes `default`).
-- Postgres / pgvector / Neo4j / Graphiti / Redis upgrade path.
-- Cloud LLM/embedding/vector providers — explicitly forbidden by the
-  local-only guard.
-- A real MCP stdio JSON-RPC transport. The tool registry + dispatcher are
-  ready; users plug in any MCP runtime they prefer.
-- Tree-sitter symbol extraction beyond Python (`ast`) and the regex fallback.
+- Phase 5: file/project ingestion.
+- Phase 6: compaction + eval harness + MCP base surface.
+- Research layer: theories, snapshots, experiments, results, concepts, insights.
 
 ## Locked-in decisions
 
 - Embedding model: `intfloat/multilingual-e5-small` via sentence-transformers.
-- LLM extraction: heuristic always on; Ollama (`qwen2.5:7b-instruct`)
-  **mandatory** with a startup probe (skippable via `OLLAMA_PROBE_SKIP=true`
-  for CI/tests).
+- LLM extraction: heuristic always on; Ollama (`qwen2.5:7b-instruct`) mandatory
+  with a startup probe unless `OLLAMA_PROBE_SKIP=true`.
 - Workspace ingest excludes: `.gitignore` + builtin denylist + optional
   `.memoryignore`.
-- v1 single-workspace, hard-coded `workspace_id="default"`.
+- Project isolation is primarily by physical DB/vector paths. `workspace_id` is
+  a logical namespace inside that database and must remain consistent with the
+  project's established convention.
 
 ## How to resume
 
-For a fresh session, read this `SESSION_STATE.md` and `CLAUDE.md` in
-parallel; everything else is discoverable from the code and the eval
-suite. The original implementation plan lives in the runtime's plans
-directory (Claude Code: `~/.claude/plans/`) and is referenced by the
-agent that did the build.
+For a fresh session, read `SESSION_STATE.md` and `CLAUDE.md` in parallel. Then
+call `memory_get_context` for the specific task before editing.

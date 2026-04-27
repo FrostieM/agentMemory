@@ -44,6 +44,59 @@ class DecisionStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class TheoryStatus(StrEnum):
+    PROPOSED = "proposed"
+    TESTING = "testing"
+    SUPPORTED = "supported"
+    WEAKENED = "weakened"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+class TheoryEvidenceKind(StrEnum):
+    SUPPORTING = "supporting"
+    REFUTING = "refuting"
+    MIXED = "mixed"
+    NEUTRAL = "neutral"
+    EXPERIMENT = "experiment"
+
+
+class ExperimentStatus(StrEnum):
+    PLANNED = "planned"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+
+
+class ConceptKind(StrEnum):
+    TERM = "term"
+    METRIC = "metric"
+    GATE = "gate"
+    COHORT = "cohort"
+    ARTIFACT = "artifact"
+
+
+class InsightType(StrEnum):
+    THEORY_CANDIDATE = "theory_candidate"
+    EVIDENCE_CANDIDATE = "evidence_candidate"
+    DECISION_CANDIDATE = "decision_candidate"
+    RULE_CANDIDATE = "rule_candidate"
+    OPEN_QUESTION = "open_question"
+    CONTRADICTION = "contradiction"
+    BOTTLENECK = "bottleneck"
+    LESSON = "lesson"
+    RISK = "risk"
+    OPPORTUNITY = "opportunity"
+
+
+class InsightStatus(StrEnum):
+    NEW = "new"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
 class MemoryCandidateKind(StrEnum):
     CONSTRAINT = "constraint"
     PROJECT_FACT = "project_fact"

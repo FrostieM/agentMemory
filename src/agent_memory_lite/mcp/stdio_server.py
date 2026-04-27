@@ -50,12 +50,34 @@ from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.file_pipeline import ingest_file
+from agent_memory_lite.ingestion.research_writer import (
+    add_experiment_result,
+    distill_insight,
+    register_snapshot,
+    upsert_domain_concept,
+    write_experiment,
+)
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
+from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
+from agent_memory_lite.models.research import (
+    DomainConceptIn,
+    ExperimentIn,
+    ExperimentResultIn,
+    MemorySnapshotIn,
+    ResearchInsightIn,
+)
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
+from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.research_repo import (
+    build_research_agenda,
+    list_concepts,
+    list_insights,
+)
+from agent_memory_lite.repositories.theories_repo import list_evidence_for_theory, list_theories
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.factory import get_vector_store
@@ -123,18 +145,23 @@ _runtime = _Runtime()
 _server: Server = Server("agent-memory-lite")
 
 
+def _workspace_schema() -> dict[str, str]:
+    return {"type": "string", "default": _runtime.settings.workspace_id}
+
+
 _TOOLS: list[types.Tool] = [
     types.Tool(
         name="memory_get_context",
         description=(
             "Retrieve the agent's memory context for the given query. Returns an "
             "XML envelope with core_memory, task_state, active_decisions, "
-            "procedural_rules, retrieved_facts, and retrieved_chunks."
+            "active_theories, research_agenda, procedural_rules, "
+            "retrieved_facts, and retrieved_chunks."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "task_id": {"type": "string"},
                 "query": {"type": "string", "minLength": 1},
                 "files_in_scope": {"type": "array", "items": {"type": "string"}},
@@ -155,7 +182,7 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "query": {"type": "string", "minLength": 1},
                 "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 200},
             },
@@ -171,7 +198,7 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "session_id": {"type": "string"},
                 "task_id": {"type": "string"},
                 "source_type": {"type": "string", "default": "agent_action"},
@@ -191,7 +218,7 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "title": {"type": "string", "minLength": 1},
                 "decision_text": {"type": "string", "minLength": 1},
                 "rationale": {"type": "string"},
@@ -209,7 +236,7 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "task_id": {"type": "string", "minLength": 1},
                 "goal": {"type": "string", "minLength": 1},
                 "status": {"type": "string", "minLength": 1},
@@ -229,12 +256,216 @@ _TOOLS: list[types.Tool] = [
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace_id": {"type": "string", "default": "default"},
+                "workspace_id": _workspace_schema(),
                 "path": {"type": "string", "minLength": 1},
                 "content": {"type": "string"},
                 "language": {"type": "string"},
             },
             "required": ["path", "content"],
+        },
+    ),
+    types.Tool(
+        name="memory_write_theory",
+        description="Record a working research theory with claim, mechanism, predictions, and experiment plan.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "title": {"type": "string", "minLength": 1},
+                "claim": {"type": "string", "minLength": 1},
+                "domain": {"type": "string", "default": "general"},
+                "mechanism": {"type": "string"},
+                "predictions": {"type": "array", "items": {"type": "string"}},
+                "experiment_plan": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "status": {"type": "string", "default": "proposed"},
+                "supersedes_theory_id": {"type": "string"},
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            },
+            "required": ["title", "claim"],
+        },
+    ),
+    types.Tool(
+        name="memory_add_theory_evidence",
+        description="Attach supporting, refuting, mixed, neutral, or experiment evidence to a theory.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "theory_id": {"type": "string", "minLength": 1},
+                "kind": {"type": "string"},
+                "summary": {"type": "string", "minLength": 1},
+                "source_episode_id": {"type": "string"},
+                "artifact_path": {"type": "string"},
+                "metrics": {"type": "object"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "observed_at": {"type": "string"},
+            },
+            "required": ["theory_id", "kind", "summary"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_theories",
+        description="List relevant theory memory items, optionally including recent evidence.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                "include_archived": {"type": "boolean", "default": False},
+                "include_evidence": {"type": "boolean", "default": False},
+                "evidence_limit": {"type": "integer", "minimum": 0, "maximum": 20, "default": 3},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_register_snapshot",
+        description="Register or update a research data snapshot with paths, build metadata, and table counts.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "snapshot_key": {"type": "string", "minLength": 1},
+                "title": {"type": "string", "minLength": 1},
+                "source": {"type": "string", "default": "manual"},
+                "db_path": {"type": "string"},
+                "duckdb_path": {"type": "string"},
+                "parquet_dir": {"type": "string"},
+                "window_start": {"type": "string"},
+                "window_end": {"type": "string"},
+                "build_sha": {"type": "string"},
+                "build_branch": {"type": "string"},
+                "build_time": {"type": "string"},
+                "remote_host": {"type": "string"},
+                "table_counts": {"type": "object"},
+                "total_rows": {"type": "integer", "minimum": 0},
+                "metadata": {"type": "object"},
+                "source_episode_id": {"type": "string"},
+            },
+            "required": ["snapshot_key", "title"],
+        },
+    ),
+    types.Tool(
+        name="memory_write_experiment",
+        description="Create a planned/running research experiment linked to a theory and/or data snapshot.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "theory_id": {"type": "string"},
+                "snapshot_id": {"type": "string"},
+                "title": {"type": "string", "minLength": 1},
+                "hypothesis": {"type": "string", "minLength": 1},
+                "cohort_definition": {"type": "string"},
+                "success_criteria": {"type": "object"},
+                "command": {"type": "string"},
+                "status": {"type": "string", "default": "planned"},
+                "priority": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "owner": {"type": "string"},
+                "due_at": {"type": "string"},
+                "source_episode_id": {"type": "string"},
+                "metadata": {"type": "object"},
+            },
+            "required": ["title", "hypothesis"],
+        },
+    ),
+    types.Tool(
+        name="memory_add_experiment_result",
+        description="Record an experiment result; linked theory confidence/status is updated automatically.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "experiment_id": {"type": "string", "minLength": 1},
+                "theory_id": {"type": "string"},
+                "kind": {"type": "string"},
+                "summary": {"type": "string", "minLength": 1},
+                "metrics": {"type": "object"},
+                "artifact_path": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "observed_at": {"type": "string"},
+                "source_episode_id": {"type": "string"},
+            },
+            "required": ["experiment_id", "kind", "summary"],
+        },
+    ),
+    types.Tool(
+        name="memory_upsert_concept",
+        description="Create or update a domain concept so research vocabulary is explicit and reusable.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "name": {"type": "string", "minLength": 1},
+                "kind": {"type": "string", "default": "term"},
+                "definition": {"type": "string", "minLength": 1},
+                "aliases": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "active": {"type": "boolean"},
+            },
+            "required": ["name", "definition"],
+        },
+    ),
+    types.Tool(
+        name="memory_distill_insight",
+        description="Promote raw episode learnings into actionable insights or open questions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "insight_type": {"type": "string"},
+                "summary": {"type": "string", "minLength": 1},
+                "proposed_action": {"type": "string"},
+                "target_type": {"type": "string"},
+                "target_id": {"type": "string"},
+                "source_episode_ids": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "status": {"type": "string", "default": "new"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["insight_type", "summary"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_research_agenda",
+        description="List current snapshots, open experiments, insights, and concepts relevant to a query.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_list_concepts",
+        description="List domain concepts in the project memory.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "include_inactive": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_list_insights",
+        description="List distilled research insights and open questions.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
         },
     ),
 ]
@@ -249,8 +480,14 @@ def _drop_none(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _with_workspace(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned = _drop_none(payload)
+    cleaned.setdefault("workspace_id", _runtime.settings.workspace_id)
+    return cleaned
+
+
 def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
-    query = RetrievalQuery(**_drop_none(args))
+    query = RetrievalQuery(**_with_workspace(args))
     built = build_context(
         _runtime.db(),
         query,
@@ -272,7 +509,7 @@ def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", "default")
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
     query = args["query"]
     limit = int(args.get("limit", 10))
     hits = search_chunks_fts(
@@ -297,7 +534,7 @@ def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
-    payload = _drop_none(args)
+    payload = _with_workspace(args)
     payload.setdefault("source_type", "agent_action")
     payload.setdefault("trust_level", "agent_observed")
     result = ingest_episode(
@@ -320,7 +557,7 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
-    decision = write_decision(_runtime.db(), DecisionIn(**_drop_none(args)))
+    decision = write_decision(_runtime.db(), DecisionIn(**_with_workspace(args)))
     return {
         "decision_id": decision.id,
         "status": decision.status.value,
@@ -330,7 +567,7 @@ def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
-    state = write_task_state(_runtime.db(), TaskStateIn(**_drop_none(args)))
+    state = write_task_state(_runtime.db(), TaskStateIn(**_with_workspace(args)))
     return {
         "state_id": state.id,
         "task_id": state.task_id,
@@ -341,7 +578,7 @@ def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
     payload = _drop_none(args)
-    workspace_id = payload.pop("workspace_id", "default")
+    workspace_id = payload.pop("workspace_id", _runtime.settings.workspace_id)
     result = ingest_file(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -358,6 +595,227 @@ def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
+    theory = write_theory(_runtime.db(), TheoryIn(**_with_workspace(args)))
+    return {
+        "theory_id": theory.id,
+        "status": theory.status.value,
+        "confidence": theory.confidence,
+        "importance": theory.importance,
+    }
+
+
+def _handle_add_theory_evidence(args: dict[str, Any]) -> dict[str, Any]:
+    evidence = add_theory_evidence(_runtime.db(), TheoryEvidenceIn(**_with_workspace(args)))
+    return {
+        "evidence_id": evidence.id,
+        "theory_id": evidence.theory_id,
+        "kind": evidence.kind.value,
+        "observed_at": evidence.observed_at,
+    }
+
+
+def _handle_list_theories(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    include_evidence = bool(args.get("include_evidence", False))
+    evidence_limit = int(args.get("evidence_limit", 3))
+    theories = list_theories(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        query=args.get("query"),
+        limit=int(args.get("limit", 20)),
+        include_archived=bool(args.get("include_archived", False)),
+    )
+    return {
+        "theories": [
+            {
+                "theory_id": theory.id,
+                "title": theory.title,
+                "domain": theory.domain,
+                "claim": theory.claim,
+                "status": theory.status.value,
+                "confidence": theory.confidence,
+                "importance": theory.importance,
+                "tags": theory.tags,
+                "evidence": [
+                    {
+                        "evidence_id": evidence.id,
+                        "kind": evidence.kind.value,
+                        "summary": evidence.summary,
+                        "confidence": evidence.confidence,
+                        "observed_at": evidence.observed_at,
+                    }
+                    for evidence in (
+                        list_evidence_for_theory(_runtime.db(), theory.id, limit=evidence_limit)
+                        if include_evidence
+                        else []
+                    )
+                ],
+            }
+            for theory in theories
+        ],
+    }
+
+
+def _handle_register_snapshot(args: dict[str, Any]) -> dict[str, Any]:
+    snapshot = register_snapshot(_runtime.db(), MemorySnapshotIn(**_with_workspace(args)))
+    return {
+        "snapshot_id": snapshot.id,
+        "snapshot_key": snapshot.snapshot_key,
+        "total_rows": snapshot.total_rows,
+        "duckdb_path": snapshot.duckdb_path,
+        "updated_at": snapshot.updated_at,
+    }
+
+
+def _handle_write_experiment(args: dict[str, Any]) -> dict[str, Any]:
+    experiment = write_experiment(_runtime.db(), ExperimentIn(**_with_workspace(args)))
+    return {
+        "experiment_id": experiment.id,
+        "theory_id": experiment.theory_id,
+        "snapshot_id": experiment.snapshot_id,
+        "status": experiment.status.value,
+        "priority": experiment.priority,
+    }
+
+
+def _handle_add_experiment_result(args: dict[str, Any]) -> dict[str, Any]:
+    result = add_experiment_result(_runtime.db(), ExperimentResultIn(**_with_workspace(args)))
+    return {
+        "result_id": result.id,
+        "experiment_id": result.experiment_id,
+        "theory_id": result.theory_id,
+        "kind": result.kind.value,
+        "observed_at": result.observed_at,
+    }
+
+
+def _handle_upsert_concept(args: dict[str, Any]) -> dict[str, Any]:
+    concept = upsert_domain_concept(_runtime.db(), DomainConceptIn(**_with_workspace(args)))
+    return {
+        "concept_id": concept.id,
+        "name": concept.name,
+        "kind": concept.kind.value,
+        "confidence": concept.confidence,
+        "active": concept.active,
+    }
+
+
+def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
+    insight = distill_insight(_runtime.db(), ResearchInsightIn(**_with_workspace(args)))
+    return {
+        "insight_id": insight.id,
+        "insight_type": insight.insight_type.value,
+        "status": insight.status.value,
+        "target_type": insight.target_type,
+        "target_id": insight.target_id,
+    }
+
+
+def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    agenda = build_research_agenda(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        query=args.get("query"),
+        limit=int(args.get("limit", 10)),
+    )
+    return {
+        "snapshots": [
+            {
+                "snapshot_id": item.id,
+                "snapshot_key": item.snapshot_key,
+                "title": item.title,
+                "total_rows": item.total_rows,
+                "duckdb_path": item.duckdb_path,
+            }
+            for item in agenda.snapshots
+        ],
+        "experiments": [
+            {
+                "experiment_id": item.id,
+                "title": item.title,
+                "theory_id": item.theory_id,
+                "snapshot_id": item.snapshot_id,
+                "status": item.status.value,
+                "priority": item.priority,
+                "hypothesis": item.hypothesis,
+            }
+            for item in agenda.experiments
+        ],
+        "insights": [
+            {
+                "insight_id": item.id,
+                "insight_type": item.insight_type.value,
+                "summary": item.summary,
+                "status": item.status.value,
+                "confidence": item.confidence,
+                "target_type": item.target_type,
+                "target_id": item.target_id,
+            }
+            for item in agenda.insights
+        ],
+        "concepts": [
+            {
+                "concept_id": item.id,
+                "name": item.name,
+                "kind": item.kind.value,
+                "definition": item.definition,
+                "confidence": item.confidence,
+            }
+            for item in agenda.concepts
+        ],
+    }
+
+
+def _handle_list_concepts(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    concepts = list_concepts(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        query=args.get("query"),
+        include_inactive=bool(args.get("include_inactive", False)),
+        limit=int(args.get("limit", 20)),
+    )
+    return {
+        "concepts": [
+            {
+                "concept_id": item.id,
+                "name": item.name,
+                "kind": item.kind.value,
+                "definition": item.definition,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in concepts
+        ],
+    }
+
+
+def _handle_list_insights(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    insights = list_insights(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        query=args.get("query"),
+        limit=int(args.get("limit", 20)),
+    )
+    return {
+        "insights": [
+            {
+                "insight_id": item.id,
+                "insight_type": item.insight_type.value,
+                "summary": item.summary,
+                "status": item.status.value,
+                "confidence": item.confidence,
+                "target_type": item.target_type,
+                "target_id": item.target_id,
+            }
+            for item in insights
+        ],
+    }
+
+
 _HANDLERS = {
     "memory_get_context": _handle_get_context,
     "memory_search": _handle_search,
@@ -365,6 +823,17 @@ _HANDLERS = {
     "memory_write_decision": _handle_write_decision,
     "memory_update_task_state": _handle_update_task_state,
     "memory_ingest_file": _handle_ingest_file,
+    "memory_write_theory": _handle_write_theory,
+    "memory_add_theory_evidence": _handle_add_theory_evidence,
+    "memory_list_theories": _handle_list_theories,
+    "memory_register_snapshot": _handle_register_snapshot,
+    "memory_write_experiment": _handle_write_experiment,
+    "memory_add_experiment_result": _handle_add_experiment_result,
+    "memory_upsert_concept": _handle_upsert_concept,
+    "memory_distill_insight": _handle_distill_insight,
+    "memory_list_research_agenda": _handle_list_research_agenda,
+    "memory_list_concepts": _handle_list_concepts,
+    "memory_list_insights": _handle_list_insights,
 }
 
 
