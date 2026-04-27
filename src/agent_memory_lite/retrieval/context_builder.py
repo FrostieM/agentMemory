@@ -179,50 +179,104 @@ def _render_decisions(items: list[Decision]) -> list[str]:
     return lines
 
 
+def _theory_attrs(item: Theory) -> str:
+    return (
+        f"id={quoteattr(item.id)} "
+        f"status={quoteattr(item.status.value)} "
+        f"domain={quoteattr(item.domain)} "
+        f"confidence={quoteattr(f'{item.confidence:.2f}')} "
+        f"importance={quoteattr(f'{item.importance:.2f}')} "
+        f"evidence_count={quoteattr(str(item.evidence_count))} "
+        f"evidence_strength={quoteattr(f'{item.evidence_strength:.2f}')} "
+        f"source={quoteattr(item.source_episode_id or '')}"
+    )
+
+
+def _render_string_items(
+    *,
+    container_tag: str,
+    item_tag: str,
+    items: list[str],
+    indent: str,
+) -> list[str]:
+    if not items:
+        return []
+    lines = [f"{indent}<{container_tag}>"]
+    for item in items:
+        lines.append(f"{indent}  <{item_tag}>{escape(item)}</{item_tag}>")
+    lines.append(f"{indent}</{container_tag}>")
+    return lines
+
+
+def _render_theory_evidence(items: list[TheoryEvidence]) -> list[str]:
+    if not items:
+        return []
+    lines = ["      <evidence>"]
+    for evidence in items:
+        ev_attrs = (
+            f"id={quoteattr(evidence.id)} "
+            f"kind={quoteattr(evidence.kind.value)} "
+            f"confidence={quoteattr(f'{evidence.confidence:.2f}')} "
+            f"observed_at={quoteattr(evidence.observed_at)} "
+            f"source={quoteattr(evidence.source_episode_id or '')}"
+        )
+        lines.append(f"        <item {ev_attrs}>{escape(evidence.summary)}</item>")
+    lines.append("      </evidence>")
+    return lines
+
+
+def _render_theory(bundle: TheoryContext) -> list[str]:
+    item = bundle.theory
+    lines = [f"    <theory {_theory_attrs(item)}>"]
+    lines.append(f"      <title>{escape(item.title)}</title>")
+    lines.append(f"      <claim>{escape(item.claim)}</claim>")
+    if item.mechanism:
+        lines.append(f"      <mechanism>{escape(item.mechanism)}</mechanism>")
+    lines.extend(
+        _render_string_items(
+            container_tag="predictions",
+            item_tag="item",
+            items=item.predictions,
+            indent="      ",
+        )
+    )
+    lines.extend(
+        _render_string_items(
+            container_tag="validation_criteria",
+            item_tag="item",
+            items=item.validation_criteria,
+            indent="      ",
+        )
+    )
+    if item.experiment_plan:
+        lines.append(f"      <experiment_plan>{escape(item.experiment_plan)}</experiment_plan>")
+    lines.extend(
+        _render_string_items(
+            container_tag="dependent_decisions",
+            item_tag="decision_id",
+            items=item.dependent_decision_ids,
+            indent="      ",
+        )
+    )
+    lines.extend(
+        _render_string_items(
+            container_tag="tags",
+            item_tag="tag",
+            items=item.tags,
+            indent="      ",
+        )
+    )
+    lines.extend(_render_theory_evidence(bundle.evidence))
+    lines.append("    </theory>")
+    return lines
+
+
 def _render_theories(items: list[TheoryContext]) -> list[str]:
     if not items:
         return ["  <active_theories/>"]
     lines = ["  <active_theories>"]
     for bundle in items:
-        item = bundle.theory
-        attrs = (
-            f"id={quoteattr(item.id)} "
-            f"status={quoteattr(item.status.value)} "
-            f"domain={quoteattr(item.domain)} "
-            f"confidence={quoteattr(f'{item.confidence:.2f}')} "
-            f"importance={quoteattr(f'{item.importance:.2f}')} "
-            f"source={quoteattr(item.source_episode_id or '')}"
-        )
-        lines.append(f"    <theory {attrs}>")
-        lines.append(f"      <title>{escape(item.title)}</title>")
-        lines.append(f"      <claim>{escape(item.claim)}</claim>")
-        if item.mechanism:
-            lines.append(f"      <mechanism>{escape(item.mechanism)}</mechanism>")
-        if item.predictions:
-            lines.append("      <predictions>")
-            for prediction in item.predictions:
-                lines.append(f"        <item>{escape(prediction)}</item>")
-            lines.append("      </predictions>")
-        if item.experiment_plan:
-            lines.append(f"      <experiment_plan>{escape(item.experiment_plan)}</experiment_plan>")
-        if item.tags:
-            lines.append("      <tags>")
-            for tag in item.tags:
-                lines.append(f"        <tag>{escape(tag)}</tag>")
-            lines.append("      </tags>")
-        if bundle.evidence:
-            lines.append("      <evidence>")
-            for evidence in bundle.evidence:
-                ev_attrs = (
-                    f"id={quoteattr(evidence.id)} "
-                    f"kind={quoteattr(evidence.kind.value)} "
-                    f"confidence={quoteattr(f'{evidence.confidence:.2f}')} "
-                    f"observed_at={quoteattr(evidence.observed_at)} "
-                    f"source={quoteattr(evidence.source_episode_id or '')}"
-                )
-                lines.append(f"        <item {ev_attrs}>{escape(evidence.summary)}</item>")
-            lines.append("      </evidence>")
-        lines.append("    </theory>")
+        lines.extend(_render_theory(bundle))
     lines.append("  </active_theories>")
     return lines
 

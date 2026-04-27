@@ -71,12 +71,14 @@ should not be the only place where learning lives. Use **theories** for working
 claims that need evidence and experiments:
 
 - `POST /memory/write_theory` records a hypothesis with `claim`, `mechanism`,
-  `predictions`, `experiment_plan`, `tags`, `status`, `confidence`, and
-  `importance`.
+  `predictions`, `validation_criteria`, `experiment_plan`,
+  `dependent_decision_ids`, `tags`, `status`, `confidence`, and `importance`.
 - `POST /memory/add_theory_evidence` attaches supporting, refuting, mixed,
   neutral, or experiment evidence to a theory.
 - `POST /memory/list_theories` retrieves the relevant theory set, optionally
-  including recent evidence.
+  including recent evidence. Responses include `evidence_count` and signed
+  `evidence_strength`, so rejected/weak theories remain visible as negative
+  knowledge instead of disappearing into episodes.
 - `POST /memory/get_context` includes an `<active_theories>` section ahead of
   retrieved chunks, so agents see the current research agenda instead of
   rediscovering it from hundreds of episodes.
@@ -182,11 +184,21 @@ Example theory:
   "claim": "Source-flip trades on tennis favorites may carry short-lived edge.",
   "mechanism": "The source wallet may react before public odds fully adjust.",
   "predictions": ["favorite-side flips outperform underdog-side flips"],
+  "validation_criteria": [
+    "minimum 100 settled trades",
+    "net edge remains positive after fee assumptions"
+  ],
   "experiment_plan": "Replay source-flip fills by sport and side on the latest VPS snapshot.",
+  "dependent_decision_ids": ["dec_..."],
   "tags": ["trading-bot", "source-flip", "tennis", "favorite"],
   "status": "testing"
 }
 ```
+
+Use `status="rejected"` for disproven theories. A rejected theory is an
+anti-theory: it records that a tempting explanation or edge did **not** survive
+measurement. Keep it queryable with refuting evidence and metrics rather than
+burying it in an episode.
 
 ```bash
 # 1. configure (one-off)

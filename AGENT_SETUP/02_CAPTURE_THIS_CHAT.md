@@ -90,6 +90,12 @@ dataset, call `memory_register_snapshot`. If the conversation planned or ran a
 research test, call `memory_write_experiment` and, when results exist,
 `memory_add_experiment_result`.
 
+Write theories with enough discipline that a future agent can test them:
+include validation criteria, expected evidence, and any decision IDs that depend
+on the theory. If the conversation disproved a tempting claim, write it as a
+`status="rejected"` theory with refuting evidence instead of dropping it into a
+summary episode.
+
 If the conversation clarified a reusable role, skill, or repeatable workflow,
 call `memory_upsert_agent_role`, `memory_upsert_agent_skill`, or
 `memory_upsert_agent_playbook`. Use capability memory for operating knowledge

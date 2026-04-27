@@ -200,6 +200,8 @@ def _memory_write_theory(
         "status": theory.status.value,
         "confidence": theory.confidence,
         "importance": theory.importance,
+        "evidence_count": theory.evidence_count,
+        "evidence_strength": theory.evidence_strength,
     }
 
 
@@ -243,9 +245,13 @@ def _memory_list_theories(
                 "title": theory.title,
                 "domain": theory.domain,
                 "claim": theory.claim,
+                "validation_criteria": theory.validation_criteria,
+                "dependent_decision_ids": theory.dependent_decision_ids,
                 "status": theory.status.value,
                 "confidence": theory.confidence,
                 "importance": theory.importance,
+                "evidence_count": theory.evidence_count,
+                "evidence_strength": theory.evidence_strength,
                 "tags": theory.tags,
                 "evidence": [
                     {

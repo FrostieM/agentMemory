@@ -283,7 +283,9 @@ _TOOLS: list[types.Tool] = [
                 "domain": {"type": "string", "default": "general"},
                 "mechanism": {"type": "string"},
                 "predictions": {"type": "array", "items": {"type": "string"}},
+                "validation_criteria": {"type": "array", "items": {"type": "string"}},
                 "experiment_plan": {"type": "string"},
+                "dependent_decision_ids": {"type": "array", "items": {"type": "string"}},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "status": {"type": "string", "default": "proposed"},
                 "supersedes_theory_id": {"type": "string"},
@@ -683,6 +685,8 @@ def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
         "status": theory.status.value,
         "confidence": theory.confidence,
         "importance": theory.importance,
+        "evidence_count": theory.evidence_count,
+        "evidence_strength": theory.evidence_strength,
     }
 
 
@@ -714,9 +718,13 @@ def _handle_list_theories(args: dict[str, Any]) -> dict[str, Any]:
                 "title": theory.title,
                 "domain": theory.domain,
                 "claim": theory.claim,
+                "validation_criteria": theory.validation_criteria,
+                "dependent_decision_ids": theory.dependent_decision_ids,
                 "status": theory.status.value,
                 "confidence": theory.confidence,
                 "importance": theory.importance,
+                "evidence_count": theory.evidence_count,
+                "evidence_strength": theory.evidence_strength,
                 "tags": theory.tags,
                 "evidence": [
                     {

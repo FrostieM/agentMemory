@@ -13,6 +13,7 @@ from agent_memory_lite.models.theories import (
     TheoryIn,
 )
 from agent_memory_lite.repositories.audit_repo import insert_audit
+from agent_memory_lite.repositories.decisions_repo import get_decision
 from agent_memory_lite.repositories.theories_repo import (
     archive_theory,
     get_theory,
@@ -35,6 +36,13 @@ def write_theory(conn: sqlite3.Connection, payload: TheoryIn) -> Theory:
         if prior.workspace_id != payload.workspace_id:
             raise ValidationError("supersedes_theory_id must belong to the same workspace")
 
+    for decision_id in payload.dependent_decision_ids:
+        decision = get_decision(conn, decision_id)
+        if decision is None:
+            raise NotFoundError(f"dependent_decision_id {decision_id!r} not found")
+        if decision.workspace_id != payload.workspace_id:
+            raise ValidationError("dependent_decision_ids must belong to the same workspace")
+
     with with_tx(conn):
         if payload.supersedes_theory_id is not None:
             archive_theory(
@@ -51,7 +59,9 @@ def write_theory(conn: sqlite3.Connection, payload: TheoryIn) -> Theory:
             claim=payload.claim,
             mechanism=payload.mechanism,
             predictions=payload.predictions,
+            validation_criteria=payload.validation_criteria,
             experiment_plan=payload.experiment_plan,
+            dependent_decision_ids=payload.dependent_decision_ids,
             tags=payload.tags,
             status=payload.status,
             supersedes_theory_id=payload.supersedes_theory_id,
@@ -72,6 +82,7 @@ def write_theory(conn: sqlite3.Connection, payload: TheoryIn) -> Theory:
                 "domain": payload.domain,
                 "status": payload.status.value,
                 "supersedes": payload.supersedes_theory_id,
+                "dependent_decision_ids": payload.dependent_decision_ids,
             },
         )
 

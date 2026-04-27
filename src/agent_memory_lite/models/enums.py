@@ -48,8 +48,10 @@ class TheoryStatus(StrEnum):
     PROPOSED = "proposed"
     TESTING = "testing"
     SUPPORTED = "supported"
+    VALIDATED = "validated"
     WEAKENED = "weakened"
     REJECTED = "rejected"
+    SUPERSEDED = "superseded"
     ARCHIVED = "archived"
 
 

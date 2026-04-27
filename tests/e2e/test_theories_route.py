@@ -23,6 +23,10 @@ def test_write_list_and_context_render_theory(client: TestClient) -> None:
             "claim": "Source-flip trades on tennis favorites may have positive edge.",
             "mechanism": "The source wallet may react before the public odds fully adjust.",
             "predictions": ["favorite-side flips outperform underdog-side flips"],
+            "validation_criteria": [
+                "minimum 100 settled trades",
+                "positive net edge after fees",
+            ],
             "experiment_plan": "Replay source-flip fills by sport and side.",
             "tags": ["trading-bot", "source-flip", "tennis", "favorite"],
             "status": "testing",
@@ -33,6 +37,10 @@ def test_write_list_and_context_render_theory(client: TestClient) -> None:
     assert write.status_code == 200, write.text
     theory_id = write.json()["theory_id"]
     assert theory_id.startswith("th_")
+    assert write.json()["validation_criteria"] == [
+        "minimum 100 settled trades",
+        "positive net edge after fees",
+    ]
 
     evidence = client.post(
         "/memory/add_theory_evidence",
@@ -59,6 +67,7 @@ def test_write_list_and_context_render_theory(client: TestClient) -> None:
     assert listed.status_code == 200, listed.text
     body = listed.json()
     assert body["theories"][0]["theory"]["theory_id"] == theory_id
+    assert body["theories"][0]["theory"]["evidence_count"] == 1
     assert body["theories"][0]["evidence"][0]["kind"] == "experiment"
 
     context = client.post(
@@ -73,6 +82,7 @@ def test_write_list_and_context_render_theory(client: TestClient) -> None:
     text = context.json()["context_text"]
     assert "<active_theories>" in text
     assert "Source-flip tennis favorites" in text
+    assert "minimum 100 settled trades" in text
     assert "Replay cohort query is ready" in text
 
 

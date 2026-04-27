@@ -14,7 +14,9 @@ _ACTIVE_STATUSES = {
     TheoryStatus.PROPOSED.value,
     TheoryStatus.TESTING.value,
     TheoryStatus.SUPPORTED.value,
+    TheoryStatus.VALIDATED.value,
     TheoryStatus.WEAKENED.value,
+    TheoryStatus.REJECTED.value,
 }
 
 
@@ -39,13 +41,17 @@ def _row_to_theory(row: sqlite3.Row) -> Theory:
         claim=row["claim"],
         mechanism=row["mechanism"],
         predictions=_json_list(row["predictions_json"]),
+        validation_criteria=_json_list(row["validation_criteria_json"]),
         experiment_plan=row["experiment_plan"],
+        dependent_decision_ids=_json_list(row["dependent_decision_ids_json"]),
         tags=_json_list(row["tags_json"]),
         status=TheoryStatus(row["status"]),
         supersedes_theory_id=row["supersedes_theory_id"],
         source_episode_id=row["source_episode_id"],
         confidence=float(row["confidence"]),
         importance=float(row["importance"]),
+        evidence_count=int(row["evidence_count"]),
+        evidence_strength=float(row["evidence_strength"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         last_tested_at=row["last_tested_at"],
@@ -78,7 +84,9 @@ def insert_theory_row(
     claim: str,
     mechanism: str | None,
     predictions: list[str],
+    validation_criteria: list[str],
     experiment_plan: str | None,
+    dependent_decision_ids: list[str],
     tags: list[str],
     status: TheoryStatus,
     supersedes_theory_id: str | None,
@@ -91,10 +99,11 @@ def insert_theory_row(
         """
         INSERT INTO theories (
             id, workspace_id, title, domain, claim, mechanism,
-            predictions_json, experiment_plan, tags_json, status,
+            predictions_json, validation_criteria_json, experiment_plan,
+            dependent_decision_ids_json, tags_json, status,
             supersedes_theory_id, source_episode_id, confidence, importance,
-            created_at, updated_at, last_tested_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            evidence_count, evidence_strength, created_at, updated_at, last_tested_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0.0, ?, ?, NULL)
         """,
         (
             theory_id,
@@ -104,7 +113,9 @@ def insert_theory_row(
             claim,
             mechanism,
             json.dumps(predictions, sort_keys=True),
+            json.dumps(validation_criteria, sort_keys=True),
             experiment_plan,
+            json.dumps(dependent_decision_ids, sort_keys=True),
             json.dumps(tags, sort_keys=True),
             status.value,
             supersedes_theory_id,
@@ -126,7 +137,7 @@ def archive_theory(
     conn.execute(
         """
         UPDATE theories
-        SET status = 'archived', updated_at = ?
+        SET status = 'superseded', updated_at = ?
         WHERE id = ?
         """,
         (updated_at, theory_id),
@@ -168,6 +179,8 @@ def _searchable_text(theory: Theory) -> str:
         theory.mechanism or "",
         theory.experiment_plan or "",
         " ".join(theory.predictions),
+        " ".join(theory.validation_criteria),
+        " ".join(theory.dependent_decision_ids),
         " ".join(theory.tags),
     ]
     return " ".join(parts).lower()
@@ -182,10 +195,12 @@ def _tokens(query: str | None) -> list[str]:
 def _rank(theory: Theory, tokens: list[str]) -> tuple[float, str]:
     status_bonus = {
         TheoryStatus.TESTING: 0.25,
+        TheoryStatus.VALIDATED: 0.25,
         TheoryStatus.SUPPORTED: 0.22,
+        TheoryStatus.REJECTED: 0.18,
         TheoryStatus.PROPOSED: 0.15,
         TheoryStatus.WEAKENED: 0.08,
-        TheoryStatus.REJECTED: -0.25,
+        TheoryStatus.SUPERSEDED: -0.30,
         TheoryStatus.ARCHIVED: -0.35,
     }[theory.status]
     text = _searchable_text(theory)
@@ -240,6 +255,13 @@ def insert_theory_evidence_row(
     observed_at: str,
     created_at: str,
 ) -> None:
+    strength_delta = {
+        TheoryEvidenceKind.SUPPORTING: confidence,
+        TheoryEvidenceKind.REFUTING: -confidence,
+        TheoryEvidenceKind.MIXED: -0.5 * confidence,
+        TheoryEvidenceKind.NEUTRAL: 0.0,
+        TheoryEvidenceKind.EXPERIMENT: 0.0,
+    }[kind]
     conn.execute(
         """
         INSERT INTO theory_evidence (
@@ -265,13 +287,15 @@ def insert_theory_evidence_row(
         """
         UPDATE theories
         SET updated_at = ?,
+            evidence_count = evidence_count + 1,
+            evidence_strength = evidence_strength + ?,
             last_tested_at = CASE
                 WHEN ? IN ('supporting', 'refuting', 'mixed', 'experiment') THEN ?
                 ELSE last_tested_at
             END
         WHERE id = ?
         """,
-        (created_at, kind.value, observed_at, theory_id),
+        (created_at, strength_delta, kind.value, observed_at, theory_id),
     )
 
 

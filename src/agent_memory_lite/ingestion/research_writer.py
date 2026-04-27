@@ -203,7 +203,12 @@ def _confidence_after_result(
         else:
             new_status = TheoryStatus.TESTING
     elif kind is TheoryEvidenceKind.SUPPORTING:
-        new_status = TheoryStatus.SUPPORTED if new_confidence >= 0.7 else TheoryStatus.TESTING
+        if new_confidence >= 0.85:
+            new_status = TheoryStatus.VALIDATED
+        elif new_confidence >= 0.7:
+            new_status = TheoryStatus.SUPPORTED
+        else:
+            new_status = TheoryStatus.TESTING
     elif kind is TheoryEvidenceKind.EXPERIMENT and current_status is TheoryStatus.PROPOSED:
         new_status = TheoryStatus.TESTING
     return new_confidence, new_status
