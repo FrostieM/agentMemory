@@ -65,17 +65,25 @@ from agent_memory_lite.retrieval.fusion_rrf import reciprocal_rank_fusion
 from agent_memory_lite.retrieval.normalize import NormalizedQuery, normalize
 from agent_memory_lite.retrieval.scoring import score_candidates
 from agent_memory_lite.retrieval.token_budget import fit_within_budget
+from agent_memory_lite.utils.tokens import estimate_tokens
 from agent_memory_lite.vector_store.base import VectorStore
 
 MAX_FTS_HITS = 30
 MAX_VECTOR_HITS = 30
 MAX_GRAPH_HITS = 40
-MAX_DECISIONS = 8
+MAX_DECISIONS = 4
 MAX_HISTORICAL_DECISIONS = 20
-MAX_THEORIES = 6
-MAX_THEORY_EVIDENCE = 3
-MAX_RESEARCH_AGENDA = 6
-MAX_AGENT_CAPABILITIES = 6
+MAX_THEORIES = 2
+MAX_THEORY_EVIDENCE = 1
+MAX_RESEARCH_AGENDA = 2
+MAX_AGENT_CAPABILITIES = 1
+MAX_TITLE_CHARS = 180
+MAX_TEXT_CHARS = 280
+MAX_COMMAND_CHARS = 180
+MAX_LIST_ITEMS = 1
+MAX_LIST_ITEM_CHARS = 140
+MAX_CHUNK_TEXT_CHARS = 1200
+CONTEXT_CHUNK_RESERVE_TOKENS = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +105,30 @@ class BuiltContext:
     research_agenda: ResearchAgenda | None = None
     agent_capabilities: AgentCapabilities | None = None
     rules: list[ProceduralRule] = field(default_factory=list)
+
+
+def _clip_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    suffix = " ... [truncated]"
+    return text[: max(0, max_chars - len(suffix))].rstrip() + suffix
+
+
+def _limited_items(items: list[str]) -> tuple[list[str], int]:
+    visible = [_clip_text(item, MAX_LIST_ITEM_CHARS) for item in items[:MAX_LIST_ITEMS]]
+    return visible, max(0, len(items) - len(visible))
+
+
+def _render_omitted_line(*, count: int, tag: str, indent: str) -> list[str]:
+    if count <= 0:
+        return []
+    return [f"{indent}<{tag} count={quoteattr(str(count))}/>"]
+
+
+def _clip_hits_for_context(hits: list[ScoredHit]) -> list[ScoredHit]:
+    return [
+        hit.model_copy(update={"text": _clip_text(hit.text, MAX_CHUNK_TEXT_CHARS)}) for hit in hits
+    ]
 
 
 def _gather_chunk_candidates(
@@ -148,14 +180,18 @@ def _render_task(task: TaskState | None) -> list[str]:
     if task is None:
         return ["  <task_state/>"]
     lines = [f"  <task_state task_id={quoteattr(task.task_id)}>"]
-    lines.append(f"    <goal>{escape(task.goal)}</goal>")
+    lines.append(f"    <goal>{escape(_clip_text(task.goal, MAX_TEXT_CHARS))}</goal>")
     lines.append(f"    <status>{escape(task.status)}</status>")
     if task.next_action:
-        lines.append(f"    <next_action>{escape(task.next_action)}</next_action>")
+        lines.append(
+            f"    <next_action>{escape(_clip_text(task.next_action, MAX_TEXT_CHARS))}</next_action>"
+        )
     if task.blockers:
         lines.append("    <blockers>")
-        for item in task.blockers:
+        visible, omitted = _limited_items(task.blockers)
+        for item in visible:
             lines.append(f"      <item>{escape(item)}</item>")
+        lines.extend(_render_omitted_line(count=omitted, tag="omitted", indent="      "))
         lines.append("    </blockers>")
     lines.append("  </task_state>")
     return lines
@@ -172,8 +208,8 @@ def _render_decisions(items: list[Decision]) -> list[str]:
             f"source={quoteattr(item.source_episode_id or '')}"
         )
         lines.append(f"    <decision {attrs}>")
-        lines.append(f"      <title>{escape(item.title)}</title>")
-        lines.append(f"      <text>{escape(item.decision_text)}</text>")
+        lines.append(f"      <title>{escape(_clip_text(item.title, MAX_TITLE_CHARS))}</title>")
+        lines.append(f"      <text>{escape(_clip_text(item.decision_text, MAX_TEXT_CHARS))}</text>")
         lines.append("    </decision>")
     lines.append("  </active_decisions>")
     return lines
@@ -202,8 +238,10 @@ def _render_string_items(
     if not items:
         return []
     lines = [f"{indent}<{container_tag}>"]
-    for item in items:
+    visible, omitted = _limited_items(items)
+    for item in visible:
         lines.append(f"{indent}  <{item_tag}>{escape(item)}</{item_tag}>")
+    lines.extend(_render_omitted_line(count=omitted, tag="omitted", indent=f"{indent}  "))
     lines.append(f"{indent}</{container_tag}>")
     return lines
 
@@ -220,7 +258,9 @@ def _render_theory_evidence(items: list[TheoryEvidence]) -> list[str]:
             f"observed_at={quoteattr(evidence.observed_at)} "
             f"source={quoteattr(evidence.source_episode_id or '')}"
         )
-        lines.append(f"        <item {ev_attrs}>{escape(evidence.summary)}</item>")
+        lines.append(
+            f"        <item {ev_attrs}>{escape(_clip_text(evidence.summary, MAX_TEXT_CHARS))}</item>"
+        )
     lines.append("      </evidence>")
     return lines
 
@@ -228,10 +268,12 @@ def _render_theory_evidence(items: list[TheoryEvidence]) -> list[str]:
 def _render_theory(bundle: TheoryContext) -> list[str]:
     item = bundle.theory
     lines = [f"    <theory {_theory_attrs(item)}>"]
-    lines.append(f"      <title>{escape(item.title)}</title>")
-    lines.append(f"      <claim>{escape(item.claim)}</claim>")
+    lines.append(f"      <title>{escape(_clip_text(item.title, MAX_TITLE_CHARS))}</title>")
+    lines.append(f"      <claim>{escape(_clip_text(item.claim, MAX_TEXT_CHARS))}</claim>")
     if item.mechanism:
-        lines.append(f"      <mechanism>{escape(item.mechanism)}</mechanism>")
+        lines.append(
+            f"      <mechanism>{escape(_clip_text(item.mechanism, MAX_TEXT_CHARS))}</mechanism>"
+        )
     lines.extend(
         _render_string_items(
             container_tag="predictions",
@@ -249,7 +291,9 @@ def _render_theory(bundle: TheoryContext) -> list[str]:
         )
     )
     if item.experiment_plan:
-        lines.append(f"      <experiment_plan>{escape(item.experiment_plan)}</experiment_plan>")
+        lines.append(
+            f"      <experiment_plan>{escape(_clip_text(item.experiment_plan, MAX_TEXT_CHARS))}</experiment_plan>"
+        )
     lines.extend(
         _render_string_items(
             container_tag="dependent_decisions",
@@ -302,15 +346,25 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             f"snapshot_id={quoteattr(experiment.snapshot_id or '')}"
         )
         lines.append(f"    <experiment {attrs}>")
-        lines.append(f"      <title>{escape(experiment.title)}</title>")
-        lines.append(f"      <hypothesis>{escape(experiment.hypothesis)}</hypothesis>")
+        lines.append(
+            f"      <title>{escape(_clip_text(experiment.title, MAX_TITLE_CHARS))}</title>"
+        )
+        lines.append(
+            f"      <hypothesis>{escape(_clip_text(experiment.hypothesis, MAX_TEXT_CHARS))}</hypothesis>"
+        )
         if experiment.cohort_definition:
-            lines.append(f"      <cohort>{escape(experiment.cohort_definition)}</cohort>")
+            lines.append(
+                f"      <cohort>{escape(_clip_text(experiment.cohort_definition, MAX_TEXT_CHARS))}</cohort>"
+            )
         if experiment.success_criteria:
             criteria = json.dumps(experiment.success_criteria, sort_keys=True)
-            lines.append(f"      <success_criteria>{escape(criteria)}</success_criteria>")
+            lines.append(
+                f"      <success_criteria>{escape(_clip_text(criteria, MAX_COMMAND_CHARS))}</success_criteria>"
+            )
         if experiment.command:
-            lines.append(f"      <command>{escape(experiment.command)}</command>")
+            lines.append(
+                f"      <command>{escape(_clip_text(experiment.command, MAX_COMMAND_CHARS))}</command>"
+            )
         lines.append("    </experiment>")
 
     for insight in agenda.insights:
@@ -323,10 +377,12 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             f"target_id={quoteattr(insight.target_id or '')}"
         )
         lines.append(f"    <insight {attrs}>")
-        lines.append(f"      <summary>{escape(insight.summary)}</summary>")
+        lines.append(
+            f"      <summary>{escape(_clip_text(insight.summary, MAX_TEXT_CHARS))}</summary>"
+        )
         if insight.proposed_action:
             lines.append(
-                f"      <proposed_action>{escape(insight.proposed_action)}</proposed_action>"
+                f"      <proposed_action>{escape(_clip_text(insight.proposed_action, MAX_TEXT_CHARS))}</proposed_action>"
             )
         lines.append("    </insight>")
 
@@ -337,8 +393,10 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             f"confidence={quoteattr(f'{concept.confidence:.2f}')}"
         )
         lines.append(f"    <concept {attrs}>")
-        lines.append(f"      <name>{escape(concept.name)}</name>")
-        lines.append(f"      <definition>{escape(concept.definition)}</definition>")
+        lines.append(f"      <name>{escape(_clip_text(concept.name, MAX_TITLE_CHARS))}</name>")
+        lines.append(
+            f"      <definition>{escape(_clip_text(concept.definition, MAX_TEXT_CHARS))}</definition>"
+        )
         lines.append("    </concept>")
 
     for snapshot in agenda.snapshots:
@@ -349,9 +407,11 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             f"total_rows={quoteattr(str(snapshot.total_rows))}"
         )
         lines.append(f"    <snapshot {attrs}>")
-        lines.append(f"      <title>{escape(snapshot.title)}</title>")
+        lines.append(f"      <title>{escape(_clip_text(snapshot.title, MAX_TITLE_CHARS))}</title>")
         if snapshot.duckdb_path:
-            lines.append(f"      <duckdb_path>{escape(snapshot.duckdb_path)}</duckdb_path>")
+            lines.append(
+                f"      <duckdb_path>{escape(_clip_text(snapshot.duckdb_path, MAX_COMMAND_CHARS))}</duckdb_path>"
+            )
         lines.append("    </snapshot>")
 
     lines.append("  </research_agenda>")
@@ -394,8 +454,8 @@ def _render_role(role: AgentRole) -> list[str]:
         source_episode_id=role.source_episode_id,
     )
     lines = [f"    <role {attrs}>"]
-    lines.append(f"      <name>{escape(role.name)}</name>")
-    lines.append(f"      <purpose>{escape(role.purpose)}</purpose>")
+    lines.append(f"      <name>{escape(_clip_text(role.name, MAX_TITLE_CHARS))}</name>")
+    lines.append(f"      <purpose>{escape(_clip_text(role.purpose, MAX_TEXT_CHARS))}</purpose>")
     lines.extend(
         _render_item_list(
             container_tag="responsibilities",
@@ -403,17 +463,6 @@ def _render_role(role: AgentRole) -> list[str]:
             items=role.responsibilities,
         )
     )
-    lines.extend(
-        _render_item_list(container_tag="boundaries", item_tag="item", items=role.boundaries)
-    )
-    lines.extend(
-        _render_item_list(
-            container_tag="handoff_triggers",
-            item_tag="item",
-            items=role.handoff_triggers,
-        )
-    )
-    lines.extend(_render_item_list(container_tag="tools", item_tag="tool", items=role.tools))
     lines.append("    </role>")
     return lines
 
@@ -425,20 +474,10 @@ def _render_skill(skill: AgentSkill) -> list[str]:
         source_episode_id=skill.source_episode_id,
     )
     lines = [f"    <skill {attrs}>"]
-    lines.append(f"      <name>{escape(skill.name)}</name>")
-    lines.append(f"      <summary>{escape(skill.summary)}</summary>")
+    lines.append(f"      <name>{escape(_clip_text(skill.name, MAX_TITLE_CHARS))}</name>")
+    lines.append(f"      <summary>{escape(_clip_text(skill.summary, MAX_TEXT_CHARS))}</summary>")
     lines.extend(
         _render_item_list(container_tag="when_to_use", item_tag="item", items=skill.when_to_use)
-    )
-    lines.extend(_render_item_list(container_tag="inputs", item_tag="item", items=skill.inputs))
-    lines.extend(_render_item_list(container_tag="outputs", item_tag="item", items=skill.outputs))
-    lines.extend(_render_item_list(container_tag="tools", item_tag="tool", items=skill.tools))
-    lines.extend(
-        _render_item_list(
-            container_tag="related_roles",
-            item_tag="role",
-            items=skill.related_roles,
-        )
     )
     lines.append("    </skill>")
     return lines
@@ -451,26 +490,9 @@ def _render_playbook(playbook: AgentPlaybook) -> list[str]:
         source_episode_id=playbook.source_episode_id,
     )
     lines = [f"    <playbook {attrs}>"]
-    lines.append(f"      <name>{escape(playbook.name)}</name>")
-    lines.append(f"      <goal>{escape(playbook.goal)}</goal>")
-    lines.extend(
-        _render_item_list(container_tag="triggers", item_tag="item", items=playbook.triggers)
-    )
+    lines.append(f"      <name>{escape(_clip_text(playbook.name, MAX_TITLE_CHARS))}</name>")
+    lines.append(f"      <goal>{escape(_clip_text(playbook.goal, MAX_TEXT_CHARS))}</goal>")
     lines.extend(_render_item_list(container_tag="steps", item_tag="step", items=playbook.steps))
-    lines.extend(
-        _render_item_list(
-            container_tag="success_criteria",
-            item_tag="item",
-            items=playbook.success_criteria,
-        )
-    )
-    lines.extend(
-        _render_item_list(
-            container_tag="required_skills",
-            item_tag="skill",
-            items=playbook.required_skills,
-        )
-    )
     lines.append("    </playbook>")
     return lines
 
@@ -498,7 +520,9 @@ def _render_rules(items: list[ProceduralRule]) -> list[str]:
     lines = ["  <procedural_rules>"]
     for item in items:
         attrs = f"source={quoteattr(item.source_episode_id or '')}"
-        lines.append(f"    <rule {attrs}>{escape(item.rule_text)}</rule>")
+        lines.append(
+            f"    <rule {attrs}>{escape(_clip_text(item.rule_text, MAX_TEXT_CHARS))}</rule>"
+        )
     lines.append("  </procedural_rules>")
     return lines
 
@@ -516,7 +540,7 @@ def _render_facts(items: list[RetrievalCandidate]) -> list[str]:
             f"valid_from={quoteattr(str(item.metadata.get('valid_from', '')))} "
             f"valid_to={quoteattr(str(valid_to or ''))}"
         )
-        lines.append(f"    <fact {attrs}>{escape(item.text)}</fact>")
+        lines.append(f"    <fact {attrs}>{escape(_clip_text(item.text, MAX_TEXT_CHARS))}</fact>")
     lines.append("  </retrieved_facts>")
     return lines
 
@@ -565,6 +589,84 @@ def _render(
     return "\n".join(lines)
 
 
+def _render_structured_only(
+    *,
+    core: list[CoreMemory],
+    task: TaskState | None,
+    decisions: list[Decision],
+    theories: list[TheoryContext],
+    research_agenda: ResearchAgenda | None,
+    agent_capabilities: AgentCapabilities | None,
+    rules: list[ProceduralRule],
+    facts: list[RetrievalCandidate],
+) -> str:
+    return _render(
+        core=core,
+        task=task,
+        decisions=decisions,
+        theories=theories,
+        research_agenda=research_agenda,
+        agent_capabilities=agent_capabilities,
+        rules=rules,
+        facts=facts,
+        hits=[],
+    )
+
+
+def _fit_structured_sections(
+    *,
+    max_tokens: int,
+    core: list[CoreMemory],
+    task: TaskState | None,
+    decisions: list[Decision],
+    theories: list[TheoryContext],
+    research_agenda: ResearchAgenda | None,
+    agent_capabilities: AgentCapabilities | None,
+    rules: list[ProceduralRule],
+    facts: list[RetrievalCandidate],
+) -> tuple[list[Decision], list[TheoryContext], ResearchAgenda | None, AgentCapabilities | None]:
+    decision_variants = [decisions, decisions[:2], decisions[:1], []]
+    theory_variants = [theories, theories[:1], []]
+    agenda_variants = [research_agenda, None]
+    capability_variants = [agent_capabilities, None]
+
+    target_tokens = max(0, max_tokens - CONTEXT_CHUNK_RESERVE_TOKENS)
+    best = (decisions, theories, research_agenda, agent_capabilities)
+    best_tokens = estimate_tokens(
+        _render_structured_only(
+            core=core,
+            task=task,
+            decisions=decisions,
+            theories=theories,
+            research_agenda=research_agenda,
+            agent_capabilities=agent_capabilities,
+            rules=rules,
+            facts=facts,
+        )
+    )
+    for cap in capability_variants:
+        for agenda in agenda_variants:
+            for theory_items in theory_variants:
+                for decision_items in decision_variants:
+                    text = _render_structured_only(
+                        core=core,
+                        task=task,
+                        decisions=decision_items,
+                        theories=theory_items,
+                        research_agenda=agenda,
+                        agent_capabilities=cap,
+                        rules=rules,
+                        facts=facts,
+                    )
+                    tokens = estimate_tokens(text)
+                    if tokens < best_tokens:
+                        best = (decision_items, theory_items, agenda, cap)
+                        best_tokens = tokens
+                    if tokens <= target_tokens:
+                        return decision_items, theory_items, agenda, cap
+    return best
+
+
 def build_context(
     conn: sqlite3.Connection,
     query: RetrievalQuery,
@@ -582,7 +684,7 @@ def build_context(
     fused = reciprocal_rank_fusion(rankings)
     scored = score_candidates(fused)
     filtered = filter_active(scored, historical=query.historical)
-    chunks_fit = fit_within_budget(filtered, max_tokens=query.max_tokens)
+    clipped_hits = _clip_hits_for_context(filtered)
 
     facts = collect_graph(
         conn,
@@ -641,13 +743,42 @@ def build_context(
     )
     task = get_task_state(conn, query.workspace_id, query.task_id) if query.task_id else None
 
+    render_decisions, render_theories, render_research_agenda, render_agent_capabilities = (
+        _fit_structured_sections(
+            max_tokens=query.max_tokens,
+            core=core,
+            task=task,
+            decisions=decisions,
+            theories=theories,
+            research_agenda=research_agenda,
+            agent_capabilities=agent_capabilities,
+            rules=rules,
+            facts=facts,
+        )
+    )
+    structured_text = _render_structured_only(
+        core=core,
+        task=task,
+        decisions=render_decisions,
+        theories=render_theories,
+        research_agenda=render_research_agenda,
+        agent_capabilities=render_agent_capabilities,
+        rules=rules,
+        facts=facts,
+    )
+    chunk_budget = max(
+        0,
+        query.max_tokens - estimate_tokens(structured_text) - CONTEXT_CHUNK_RESERVE_TOKENS,
+    )
+    chunks_fit = fit_within_budget(clipped_hits, max_tokens=chunk_budget)
+
     text = _render(
         core=core,
         task=task,
-        decisions=decisions,
-        theories=theories,
-        research_agenda=research_agenda,
-        agent_capabilities=agent_capabilities,
+        decisions=render_decisions,
+        theories=render_theories,
+        research_agenda=render_research_agenda,
+        agent_capabilities=render_agent_capabilities,
         rules=rules,
         facts=facts,
         hits=chunks_fit,
@@ -659,9 +790,9 @@ def build_context(
         normalized=normalized,
         core=core,
         task_state=task,
-        decisions=decisions,
-        theories=theories,
-        research_agenda=research_agenda,
-        agent_capabilities=agent_capabilities,
+        decisions=render_decisions,
+        theories=render_theories,
+        research_agenda=render_research_agenda,
+        agent_capabilities=render_agent_capabilities,
         rules=rules,
     )

@@ -704,6 +704,6 @@ def build_research_agenda(
             limit=limit,
         ),
         concepts=list_concepts(
-            conn, workspace_id=workspace_id, query=query, limit=max(3, limit // 2)
+            conn, workspace_id=workspace_id, query=query, limit=max(1, limit // 2)
         ),
     )

@@ -7,6 +7,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_memory_lite.utils.tokens import estimate_tokens
+
 
 @pytest.fixture
 def client(app_factory) -> Iterator[TestClient]:
@@ -104,4 +106,44 @@ def test_get_context_limits_decisions_by_query(client: TestClient) -> None:
     assert response.status_code == 200, response.text
     text = response.json()["context_text"]
     assert "Research agenda stays visible" in text
-    assert text.count("<decision ") <= 8
+    assert text.count("<decision ") <= 4
+
+
+def test_get_context_applies_budget_to_structured_sections(client: TestClient) -> None:
+    long_text = " ".join(["structured context budget should stay bounded"] * 80)
+    for index in range(8):
+        response = client.post(
+            "/memory/write_decision",
+            json={
+                "workspace_id": "default",
+                "title": f"Budget pressure decision {index}",
+                "decision_text": long_text,
+                "importance": 0.9,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    role = client.post(
+        "/memory/upsert_agent_role",
+        json={
+            "workspace_id": "default",
+            "name": "Budget pressure role",
+            "purpose": long_text,
+            "responsibilities": [long_text, long_text],
+            "confidence": 0.9,
+        },
+    )
+    assert role.status_code == 200, role.text
+
+    context = client.post(
+        "/memory/get_context",
+        json={
+            "workspace_id": "default",
+            "query": "budget pressure structured context",
+            "max_tokens": 600,
+        },
+    )
+    assert context.status_code == 200, context.text
+    text = context.json()["context_text"]
+    assert estimate_tokens(text) <= 600
+    assert text.count("<decision ") <= 2
