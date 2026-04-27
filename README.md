@@ -230,11 +230,16 @@ for tools to work. The **HTTP service** is what backs the auto-injection
 hook and any non-MCP client. Start it once per machine:
 
 ```bash
-python -m agent_memory_lite     # binds 127.0.0.1:8765
+python scripts/serve.py
 ```
 
-To keep it running across reboots: put it in a Windows startup folder, a
-launchd plist, a systemd user service, or whatever your OS prefers.
+That bootstraps the DB if missing, refuses to start when port 8765 is
+already taken, and runs `python -m agent_memory_lite` in the foreground.
+Override the port with `AGENT_MEMORY_PORT=<n>`.
+
+To keep it running across reboots: put `python scripts/serve.py` in a
+Windows startup folder, a launchd plist, a systemd user service, or
+whatever your OS prefers.
 
 ### The contract behind it all
 
