@@ -13,6 +13,11 @@ from typing import Any
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.capability_writer import (
+    upsert_agent_playbook,
+    upsert_agent_role,
+    upsert_agent_skill,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.file_pipeline import ingest_file
@@ -25,6 +30,7 @@ from agent_memory_lite.ingestion.research_writer import (
 )
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
+from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import (
@@ -37,6 +43,7 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
@@ -463,6 +470,101 @@ def _memory_list_insights(
     }
 
 
+def _memory_upsert_agent_role(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    role = upsert_agent_role(conn, AgentRoleIn(**payload))
+    return {
+        "role_id": role.id,
+        "name": role.name,
+        "confidence": role.confidence,
+        "active": role.active,
+    }
+
+
+def _memory_upsert_agent_skill(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    skill = upsert_agent_skill(conn, AgentSkillIn(**payload))
+    return {
+        "skill_id": skill.id,
+        "name": skill.name,
+        "confidence": skill.confidence,
+        "active": skill.active,
+    }
+
+
+def _memory_upsert_agent_playbook(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    playbook = upsert_agent_playbook(conn, AgentPlaybookIn(**payload))
+    return {
+        "playbook_id": playbook.id,
+        "name": playbook.name,
+        "confidence": playbook.confidence,
+        "active": playbook.active,
+    }
+
+
+def _memory_list_agent_capabilities(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    include_inactive: bool = False,
+    limit: int = 6,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    capabilities = build_agent_capabilities(
+        conn,
+        workspace_id=workspace_id,
+        query=query,
+        include_inactive=include_inactive,
+        limit=limit,
+    )
+    return {
+        "roles": [
+            {
+                "role_id": item.id,
+                "name": item.name,
+                "purpose": item.purpose,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.roles
+        ],
+        "skills": [
+            {
+                "skill_id": item.id,
+                "name": item.name,
+                "summary": item.summary,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.skills
+        ],
+        "playbooks": [
+            {
+                "playbook_id": item.id,
+                "name": item.name,
+                "goal": item.goal,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.playbooks
+        ],
+    }
+
+
 TOOLS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="memory_get_context",
@@ -548,6 +650,26 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_list_insights",
         description="List distilled research insights and open questions.",
         handler=_memory_list_insights,
+    ),
+    ToolDefinition(
+        name="memory_upsert_agent_role",
+        description="Create or update a first-class agent role with responsibilities and boundaries.",
+        handler=_memory_upsert_agent_role,
+    ),
+    ToolDefinition(
+        name="memory_upsert_agent_skill",
+        description="Create or update a reusable agent skill with inputs, outputs, and related roles.",
+        handler=_memory_upsert_agent_skill,
+    ),
+    ToolDefinition(
+        name="memory_upsert_agent_playbook",
+        description="Create or update a repeatable agent playbook with triggers, steps, and success criteria.",
+        handler=_memory_upsert_agent_playbook,
+    ),
+    ToolDefinition(
+        name="memory_list_agent_capabilities",
+        description="List relevant roles, skills, and playbooks for a query.",
+        handler=_memory_list_agent_capabilities,
     ),
 )
 

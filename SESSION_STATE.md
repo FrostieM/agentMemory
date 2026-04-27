@@ -4,24 +4,26 @@ Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
 ## Current phase
 
-**Research-lab memory layer complete.** The original v1 memory subsystem is
-feature-complete and now includes first-class theory and research workflow
-objects, query-ranked context sections, offline research evals, and a
-human-readable research status CLI.
+**Research-lab and capability memory layers complete.** The original v1 memory
+subsystem is feature-complete and now includes first-class theory/research
+workflow objects plus roles, skills, and playbooks. Context rendering is
+query-ranked so active execution and research guidance stays visible before raw
+chunks.
 
 ## Last verified
 
 All gates green on Python 3.14.3 (Windows):
 
-- `pytest` - **260 passed**, 0 failed.
+- `pytest` - **263 passed**, 0 failed.
 - `ruff check src tests scripts` - clean.
-- `mypy src` - clean across **148 source files**.
+- `mypy src` - clean across **153 source files**.
 - `python scripts/run_evals.py --workspace default --no-vector` - 11/11 cases
   passed with recall@10=1.0 and precision@10=1.0.
 - HTTP health on a project memory reported migrations `0001_init`,
-  `0002_chunks_fts`, `0003_theories`, and `0004_research_lab`.
+  `0002_chunks_fts`, `0003_theories`, `0004_research_lab`, and
+  `0005_agent_capabilities`.
 
-## Research-lab deliverables landed
+## Research-lab and capability deliverables landed
 
 Source:
 
@@ -29,6 +31,8 @@ Source:
 - `migrations/0004_research_lab.sql` with `memory_snapshots`,
   `research_experiments`, `experiment_results`, `domain_concepts`, and
   `research_insights`.
+- `migrations/0005_agent_capabilities.sql` with `agent_roles`,
+  `agent_skills`, and `agent_playbooks`.
 - Theory models, repository, writer, routes, schemas, MCP registry tools, and
   `<active_theories>` context rendering.
 - Research models, repository, writer, routes, schemas, MCP registry tools, and
@@ -44,14 +48,17 @@ Source:
   embedding model or vector store.
 - The real MCP stdio server exposes the expanded tool surface, not just the old
   base tools.
+- Capability models, repository, writer, routes, schemas, MCP tools, and
+  `<agent_capabilities>` context rendering.
 
 Docs:
 
 - `README.md` documents theory memory and the research-lab flow.
 - `docs/AGENT_CONTRACT.md` describes snapshots, experiments, results, concepts,
-  insights, and workspace-id handling.
+  insights, roles, skills, playbooks, and workspace-id handling.
 - `AGENT_SETUP/` prompts now tell agents to preserve research objects and to use
   the project's established workspace id instead of hard-coding a foreign one.
+  The capture prompt also preserves reusable capability memory.
 
 Tests:
 
@@ -61,6 +68,8 @@ Tests:
 - `tests/e2e/test_research_routes.py`.
 - `tests/unit/mcp/test_tools.py` now checks both the registry and stdio server
   tool exposure.
+- `tests/unit/ingestion/test_capability_writer.py`.
+- `tests/e2e/test_capabilities_routes.py`.
 - `tests/unit/evals/test_runner.py` covers `research_context` eval cases.
 - `tests/e2e/test_get_context_route.py` covers decision capping/query ranking.
 
@@ -74,6 +83,7 @@ Tests:
 - Phase 5: file/project ingestion.
 - Phase 6: compaction + eval harness + MCP base surface.
 - Research layer: theories, snapshots, experiments, results, concepts, insights.
+- Capability layer: roles, skills, playbooks.
 
 ## Locked-in decisions
 

@@ -26,7 +26,9 @@ After either prompt finishes, the agent should:
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the
-first-class research tools instead of burying them inside raw episodes.
+first-class research tools instead of burying them inside raw episodes. For
+operations-heavy projects, it tells the agent to preserve reusable roles,
+skills, and playbooks with the capability tools.
 
 If the agent reports that MCP tools aren't visible in its tool list, you
 need to **restart whichever runtime is hosting it**:

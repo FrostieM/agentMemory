@@ -56,7 +56,9 @@ Routes call services.
 
 The learning layer has first-class theory and research-lab objects. Episodes are
 the audit log; theories hold claims and predictions; snapshots, experiments,
-results, concepts, and insights form the reusable research backlog.
+results, concepts, and insights form the reusable research backlog. The
+capability layer has roles, skills, and playbooks so reusable execution
+knowledge is retrieved explicitly instead of rediscovered from episodes.
 
 ## Shared contracts (lock these early)
 

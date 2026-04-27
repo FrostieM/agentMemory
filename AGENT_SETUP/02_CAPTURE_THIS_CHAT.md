@@ -79,7 +79,7 @@ For the most recent/current task, call `memory_update_task_state`:
 If multiple distinct tasks happened in this chat, pick the most recent and write
 its state. The others should appear as episodes, not separate task rows.
 
-# Step 4 - write decisions and theories
+# Step 4 - write decisions, theories, and capabilities
 
 For each architectural decision, call `memory_write_decision`. One call per
 decision, with rationale.
@@ -89,6 +89,11 @@ If the conversation formed a research hypothesis or edge theory, call
 dataset, call `memory_register_snapshot`. If the conversation planned or ran a
 research test, call `memory_write_experiment` and, when results exist,
 `memory_add_experiment_result`.
+
+If the conversation clarified a reusable role, skill, or repeatable workflow,
+call `memory_upsert_agent_role`, `memory_upsert_agent_skill`, or
+`memory_upsert_agent_playbook`. Use capability memory for operating knowledge
+that future agents should retrieve before doing similar work.
 
 # Step 5 - write episodes
 
@@ -118,7 +123,9 @@ Important rules for `raw_text`:
 
 Call `memory_get_context` with a representative query about this chat. Confirm
 that at least one just-written episode, decision, theory, experiment, or insight
-appears in the response.
+appears in the response. If capabilities were written, confirm the response also
+contains `<agent_capabilities>` or call `memory_list_agent_capabilities` with
+the same query.
 
 If the query returns nothing relevant, write one more summary episode that
 explicitly mentions the keywords, then stop. Do not loop.
@@ -135,6 +142,7 @@ task_state:    <task_id> = <status>
 decisions:     <count> written  (titles: <title 1>; <title 2>; ...)
 theories:      <count> written
 experiments:   <count> written
+capabilities:  <roles>/<skills>/<playbooks> written
 episodes:      <count> written
 verification:  <ok | partial - context query returned no overlap; wrote a fallback summary>
 

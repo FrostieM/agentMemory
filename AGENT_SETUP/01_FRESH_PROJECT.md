@@ -150,6 +150,16 @@ If the project already has research memory, also run:
 This confirms that active theories, snapshots, experiments, insights, and
 concepts are visible from the same service the agent will use.
 
+If the project already has capability memory, also call
+`memory_list_agent_capabilities` with:
+
+```json
+{"workspace_id": "<WORKSPACE_ID>", "query": "self-test roles skills playbooks", "limit": 6}
+```
+
+This confirms that roles, skills, and playbooks are visible from the same
+service the agent will use.
+
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
    reads its MCP config file at startup, not on every prompt. The new
@@ -199,6 +209,9 @@ What this means for our future chats in this project:
 - Before non-trivial work I will call memory_get_context to load prior context.
 - After meaningful actions I will call memory_ingest_episode.
 - After architectural choices I will call memory_write_decision.
+- Before specialized workflows I will call memory_list_agent_capabilities.
+- When reusable roles, skills, or playbooks emerge I will save them with the
+  capability memory tools.
 - After task progress I will call memory_update_task_state.
 All of this writes to <project>/.agent_memory/memory.db only — no
 cross-project leakage.

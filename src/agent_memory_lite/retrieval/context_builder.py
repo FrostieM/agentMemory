@@ -7,6 +7,8 @@ Produces the XML-like envelope the agent consumes:
       <task_state>...</task_state>
       <active_decisions>...</active_decisions>
       <active_theories>...</active_theories>
+      <research_agenda>...</research_agenda>
+      <agent_capabilities>...</agent_capabilities>
       <procedural_rules>...</procedural_rules>
       <retrieved_facts>...</retrieved_facts>
       <retrieved_chunks>...</retrieved_chunks>
@@ -25,6 +27,12 @@ from dataclasses import dataclass, field
 from xml.sax.saxutils import escape, quoteattr
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.models.capabilities import (
+    AgentCapabilities,
+    AgentPlaybook,
+    AgentRole,
+    AgentSkill,
+)
 from agent_memory_lite.models.core_memory import CoreMemory
 from agent_memory_lite.models.decisions import Decision
 from agent_memory_lite.models.procedural import ProceduralRule
@@ -36,6 +44,7 @@ from agent_memory_lite.models.retrieval import (
 )
 from agent_memory_lite.models.task_state import TaskState
 from agent_memory_lite.models.theories import Theory, TheoryEvidence
+from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.core_memory_repo import list_active_core
 from agent_memory_lite.repositories.decisions_repo import (
     list_active_decisions,
@@ -66,6 +75,7 @@ MAX_HISTORICAL_DECISIONS = 20
 MAX_THEORIES = 6
 MAX_THEORY_EVIDENCE = 3
 MAX_RESEARCH_AGENDA = 6
+MAX_AGENT_CAPABILITIES = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +95,7 @@ class BuiltContext:
     decisions: list[Decision] = field(default_factory=list)
     theories: list[TheoryContext] = field(default_factory=list)
     research_agenda: ResearchAgenda | None = None
+    agent_capabilities: AgentCapabilities | None = None
     rules: list[ProceduralRule] = field(default_factory=list)
 
 
@@ -293,6 +304,140 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
     return lines
 
 
+def _capability_attrs(
+    *,
+    item_id: str,
+    confidence: float,
+    source_episode_id: str | None,
+) -> str:
+    return (
+        f"id={quoteattr(item_id)} "
+        f"confidence={quoteattr(f'{confidence:.2f}')} "
+        f"source={quoteattr(source_episode_id or '')}"
+    )
+
+
+def _render_item_list(
+    *,
+    container_tag: str,
+    item_tag: str,
+    items: list[str],
+    indent: str = "      ",
+) -> list[str]:
+    if not items:
+        return []
+    lines = [f"{indent}<{container_tag}>"]
+    for item in items:
+        lines.append(f"{indent}  <{item_tag}>{escape(item)}</{item_tag}>")
+    lines.append(f"{indent}</{container_tag}>")
+    return lines
+
+
+def _render_role(role: AgentRole) -> list[str]:
+    attrs = _capability_attrs(
+        item_id=role.id,
+        confidence=role.confidence,
+        source_episode_id=role.source_episode_id,
+    )
+    lines = [f"    <role {attrs}>"]
+    lines.append(f"      <name>{escape(role.name)}</name>")
+    lines.append(f"      <purpose>{escape(role.purpose)}</purpose>")
+    lines.extend(
+        _render_item_list(
+            container_tag="responsibilities",
+            item_tag="item",
+            items=role.responsibilities,
+        )
+    )
+    lines.extend(
+        _render_item_list(container_tag="boundaries", item_tag="item", items=role.boundaries)
+    )
+    lines.extend(
+        _render_item_list(
+            container_tag="handoff_triggers",
+            item_tag="item",
+            items=role.handoff_triggers,
+        )
+    )
+    lines.extend(_render_item_list(container_tag="tools", item_tag="tool", items=role.tools))
+    lines.append("    </role>")
+    return lines
+
+
+def _render_skill(skill: AgentSkill) -> list[str]:
+    attrs = _capability_attrs(
+        item_id=skill.id,
+        confidence=skill.confidence,
+        source_episode_id=skill.source_episode_id,
+    )
+    lines = [f"    <skill {attrs}>"]
+    lines.append(f"      <name>{escape(skill.name)}</name>")
+    lines.append(f"      <summary>{escape(skill.summary)}</summary>")
+    lines.extend(
+        _render_item_list(container_tag="when_to_use", item_tag="item", items=skill.when_to_use)
+    )
+    lines.extend(_render_item_list(container_tag="inputs", item_tag="item", items=skill.inputs))
+    lines.extend(_render_item_list(container_tag="outputs", item_tag="item", items=skill.outputs))
+    lines.extend(_render_item_list(container_tag="tools", item_tag="tool", items=skill.tools))
+    lines.extend(
+        _render_item_list(
+            container_tag="related_roles",
+            item_tag="role",
+            items=skill.related_roles,
+        )
+    )
+    lines.append("    </skill>")
+    return lines
+
+
+def _render_playbook(playbook: AgentPlaybook) -> list[str]:
+    attrs = _capability_attrs(
+        item_id=playbook.id,
+        confidence=playbook.confidence,
+        source_episode_id=playbook.source_episode_id,
+    )
+    lines = [f"    <playbook {attrs}>"]
+    lines.append(f"      <name>{escape(playbook.name)}</name>")
+    lines.append(f"      <goal>{escape(playbook.goal)}</goal>")
+    lines.extend(
+        _render_item_list(container_tag="triggers", item_tag="item", items=playbook.triggers)
+    )
+    lines.extend(_render_item_list(container_tag="steps", item_tag="step", items=playbook.steps))
+    lines.extend(
+        _render_item_list(
+            container_tag="success_criteria",
+            item_tag="item",
+            items=playbook.success_criteria,
+        )
+    )
+    lines.extend(
+        _render_item_list(
+            container_tag="required_skills",
+            item_tag="skill",
+            items=playbook.required_skills,
+        )
+    )
+    lines.append("    </playbook>")
+    return lines
+
+
+def _render_agent_capabilities(capabilities: AgentCapabilities | None) -> list[str]:
+    if capabilities is None:
+        return ["  <agent_capabilities/>"]
+    if not capabilities.roles and not capabilities.skills and not capabilities.playbooks:
+        return ["  <agent_capabilities/>"]
+
+    lines = ["  <agent_capabilities>"]
+    for role in capabilities.roles:
+        lines.extend(_render_role(role))
+    for skill in capabilities.skills:
+        lines.extend(_render_skill(skill))
+    for playbook in capabilities.playbooks:
+        lines.extend(_render_playbook(playbook))
+    lines.append("  </agent_capabilities>")
+    return lines
+
+
 def _render_rules(items: list[ProceduralRule]) -> list[str]:
     if not items:
         return ["  <procedural_rules/>"]
@@ -347,6 +492,7 @@ def _render(
     decisions: list[Decision],
     theories: list[TheoryContext],
     research_agenda: ResearchAgenda | None,
+    agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
     hits: list[ScoredHit],
@@ -357,6 +503,7 @@ def _render(
     lines.extend(_render_decisions(decisions))
     lines.extend(_render_theories(theories))
     lines.extend(_render_research_agenda(research_agenda))
+    lines.extend(_render_agent_capabilities(agent_capabilities))
     lines.extend(_render_rules(rules))
     lines.extend(_render_facts(facts))
     lines.extend(_render_chunks(hits))
@@ -431,6 +578,13 @@ def build_context(
         query=query.query,
         limit=MAX_RESEARCH_AGENDA,
     )
+    agent_capabilities = build_agent_capabilities(
+        conn,
+        workspace_id=query.workspace_id,
+        query=query.query,
+        include_inactive=query.historical,
+        limit=MAX_AGENT_CAPABILITIES,
+    )
     task = get_task_state(conn, query.workspace_id, query.task_id) if query.task_id else None
 
     text = _render(
@@ -439,6 +593,7 @@ def build_context(
         decisions=decisions,
         theories=theories,
         research_agenda=research_agenda,
+        agent_capabilities=agent_capabilities,
         rules=rules,
         facts=facts,
         hits=chunks_fit,
@@ -453,5 +608,6 @@ def build_context(
         decisions=decisions,
         theories=theories,
         research_agenda=research_agenda,
+        agent_capabilities=agent_capabilities,
         rules=rules,
     )

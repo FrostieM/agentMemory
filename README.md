@@ -21,7 +21,9 @@ v1 feature-complete: all six phases of the spec are landed (episodes + FTS,
 hybrid retrieval, decisions/task/core/procedural, lite temporal graph, file
 ingestion, compaction + evals + MCP tool registry). The research-lab extension
 adds theories, snapshots, experiments, results, concepts, insights, query-ranked
-context sections, and a status CLI. See `SESSION_STATE.md` for current
+context sections, and a status CLI. The capability extension adds first-class
+agent roles, reusable skills, and repeatable playbooks so execution knowledge is
+retrievable instead of buried in episodes. See `SESSION_STATE.md` for current
 verification counts.
 
 ## Requirements
@@ -109,6 +111,44 @@ to test those theories:
 `memory_get_context` query-ranks and caps active decisions before rendering
 theories and agenda, so old architectural choices do not bury current research
 work as the memory grows.
+
+## Agent capability memory
+
+Episodes record what happened. Decisions record what was chosen. Research
+objects record what should be studied. Capability memory records how agents
+should execute work:
+
+- `POST /memory/upsert_agent_role` stores a role with purpose,
+  responsibilities, boundaries, handoff triggers, tools, confidence, and source.
+- `POST /memory/upsert_agent_skill` stores a reusable skill with when-to-use
+  cues, inputs, outputs, tools, and related roles.
+- `POST /memory/upsert_agent_playbook` stores a repeatable workflow with
+  triggers, ordered steps, success criteria, and required skills.
+- `POST /memory/list_agent_capabilities` retrieves the relevant roles, skills,
+  and playbooks for a query.
+- `POST /memory/get_context` includes an `<agent_capabilities>` section after
+  `<research_agenda>`, so the agent sees execution guidance before raw chunks.
+
+Recommended flow:
+
+```text
+define role -> define reusable skill -> define playbook -> verify via get_context
+```
+
+Example playbook:
+
+```json
+{
+  "workspace_id": "default",
+  "name": "Non-destructive live audit",
+  "goal": "Confirm live flow without changing data.",
+  "triggers": ["The user asks whether the live system works"],
+  "steps": ["Read memory context", "Check health endpoints", "Report blockers"],
+  "success_criteria": ["No reset was performed", "The report cites exact evidence"],
+  "required_skills": ["Live flow audit"],
+  "confidence": 0.85
+}
+```
 
 Recommended flow:
 
@@ -294,11 +334,13 @@ The script (either mode) is idempotent. It:
 
 After this, in any new chat the agent has three layers of "don't forget":
 
-- **Tools layer**: base memory tools plus theory/research tools
+- **Tools layer**: base memory tools plus theory/research/capability tools
   (`memory_write_theory`, `memory_register_snapshot`,
   `memory_write_experiment`, `memory_add_experiment_result`,
-  `memory_list_research_agenda`, and related concept/insight tools) appear in
-  the tool list natively (via MCP), no system prompt required.
+  `memory_list_research_agenda`, `memory_upsert_agent_role`,
+  `memory_upsert_agent_skill`, `memory_upsert_agent_playbook`,
+  `memory_list_agent_capabilities`, and related concept/insight tools) appear
+  in the tool list natively (via MCP), no system prompt required.
 - **Instructions layer**: the contract markdown is auto-loaded into the
   agent's system context every session.
 - **Auto-injection layer** (Claude Code only): the hook calls the HTTP

@@ -2,6 +2,15 @@
 
 from agent_memory_lite.models.audit import AuditEntry
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
+from agent_memory_lite.models.capabilities import (
+    AgentCapabilities,
+    AgentPlaybook,
+    AgentPlaybookIn,
+    AgentRole,
+    AgentRoleIn,
+    AgentSkill,
+    AgentSkillIn,
+)
 from agent_memory_lite.models.chunks import Chunk, ChunkIn
 from agent_memory_lite.models.core_memory import CoreMemory, CoreMemoryIn
 from agent_memory_lite.models.decisions import Decision, DecisionIn
@@ -39,6 +48,13 @@ from agent_memory_lite.models.task_state import TaskState, TaskStateIn
 from agent_memory_lite.models.theories import Theory, TheoryEvidence, TheoryEvidenceIn, TheoryIn
 
 __all__ = [
+    "AgentCapabilities",
+    "AgentPlaybook",
+    "AgentPlaybookIn",
+    "AgentRole",
+    "AgentRoleIn",
+    "AgentSkill",
+    "AgentSkillIn",
     "AuditEntry",
     "Chunk",
     "ChunkIn",

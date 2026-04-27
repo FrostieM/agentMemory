@@ -47,6 +47,11 @@ from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.capability_writer import (
+    upsert_agent_playbook,
+    upsert_agent_role,
+    upsert_agent_skill,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.file_pipeline import ingest_file
@@ -60,6 +65,7 @@ from agent_memory_lite.ingestion.research_writer import (
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.logging_setup import configure_logging, get_logger
+from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import (
@@ -72,6 +78,7 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
@@ -155,8 +162,8 @@ _TOOLS: list[types.Tool] = [
         description=(
             "Retrieve the agent's memory context for the given query. Returns an "
             "XML envelope with core_memory, task_state, active_decisions, "
-            "active_theories, research_agenda, procedural_rules, "
-            "retrieved_facts, and retrieved_chunks."
+            "active_theories, research_agenda, agent_capabilities, "
+            "procedural_rules, retrieved_facts, and retrieved_chunks."
         ),
         inputSchema={
             "type": "object",
@@ -465,6 +472,80 @@ _TOOLS: list[types.Tool] = [
                 "workspace_id": _workspace_schema(),
                 "query": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_upsert_agent_role",
+        description="Create or update a first-class agent role with responsibilities and boundaries.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "name": {"type": "string", "minLength": 1},
+                "purpose": {"type": "string", "minLength": 1},
+                "responsibilities": {"type": "array", "items": {"type": "string"}},
+                "boundaries": {"type": "array", "items": {"type": "string"}},
+                "handoff_triggers": {"type": "array", "items": {"type": "string"}},
+                "tools": {"type": "array", "items": {"type": "string"}},
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "active": {"type": "boolean"},
+            },
+            "required": ["name", "purpose"],
+        },
+    ),
+    types.Tool(
+        name="memory_upsert_agent_skill",
+        description="Create or update a reusable agent skill with inputs, outputs, and related roles.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "name": {"type": "string", "minLength": 1},
+                "summary": {"type": "string", "minLength": 1},
+                "when_to_use": {"type": "array", "items": {"type": "string"}},
+                "inputs": {"type": "array", "items": {"type": "string"}},
+                "outputs": {"type": "array", "items": {"type": "string"}},
+                "tools": {"type": "array", "items": {"type": "string"}},
+                "related_roles": {"type": "array", "items": {"type": "string"}},
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "active": {"type": "boolean"},
+            },
+            "required": ["name", "summary"],
+        },
+    ),
+    types.Tool(
+        name="memory_upsert_agent_playbook",
+        description="Create or update a repeatable agent playbook with triggers, steps, and success criteria.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "name": {"type": "string", "minLength": 1},
+                "goal": {"type": "string", "minLength": 1},
+                "triggers": {"type": "array", "items": {"type": "string"}},
+                "steps": {"type": "array", "items": {"type": "string"}},
+                "success_criteria": {"type": "array", "items": {"type": "string"}},
+                "required_skills": {"type": "array", "items": {"type": "string"}},
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "active": {"type": "boolean"},
+            },
+            "required": ["name", "goal"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_agent_capabilities",
+        description="List relevant roles, skills, and playbooks for a query.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "include_inactive": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 6},
             },
         },
     ),
@@ -816,6 +897,82 @@ def _handle_list_insights(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_upsert_agent_role(args: dict[str, Any]) -> dict[str, Any]:
+    role = upsert_agent_role(_runtime.db(), AgentRoleIn(**_with_workspace(args)))
+    return {
+        "role_id": role.id,
+        "name": role.name,
+        "confidence": role.confidence,
+        "active": role.active,
+        "updated_at": role.updated_at,
+    }
+
+
+def _handle_upsert_agent_skill(args: dict[str, Any]) -> dict[str, Any]:
+    skill = upsert_agent_skill(_runtime.db(), AgentSkillIn(**_with_workspace(args)))
+    return {
+        "skill_id": skill.id,
+        "name": skill.name,
+        "confidence": skill.confidence,
+        "active": skill.active,
+        "updated_at": skill.updated_at,
+    }
+
+
+def _handle_upsert_agent_playbook(args: dict[str, Any]) -> dict[str, Any]:
+    playbook = upsert_agent_playbook(_runtime.db(), AgentPlaybookIn(**_with_workspace(args)))
+    return {
+        "playbook_id": playbook.id,
+        "name": playbook.name,
+        "confidence": playbook.confidence,
+        "active": playbook.active,
+        "updated_at": playbook.updated_at,
+    }
+
+
+def _handle_list_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    capabilities = build_agent_capabilities(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        query=args.get("query"),
+        include_inactive=bool(args.get("include_inactive", False)),
+        limit=int(args.get("limit", 6)),
+    )
+    return {
+        "roles": [
+            {
+                "role_id": item.id,
+                "name": item.name,
+                "purpose": item.purpose,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.roles
+        ],
+        "skills": [
+            {
+                "skill_id": item.id,
+                "name": item.name,
+                "summary": item.summary,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.skills
+        ],
+        "playbooks": [
+            {
+                "playbook_id": item.id,
+                "name": item.name,
+                "goal": item.goal,
+                "confidence": item.confidence,
+                "active": item.active,
+            }
+            for item in capabilities.playbooks
+        ],
+    }
+
+
 _HANDLERS = {
     "memory_get_context": _handle_get_context,
     "memory_search": _handle_search,
@@ -834,6 +991,10 @@ _HANDLERS = {
     "memory_list_research_agenda": _handle_list_research_agenda,
     "memory_list_concepts": _handle_list_concepts,
     "memory_list_insights": _handle_list_insights,
+    "memory_upsert_agent_role": _handle_upsert_agent_role,
+    "memory_upsert_agent_skill": _handle_upsert_agent_skill,
+    "memory_upsert_agent_playbook": _handle_upsert_agent_playbook,
+    "memory_list_agent_capabilities": _handle_list_agent_capabilities,
 }
 
 
