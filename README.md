@@ -227,19 +227,22 @@ Flags:
 
 The MCP stdio server boots per agent session — no separate process required
 for tools to work. The **HTTP service** is what backs the auto-injection
-hook and any non-MCP client. Start it once per machine:
+hook and any non-MCP client. One command from the repo root:
 
-```bash
-python scripts/serve.py
+```cmd
+.\start.bat            (Windows)
+./start.sh             (macOS / Linux / Git Bash)
 ```
 
-That bootstraps the DB if missing, refuses to start when port 8765 is
-already taken, and runs `python -m agent_memory_lite` in the foreground.
-Override the port with `AGENT_MEMORY_PORT=<n>`.
+The launchers auto-detect the project venv (`.venv/Scripts/python.exe` or
+`.venv/bin/python`), bootstrap the DB if missing, refuse to start when
+port 8765 is already taken, and run `python -m agent_memory_lite` in the
+foreground (Ctrl+C to stop). Override the port with
+`AGENT_MEMORY_PORT=<n>`.
 
-To keep it running across reboots: put `python scripts/serve.py` in a
-Windows startup folder, a launchd plist, a systemd user service, or
-whatever your OS prefers.
+To keep it running across reboots: put `.\start.bat` in a Windows startup
+folder, drop `./start.sh` into a launchd plist, a systemd user service,
+or whatever your OS prefers.
 
 ### The contract behind it all
 
