@@ -1,0 +1,215 @@
+"""Live retrieval quality evals for trusted project memory.
+
+The normal eval harness runs against synthetic temporary databases. This module
+checks the real selected memory DB: known queries must surface known objects in
+`memory_get_context`, with the expected retrieval sources when specified.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml  # type: ignore[import-untyped]
+
+from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.models.retrieval import RetrievalQuery
+from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.vector_store.base import VectorStore
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalQualityCase:
+    name: str
+    query: str
+    expected_ids: list[str] = field(default_factory=list)
+    expected_substrings: list[str] = field(default_factory=list)
+    expected_sections: list[str] = field(default_factory=list)
+    expected_sources: list[str] = field(default_factory=list)
+    top_k: int = 10
+    max_tokens: int = 2500
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> RetrievalQualityCase:
+        name = str(data.get("name") or data.get("query") or "unnamed")
+        query = str(data["query"])
+        return cls(
+            name=name,
+            query=query,
+            expected_ids=[str(item) for item in data.get("expected_ids", [])],
+            expected_substrings=[str(item) for item in data.get("expected_substrings", [])],
+            expected_sections=[str(item) for item in data.get("expected_sections", [])],
+            expected_sources=[str(item) for item in data.get("expected_sources", [])],
+            top_k=max(1, int(data.get("top_k", 10))),
+            max_tokens=max(200, int(data.get("max_tokens", 2500))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalQualityResult:
+    name: str
+    status: str
+    query: str
+    top_k: int
+    expected_ids: list[str]
+    matched_ids: list[str]
+    retrieved_ids: list[str]
+    expected_sources: list[str]
+    source_map: dict[str, list[str]]
+    failures: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "status": self.status,
+            "query": self.query,
+            "top_k": self.top_k,
+            "expected_ids": self.expected_ids,
+            "matched_ids": self.matched_ids,
+            "retrieved_ids": self.retrieved_ids,
+            "expected_sources": self.expected_sources,
+            "source_map": self.source_map,
+            "failures": self.failures,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalQualityReport:
+    status: str
+    workspace_id: str
+    cases_run: int
+    cases_passed: int
+    failures: list[str]
+    results: list[RetrievalQualityResult]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "workspace_id": self.workspace_id,
+            "cases_run": self.cases_run,
+            "cases_passed": self.cases_passed,
+            "failures": self.failures,
+            "results": [result.to_dict() for result in self.results],
+        }
+
+
+def load_retrieval_quality_cases(path: Path) -> list[RetrievalQualityCase]:
+    parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or []
+    if not isinstance(parsed, list):
+        raise ValueError(f"{path} must contain a YAML list of retrieval quality cases")
+    return [RetrievalQualityCase.from_mapping(dict(item)) for item in parsed]
+
+
+def _run_case(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    case: RetrievalQualityCase,
+    *,
+    embedding_provider: EmbeddingProvider | None,
+    vector_store: VectorStore | None,
+) -> RetrievalQualityResult:
+    built = build_context(
+        conn,
+        RetrievalQuery(
+            workspace_id=workspace_id,
+            query=case.query,
+            max_tokens=case.max_tokens,
+        ),
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+    )
+    top_hits = built.hits[: case.top_k]
+    retrieved_ids = [hit.id for hit in top_hits]
+    source_map = {hit.id: list(hit.sources) for hit in top_hits}
+    matched_ids = [item for item in case.expected_ids if item in retrieved_ids]
+    failures: list[str] = []
+
+    missing_ids = [item for item in case.expected_ids if item not in retrieved_ids]
+    if missing_ids:
+        failures.append(f"missing expected ids in top {case.top_k}: {missing_ids}")
+
+    for expected_source in case.expected_sources:
+        source_ok = False
+        if case.expected_ids:
+            source_ok = any(
+                expected_source in source_map.get(expected_id, []) for expected_id in matched_ids
+            )
+        else:
+            source_ok = any(expected_source in sources for sources in source_map.values())
+        if not source_ok:
+            failures.append(f"missing expected retrieval source {expected_source!r}")
+
+    for section in case.expected_sections:
+        if f"<{section}" not in built.text:
+            failures.append(f"missing context section <{section}>")
+
+    for needle in case.expected_substrings:
+        if needle not in built.text:
+            failures.append(f"missing context substring {needle!r}")
+
+    return RetrievalQualityResult(
+        name=case.name,
+        status="failed" if failures else "passed",
+        query=case.query,
+        top_k=case.top_k,
+        expected_ids=case.expected_ids,
+        matched_ids=matched_ids,
+        retrieved_ids=retrieved_ids,
+        expected_sources=case.expected_sources,
+        source_map=source_map,
+        failures=failures,
+    )
+
+
+def run_retrieval_quality_evals(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    cases: list[RetrievalQualityCase],
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
+) -> RetrievalQualityReport:
+    results: list[RetrievalQualityResult] = []
+    failures: list[str] = []
+    for case in cases:
+        try:
+            result = _run_case(
+                conn,
+                workspace_id,
+                case,
+                embedding_provider=embedding_provider,
+                vector_store=vector_store,
+            )
+        except Exception as exc:
+            result = RetrievalQualityResult(
+                name=case.name,
+                status="failed",
+                query=case.query,
+                top_k=case.top_k,
+                expected_ids=case.expected_ids,
+                matched_ids=[],
+                retrieved_ids=[],
+                expected_sources=case.expected_sources,
+                source_map={},
+                failures=[f"{type(exc).__name__}: {exc}"],
+            )
+        results.append(result)
+        failures.extend(f"{result.name}: {failure}" for failure in result.failures)
+
+    cases_passed = sum(1 for result in results if result.status == "passed")
+    if not cases:
+        status = "unknown"
+    elif failures:
+        status = "degraded"
+    else:
+        status = "ok"
+    return RetrievalQualityReport(
+        status=status,
+        workspace_id=workspace_id,
+        cases_run=len(cases),
+        cases_passed=cases_passed,
+        failures=failures,
+        results=results,
+    )

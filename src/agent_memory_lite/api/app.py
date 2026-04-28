@@ -19,6 +19,7 @@ from agent_memory_lite.api.routes import (
     decisions,
     evals,
     health,
+    hygiene,
     ingest_episode,
     ingest_file,
     maintenance,
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     install_handlers(app)
     app.include_router(health.router)
+    app.include_router(hygiene.router)
     app.include_router(candidates.router)
     app.include_router(capability_links.router)
     app.include_router(ingest_episode.router)

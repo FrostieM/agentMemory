@@ -22,8 +22,9 @@ After either prompt finishes, the agent should:
 2. Confirm the memory tools are working (a quick `memory_get_context` round-trip).
 3. Use the project's established workspace id, or the project directory name
    when none is established.
-4. Run a read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
-   check when the repo is available.
+4. Run read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
+   and `scripts/memory_hygiene.py --workspace <workspace_id> --json` checks
+   when the repo is available.
 5. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve

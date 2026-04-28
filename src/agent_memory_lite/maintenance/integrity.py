@@ -6,10 +6,12 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from agent_memory_lite.fts.chunks_fts import rebuild_chunks_fts
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.maintenance.hygiene import run_hygiene_report
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.repositories.maintenance_repo import count_open_maintenance_events
 from agent_memory_lite.repositories.workspace_manifest_repo import get_workspace_manifest
@@ -175,6 +177,7 @@ def _workspace_manifest_check(conn: sqlite3.Connection, workspace_id: str) -> In
             "db_uuid": manifest.db_uuid,
             "last_audit_at": manifest.last_audit_at,
             "last_audit_status": manifest.last_audit_status,
+            "last_repair_at": manifest.last_repair_at,
         },
     )
 
@@ -558,11 +561,61 @@ def _research_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> Inte
     )
 
 
-def run_integrity_audit(
+def _hygiene_report_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
+    report = run_hygiene_report(conn, workspace_id=workspace_id)
+    capability_link_warnings = [
+        finding.to_dict()
+        for finding in report.findings
+        if finding.kind == "missing_capability_link"
+    ]
+    return IntegrityCheck(
+        status=report.status,
+        details={
+            "counts": report.counts,
+            "total_findings": report.counts.get("total_findings", 0),
+            "capability_link_warnings": capability_link_warnings[:20],
+            "findings_sample": [finding.to_dict() for finding in report.findings[:20]],
+        },
+    )
+
+
+def _stray_db_check(db_path: Path | None) -> IntegrityCheck:
+    if db_path is None:
+        return IntegrityCheck(status="unknown", details={"reason": "db_path_not_supplied"})
+    resolved = db_path.resolve()
+    if resolved.name != "memory.db" or resolved.parent.name != ".agent_memory":
+        return IntegrityCheck(
+            status="unknown",
+            details={"reason": "non_standard_db_path", "db_path": str(resolved)},
+        )
+    project_root = resolved.parent.parent
+    candidates: list[str] = []
+    try:
+        for candidate in project_root.rglob(".agent_memory/memory.db"):
+            candidate_resolved = candidate.resolve()
+            if candidate_resolved != resolved:
+                candidates.append(str(candidate_resolved))
+    except OSError as exc:
+        return IntegrityCheck(
+            status="unknown",
+            details={"db_path": str(resolved), "error": str(exc)},
+        )
+    return IntegrityCheck(
+        status="warning" if candidates else "ok",
+        details={
+            "db_path": str(resolved),
+            "project_root": str(project_root),
+            "stray_dbs": candidates,
+        },
+    )
+
+
+def run_integrity_audit(  # noqa: PLR0912
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
     vector_store: VectorStore | None = None,
+    db_path: str | Path | None = None,
 ) -> IntegrityReport:
     checks = {
         "sqlite": _sqlite_check(conn),
@@ -575,6 +628,8 @@ def run_integrity_audit(
         "capability_links": _capability_links_check(conn, workspace_id),
         "candidate_hygiene": _candidate_hygiene_check(conn, workspace_id),
         "research_hygiene": _research_hygiene_check(conn, workspace_id),
+        "hygiene": _hygiene_report_check(conn, workspace_id),
+        "stray_dbs": _stray_db_check(Path(db_path) if db_path is not None else None),
     }
     failures = [name for name, check in checks.items() if check.status == "degraded"]
     warnings = [name for name, check in checks.items() if check.status == "warning"]
@@ -593,9 +648,10 @@ def run_integrity_audit(
     if checks["fts"].status == "degraded":
         repair_hints.append("Run scripts/memory_audit.py --repair-fts --backup-first.")
     vector_status = checks["vector"].status
-    if vector_status in {"degraded", "warning"}:
-        suffix = " to backfill vector references" if vector_status == "warning" else ""
-        repair_hints.append(f"Run scripts/memory_audit.py --repair-vectors --backup-first{suffix}.")
+    if vector_status == "degraded":
+        repair_hints.append("Run scripts/memory_audit.py --repair-vectors --backup-first.")
+    elif vector_status == "warning":
+        repair_hints.append("Run scripts/memory_audit.py --repair-embedding-refs --backup-first.")
     if checks["workspace_pollution"].status == "degraded":
         repair_hints.append("Inspect workspace_id rows before migrating or deleting them.")
     if checks["maintenance_events"].status == "degraded":
@@ -611,6 +667,14 @@ def run_integrity_audit(
     if checks["research_hygiene"].status == "warning":
         repair_hints.append(
             "Add validation criteria, evidence, or completion state to stale research objects."
+        )
+    if checks["hygiene"].status == "warning":
+        repair_hints.append(
+            "Run scripts/memory_hygiene.py and triage candidates, theories, experiments, insights, decisions, or capability links."
+        )
+    if checks["stray_dbs"].status == "warning":
+        repair_hints.append(
+            "Inspect stray .agent_memory/memory.db files before trusting the selected project DB."
         )
 
     return IntegrityReport(
@@ -632,6 +696,13 @@ def run_integrity_audit(
             "stale_open_experiments": checks["research_hygiene"].details.get(
                 "stale_open_experiments"
             ),
+            "hygiene_findings": checks["hygiene"].details.get("total_findings"),
+            "capability_link_warnings": len(
+                checks["hygiene"].details.get("capability_link_warnings", [])
+            ),
+            "stray_db_warnings": len(checks["stray_dbs"].details.get("stray_dbs", [])),
+            "manifest_status": checks["workspace_manifest"].status,
+            "hygiene_status": checks["hygiene"].status,
         },
         failures=failures,
         warnings=warnings,

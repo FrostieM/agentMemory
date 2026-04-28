@@ -10,6 +10,7 @@ embedding model or vector store. Standalone use:
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -53,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     store = None if args.no_vector else get_vector_store(settings)
 
     @contextmanager
-    def _conn_factory() -> Iterator:
+    def _conn_factory() -> Iterator[sqlite3.Connection]:
         conn = open_connection(":memory:")
         try:
             apply_migrations(conn)

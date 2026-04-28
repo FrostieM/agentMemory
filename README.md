@@ -256,8 +256,8 @@ FTS lookup via `POST /memory/search`, and finally runs the eval harness via
 ```
 === POST /memory/run_evals ===
 {
-  "cases_run": 11,
-  "cases_passed": 11,
+  "cases_run": 13,
+  "cases_passed": 13,
   "retrieval_recall_at_10": 1.0,
   "retrieval_precision_at_10": 1.0,
   "stale_fact_rate": 0.0,
@@ -285,11 +285,42 @@ Read-only audit:
 python scripts/memory_audit.py --workspace <workspace_id> --json
 ```
 
+Detailed memory hygiene report:
+
+```bash
+python scripts/memory_hygiene.py --workspace <workspace_id> --json
+curl "http://127.0.0.1:8765/memory/hygiene_report?workspace_id=<workspace_id>"
+```
+
+Live watchdog over integrity, retrieval sentinels, and hygiene:
+
+```bash
+python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
+python scripts/memory_watchdog.py --workspace-id <workspace_id> --sentinels .agent_memory/retrieval_sentinels.yaml --json
+```
+
+The watchdog writes JSON artifacts under `.agent_memory/audit_runs/`, updates
+the workspace manifest audit timestamp, and opens a maintenance event only when
+integrity, retrieval quality, or hygiene is degraded/warning. It never repairs.
+
+Sentinel files are YAML lists. They should contain project-specific ids kept
+outside generic docs, for example:
+
+```yaml
+- name: known_recent_incident
+  query: "exact token plus paraphrase"
+  expected_ids: ["chk_..."]
+  expected_sources: ["fts", "vector"]
+  top_k: 10
+  max_tokens: 2500
+```
+
 Explicit repair, with backups first:
 
 ```bash
 python scripts/memory_audit.py --workspace <workspace_id> --repair-fts --backup-first
 python scripts/memory_audit.py --workspace <workspace_id> --repair-vectors --backup-first
+python scripts/memory_audit.py --workspace <workspace_id> --repair-embedding-refs --backup-first
 ```
 
 Dry-run a repair plan without mutating the DB:
@@ -424,7 +455,8 @@ After this, in any new chat the agent has three layers of "don't forget":
 
 Re-run `python scripts/status.py` at any time to see the current state.
 Use `python scripts/research_status.py --workspace <workspace_id>` to inspect
-the research memory backlog. Use
+the research memory backlog. Use `python scripts/memory_hygiene.py --workspace
+<workspace_id>` to inspect content-discipline gaps, and use
 `python scripts/run_evals.py --workspace <workspace_id> --no-vector` for a fast
 offline eval run that does not load an embedding model or vector store.
 

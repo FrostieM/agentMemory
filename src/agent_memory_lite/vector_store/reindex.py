@@ -79,3 +79,38 @@ def reindex_chunks(
         total += len(rows)
 
     return total
+
+
+def repair_chunk_embedding_refs(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    store: VectorStore,
+) -> int:
+    """Backfill `chunks.embedding_id` from existing vector row ids.
+
+    This does not embed or upsert vectors. It is safe when the vector namespace
+    already has parity with SQLite chunks but older rows have NULL
+    `embedding_id` values.
+    """
+    store.open()
+    vector_ids = sorted(store.list_ids(NAMESPACE_CHUNKS, workspace_id=workspace_id))
+    if not vector_ids:
+        return 0
+    placeholders = ",".join("?" for _ in vector_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id
+        FROM chunks
+        WHERE workspace_id = ?
+          AND id IN ({placeholders})
+          AND (embedding_id IS NULL OR embedding_id != id)
+        ORDER BY id
+        """,
+        (workspace_id, *vector_ids),
+    ).fetchall()
+    chunk_ids = [str(row["id"]) for row in rows]
+    if not chunk_ids:
+        return 0
+    set_many_chunk_embedding_ids(conn, chunk_ids=chunk_ids)
+    return len(chunk_ids)

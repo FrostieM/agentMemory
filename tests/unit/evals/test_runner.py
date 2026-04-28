@@ -90,6 +90,40 @@ def test_runner_handles_retrieval_case(fake_embedding_provider, fake_vector_stor
     assert report.retrieval_recall_at_10 >= 0.5
 
 
+def test_runner_handles_retrieval_context_quality_case(
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    cases = [
+        {
+            "name": "retrieval_quality",
+            "type": "retrieval_context_quality",
+            "setup": [
+                {
+                    "episode": "heap_watchdog v2 fixed state refresh memory pressure",
+                    "label": "heap",
+                }
+            ],
+            "query": "heap_watchdog memory pressure",
+            "expect_labels": ["heap"],
+            "expect_sources": ["fts", "vector"],
+            "expect_sections": ["retrieved_chunks"],
+            "expect_substrings": ["heap_watchdog v2"],
+            "top_k": 3,
+        }
+    ]
+    report = run_evals(
+        _fresh_factory(),
+        workspace_id="default",
+        cases=cases,
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    assert report.cases_run == 1
+    assert report.cases_passed == 1
+    assert report.failures == []
+
+
 def test_runner_handles_research_context_case(fake_embedding_provider, fake_vector_store) -> None:
     cases = [
         {

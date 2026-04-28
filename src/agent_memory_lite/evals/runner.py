@@ -162,6 +162,58 @@ def _run_retrieval(
     return recall, precision, failures
 
 
+def _run_retrieval_context_quality(
+    conn: sqlite3.Connection,
+    case: dict[str, Any],
+    workspace_id: str,
+    *,
+    embedding_provider: EmbeddingProvider | None,
+    vector_store: VectorStore | None,
+) -> tuple[float, float, list[str]]:
+    label_map = _ingest_setup(
+        conn,
+        workspace_id,
+        list(case.get("setup", [])),
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+    )
+    top_k = max(1, int(case.get("top_k", 10)))
+    query = RetrievalQuery(
+        workspace_id=workspace_id,
+        query=str(case["query"]),
+        max_tokens=int(case.get("max_tokens", 2500)),
+    )
+    built = build_context(
+        conn,
+        query,
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+    )
+    top_hits = built.hits[:top_k]
+    retrieved_ids = [hit.id for hit in top_hits]
+    expected_labels = [str(label) for label in case.get("expect_labels", [])]
+    expected_ids = [label_map[label] for label in expected_labels if label in label_map]
+    recall = recall_at_k(retrieved_ids, expected_ids, k=top_k)
+    precision = precision_at_k(retrieved_ids, expected_ids, k=top_k)
+    failures: list[str] = []
+    missing_ids = [chunk_id for chunk_id in expected_ids if chunk_id not in retrieved_ids]
+    if missing_ids:
+        failures.append(f"missing expected ids in top {top_k}: {missing_ids}")
+    expected_sources = [str(source) for source in case.get("expect_sources", [])]
+    expected_source_ids = set(expected_ids) if expected_ids else set(retrieved_ids)
+    source_map = {hit.id: set(hit.sources) for hit in top_hits}
+    for source in expected_sources:
+        if not any(source in source_map.get(chunk_id, set()) for chunk_id in expected_source_ids):
+            failures.append(f"missing expected retrieval source {source!r}")
+    for section in case.get("expect_sections", []):
+        if f"<{section}" not in built.text:
+            failures.append(f"missing section <{section}>")
+    for needle in case.get("expect_substrings", []):
+        if str(needle) not in built.text:
+            failures.append(f"missing substring {needle!r}")
+    return recall, precision, failures
+
+
 def _seed_research_setup(
     conn: sqlite3.Connection,
     case: dict[str, Any],
@@ -418,6 +470,20 @@ def _process_case(  # noqa: PLR0912
     name = case.get("name", "?")
     if kind == "retrieval":
         recall, precision, failures = _run_retrieval(
+            conn,
+            case,
+            workspace_id,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+        )
+        recalls.append(recall)
+        precisions.append(precision)
+        if failures:
+            report.failures.extend(f"{name}: {f}" for f in failures)
+        else:
+            report.cases_passed += 1
+    elif kind == "retrieval_context_quality":
+        recall, precision, failures = _run_retrieval_context_quality(
             conn,
             case,
             workspace_id,

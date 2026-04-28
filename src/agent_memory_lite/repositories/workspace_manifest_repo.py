@@ -39,14 +39,16 @@ def get_workspace_manifest(conn: sqlite3.Connection) -> WorkspaceManifest | None
     row = conn.execute("SELECT * FROM workspace_manifest WHERE id = 1").fetchone()
     if row is None:
         return None
+    data = dict(row)
     return WorkspaceManifest(
-        workspace_id=row["workspace_id"],
-        db_uuid=row["db_uuid"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        last_audit_at=row["last_audit_at"],
-        last_audit_status=row["last_audit_status"],
-        metadata=_json_dict(row["metadata_json"]),
+        workspace_id=data["workspace_id"],
+        db_uuid=data["db_uuid"],
+        created_at=data["created_at"],
+        updated_at=data["updated_at"],
+        last_audit_at=data["last_audit_at"],
+        last_audit_status=data["last_audit_status"],
+        last_repair_at=data.get("last_repair_at"),
+        metadata=_json_dict(data["metadata_json"]),
     )
 
 
@@ -106,6 +108,7 @@ def _insert_manifest(conn: sqlite3.Connection, *, workspace_id: str) -> Workspac
         updated_at=now,
         last_audit_at=None,
         last_audit_status=None,
+        last_repair_at=None,
         metadata=metadata,
     )
 
@@ -162,4 +165,25 @@ def update_workspace_manifest_audit(
         WHERE id = 1
         """,
         (audited_at or iso_now(), status, iso_now()),
+    )
+
+
+def update_workspace_manifest_repair(
+    conn: sqlite3.Connection,
+    *,
+    repaired_at: str | None = None,
+) -> None:
+    if not _table_exists(conn, "workspace_manifest"):
+        return
+    cols = [str(col[1]) for col in conn.execute("PRAGMA table_info(workspace_manifest)")]
+    if "last_repair_at" not in cols:
+        return
+    timestamp = repaired_at or iso_now()
+    conn.execute(
+        """
+        UPDATE workspace_manifest
+        SET last_repair_at = ?, updated_at = ?
+        WHERE id = 1
+        """,
+        (timestamp, iso_now()),
     )

@@ -18,10 +18,13 @@ from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.maintenance.integrity import repair_fts, run_integrity_audit
-from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
+from agent_memory_lite.repositories.workspace_manifest_repo import (
+    ensure_workspace_manifest,
+    update_workspace_manifest_repair,
+)
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.factory import get_vector_store
-from agent_memory_lite.vector_store.reindex import reindex_chunks
+from agent_memory_lite.vector_store.reindex import reindex_chunks, repair_chunk_embedding_refs
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +38,11 @@ def _parser() -> argparse.ArgumentParser:
         "--repair-vectors",
         action="store_true",
         help="Drop and rebuild the chunks vector namespace from SQLite chunks.",
+    )
+    parser.add_argument(
+        "--repair-embedding-refs",
+        action="store_true",
+        help="Backfill chunks.embedding_id from existing vector row ids without re-embedding.",
     )
     parser.add_argument(
         "--backup-first",
@@ -55,7 +63,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _settings(args: argparse.Namespace) -> Settings:
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    settings = Settings(_env_file=None)
     updates: dict[str, Any] = {}
     if args.workspace:
         updates["workspace_id"] = args.workspace
@@ -106,7 +114,11 @@ def _print(report: dict[str, Any], *, as_json: bool) -> None:
 
 
 def _repair_plan(
-    payload: dict[str, Any], *, repair_fts_flag: bool, repair_vectors_flag: bool
+    payload: dict[str, Any],
+    *,
+    repair_fts_flag: bool,
+    repair_vectors_flag: bool,
+    repair_embedding_refs_flag: bool,
 ) -> dict[str, Any]:
     checks = payload.get("checks", {})
     plan: dict[str, Any] = {"will_mutate": False, "steps": []}
@@ -137,13 +149,24 @@ def _repair_plan(
                 "extra_ids_sample": details.get("extra_ids_sample"),
             }
         )
+    if repair_embedding_refs_flag:
+        details = checks.get("vector", {}).get("details", {})
+        plan["steps"].append(
+            {
+                "action": "repair_chunk_embedding_refs",
+                "workspace_id": payload.get("workspace_id"),
+                "missing_embedding_ids": details.get("missing_embedding_ids"),
+                "expected_rows": details.get("chunks"),
+                "current_rows": details.get("vectors"),
+            }
+        )
     return plan
 
 
 def main() -> int:
     args = _parser().parse_args()
     settings = _settings(args)
-    repairing = bool(args.repair_fts or args.repair_vectors)
+    repairing = bool(args.repair_fts or args.repair_vectors or args.repair_embedding_refs)
     if repairing and not args.backup_first and not args.dry_run_repair:
         print("Refusing repair without --backup-first.", file=sys.stderr)
         return 1
@@ -173,7 +196,20 @@ def main() -> int:
                 store=store,
                 batch_size=settings.embedding_batch_size,
             )
-        report = run_integrity_audit(conn, workspace_id=settings.workspace_id, vector_store=store)
+        if args.repair_embedding_refs and not args.dry_run_repair:
+            repair_chunk_embedding_refs(
+                conn,
+                workspace_id=settings.workspace_id,
+                store=store,
+            )
+        if repairing and not args.dry_run_repair:
+            update_workspace_manifest_repair(conn)
+        report = run_integrity_audit(
+            conn,
+            workspace_id=settings.workspace_id,
+            vector_store=store,
+            db_path=settings.db_path,
+        )
         payload = report.to_dict()
         if backups:
             payload["backups"] = backups
@@ -182,6 +218,7 @@ def main() -> int:
                 payload,
                 repair_fts_flag=args.repair_fts,
                 repair_vectors_flag=args.repair_vectors,
+                repair_embedding_refs_flag=args.repair_embedding_refs,
             )
         _print(payload, as_json=args.json)
     except Exception as exc:

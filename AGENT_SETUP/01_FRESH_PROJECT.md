@@ -166,6 +166,21 @@ If it reports `warning`, continue only after listing the warning names. Common
 warnings mean stale candidates need review, theories need validation criteria,
 or open experiments need a fresh status.
 
+Also run the detailed hygiene report:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_hygiene.py --workspace <WORKSPACE_ID> --json
+```
+
+If the project has a local retrieval sentinel YAML, run the watchdog:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --sentinels <PROJECT_ROOT>/.agent_memory/retrieval_sentinels.yaml --json
+```
+
+The watchdog is detect-only. It may create a maintenance event when memory is
+warning/degraded, but it must not repair indexes or change research content.
+
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
    reads its MCP config file at startup, not on every prompt. The new

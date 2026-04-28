@@ -16,4 +16,5 @@ class WorkspaceManifest(BaseModel):
     updated_at: str
     last_audit_at: str | None
     last_audit_status: str | None
+    last_repair_at: str | None
     metadata: dict[str, Any]

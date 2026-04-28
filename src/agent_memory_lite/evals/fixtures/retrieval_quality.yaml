@@ -1,0 +1,28 @@
+- name: get_context_preserves_exact_and_semantic_sources
+  type: retrieval_context_quality
+  setup:
+    - episode: "The heap_watchdog v2 fix reduced memory pressure after repeated state refresh cycles."
+      label: target
+    - episode: "A note about unrelated UI copy and keyboard focus."
+  query: "heap watchdog memory pressure state refresh"
+  expect_labels: [target]
+  expect_sources: [fts]
+  expect_sections: [retrieved_chunks]
+  expect_substrings:
+    - "heap_watchdog v2 fix"
+  top_k: 3
+  max_tokens: 2500
+
+- name: get_context_handles_multilingual_paraphrase
+  type: retrieval_context_quality
+  setup:
+    - episode: "A source-flip theory was rejected after replay showed the edge did not persist."
+      label: target
+    - episode: "Routine maintenance event about vector parity."
+  query: "почему гипотеза source flip была отклонена после replay"
+  expect_labels: [target]
+  expect_sections: [retrieved_chunks]
+  expect_substrings:
+    - "source-flip theory was rejected"
+  top_k: 10
+  max_tokens: 2500
