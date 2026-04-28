@@ -33,8 +33,9 @@ import asyncio
 import json
 import os
 import sqlite3
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import mcp.server.stdio
 from mcp import types
@@ -170,6 +171,14 @@ class _Runtime:
 
 _runtime = _Runtime()
 _server: Server = Server("agent-memory-lite")
+_ListToolsHandler = Callable[[], Awaitable[list[types.Tool]]]
+_ListToolsDecorator = Callable[[_ListToolsHandler], _ListToolsHandler]
+_CallToolHandler = Callable[[str, dict[str, Any] | None], Awaitable[list[types.TextContent]]]
+_CallToolDecorator = Callable[[_CallToolHandler], _CallToolHandler]
+_list_tools_factory = cast(Callable[[], object], _server.list_tools)
+_call_tool_factory = cast(Callable[[], object], _server.call_tool)
+_list_tools_decorator = cast(_ListToolsDecorator, _list_tools_factory())
+_call_tool_decorator = cast(_CallToolDecorator, _call_tool_factory())
 
 
 def _workspace_schema() -> dict[str, str]:
@@ -667,7 +676,7 @@ _TOOLS: list[types.Tool] = [
 ]
 
 
-@_server.list_tools()  # type: ignore[no-untyped-call,untyped-decorator]
+@_list_tools_decorator
 async def _list_tools() -> list[types.Tool]:
     return _TOOLS
 
@@ -1298,7 +1307,7 @@ _HANDLERS = {
 }
 
 
-@_server.call_tool()  # type: ignore[untyped-decorator]
+@_call_tool_decorator
 async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
     if name not in _HANDLERS:
         return [types.TextContent(type="text", text=json.dumps({"error": f"unknown tool: {name}"}))]
