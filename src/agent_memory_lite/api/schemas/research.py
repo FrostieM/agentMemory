@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_memory_lite.models.enums import (
     ConceptKind,
@@ -140,6 +140,27 @@ class InsightResponse(DistillInsightRequest):
     insight_id: str
     created_at: str
     updated_at: str
+
+
+class UpdateInsightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: str = "default"
+    insight_id: str = Field(min_length=1)
+    target_type: str | None = Field(default=None, min_length=1)
+    target_id: str | None = Field(default=None, min_length=1)
+    status: InsightStatus | None = None
+    source_episode_id: str | None = None
+
+    @model_validator(mode="after")
+    def require_update(self) -> UpdateInsightRequest:
+        has_target_type = bool(self.target_type)
+        has_target_id = bool(self.target_id)
+        if has_target_type != has_target_id:
+            raise ValueError("target_type and target_id must be provided together")
+        if not has_target_type and self.status is None:
+            raise ValueError("provide a target link or status update")
+        return self
 
 
 class ListResearchAgendaRequest(BaseModel):

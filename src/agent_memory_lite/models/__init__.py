@@ -43,6 +43,7 @@ from agent_memory_lite.models.research import (
     ResearchAgenda,
     ResearchInsight,
     ResearchInsightIn,
+    ResearchInsightUpdateIn,
 )
 from agent_memory_lite.models.task_state import TaskState, TaskStateIn
 from agent_memory_lite.models.theories import Theory, TheoryEvidence, TheoryEvidenceIn, TheoryIn
@@ -90,6 +91,7 @@ __all__ = [
     "ResearchAgenda",
     "ResearchInsight",
     "ResearchInsightIn",
+    "ResearchInsightUpdateIn",
     "TaskState",
     "TaskStateIn",
     "TemporalSpan",

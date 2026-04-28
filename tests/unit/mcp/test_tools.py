@@ -33,6 +33,7 @@ def test_known_tools_present() -> None:
         "memory_add_experiment_result",
         "memory_upsert_concept",
         "memory_distill_insight",
+        "memory_update_insight",
         "memory_list_research_agenda",
         "memory_list_concepts",
         "memory_list_insights",

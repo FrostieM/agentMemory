@@ -65,6 +65,7 @@ from agent_memory_lite.ingestion.research_writer import (
     add_experiment_result,
     distill_insight,
     register_snapshot,
+    update_insight,
     upsert_domain_concept,
     write_experiment,
 )
@@ -81,6 +82,7 @@ from agent_memory_lite.models.research import (
     ExperimentResultIn,
     MemorySnapshotIn,
     ResearchInsightIn,
+    ResearchInsightUpdateIn,
 )
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
@@ -560,6 +562,22 @@ _TOOLS: list[types.Tool] = [
                 "tags": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["insight_type", "summary"],
+        },
+    ),
+    types.Tool(
+        name="memory_update_insight",
+        description="Update an existing research insight's target link or status.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "insight_id": {"type": "string", "minLength": 1},
+                "target_type": {"type": "string", "minLength": 1},
+                "target_id": {"type": "string", "minLength": 1},
+                "status": {"type": "string"},
+                "source_episode_id": {"type": "string"},
+            },
+            "required": ["insight_id"],
         },
     ),
     types.Tool(
@@ -1095,6 +1113,18 @@ def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_update_insight(args: dict[str, Any]) -> dict[str, Any]:
+    insight = update_insight(_runtime.db(), ResearchInsightUpdateIn(**_with_workspace(args)))
+    return {
+        "insight_id": insight.id,
+        "insight_type": insight.insight_type.value,
+        "status": insight.status.value,
+        "target_type": insight.target_type,
+        "target_id": insight.target_id,
+        "updated_at": insight.updated_at,
+    }
+
+
 def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
     workspace_id = _workspace_from_args(args)
     agenda = build_research_agenda(
@@ -1297,6 +1327,7 @@ _HANDLERS = {
     "memory_add_experiment_result": _handle_add_experiment_result,
     "memory_upsert_concept": _handle_upsert_concept,
     "memory_distill_insight": _handle_distill_insight,
+    "memory_update_insight": _handle_update_insight,
     "memory_list_research_agenda": _handle_list_research_agenda,
     "memory_list_concepts": _handle_list_concepts,
     "memory_list_insights": _handle_list_insights,

@@ -4,7 +4,9 @@ import sqlite3
 
 from agent_memory_lite.ingestion.research_writer import (
     add_experiment_result,
+    distill_insight,
     register_snapshot,
+    update_insight,
     upsert_domain_concept,
     write_experiment,
 )
@@ -13,6 +15,7 @@ from agent_memory_lite.models.enums import (
     ConceptKind,
     ExperimentStatus,
     InsightStatus,
+    InsightType,
     TheoryEvidenceKind,
     TheoryStatus,
 )
@@ -21,6 +24,8 @@ from agent_memory_lite.models.research import (
     ExperimentIn,
     ExperimentResultIn,
     MemorySnapshotIn,
+    ResearchInsightIn,
+    ResearchInsightUpdateIn,
 )
 from agent_memory_lite.models.theories import TheoryIn
 from agent_memory_lite.repositories.research_repo import (
@@ -170,3 +175,34 @@ def test_concept_upsert_reuses_name_per_workspace(applied_conn: sqlite3.Connecti
     assert (
         concepts[0].definition == "Paper positions opened divided by selector-approved candidates."
     )
+
+
+def test_update_insight_links_existing_research_item(applied_conn: sqlite3.Connection) -> None:
+    insight = distill_insight(
+        applied_conn,
+        ResearchInsightIn(
+            workspace_id="default",
+            insight_type=InsightType.RISK,
+            summary="Insight exists but has not been linked into the reasoning graph.",
+            proposed_action="Attach the insight to the theory it supports.",
+            confidence=0.8,
+        ),
+    )
+
+    updated = update_insight(
+        applied_conn,
+        ResearchInsightUpdateIn(
+            workspace_id="default",
+            insight_id=insight.id,
+            target_type="theory",
+            target_id="th_example",
+            status=InsightStatus.ACCEPTED,
+        ),
+    )
+
+    assert updated.id == insight.id
+    assert updated.target_type == "theory"
+    assert updated.target_id == "th_example"
+    assert updated.status is InsightStatus.ACCEPTED
+    insights = list_insights(applied_conn, workspace_id="default", query="th_example")
+    assert [item.id for item in insights] == [insight.id]

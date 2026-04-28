@@ -652,6 +652,34 @@ def get_insight(conn: sqlite3.Connection, insight_id: str) -> ResearchInsight | 
     return _row_to_insight(row) if row is not None else None
 
 
+def update_insight_row(
+    conn: sqlite3.Connection,
+    *,
+    insight_id: str,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    status: InsightStatus | None = None,
+    updated_at: str,
+) -> None:
+    assignments: list[str] = []
+    values: list[str] = []
+    if target_type is not None and target_id is not None:
+        assignments.extend(["target_type = ?", "target_id = ?"])
+        values.extend([target_type, target_id])
+    if status is not None:
+        assignments.append("status = ?")
+        values.append(status.value)
+    if not assignments:
+        return
+    assignments.append("updated_at = ?")
+    values.append(updated_at)
+    values.append(insight_id)
+    conn.execute(
+        f"UPDATE research_insights SET {', '.join(assignments)} WHERE id = ?",
+        tuple(values),
+    )
+
+
 def _insight_text(insight: ResearchInsight, linked_text: str = "") -> str:
     return " ".join(
         [

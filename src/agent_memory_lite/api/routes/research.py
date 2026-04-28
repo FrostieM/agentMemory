@@ -20,6 +20,7 @@ from agent_memory_lite.api.schemas.research import (
     MemorySnapshotResponse,
     RegisterSnapshotRequest,
     ResearchAgendaResponse,
+    UpdateInsightRequest,
     UpsertConceptRequest,
     WriteExperimentRequest,
 )
@@ -27,6 +28,7 @@ from agent_memory_lite.ingestion.research_writer import (
     add_experiment_result,
     distill_insight,
     register_snapshot,
+    update_insight,
     upsert_domain_concept,
     write_experiment,
 )
@@ -41,6 +43,7 @@ from agent_memory_lite.models.research import (
     MemorySnapshotIn,
     ResearchInsight,
     ResearchInsightIn,
+    ResearchInsightUpdateIn,
 )
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
@@ -281,6 +284,27 @@ def distill_insight_route(
             confidence=body.confidence,
             status=body.status,
             tags=body.tags,
+        ),
+    )
+    return _insight_response(insight)
+
+
+@router.post("/memory/update_insight", response_model=InsightResponse)
+def update_insight_route(
+    body: UpdateInsightRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> InsightResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
+    insight = update_insight(
+        conn,
+        ResearchInsightUpdateIn(
+            workspace_id=body.workspace_id,
+            insight_id=body.insight_id,
+            target_type=body.target_type,
+            target_id=body.target_id,
+            status=body.status,
+            source_episode_id=body.source_episode_id,
         ),
     )
     return _insight_response(insight)

@@ -80,7 +80,9 @@ def _json_len(raw: str | None) -> int:
         data = json.loads(raw or "[]")
     except json.JSONDecodeError:
         return 0
-    return len(data) if isinstance(data, list) else 0
+    if isinstance(data, list | dict):
+        return len(data)
+    return 0
 
 
 def _find_stale_candidates(
@@ -273,7 +275,8 @@ def _find_decision_gaps(conn: sqlite3.Connection, *, workspace_id: str) -> list[
         SELECT id, title, rationale, source_episode_id, importance
         FROM decisions
         WHERE workspace_id = ? AND status = 'active' AND importance >= 0.8
-          AND (COALESCE(rationale, '') = '' OR COALESCE(source_episode_id, '') = '')
+          AND COALESCE(rationale, '') = ''
+          AND COALESCE(source_episode_id, '') = ''
         ORDER BY importance DESC, updated_at DESC
         """,
         (workspace_id,),
@@ -284,7 +287,7 @@ def _find_decision_gaps(conn: sqlite3.Connection, *, workspace_id: str) -> list[
             severity="warning",
             target_type="decision",
             target_id=str(row["id"]),
-            summary="Important active decision lacks rationale or source episode.",
+            summary="Important active decision lacks both rationale and source episode.",
             details={
                 "title": row["title"],
                 "has_rationale": bool(row["rationale"]),

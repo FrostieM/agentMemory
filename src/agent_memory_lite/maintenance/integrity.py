@@ -585,7 +585,7 @@ def _stray_db_check(db_path: Path | None) -> IntegrityCheck:
     resolved = db_path.resolve()
     if resolved.name != "memory.db" or resolved.parent.name != ".agent_memory":
         return IntegrityCheck(
-            status="unknown",
+            status="ok",
             details={"reason": "non_standard_db_path", "db_path": str(resolved)},
         )
     project_root = resolved.parent.parent

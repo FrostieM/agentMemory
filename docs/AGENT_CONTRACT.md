@@ -328,6 +328,22 @@ gap unless the project is intentionally paused.
 }
 ```
 
+### POST /memory/update_insight (write - link or triage insight)
+
+Use this when an insight was captured before its target was known. Do not edit
+SQLite directly just to attach an insight to a theory, decision, skill, or
+playbook.
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "insight_id": "insight_...",
+  "target_type": "theory",
+  "target_id": "th_...",
+  "status": "accepted"
+}
+```
+
 ### POST /memory/list_research_agenda (read - lab backlog)
 
 ```json

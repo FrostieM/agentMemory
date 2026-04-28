@@ -56,6 +56,35 @@ def test_research_routes_feed_context_agenda(client: TestClient) -> None:
     )
     assert concept.status_code == 200, concept.text
 
+    insight = client.post(
+        "/memory/distill_insight",
+        json={
+            "workspace_id": "default",
+            "insight_type": "risk",
+            "summary": "Unlinked insight should be attachable without direct DB edits.",
+            "proposed_action": "Link the insight to the sparse-open theory.",
+            "confidence": 0.85,
+        },
+    )
+    assert insight.status_code == 200, insight.text
+    insight_id = insight.json()["insight_id"]
+
+    updated_insight = client.post(
+        "/memory/update_insight",
+        json={
+            "workspace_id": "default",
+            "insight_id": insight_id,
+            "target_type": "theory",
+            "target_id": theory_id,
+            "status": "accepted",
+        },
+    )
+    assert updated_insight.status_code == 200, updated_insight.text
+    updated_body = updated_insight.json()
+    assert updated_body["target_type"] == "theory"
+    assert updated_body["target_id"] == theory_id
+    assert updated_body["status"] == "accepted"
+
     experiment = client.post(
         "/memory/write_experiment",
         json={

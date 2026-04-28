@@ -243,6 +243,8 @@ What this means for our future chats in this project:
 - When a role, skill, or playbook must influence a specific theory,
   experiment, evidence item, insight, candidate, or decision I will link it
   with memory_link_capability.
+- When an existing insight needs a target or triage status I will use
+  memory_update_insight instead of direct database edits.
 - After task progress I will call memory_update_task_state.
 All of this writes to <project>/.agent_memory/memory.db only — no
 cross-project leakage.

@@ -44,7 +44,12 @@ class HealthResponse(BaseModel):
 def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthResponse:
     rows = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
     versions = [str(row[0]) for row in rows]
-    report = run_integrity_audit(conn, workspace_id=settings.workspace_id, vector_store=store)
+    report = run_integrity_audit(
+        conn,
+        workspace_id=settings.workspace_id,
+        vector_store=store,
+        db_path=settings.db_path,
+    )
     return HealthResponse(
         status="degraded" if report.status == "degraded" else "ok",
         version=__version__,

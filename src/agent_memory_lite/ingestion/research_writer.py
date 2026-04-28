@@ -24,6 +24,7 @@ from agent_memory_lite.models.research import (
     MemorySnapshotIn,
     ResearchInsight,
     ResearchInsightIn,
+    ResearchInsightUpdateIn,
 )
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.research_repo import (
@@ -37,6 +38,7 @@ from agent_memory_lite.repositories.research_repo import (
     insert_experiment_row,
     insert_insight_row,
     mark_experiment_completed,
+    update_insight_row,
     upsert_concept_row,
     upsert_snapshot_row,
 )
@@ -454,3 +456,46 @@ def distill_insight(conn: sqlite3.Connection, payload: ResearchInsightIn) -> Res
     insight = get_insight(conn, insight_id)
     assert insight is not None
     return insight
+
+
+def update_insight(conn: sqlite3.Connection, payload: ResearchInsightUpdateIn) -> ResearchInsight:
+    insight = get_insight(conn, payload.insight_id)
+    if insight is None:
+        raise NotFoundError(f"insight_id {payload.insight_id!r} not found")
+    _validate_workspace(
+        item_workspace_id=insight.workspace_id,
+        payload_workspace_id=payload.workspace_id,
+        field_name="insight_id",
+    )
+
+    timestamp = iso_now()
+    with with_tx(conn):
+        update_insight_row(
+            conn,
+            insight_id=payload.insight_id,
+            target_type=payload.target_type,
+            target_id=payload.target_id,
+            status=payload.status,
+            updated_at=timestamp,
+        )
+        insert_audit(
+            conn,
+            workspace_id=payload.workspace_id,
+            action="update_insight",
+            target_type="research_insight",
+            target_id=payload.insight_id,
+            source_episode_id=payload.source_episode_id,
+            before={
+                "target_type": insight.target_type,
+                "target_id": insight.target_id,
+                "status": insight.status.value,
+            },
+            after={
+                "target_type": payload.target_type or insight.target_type,
+                "target_id": payload.target_id or insight.target_id,
+                "status": (payload.status or insight.status).value,
+            },
+        )
+    updated = get_insight(conn, payload.insight_id)
+    assert updated is not None
+    return updated
