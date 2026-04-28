@@ -27,6 +27,12 @@ from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.evals.metrics import EvalReport, precision_at_k, recall_at_k
 from agent_memory_lite.extraction.thresholds import meets_thresholds
 from agent_memory_lite.extraction.trust_gate import passes_trust_gate
+from agent_memory_lite.ingestion.capability_link_writer import link_capability
+from agent_memory_lite.ingestion.capability_writer import (
+    upsert_agent_playbook,
+    upsert_agent_role,
+    upsert_agent_skill,
+)
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.research_writer import (
     distill_insight,
@@ -36,6 +42,8 @@ from agent_memory_lite.ingestion.research_writer import (
 )
 from agent_memory_lite.ingestion.theory_writer import write_theory
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
+from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
+from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import (
@@ -179,11 +187,15 @@ def _seed_research_entry(
     labels: dict[str, str],
 ) -> None:
     handlers = {
+        "role": _seed_role,
+        "skill": _seed_skill,
+        "playbook": _seed_playbook,
         "theory": _seed_theory,
         "snapshot": _seed_snapshot,
         "concept": _seed_concept,
         "experiment": _seed_experiment,
         "insight": _seed_insight,
+        "capability_link": _seed_capability_link,
     }
     for key, handler in handlers.items():
         if key in entry:
@@ -202,6 +214,42 @@ def _seed_theory(
     del labels
     payload.setdefault("workspace_id", workspace_id)
     return write_theory(conn, TheoryIn.model_validate(payload)).id
+
+
+def _seed_role(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return upsert_agent_role(conn, AgentRoleIn.model_validate(payload)).id
+
+
+def _seed_skill(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return upsert_agent_skill(conn, AgentSkillIn.model_validate(payload)).id
+
+
+def _seed_playbook(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    del labels
+    payload.setdefault("workspace_id", workspace_id)
+    return upsert_agent_playbook(conn, AgentPlaybookIn.model_validate(payload)).id
 
 
 def _seed_snapshot(
@@ -257,6 +305,23 @@ def _seed_insight(
     if target_label is not None:
         payload["target_id"] = labels[str(target_label)]
     return distill_insight(conn, ResearchInsightIn.model_validate(payload)).id
+
+
+def _seed_capability_link(
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    *,
+    workspace_id: str,
+    labels: dict[str, str],
+) -> str:
+    payload.setdefault("workspace_id", workspace_id)
+    target_label = payload.pop("target_label", None)
+    capability_label = payload.pop("capability_label", None)
+    if target_label is not None:
+        payload["target_id"] = labels[str(target_label)]
+    if capability_label is not None:
+        payload["capability_id"] = labels[str(capability_label)]
+    return link_capability(conn, CapabilityLinkIn.model_validate(payload)).id
 
 
 def _run_research_context(

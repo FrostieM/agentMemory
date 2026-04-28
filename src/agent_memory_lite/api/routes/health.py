@@ -20,6 +20,7 @@ class RetrievalIntegritySummary(BaseModel):
     status: str
     counts: dict[str, Any]
     failures: list[str]
+    warnings: list[str]
     repair_hints: list[str]
 
 
@@ -59,6 +60,7 @@ def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthR
             status=report.status,
             counts=report.counts,
             failures=report.failures,
+            warnings=report.warnings,
             repair_hints=report.repair_hints,
         ),
     )

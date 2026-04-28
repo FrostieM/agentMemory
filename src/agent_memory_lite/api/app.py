@@ -21,6 +21,7 @@ from agent_memory_lite.api.routes import (
     health,
     ingest_episode,
     ingest_file,
+    maintenance,
     research,
     search,
     task_state,
@@ -31,6 +32,7 @@ from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.extraction.llm_extractor import probe_ollama
+from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 from agent_memory_lite.version import __version__
 
 
@@ -39,6 +41,12 @@ def _bootstrap(settings: Settings) -> None:
     conn = open_connection(settings.db_path)
     try:
         apply_migrations(conn)
+        if settings.enforce_workspace_manifest:
+            ensure_workspace_manifest(
+                conn,
+                workspace_id=settings.workspace_id,
+                allow_default_workspace=not settings.forbid_default_workspace,
+            )
     finally:
         close_connection(conn)
     probe_ollama(settings)
@@ -60,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(capability_links.router)
     app.include_router(ingest_episode.router)
     app.include_router(ingest_file.router)
+    app.include_router(maintenance.router)
     app.include_router(search.router)
     app.include_router(context.router)
     app.include_router(decisions.router)

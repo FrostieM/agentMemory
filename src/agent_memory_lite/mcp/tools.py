@@ -52,6 +52,10 @@ from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
+from agent_memory_lite.repositories.maintenance_repo import (
+    list_maintenance_events,
+    resolve_maintenance_event,
+)
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
@@ -62,6 +66,7 @@ from agent_memory_lite.repositories.theories_repo import (
     list_theories,
 )
 from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
 
 ToolHandler = Callable[..., dict[str, Any]]
@@ -167,6 +172,23 @@ def _capability_link_payload(link: Any) -> dict[str, Any]:
     }
 
 
+def _maintenance_event_payload(event: Any) -> dict[str, Any]:
+    return {
+        "event_id": event.id,
+        "workspace_id": event.workspace_id,
+        "kind": event.kind,
+        "severity": event.severity.value,
+        "status": event.status.value,
+        "summary": event.summary,
+        "details": event.details,
+        "source_episode_id": event.source_episode_id,
+        "target_type": event.target_type,
+        "target_id": event.target_id,
+        "created_at": event.created_at,
+        "resolved_at": event.resolved_at,
+    }
+
+
 def _memory_list_candidates(
     *,
     conn: sqlite3.Connection,
@@ -209,6 +231,50 @@ def _memory_reject_candidate(
     **_kwargs: Any,
 ) -> dict[str, Any]:
     return _candidate_payload(reject_memory_candidate(conn, candidate_id=candidate_id))
+
+
+def _memory_list_maintenance_events(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    statuses: list[str] | None = None,
+    limit: int = 20,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
+
+    parsed = [MaintenanceEventStatus(item) for item in statuses] if statuses else None
+    return {
+        "events": [
+            _maintenance_event_payload(event)
+            for event in list_maintenance_events(
+                conn,
+                workspace_id=workspace_id,
+                statuses=parsed,
+                limit=limit,
+            )
+        ]
+    }
+
+
+def _memory_resolve_maintenance_event(
+    *,
+    conn: sqlite3.Connection,
+    event_id: str,
+    status: str = "resolved",
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
+
+    event = resolve_maintenance_event(
+        conn,
+        event_id=event_id,
+        status=MaintenanceEventStatus(status),
+        resolved_at=iso_now(),
+    )
+    if event is None:
+        raise ValueError(f"maintenance event not found: {event_id}")
+    return _maintenance_event_payload(event)
 
 
 def _memory_link_capability(
@@ -740,6 +806,16 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_reject_candidate",
         description="Reject a memory candidate while preserving it as negative evidence.",
         handler=_memory_reject_candidate,
+    ),
+    ToolDefinition(
+        name="memory_list_maintenance_events",
+        description="List open/resolved maintenance events that affect memory integrity.",
+        handler=_memory_list_maintenance_events,
+    ),
+    ToolDefinition(
+        name="memory_resolve_maintenance_event",
+        description="Mark a maintenance event resolved or ignored after review.",
+        handler=_memory_resolve_maintenance_event,
     ),
     ToolDefinition(
         name="memory_link_capability",

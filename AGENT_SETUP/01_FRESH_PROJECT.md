@@ -162,6 +162,9 @@ Also run a read-only retrieval integrity audit:
 
 If it reports `degraded`, do not repair silently. Report the failing checks and
 ask for permission unless the user already explicitly requested repair.
+If it reports `warning`, continue only after listing the warning names. Common
+warnings mean stale candidates need review, theories need validation criteria,
+or open experiments need a fresh status.
 
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
@@ -207,6 +210,7 @@ ollama:     <ok | not running | not installed — LLM extraction is no-op>
 mcp tools:  <verified | NOT VISIBLE — please restart your runtime (<runtime name>)>
 
 research:   <empty | theories=N snapshots=N open_experiments=N insights=N>
+integrity:  <ok | warning: names | degraded: names>
 
 What this means for our future chats in this project:
 - Before non-trivial work I will call memory_get_context to load prior context.
@@ -215,6 +219,8 @@ What this means for our future chats in this project:
 - Before specialized workflows I will call memory_list_agent_capabilities.
 - Before trusting memory after deploy/migration/restart anomalies I will run a
   read-only memory_audit check.
+- I will treat memory_audit warnings as maintenance items, not as ignorable log
+  noise.
 - Extracted decisions/rules now enter memory_candidates first; I will promote
   or reject them explicitly.
 - When reusable roles, skills, or playbooks emerge I will save them with the

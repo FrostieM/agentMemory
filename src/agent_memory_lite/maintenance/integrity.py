@@ -5,17 +5,38 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agent_memory_lite.fts.chunks_fts import rebuild_chunks_fts
 from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.repositories.maintenance_repo import count_open_maintenance_events
+from agent_memory_lite.repositories.workspace_manifest_repo import get_workspace_manifest
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
 _TOKEN_RE = re.compile(r"[\w.-]+", re.UNICODE)
+_ROUNDTRIP_STOPWORDS = {
+    "about",
+    "after",
+    "against",
+    "before",
+    "candidate",
+    "completed",
+    "context",
+    "decision",
+    "default",
+    "episode",
+    "memory",
+    "project",
+    "reports",
+    "status",
+    "system",
+    "theory",
+    "workspace",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +52,7 @@ class IntegrityReport:
     checks: dict[str, IntegrityCheck]
     counts: dict[str, Any]
     failures: list[str]
+    warnings: list[str]
     repair_hints: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +65,7 @@ class IntegrityReport:
             },
             "counts": self.counts,
             "failures": self.failures,
+            "warnings": self.warnings,
             "repair_hints": self.repair_hints,
         }
 
@@ -81,7 +104,20 @@ def _count(conn: sqlite3.Connection, query: str, args: tuple[object, ...]) -> in
     return int(row[0]) if row else 0
 
 
-def _sample_query(conn: sqlite3.Connection, workspace_id: str) -> tuple[str, str] | None:
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _sample_query(conn: sqlite3.Connection, workspace_id: str) -> tuple[str, list[str]] | None:
     row = conn.execute(
         """
         SELECT id, text
@@ -94,10 +130,19 @@ def _sample_query(conn: sqlite3.Connection, workspace_id: str) -> tuple[str, str
     ).fetchone()
     if row is None:
         return None
-    tokens = [token for token in _TOKEN_RE.findall(str(row["text"])) if len(token) >= 4]
+    raw_tokens = [token for token in _TOKEN_RE.findall(str(row["text"])) if len(token) >= 4]
+    tokens = [
+        token
+        for token in raw_tokens
+        if token.lower() not in _ROUNDTRIP_STOPWORDS and not token.isdigit()
+    ]
+    tokens.sort(key=lambda token: (len(token), token), reverse=True)
+    if len(tokens) < 3:
+        tokens.extend(raw_tokens)
+    tokens = list(dict.fromkeys(tokens))[:8]
     if not tokens:
         return None
-    return str(row["id"]), tokens[0]
+    return str(row["id"]), tokens
 
 
 def _sqlite_check(conn: sqlite3.Connection) -> IntegrityCheck:
@@ -111,6 +156,25 @@ def _sqlite_check(conn: sqlite3.Connection) -> IntegrityCheck:
             "integrity_check": integrity,
             "quick_check": quick,
             "foreign_key_violations": len(fk_rows),
+        },
+    )
+
+
+def _workspace_manifest_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
+    if not _table_exists(conn, "workspace_manifest"):
+        return IntegrityCheck(status="degraded", details={"error": "workspace_manifest missing"})
+    manifest = get_workspace_manifest(conn)
+    if manifest is None:
+        return IntegrityCheck(status="warning", details={"error": "workspace_manifest empty"})
+    status = "ok" if manifest.workspace_id == workspace_id else "degraded"
+    return IntegrityCheck(
+        status=status,
+        details={
+            "workspace_id": manifest.workspace_id,
+            "expected_workspace_id": workspace_id,
+            "db_uuid": manifest.db_uuid,
+            "last_audit_at": manifest.last_audit_at,
+            "last_audit_status": manifest.last_audit_status,
         },
     )
 
@@ -245,28 +309,50 @@ def _roundtrip_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCh
     sample = _sample_query(conn, workspace_id)
     if sample is None:
         return IntegrityCheck(status="unknown", details={"reason": "no searchable chunk"})
-    expected_chunk_id, token = sample
-    hits = search_chunks_fts(conn, workspace_id=workspace_id, query=token, limit=10)
-    fts_hit_ids = {hit.chunk_id for hit in hits}
-    fts_ok = bool(hits)
-    built = build_context(
-        conn,
-        RetrievalQuery(workspace_id=workspace_id, query=token, max_tokens=1200),
-        embedding_provider=None,
-        vector_store=None,
-    )
-    context_hit_ids = {hit.id for hit in built.hits}
-    context_ok = bool(context_hit_ids & fts_hit_ids)
-    status = "ok" if fts_ok and context_ok else "degraded"
+    expected_chunk_id, tokens = sample
+    tried: list[dict[str, Any]] = []
+    for token in tokens:
+        hits = search_chunks_fts(conn, workspace_id=workspace_id, query=token, limit=10)
+        fts_hit_ids = {hit.chunk_id for hit in hits}
+        built = build_context(
+            conn,
+            RetrievalQuery(workspace_id=workspace_id, query=token, max_tokens=1200),
+            embedding_provider=None,
+            vector_store=None,
+        )
+        context_hit_ids = {hit.id for hit in built.hits}
+        shared = context_hit_ids & fts_hit_ids
+        tried.append(
+            {
+                "query": token,
+                "fts_hits": len(hits),
+                "context_hits": len(built.hits),
+                "shared_context_fts_hits": len(shared),
+            }
+        )
+        if hits and shared:
+            return IntegrityCheck(
+                status="ok",
+                details={
+                    "query": token,
+                    "expected_chunk_id": expected_chunk_id,
+                    "fts_ok": True,
+                    "context_ok": True,
+                    "context_hits": len(built.hits),
+                    "shared_context_fts_hits": len(shared),
+                },
+            )
+    status = "degraded"
     return IntegrityCheck(
         status=status,
         details={
-            "query": token,
+            "query": tokens[0],
             "expected_chunk_id": expected_chunk_id,
-            "fts_ok": fts_ok,
-            "context_ok": context_ok,
-            "context_hits": len(built.hits),
-            "shared_context_fts_hits": len(context_hit_ids & fts_hit_ids),
+            "fts_ok": any(item["fts_hits"] for item in tried),
+            "context_ok": False,
+            "context_hits": max((item["context_hits"] for item in tried), default=0),
+            "shared_context_fts_hits": 0,
+            "tried": tried,
         },
     )
 
@@ -352,6 +438,105 @@ def _capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Inte
     )
 
 
+def _candidate_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
+    if not _table_exists(conn, "memory_candidates"):
+        return IntegrityCheck(status="unknown", details={"reason": "memory_candidates missing"})
+
+    rows = conn.execute(
+        """
+        SELECT status, COUNT(*) AS n
+        FROM memory_candidates
+        WHERE workspace_id = ?
+        GROUP BY status
+        """,
+        (workspace_id,),
+    ).fetchall()
+    by_status = {str(row["status"]): int(row["n"]) for row in rows}
+    cutoff = datetime.now(UTC) - timedelta(days=14)
+    stale_new = 0
+    stale_rows = conn.execute(
+        """
+        SELECT updated_at
+        FROM memory_candidates
+        WHERE workspace_id = ? AND status = 'new'
+        """,
+        (workspace_id,),
+    ).fetchall()
+    for row in stale_rows:
+        updated = _parse_iso(str(row["updated_at"]))
+        if updated is not None and updated < cutoff:
+            stale_new += 1
+    status = "ok" if stale_new == 0 else "warning"
+    return IntegrityCheck(
+        status=status,
+        details={
+            "by_status": by_status,
+            "new_candidates": by_status.get("new", 0),
+            "stale_new_older_than_days": 14,
+            "stale_new": stale_new,
+        },
+    )
+
+
+def _research_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
+    required = ("theories", "research_experiments", "research_insights")
+    missing = [table for table in required if not _table_exists(conn, table)]
+    if missing:
+        return IntegrityCheck(status="unknown", details={"missing_tables": missing})
+
+    undisciplined_theories = _count(
+        conn,
+        """
+        SELECT COUNT(*)
+        FROM theories
+        WHERE workspace_id = ?
+          AND status IN ('proposed', 'testing', 'supported')
+          AND COALESCE(experiment_plan, '') = ''
+          AND COALESCE(validation_criteria_json, '[]') IN ('[]', '')
+        """,
+        (workspace_id,),
+    )
+    rejected_without_evidence = _count(
+        conn,
+        """
+        SELECT COUNT(*)
+        FROM theories
+        WHERE workspace_id = ?
+          AND status = 'rejected'
+          AND evidence_count = 0
+        """,
+        (workspace_id,),
+    )
+
+    open_experiment_rows = conn.execute(
+        """
+        SELECT updated_at
+        FROM research_experiments
+        WHERE workspace_id = ? AND status IN ('planned', 'running', 'blocked')
+        """,
+        (workspace_id,),
+    ).fetchall()
+    cutoff = datetime.now(UTC) - timedelta(days=30)
+    stale_open_experiments = 0
+    for row in open_experiment_rows:
+        updated = _parse_iso(str(row["updated_at"]))
+        if updated is not None and updated < cutoff:
+            stale_open_experiments += 1
+
+    warning = (
+        undisciplined_theories > 0 or rejected_without_evidence > 0 or stale_open_experiments > 0
+    )
+    return IntegrityCheck(
+        status="warning" if warning else "ok",
+        details={
+            "undisciplined_active_theories": undisciplined_theories,
+            "rejected_theories_without_evidence": rejected_without_evidence,
+            "stale_open_experiments_older_than_days": 30,
+            "stale_open_experiments": stale_open_experiments,
+        },
+    )
+
+
 def run_integrity_audit(
     conn: sqlite3.Connection,
     *,
@@ -360,17 +545,30 @@ def run_integrity_audit(
 ) -> IntegrityReport:
     checks = {
         "sqlite": _sqlite_check(conn),
+        "workspace_manifest": _workspace_manifest_check(conn, workspace_id),
         "workspace_pollution": _workspace_pollution_check(conn, workspace_id),
         "fts": _fts_check(conn, workspace_id),
         "vector": _vector_check(conn, workspace_id, vector_store),
         "retrieval_roundtrip": _roundtrip_check(conn, workspace_id),
         "maintenance_events": _maintenance_check(conn, workspace_id),
         "capability_links": _capability_links_check(conn, workspace_id),
+        "candidate_hygiene": _candidate_hygiene_check(conn, workspace_id),
+        "research_hygiene": _research_hygiene_check(conn, workspace_id),
     }
-    failures = [name for name, check in checks.items() if check.status not in {"ok", "unknown"}]
+    failures = [name for name, check in checks.items() if check.status == "degraded"]
+    warnings = [name for name, check in checks.items() if check.status == "warning"]
     unknown = [name for name, check in checks.items() if check.status == "unknown"]
-    status = "degraded" if failures else ("unknown" if unknown else "ok")
+    if failures:
+        status = "degraded"
+    elif warnings:
+        status = "warning"
+    elif unknown:
+        status = "unknown"
+    else:
+        status = "ok"
     repair_hints: list[str] = []
+    if checks["workspace_manifest"].status == "degraded":
+        repair_hints.append("Run migrations and verify MEMORY_WORKSPACE_ID matches this database.")
     if checks["fts"].status == "degraded":
         repair_hints.append("Run scripts/memory_audit.py --repair-fts --backup-first.")
     if checks["vector"].status == "degraded":
@@ -383,6 +581,14 @@ def run_integrity_audit(
         repair_hints.append(
             "Inspect dangling capability_links before trusting role/skill guidance."
         )
+    if checks["candidate_hygiene"].status == "warning":
+        repair_hints.append(
+            "Review or reject stale memory_candidates; do not leave extractor output untriaged."
+        )
+    if checks["research_hygiene"].status == "warning":
+        repair_hints.append(
+            "Add validation criteria, evidence, or completion state to stale research objects."
+        )
 
     return IntegrityReport(
         status=status,
@@ -394,8 +600,17 @@ def run_integrity_audit(
             "vectors": checks["vector"].details.get("vectors"),
             "open_maintenance_events": checks["maintenance_events"].details.get("open_events"),
             "capability_links": checks["capability_links"].details.get("links"),
+            "new_candidates": checks["candidate_hygiene"].details.get("new_candidates"),
+            "stale_candidates": checks["candidate_hygiene"].details.get("stale_new"),
+            "undisciplined_theories": checks["research_hygiene"].details.get(
+                "undisciplined_active_theories"
+            ),
+            "stale_open_experiments": checks["research_hygiene"].details.get(
+                "stale_open_experiments"
+            ),
         },
         failures=failures,
+        warnings=warnings,
         repair_hints=repair_hints,
     )
 

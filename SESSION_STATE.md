@@ -8,12 +8,14 @@ Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 original v1 memory subsystem is feature-complete and now includes first-class
 theory/research workflow objects plus roles, skills, playbooks, reviewable
 memory candidates, retrieval-integrity audit/health, maintenance events, and
-capability links. Context rendering is query-ranked so active execution and
-research guidance stays visible before raw chunks. The theory layer stores
+capability links. A workspace manifest now records the owning workspace inside
+the DB itself so mismatched startups are rejected. Context rendering is
+query-ranked so active execution and research guidance stays visible before raw
+chunks. The theory layer stores
 validation criteria, dependent decision links, evidence counts/strength, and
 explicit `validated`/`rejected`/`superseded` lifecycle states. Capability links
-let roles, skills, and playbooks directly influence theories and experiments
-instead of staying as passive guidance.
+let roles, skills, and playbooks directly influence theories, experiments, and
+insights instead of staying as passive guidance.
 
 ## Last verified
 
@@ -25,10 +27,8 @@ All gates green on Python 3.14.3 (Windows):
 - `mypy src` - clean across **167 source files**.
 - `python scripts/run_evals.py --workspace <workspace_id> --no-vector` - 11/11 cases
   passed with recall@10=1.0 and precision@10=1.0.
-- HTTP health on a project memory reported migrations `0001_init`,
-  `0002_chunks_fts`, `0003_theories`, `0004_research_lab`,
-  `0005_agent_capabilities`, `0006_theory_discipline`,
-  `0007_memory_integrity_candidates`, and `0008_capability_research_links`.
+- HTTP health on a project memory reported migrations through
+  `0009_workspace_manifest`.
 
 ## Research-lab and capability deliverables landed
 
@@ -46,6 +46,8 @@ Source:
   candidates and persistent maintenance events.
 - `migrations/0008_capability_research_links.sql` with role/skill/playbook
   links to theories, evidence, experiments, insights, candidates, and decisions.
+- `migrations/0009_workspace_manifest.sql` with the DB-owned workspace
+  manifest.
 - Theory models, repository, writer, routes, schemas, MCP registry tools, and
   `<active_theories>` context rendering.
 - Research models, repository, writer, routes, schemas, MCP registry tools, and
@@ -64,16 +66,20 @@ Source:
 - Capability models, repository, writer, routes, schemas, MCP tools, and
   `<agent_capabilities>` context rendering.
 - Capability-link models, repository, writer, routes, schemas, MCP tools, query
-  ranking support, `<capability_links>` context rendering inside theories, and
-  integrity audit checks for dangling capability links.
+  ranking support, `<capability_links>` context rendering inside theories,
+  experiments, and insights, and integrity audit checks for dangling capability
+  links.
 - `scripts/memory_audit.py` performs read-only retrieval-integrity audits and
-  explicit backup-first repair/migration workflows.
+  explicit backup-first repair/migration workflows, including repair dry-runs.
+- `scripts/memory_ci_gate.py` fails CI/deploy when memory integrity is degraded
+  or warnings are unreviewed.
 
 Docs:
 
 - `README.md` documents theory memory and the research-lab flow.
 - `docs/AGENT_CONTRACT.md` describes snapshots, experiments, results, concepts,
-  insights, roles, skills, playbooks, and workspace-id handling.
+  insights, roles, skills, playbooks, workspace-id handling, maintenance events,
+  and audit warnings.
 - `AGENT_SETUP/` prompts now tell agents to preserve research objects and to use
   the project's established workspace id instead of hard-coding a foreign one.
   The capture prompt also preserves reusable capability memory.
@@ -90,6 +96,8 @@ Tests:
 - `tests/e2e/test_capabilities_routes.py`.
 - `tests/e2e/test_capability_links_route.py`.
 - `tests/unit/maintenance/test_integrity.py`.
+- `tests/unit/db/test_workspace_manifest.py`.
+- `tests/e2e/test_maintenance_route.py`.
 - `tests/e2e/test_health.py` covers retrieval-integrity health summary.
 - `tests/unit/evals/test_runner.py` covers `research_context` eval cases.
 - `tests/e2e/test_get_context_route.py` covers decision capping/query ranking.

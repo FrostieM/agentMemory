@@ -9,6 +9,7 @@ def test_settings_defaults_match_env(settings_factory) -> None:
     assert s.allow_remote_providers is False
     assert s.api_port == 8765
     assert s.workspace_id == "default"
+    assert s.enforce_workspace_manifest is True
     assert s.embedding_backend == "sentence_transformers"
     assert s.embedding_model == "intfloat/multilingual-e5-small"
     assert s.vector_backend == "lancedb"

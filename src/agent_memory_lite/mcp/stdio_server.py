@@ -87,13 +87,19 @@ from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
+from agent_memory_lite.repositories.maintenance_repo import (
+    list_maintenance_events,
+    resolve_maintenance_event,
+)
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
     list_insights,
 )
 from agent_memory_lite.repositories.theories_repo import list_evidence_for_theory, list_theories
+from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.factory import get_vector_store
 from agent_memory_lite.version import __version__
@@ -135,6 +141,12 @@ class _Runtime:
         if self.conn is None:
             self.conn = open_connection(self.settings.db_path)
             apply_migrations(self.conn)
+            if self.settings.enforce_workspace_manifest:
+                ensure_workspace_manifest(
+                    self.conn,
+                    workspace_id=self.settings.workspace_id,
+                    allow_default_workspace=not self.settings.forbid_default_workspace,
+                )
         return self.conn
 
     def provider(self) -> EmbeddingProvider:
@@ -308,6 +320,30 @@ _TOOLS: list[types.Tool] = [
             "type": "object",
             "properties": {"candidate_id": {"type": "string", "minLength": 1}},
             "required": ["candidate_id"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_maintenance_events",
+        description="List maintenance events that affect memory substrate trust.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "statuses": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_resolve_maintenance_event",
+        description="Mark a maintenance event resolved or ignored after review.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "status": {"type": "string", "enum": ["resolved", "ignored"]},
+            },
+            "required": ["event_id"],
         },
     ),
     types.Tool(
@@ -809,6 +845,23 @@ def _capability_link_payload(link: Any) -> dict[str, Any]:
     }
 
 
+def _maintenance_event_payload(event: Any) -> dict[str, Any]:
+    return {
+        "event_id": event.id,
+        "workspace_id": event.workspace_id,
+        "kind": event.kind,
+        "severity": event.severity.value,
+        "status": event.status.value,
+        "summary": event.summary,
+        "details": event.details,
+        "source_episode_id": event.source_episode_id,
+        "target_type": event.target_type,
+        "target_id": event.target_id,
+        "created_at": event.created_at,
+        "resolved_at": event.resolved_at,
+    }
+
+
 def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MemoryCandidateStatus  # noqa: PLC0415
 
@@ -839,6 +892,40 @@ def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
     return _candidate_payload(
         reject_memory_candidate(_runtime.db(), candidate_id=str(args["candidate_id"]))
     )
+
+
+def _handle_list_maintenance_events(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
+
+    workspace_id = _workspace_from_args(args)
+    raw_statuses = args.get("statuses")
+    statuses = [MaintenanceEventStatus(item) for item in raw_statuses] if raw_statuses else None
+    return {
+        "events": [
+            _maintenance_event_payload(event)
+            for event in list_maintenance_events(
+                _runtime.db(),
+                workspace_id=workspace_id,
+                statuses=statuses,
+                limit=int(args.get("limit", 20)),
+            )
+        ]
+    }
+
+
+def _handle_resolve_maintenance_event(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
+
+    status = MaintenanceEventStatus(args.get("status", "resolved"))
+    event = resolve_maintenance_event(
+        _runtime.db(),
+        event_id=str(args["event_id"]),
+        status=status,
+        resolved_at=iso_now(),
+    )
+    if event is None:
+        raise ValueError(f"maintenance event not found: {args['event_id']}")
+    return _maintenance_event_payload(event)
 
 
 def _handle_link_capability(args: dict[str, Any]) -> dict[str, Any]:
@@ -1189,6 +1276,8 @@ _HANDLERS = {
     "memory_list_candidates": _handle_list_candidates,
     "memory_promote_candidate": _handle_promote_candidate,
     "memory_reject_candidate": _handle_reject_candidate,
+    "memory_list_maintenance_events": _handle_list_maintenance_events,
+    "memory_resolve_maintenance_event": _handle_resolve_maintenance_event,
     "memory_link_capability": _handle_link_capability,
     "memory_list_capability_links": _handle_list_capability_links,
     "memory_write_theory": _handle_write_theory,

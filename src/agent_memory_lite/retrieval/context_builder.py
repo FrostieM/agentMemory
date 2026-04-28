@@ -357,6 +357,15 @@ def _render_theories(items: list[TheoryContext]) -> list[str]:
 
 
 def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
+    return _render_research_agenda_with_links(agenda, experiment_links={}, insight_links={})
+
+
+def _render_research_agenda_with_links(
+    agenda: ResearchAgenda | None,
+    *,
+    experiment_links: dict[str, list[CapabilityLink]],
+    insight_links: dict[str, list[CapabilityLink]],
+) -> list[str]:
     if agenda is None:
         return ["  <research_agenda/>"]
     if (
@@ -396,6 +405,7 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             lines.append(
                 f"      <command>{escape(_clip_text(experiment.command, MAX_COMMAND_CHARS))}</command>"
             )
+        lines.extend(_render_capability_links(experiment_links.get(experiment.id, [])))
         lines.append("    </experiment>")
 
     for insight in agenda.insights:
@@ -415,6 +425,7 @@ def _render_research_agenda(agenda: ResearchAgenda | None) -> list[str]:
             lines.append(
                 f"      <proposed_action>{escape(_clip_text(insight.proposed_action, MAX_TEXT_CHARS))}</proposed_action>"
             )
+        lines.extend(_render_capability_links(insight_links.get(insight.id, [])))
         lines.append("    </insight>")
 
     for concept in agenda.concepts:
@@ -601,6 +612,8 @@ def _render(
     decisions: list[Decision],
     theories: list[TheoryContext],
     research_agenda: ResearchAgenda | None,
+    research_experiment_links: dict[str, list[CapabilityLink]],
+    research_insight_links: dict[str, list[CapabilityLink]],
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -611,7 +624,13 @@ def _render(
     lines.extend(_render_task(task))
     lines.extend(_render_decisions(decisions))
     lines.extend(_render_theories(theories))
-    lines.extend(_render_research_agenda(research_agenda))
+    lines.extend(
+        _render_research_agenda_with_links(
+            research_agenda,
+            experiment_links=research_experiment_links,
+            insight_links=research_insight_links,
+        )
+    )
     lines.extend(_render_agent_capabilities(agent_capabilities))
     lines.extend(_render_rules(rules))
     lines.extend(_render_facts(facts))
@@ -627,6 +646,8 @@ def _render_structured_only(
     decisions: list[Decision],
     theories: list[TheoryContext],
     research_agenda: ResearchAgenda | None,
+    research_experiment_links: dict[str, list[CapabilityLink]],
+    research_insight_links: dict[str, list[CapabilityLink]],
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -637,6 +658,8 @@ def _render_structured_only(
         decisions=decisions,
         theories=theories,
         research_agenda=research_agenda,
+        research_experiment_links=research_experiment_links,
+        research_insight_links=research_insight_links,
         agent_capabilities=agent_capabilities,
         rules=rules,
         facts=facts,
@@ -652,6 +675,8 @@ def _fit_structured_sections(
     decisions: list[Decision],
     theories: list[TheoryContext],
     research_agenda: ResearchAgenda | None,
+    research_experiment_links: dict[str, list[CapabilityLink]],
+    research_insight_links: dict[str, list[CapabilityLink]],
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -670,6 +695,8 @@ def _fit_structured_sections(
             decisions=decisions,
             theories=theories,
             research_agenda=research_agenda,
+            research_experiment_links=research_experiment_links,
+            research_insight_links=research_insight_links,
             agent_capabilities=agent_capabilities,
             rules=rules,
             facts=facts,
@@ -685,6 +712,8 @@ def _fit_structured_sections(
                         decisions=decision_items,
                         theories=theory_items,
                         research_agenda=agenda,
+                        research_experiment_links=research_experiment_links,
+                        research_insight_links=research_insight_links,
                         agent_capabilities=cap,
                         rules=rules,
                         facts=facts,
@@ -773,6 +802,20 @@ def build_context(
         query=query.query,
         limit=MAX_RESEARCH_AGENDA,
     )
+    research_experiment_links = list_capability_links_for_targets(
+        conn,
+        workspace_id=query.workspace_id,
+        target_type=CapabilityLinkTargetType.EXPERIMENT,
+        target_ids=[experiment.id for experiment in research_agenda.experiments],
+        limit_per_target=3,
+    )
+    research_insight_links = list_capability_links_for_targets(
+        conn,
+        workspace_id=query.workspace_id,
+        target_type=CapabilityLinkTargetType.RESEARCH_INSIGHT,
+        target_ids=[insight.id for insight in research_agenda.insights],
+        limit_per_target=3,
+    )
     agent_capabilities = build_agent_capabilities(
         conn,
         workspace_id=query.workspace_id,
@@ -790,6 +833,8 @@ def build_context(
             decisions=decisions,
             theories=theories,
             research_agenda=research_agenda,
+            research_experiment_links=research_experiment_links,
+            research_insight_links=research_insight_links,
             agent_capabilities=agent_capabilities,
             rules=rules,
             facts=facts,
@@ -801,6 +846,8 @@ def build_context(
         decisions=render_decisions,
         theories=render_theories,
         research_agenda=render_research_agenda,
+        research_experiment_links=research_experiment_links,
+        research_insight_links=research_insight_links,
         agent_capabilities=render_agent_capabilities,
         rules=rules,
         facts=facts,
@@ -817,6 +864,8 @@ def build_context(
         decisions=render_decisions,
         theories=render_theories,
         research_agenda=render_research_agenda,
+        research_experiment_links=research_experiment_links,
+        research_insight_links=research_insight_links,
         agent_capabilities=render_agent_capabilities,
         rules=rules,
         facts=facts,

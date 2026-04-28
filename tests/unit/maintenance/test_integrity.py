@@ -18,6 +18,7 @@ from agent_memory_lite.models.enums import (
 )
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.theories import TheoryIn
+from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 
 
 def _episode(text: str, *, workspace_id: str = "project-a") -> EpisodeIn:
@@ -131,3 +132,70 @@ def test_integrity_detects_dangling_capability_link(
 
     assert after.status == "degraded"
     assert after.checks["capability_links"].details["missing_capabilities"]["skill"] == 1
+
+
+def test_integrity_warns_on_empty_workspace_manifest(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.status == "warning"
+    assert "workspace_manifest" in report.warnings
+
+
+def test_integrity_accepts_workspace_manifest(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    ensure_workspace_manifest(applied_conn, workspace_id="project-a", allow_default_workspace=True)
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.checks["workspace_manifest"].status == "ok"
+
+
+def test_integrity_warns_on_undisciplined_theory(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    ensure_workspace_manifest(applied_conn, workspace_id="project-a", allow_default_workspace=True)
+    write_theory(
+        applied_conn,
+        TheoryIn(
+            workspace_id="project-a",
+            title="Loose hypothesis",
+            claim="A theory without validation discipline should be visible.",
+            status="testing",
+        ),
+    )
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.status == "warning"
+    assert "research_hygiene" in report.warnings
+    assert report.checks["research_hygiene"].details["undisciplined_active_theories"] == 1
+
+
+def test_integrity_warns_on_stale_candidate(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    ensure_workspace_manifest(applied_conn, workspace_id="project-a", allow_default_workspace=True)
+    result = ingest_episode(applied_conn, _episode("candidate source"))
+    applied_conn.execute(
+        """
+        INSERT INTO memory_candidates (
+            id, workspace_id, kind, subject, predicate, object, evidence,
+            confidence, importance, trust_level, temporal_json, write_targets_json,
+            metadata_json, source_episode_id, status, created_at, updated_at
+        ) VALUES (
+            'cand_stale', 'project-a', 'decision', 'subject', 'is', NULL, 'evidence',
+            0.9, 0.9, 'agent_observed', '{}', '[]', '{}', ?, 'new',
+            '2025-01-01T00:00:00+00:00', '2025-01-01T00:00:00+00:00'
+        )
+        """,
+        (result.episode.id,),
+    )
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.status == "warning"
+    assert "candidate_hygiene" in report.warnings
+    assert report.checks["candidate_hygiene"].details["stale_new"] == 1

@@ -8,6 +8,7 @@ import sqlite3
 from typing import Any
 
 from agent_memory_lite.models.enums import (
+    CapabilityLinkTargetType,
     ConceptKind,
     ExperimentStatus,
     InsightStatus,
@@ -22,6 +23,7 @@ from agent_memory_lite.models.research import (
     ResearchAgenda,
     ResearchInsight,
 )
+from agent_memory_lite.repositories.capability_links_repo import capability_link_text_by_target
 
 _TOKEN_RE = re.compile(r"[\w.-]+", re.UNICODE)
 _OPEN_EXPERIMENT_STATUSES = {
@@ -355,7 +357,7 @@ def get_experiment(conn: sqlite3.Connection, experiment_id: str) -> Experiment |
     return _row_to_experiment(row) if row is not None else None
 
 
-def _experiment_text(experiment: Experiment) -> str:
+def _experiment_text(experiment: Experiment, linked_text: str = "") -> str:
     return " ".join(
         [
             experiment.title,
@@ -363,11 +365,16 @@ def _experiment_text(experiment: Experiment) -> str:
             experiment.cohort_definition or "",
             experiment.command or "",
             " ".join(str(key) for key in experiment.success_criteria),
+            linked_text,
         ]
     )
 
 
-def _rank_experiment(experiment: Experiment, tokens: list[str]) -> tuple[float, str]:
+def _rank_experiment(
+    experiment: Experiment,
+    tokens: list[str],
+    linked_text: str = "",
+) -> tuple[float, str]:
     status_bonus = {
         ExperimentStatus.RUNNING: 0.35,
         ExperimentStatus.PLANNED: 0.25,
@@ -375,7 +382,7 @@ def _rank_experiment(experiment: Experiment, tokens: list[str]) -> tuple[float, 
         ExperimentStatus.COMPLETED: -0.20,
         ExperimentStatus.CANCELLED: -0.35,
     }[experiment.status]
-    text = _experiment_text(experiment).lower()
+    text = _experiment_text(experiment, linked_text).lower()
     token_score = sum(1.0 for token in tokens if token in text)
     return token_score + experiment.priority + status_bonus, experiment.updated_at
 
@@ -397,8 +404,21 @@ def list_experiments(
         allowed = {status.value for status in statuses}
         experiments = [item for item in experiments if item.status.value in allowed]
     terms = _tokens(query)
-    experiments = [item for item in experiments if _contains_all(_experiment_text(item), terms)]
-    experiments.sort(key=lambda item: _rank_experiment(item, terms), reverse=True)
+    linked_text = capability_link_text_by_target(
+        conn,
+        workspace_id=workspace_id,
+        target_type=CapabilityLinkTargetType.EXPERIMENT,
+        target_ids=[item.id for item in experiments],
+    )
+    experiments = [
+        item
+        for item in experiments
+        if _contains_all(_experiment_text(item, linked_text.get(item.id, "")), terms)
+    ]
+    experiments.sort(
+        key=lambda item: _rank_experiment(item, terms, linked_text.get(item.id, "")),
+        reverse=True,
+    )
     return experiments[:limit]
 
 
@@ -632,7 +652,7 @@ def get_insight(conn: sqlite3.Connection, insight_id: str) -> ResearchInsight | 
     return _row_to_insight(row) if row is not None else None
 
 
-def _insight_text(insight: ResearchInsight) -> str:
+def _insight_text(insight: ResearchInsight, linked_text: str = "") -> str:
     return " ".join(
         [
             insight.summary,
@@ -640,18 +660,23 @@ def _insight_text(insight: ResearchInsight) -> str:
             insight.target_type or "",
             insight.target_id or "",
             " ".join(insight.tags),
+            linked_text,
         ]
     )
 
 
-def _rank_insight(insight: ResearchInsight, tokens: list[str]) -> tuple[float, str]:
+def _rank_insight(
+    insight: ResearchInsight,
+    tokens: list[str],
+    linked_text: str = "",
+) -> tuple[float, str]:
     status_bonus = {
         InsightStatus.NEW: 0.30,
         InsightStatus.ACCEPTED: 0.18,
         InsightStatus.REJECTED: -0.25,
         InsightStatus.ARCHIVED: -0.35,
     }[insight.status]
-    text = _insight_text(insight).lower()
+    text = _insight_text(insight, linked_text).lower()
     token_score = sum(1.0 for token in tokens if token in text)
     return token_score + insight.confidence + status_bonus, insight.updated_at
 
@@ -673,8 +698,21 @@ def list_insights(
         allowed = {status.value for status in statuses}
         insights = [item for item in insights if item.status.value in allowed]
     terms = _tokens(query)
-    insights = [item for item in insights if _contains_all(_insight_text(item), terms)]
-    insights.sort(key=lambda item: _rank_insight(item, terms), reverse=True)
+    linked_text = capability_link_text_by_target(
+        conn,
+        workspace_id=workspace_id,
+        target_type=CapabilityLinkTargetType.RESEARCH_INSIGHT,
+        target_ids=[item.id for item in insights],
+    )
+    insights = [
+        item
+        for item in insights
+        if _contains_all(_insight_text(item, linked_text.get(item.id, "")), terms)
+    ]
+    insights.sort(
+        key=lambda item: _rank_insight(item, terms, linked_text.get(item.id, "")),
+        reverse=True,
+    )
     return insights[:limit]
 
 

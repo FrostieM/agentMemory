@@ -19,6 +19,8 @@ def test_known_tools_present() -> None:
         "memory_list_candidates",
         "memory_promote_candidate",
         "memory_reject_candidate",
+        "memory_list_maintenance_events",
+        "memory_resolve_maintenance_event",
         "memory_link_capability",
         "memory_list_capability_links",
         "memory_write_decision",

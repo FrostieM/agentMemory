@@ -27,8 +27,8 @@ retrievable instead of buried in episodes. See `SESSION_STATE.md` for current
 verification counts.
 
 The integrity extension adds reviewable memory candidates, maintenance events,
-and a retrieval-integrity audit so SQLite, FTS, and vector drift cannot stay
-silent.
+a workspace manifest, and a retrieval-integrity audit so SQLite, FTS, vector,
+workspace, and research-discipline drift cannot stay silent.
 
 ## Requirements
 
@@ -139,8 +139,9 @@ should execute work:
 - `POST /memory/list_capability_links` shows which capabilities influence a
   target object.
 - `POST /memory/get_context` includes an `<agent_capabilities>` section after
-  `<research_agenda>`, and linked capabilities are rendered inside
-  `<active_theories>` so roles and skills can directly shape hypothesis review.
+  `<research_agenda>`, and linked capabilities are rendered inside theories,
+  experiments, and insights so roles and skills can directly shape hypothesis
+  review and research execution.
 
 Recommended flow:
 
@@ -272,9 +273,11 @@ Health check at any time:
 curl http://127.0.0.1:8765/health
 ```
 
-`/health` includes `retrieval_integrity`. A degraded FTS/vector/workspace check,
-open maintenance event, or dangling capability link changes health status to
-`degraded`; repair is never automatic.
+`/health` includes `retrieval_integrity`. A degraded FTS/vector/workspace
+manifest/workspace pollution check, open maintenance event, or dangling
+capability link changes health status to `degraded`; repair is never automatic.
+Candidate/research hygiene problems appear as `warnings` so they are visible
+without pretending the retrieval substrate is physically broken.
 
 Read-only audit:
 
@@ -287,6 +290,18 @@ Explicit repair, with backups first:
 ```bash
 python scripts/memory_audit.py --workspace <workspace_id> --repair-fts --backup-first
 python scripts/memory_audit.py --workspace <workspace_id> --repair-vectors --backup-first
+```
+
+Dry-run a repair plan without mutating the DB:
+
+```bash
+python scripts/memory_audit.py --workspace <workspace_id> --repair-fts --dry-run-repair --json
+```
+
+Use the strict gate in CI/deploy pipelines:
+
+```bash
+python scripts/memory_ci_gate.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance
 ```
 
 To start over with a clean memory:
@@ -397,7 +412,8 @@ After this, in any new chat the agent has three layers of "don't forget":
   `memory_write_experiment`, `memory_add_experiment_result`,
   `memory_list_research_agenda`, `memory_upsert_agent_role`,
   `memory_upsert_agent_skill`, `memory_upsert_agent_playbook`,
-  `memory_list_agent_capabilities`, and related concept/insight tools) appear
+  `memory_list_agent_capabilities`, `memory_list_maintenance_events`,
+  `memory_resolve_maintenance_event`, and related concept/insight tools) appear
   in the tool list natively (via MCP), no system prompt required.
 - **Instructions layer**: the contract markdown is auto-loaded into the
   agent's system context every session.

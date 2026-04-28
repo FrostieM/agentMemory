@@ -32,6 +32,13 @@
         aliases: ["admission gate"]
         tags: ["selector", "paper"]
         confidence: 0.9
+    - label: replay-skill
+      skill:
+        name: "Replay and backtest design"
+        summary: "Design replay experiments that compare current and candidate policies without leaking future outcomes."
+        when_to_use: ["Before changing selector thresholds"]
+        related_roles: ["Data Systems Architect"]
+        confidence: 0.9
     - label: soft-gate-replay
       experiment:
         theory_label: sparse-paper-theory
@@ -44,6 +51,15 @@
           max_drawdown_bps_lt: 120
         priority: 0.95
         status: "planned"
+    - label: replay-link
+      capability_link:
+        target_type: "experiment"
+        target_label: soft-gate-replay
+        capability_type: "skill"
+        capability_label: replay-skill
+        relation: "method"
+        rationale: "The replay experiment must use the explicit replay/backtest skill."
+        strength: 0.95
     - label: wait-is-low-information
       insight:
         insight_type: "bottleneck"
@@ -60,5 +76,7 @@
     - "Sparse paper opens"
     - "Soft-gate replay for paper-open-rate"
     - "selector-gate"
+    - "Replay and backtest design"
+    - "capability_links"
     - "Waiting longer is low-information"
     - "server_20260427T105823"

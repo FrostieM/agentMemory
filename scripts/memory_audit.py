@@ -18,6 +18,7 @@ from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.maintenance.integrity import repair_fts, run_integrity_audit
+from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.factory import get_vector_store
 from agent_memory_lite.vector_store.reindex import reindex_chunks
@@ -44,6 +45,11 @@ def _parser() -> argparse.ArgumentParser:
         "--migrate",
         action="store_true",
         help="Apply pending schema migrations before audit. Default audit mode is read-only.",
+    )
+    parser.add_argument(
+        "--dry-run-repair",
+        action="store_true",
+        help="With repair flags, print the intended repair plan without mutating data.",
     )
     return parser
 
@@ -89,31 +95,76 @@ def _print(report: dict[str, Any], *, as_json: bool) -> None:
     print(f"status={report['status']} workspace_id={report['workspace_id']}")
     if report["failures"]:
         print("failures=" + ",".join(report["failures"]))
+    if report.get("warnings"):
+        print("warnings=" + ",".join(report["warnings"]))
     for name, check in report["checks"].items():
         print(f"{name}: {check['status']} {json.dumps(check['details'], ensure_ascii=False)}")
     for hint in report["repair_hints"]:
         print(f"repair_hint: {hint}")
+    if report.get("repair_plan"):
+        print("repair_plan=" + json.dumps(report["repair_plan"], ensure_ascii=False))
+
+
+def _repair_plan(
+    payload: dict[str, Any], *, repair_fts_flag: bool, repair_vectors_flag: bool
+) -> dict[str, Any]:
+    checks = payload.get("checks", {})
+    plan: dict[str, Any] = {"will_mutate": False, "steps": []}
+    if repair_fts_flag:
+        details = checks.get("fts", {}).get("details", {})
+        plan["steps"].append(
+            {
+                "action": "rebuild_chunks_fts",
+                "workspace_id": payload.get("workspace_id"),
+                "expected_rows": details.get("chunks"),
+                "current_rows": details.get("chunks_fts"),
+                "missing": details.get("missing"),
+                "extra": details.get("extra"),
+                "workspace_mismatch": details.get("workspace_mismatch"),
+            }
+        )
+    if repair_vectors_flag:
+        details = checks.get("vector", {}).get("details", {})
+        plan["steps"].append(
+            {
+                "action": "reindex_chunk_vectors",
+                "workspace_id": payload.get("workspace_id"),
+                "expected_rows": details.get("chunks"),
+                "current_rows": details.get("vectors"),
+                "missing": details.get("missing"),
+                "extra": details.get("extra"),
+                "missing_ids_sample": details.get("missing_ids_sample"),
+                "extra_ids_sample": details.get("extra_ids_sample"),
+            }
+        )
+    return plan
 
 
 def main() -> int:
     args = _parser().parse_args()
     settings = _settings(args)
     repairing = bool(args.repair_fts or args.repair_vectors)
-    if repairing and not args.backup_first:
+    if repairing and not args.backup_first and not args.dry_run_repair:
         print("Refusing repair without --backup-first.", file=sys.stderr)
         return 1
 
     conn = open_connection(settings.db_path)
     store = get_vector_store(settings)
     try:
+        backups: dict[str, str] = {}
+        if args.backup_first and (repairing or args.migrate) and not args.dry_run_repair:
+            backups = _backup(settings)
         if args.migrate:
             apply_migrations(conn)
-        backups: dict[str, str] = {}
-        if args.backup_first and (repairing or args.migrate):
-            backups = _backup(settings)
-        if args.repair_fts:
+            if settings.enforce_workspace_manifest:
+                ensure_workspace_manifest(
+                    conn,
+                    workspace_id=settings.workspace_id,
+                    allow_default_workspace=not settings.forbid_default_workspace,
+                )
+        if args.repair_fts and not args.dry_run_repair:
             repair_fts(conn, workspace_id=settings.workspace_id)
-        if args.repair_vectors:
+        if args.repair_vectors and not args.dry_run_repair:
             provider = get_embedding_provider(settings)
             reindex_chunks(
                 conn,
@@ -126,6 +177,12 @@ def main() -> int:
         payload = report.to_dict()
         if backups:
             payload["backups"] = backups
+        if repairing and args.dry_run_repair:
+            payload["repair_plan"] = _repair_plan(
+                payload,
+                repair_fts_flag=args.repair_fts,
+                repair_vectors_flag=args.repair_vectors,
+            )
         _print(payload, as_json=args.json)
     except Exception as exc:
         print(f"memory_audit_failed: {type(exc).__name__}: {exc}", file=sys.stderr)

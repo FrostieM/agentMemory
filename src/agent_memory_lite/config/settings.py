@@ -50,6 +50,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="MEMORY_FORBID_DEFAULT_WORKSPACE",
     )
+    enforce_workspace_manifest: bool = Field(
+        default=True,
+        validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST",
+    )
 
     # Embeddings
     embedding_backend: EmbeddingBackend = Field(

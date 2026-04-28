@@ -218,6 +218,7 @@ def settings_factory(
             "VECTOR_DB_PATH": str(tmp_vector_path),
             "MEMORY_WORKSPACE_ID": "default",
             "MEMORY_FORBID_DEFAULT_WORKSPACE": "false",
+            "MEMORY_ENFORCE_WORKSPACE_MANIFEST": "true",
             "EMBEDDING_BACKEND": "sentence_transformers",
             "EMBEDDING_MODEL": "intfloat/multilingual-e5-small",
             "VECTOR_BACKEND": "lancedb",

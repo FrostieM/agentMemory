@@ -99,3 +99,51 @@ def list_open_maintenance_events(
         (workspace_id, limit),
     ).fetchall()
     return [_row_to_event(row) for row in rows]
+
+
+def list_maintenance_events(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    statuses: list[MaintenanceEventStatus] | None = None,
+    limit: int = 20,
+) -> list[MaintenanceEvent]:
+    clauses = ["workspace_id = ?"]
+    params: list[str | int] = [workspace_id]
+    if statuses:
+        placeholders = ",".join("?" for _ in statuses)
+        clauses.append(f"status IN ({placeholders})")
+        params.extend(status.value for status in statuses)
+    params.append(limit)
+    rows = conn.execute(
+        f"""
+        SELECT *
+        FROM maintenance_events
+        WHERE {" AND ".join(clauses)}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        tuple(params),
+    ).fetchall()
+    return [_row_to_event(row) for row in rows]
+
+
+def resolve_maintenance_event(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    status: MaintenanceEventStatus,
+    resolved_at: str,
+) -> MaintenanceEvent | None:
+    if status == MaintenanceEventStatus.OPEN:
+        raise ValueError("maintenance event resolution status must be resolved or ignored")
+    conn.execute(
+        """
+        UPDATE maintenance_events
+        SET status = ?, resolved_at = ?
+        WHERE id = ?
+        """,
+        (status.value, resolved_at, event_id),
+    )
+    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    return _row_to_event(row) if row is not None else None
