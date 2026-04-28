@@ -49,7 +49,11 @@ def collect_vector(
                 path=str(hit.metadata.get("path") or ""),
                 summary=chunk.summary,
                 raw_score=hit.score,
-                metadata={"kind": chunk.kind.value, "episode_id": chunk.episode_id},
+                metadata={
+                    "kind": chunk.kind.value,
+                    "episode_id": chunk.episode_id,
+                    "vector_score": hit.score,
+                },
             )
         )
     return candidates

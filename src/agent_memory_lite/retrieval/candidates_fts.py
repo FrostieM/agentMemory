@@ -36,7 +36,7 @@ def collect_fts(
             path=hit.path,
             summary=hit.summary,
             raw_score=-hit.score,  # bm25 lower-is-better; flip sign for "higher = better"
-            metadata={"path": hit.path},
+            metadata={"path": hit.path, "fts_rank": rank, "fts_bm25": hit.score},
         )
-        for hit in hits
+        for rank, hit in enumerate(hits)
     ]

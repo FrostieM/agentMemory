@@ -147,3 +147,39 @@ def test_get_context_applies_budget_to_structured_sections(client: TestClient) -
     text = context.json()["context_text"]
     assert estimate_tokens(text) <= 600
     assert text.count("<decision ") <= 2
+
+
+def test_get_context_preserves_exact_fts_hit_under_structured_pressure(
+    client: TestClient,
+) -> None:
+    exact = _ingest(
+        client,
+        "heap_watchdog v2 fixed heap pressure snapshots after Mapping source-map accumulation.",
+    )
+    long_text = " ".join(["structured sections should not bury exact retrieved chunks"] * 80)
+    for index in range(10):
+        response = client.post(
+            "/memory/write_decision",
+            json={
+                "workspace_id": "default",
+                "title": f"Structured pressure decision {index}",
+                "decision_text": long_text,
+                "importance": 0.95,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    response = client.post(
+        "/memory/get_context",
+        json={
+            "workspace_id": "default",
+            "query": "heap_watchdog Mapping source-map heap pressure",
+            "max_tokens": 900,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert exact["chunk_id"] in [source["id"] for source in body["sources"]]
+    assert "heap_watchdog v2" in body["context_text"]
+    assert estimate_tokens(body["context_text"]) <= 900

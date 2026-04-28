@@ -1,7 +1,9 @@
 """Chunk domain models.
 
-A chunk is a unit of text bound to a source: an episode, a file, or both. The
-embedding lives in the vector store; `embedding_id` references it.
+A chunk is a unit of text bound to a source: an episode, a file, or both.
+Embeddings live in the vector store and are keyed by chunk id. `embedding_id`
+mirrors that id after a successful upsert/reindex so audits can detect stale
+SQLite references without treating SQLite as the vector source of truth.
 """
 
 from __future__ import annotations

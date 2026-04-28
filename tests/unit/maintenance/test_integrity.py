@@ -82,6 +82,35 @@ def test_integrity_detects_vector_missing(
     assert "vector" in report.failures
 
 
+def test_integrity_warns_when_vector_reference_missing(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        _episode("vector reference control token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    assert result.chunk.embedding_id == result.chunk.id
+
+    applied_conn.execute(
+        "UPDATE chunks SET embedding_id = NULL WHERE id = ?",
+        (result.chunk.id,),
+    )
+
+    report = run_integrity_audit(
+        applied_conn,
+        workspace_id="project-a",
+        vector_store=fake_vector_store,
+    )
+
+    assert report.status == "warning"
+    assert report.checks["vector"].status == "warning"
+    assert report.checks["vector"].details["missing_embedding_ids"] == 1
+
+
 def test_integrity_detects_default_workspace_pollution(
     applied_conn: sqlite3.Connection,
 ) -> None:

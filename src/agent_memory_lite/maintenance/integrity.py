@@ -291,7 +291,27 @@ def _vector_check(
         )
     missing = sorted(chunk_ids - vector_ids)
     extra = sorted(vector_ids - chunk_ids)
-    status = "ok" if not missing and not extra else "degraded"
+    if vector_ids:
+        placeholders = ",".join("?" for _ in vector_ids)
+        missing_embedding_ids = _count(
+            conn,
+            f"""
+            SELECT COUNT(*)
+            FROM chunks
+            WHERE workspace_id = ?
+              AND id IN ({placeholders})
+              AND (embedding_id IS NULL OR embedding_id != id)
+            """,
+            (workspace_id, *sorted(vector_ids)),
+        )
+    else:
+        missing_embedding_ids = 0
+    if missing or extra:
+        status = "degraded"
+    elif missing_embedding_ids:
+        status = "warning"
+    else:
+        status = "ok"
     return IntegrityCheck(
         status=status,
         details={
@@ -299,6 +319,7 @@ def _vector_check(
             "vectors": len(vector_ids),
             "missing": len(missing),
             "extra": len(extra),
+            "missing_embedding_ids": missing_embedding_ids,
             "missing_ids_sample": missing[:10],
             "extra_ids_sample": extra[:10],
         },
@@ -571,8 +592,10 @@ def run_integrity_audit(
         repair_hints.append("Run migrations and verify MEMORY_WORKSPACE_ID matches this database.")
     if checks["fts"].status == "degraded":
         repair_hints.append("Run scripts/memory_audit.py --repair-fts --backup-first.")
-    if checks["vector"].status == "degraded":
-        repair_hints.append("Run scripts/memory_audit.py --repair-vectors --backup-first.")
+    vector_status = checks["vector"].status
+    if vector_status in {"degraded", "warning"}:
+        suffix = " to backfill vector references" if vector_status == "warning" else ""
+        repair_hints.append(f"Run scripts/memory_audit.py --repair-vectors --backup-first{suffix}.")
     if checks["workspace_pollution"].status == "degraded":
         repair_hints.append("Inspect workspace_id rows before migrating or deleting them.")
     if checks["maintenance_events"].status == "degraded":
@@ -598,6 +621,7 @@ def run_integrity_audit(
             "chunks": checks["fts"].details.get("chunks", 0),
             "chunks_fts": checks["fts"].details.get("chunks_fts", 0),
             "vectors": checks["vector"].details.get("vectors"),
+            "missing_embedding_ids": checks["vector"].details.get("missing_embedding_ids"),
             "open_maintenance_events": checks["maintenance_events"].details.get("open_events"),
             "capability_links": checks["capability_links"].details.get("links"),
             "new_candidates": checks["candidate_hygiene"].details.get("new_candidates"),

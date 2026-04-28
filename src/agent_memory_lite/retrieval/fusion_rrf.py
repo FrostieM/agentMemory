@@ -31,6 +31,7 @@ def reciprocal_rank_fusion(
     scores: dict[str, float] = {}
     seen: dict[str, RetrievalCandidate] = {}
     sources: dict[str, list[str]] = {}
+    metadata_by_id: dict[str, dict[str, object]] = {}
 
     for ranking in rankings:
         for rank, candidate in enumerate(ranking):
@@ -38,11 +39,19 @@ def reciprocal_rank_fusion(
             if candidate.id not in seen:
                 seen[candidate.id] = candidate
                 sources[candidate.id] = [candidate.source]
+                metadata_by_id[candidate.id] = dict(candidate.metadata)
             elif candidate.source not in sources[candidate.id]:
                 sources[candidate.id].append(candidate.source)
+            else:
+                metadata_by_id[candidate.id].update(candidate.metadata)
+                continue
+            metadata_by_id[candidate.id].update(candidate.metadata)
 
     return sorted(
-        ((seen[i], scores[i], sources[i]) for i in scores),
+        (
+            (seen[i].model_copy(update={"metadata": metadata_by_id[i]}), scores[i], sources[i])
+            for i in scores
+        ),
         key=lambda triple: triple[1],
         reverse=True,
     )

@@ -97,3 +97,26 @@ def delete_chunks_by_file(conn: sqlite3.Connection, file_id: str) -> int:
 def delete_chunks_by_episode(conn: sqlite3.Connection, episode_id: str) -> int:
     cur = conn.execute("DELETE FROM chunks WHERE episode_id = ?", (episode_id,))
     return int(cur.rowcount)
+
+
+def set_chunk_embedding_id(
+    conn: sqlite3.Connection,
+    *,
+    chunk_id: str,
+    embedding_id: str | None,
+) -> None:
+    conn.execute(
+        "UPDATE chunks SET embedding_id = ? WHERE id = ?",
+        (embedding_id, chunk_id),
+    )
+
+
+def set_many_chunk_embedding_ids(
+    conn: sqlite3.Connection,
+    *,
+    chunk_ids: list[str],
+) -> None:
+    conn.executemany(
+        "UPDATE chunks SET embedding_id = ? WHERE id = ?",
+        [(chunk_id, chunk_id) for chunk_id in chunk_ids],
+    )

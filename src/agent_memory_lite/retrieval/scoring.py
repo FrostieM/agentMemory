@@ -13,8 +13,8 @@ The spec weighting:
           - untrusted_penalty
 
 Phase 2 wires `semantic` (cosine similarity, clamped to [0, 1]) and `keyword`
-(min-max normalised RRF-derived rank). The remaining components default to
-neutral (0.0) and will be set when graph + temporal data lands in Phase 4.
+(rank-normalised FTS presence). The remaining components default to neutral
+(0.0) and will be set when graph + temporal data lands in Phase 4.
 """
 
 from __future__ import annotations
@@ -33,18 +33,25 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
 
-def _semantic_term(candidate: RetrievalCandidate) -> float:
-    if candidate.source != "vector":
+def _semantic_term(candidate: RetrievalCandidate, sources: list[str]) -> float:
+    if "vector" not in sources:
         return 0.0
-    return _clamp((candidate.raw_score + 1.0) / 2.0)
+    raw_score = candidate.metadata.get("vector_score")
+    if not isinstance(raw_score, int | float):
+        raw_score = candidate.raw_score if candidate.source == "vector" else 0.0
+    return _clamp((float(raw_score) + 1.0) / 2.0)
 
 
-def _keyword_term(candidate: RetrievalCandidate) -> float:
-    if candidate.source != "fts":
+def _keyword_term(candidate: RetrievalCandidate, sources: list[str]) -> float:
+    if "fts" not in sources:
         return 0.0
-    # raw_score is -bm25; the higher (less negative) the better. Squash through
-    # 1/(1+|x|) so we land in (0, 1].
-    return 1.0 / (1.0 + abs(candidate.raw_score))
+    rank = candidate.metadata.get("fts_rank")
+    if isinstance(rank, int) and rank >= 0:
+        return 1.0 / (rank + 1.0)
+    # Fallback for older candidates/tests that do not carry fts_rank. Do not use
+    # BM25 magnitude here: SQLite FTS can return large negative values for very
+    # strong exact matches, so magnitude-based scoring buries the best hit.
+    return 1.0
 
 
 def score_candidates(
@@ -59,8 +66,8 @@ def score_candidates(
 
     hits: list[ScoredHit] = []
     for candidate, fused, sources in triples:
-        semantic = _semantic_term(candidate)
-        keyword = _keyword_term(candidate)
+        semantic = _semantic_term(candidate, sources)
+        keyword = _keyword_term(candidate, sources)
         rrf_norm = (fused - rrf_min) / rrf_range
         # Use rrf_norm as a multi-source presence boost: a chunk found in both
         # lists out-scores one found in a single list, even if either raw signal

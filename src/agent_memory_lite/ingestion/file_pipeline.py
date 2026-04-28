@@ -34,6 +34,7 @@ from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.chunks_repo import (
     delete_chunks_by_file,
     insert_chunk,
+    set_chunk_embedding_id,
 )
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.repositories.files_repo import (
@@ -241,6 +242,8 @@ def ingest_file(
                 embedding_provider,
                 vector_store,
             )
+            if embedded:
+                set_chunk_embedding_id(conn, chunk_id=chunk_id, embedding_id=chunk_id)
             if not embedded:
                 write_maintenance_event(
                     conn,

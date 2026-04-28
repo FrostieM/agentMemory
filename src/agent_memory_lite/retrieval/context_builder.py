@@ -86,7 +86,9 @@ MAX_COMMAND_CHARS = 180
 MAX_LIST_ITEMS = 1
 MAX_LIST_ITEM_CHARS = 140
 MAX_CHUNK_TEXT_CHARS = 1200
-CONTEXT_CHUNK_RESERVE_TOKENS = 128
+MIN_CHUNK_RESERVE_TOKENS = 384
+MAX_CHUNK_RESERVE_TOKENS = 1200
+STRUCTURED_SAFETY_RESERVE_TOKENS = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +135,12 @@ def _clip_hits_for_context(hits: list[ScoredHit]) -> list[ScoredHit]:
     return [
         hit.model_copy(update={"text": _clip_text(hit.text, MAX_CHUNK_TEXT_CHARS)}) for hit in hits
     ]
+
+
+def _chunk_reserve_tokens(max_tokens: int, *, has_hits: bool) -> int:
+    if not has_hits:
+        return min(STRUCTURED_SAFETY_RESERVE_TOKENS, max_tokens)
+    return min(MAX_CHUNK_RESERVE_TOKENS, max(MIN_CHUNK_RESERVE_TOKENS, max_tokens // 3))
 
 
 def _gather_chunk_candidates(
@@ -670,6 +678,7 @@ def _render_structured_only(
 def _fit_structured_sections(
     *,
     max_tokens: int,
+    chunk_reserve_tokens: int,
     core: list[CoreMemory],
     task: TaskState | None,
     decisions: list[Decision],
@@ -686,7 +695,7 @@ def _fit_structured_sections(
     agenda_variants = [research_agenda, None]
     capability_variants = [agent_capabilities, None]
 
-    target_tokens = max(0, max_tokens - CONTEXT_CHUNK_RESERVE_TOKENS)
+    target_tokens = max(0, max_tokens - chunk_reserve_tokens)
     best = (decisions, theories, research_agenda, agent_capabilities)
     best_tokens = estimate_tokens(
         _render_structured_only(
@@ -828,6 +837,10 @@ def build_context(
     render_decisions, render_theories, render_research_agenda, render_agent_capabilities = (
         _fit_structured_sections(
             max_tokens=query.max_tokens,
+            chunk_reserve_tokens=_chunk_reserve_tokens(
+                query.max_tokens,
+                has_hits=bool(clipped_hits),
+            ),
             core=core,
             task=task,
             decisions=decisions,
@@ -854,7 +867,7 @@ def build_context(
     )
     chunk_budget = max(
         0,
-        query.max_tokens - estimate_tokens(structured_text) - CONTEXT_CHUNK_RESERVE_TOKENS,
+        query.max_tokens - estimate_tokens(structured_text),
     )
     chunks_fit = fit_within_budget(clipped_hits, max_tokens=chunk_budget)
 
