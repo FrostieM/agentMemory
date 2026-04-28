@@ -43,7 +43,7 @@ Before any memory write, determine `WORKSPACE_ID`:
 - If the user or existing project instructions name a workspace id, use that
   exact value.
 - Else if existing memory clearly already uses one workspace id, keep it.
-- Otherwise use `default`.
+- Otherwise use the project directory name.
 
 # Step 2 - review THIS conversation
 
@@ -101,6 +101,16 @@ call `memory_upsert_agent_role`, `memory_upsert_agent_skill`, or
 `memory_upsert_agent_playbook`. Use capability memory for operating knowledge
 that future agents should retrieve before doing similar work.
 
+If a role, skill, or playbook is specifically required to review, test, or
+operate a theory, experiment, evidence item, insight, candidate, or decision,
+call `memory_link_capability`. This prevents capabilities from becoming a
+passive list that does not affect hypotheses.
+
+If `memory_ingest_episode` creates candidates, call `memory_list_candidates`
+for the same workspace and promote only the candidates that are truly supported
+by the conversation. Reject weak candidates so the audit trail keeps negative
+evidence.
+
 # Step 5 - write episodes
 
 Walk the conversation chronologically and call `memory_ingest_episode` for each
@@ -132,6 +142,11 @@ that at least one just-written episode, decision, theory, experiment, or insight
 appears in the response. If capabilities were written, confirm the response also
 contains `<agent_capabilities>` or call `memory_list_agent_capabilities` with
 the same query.
+
+Run a read-only retrieval integrity audit with
+`scripts/memory_audit.py --workspace <WORKSPACE_ID> --json` if the local repo
+is available. Report degraded checks; do not repair unless repair was part of
+the user's request.
 
 If the query returns nothing relevant, write one more summary episode that
 explicitly mentions the keywords, then stop. Do not loop.

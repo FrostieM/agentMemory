@@ -4,26 +4,31 @@ Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
 ## Current phase
 
-**Research-lab and capability memory layers complete.** The original v1 memory
-subsystem is feature-complete and now includes first-class theory/research
-workflow objects plus roles, skills, and playbooks. Context rendering is
-query-ranked so active execution and research guidance stays visible before raw
-chunks. The theory layer now also stores validation criteria, dependent decision
-links, evidence counts/strength, and explicit `validated`/`rejected`/
-`superseded` lifecycle states.
+**Research-lab, capability, and integrity hardening layers complete.** The
+original v1 memory subsystem is feature-complete and now includes first-class
+theory/research workflow objects plus roles, skills, playbooks, reviewable
+memory candidates, retrieval-integrity audit/health, maintenance events, and
+capability links. Context rendering is query-ranked so active execution and
+research guidance stays visible before raw chunks. The theory layer stores
+validation criteria, dependent decision links, evidence counts/strength, and
+explicit `validated`/`rejected`/`superseded` lifecycle states. Capability links
+let roles, skills, and playbooks directly influence theories and experiments
+instead of staying as passive guidance.
 
 ## Last verified
 
 All gates green on Python 3.14.3 (Windows):
 
-- `pytest` - **264 passed**, 0 failed.
+- `pytest` - full suite passed.
 - `ruff check src tests scripts` - clean.
-- `mypy src` - clean across **153 source files**.
-- `python scripts/run_evals.py --workspace default --no-vector` - 11/11 cases
+- `ruff format --check src tests scripts` - clean.
+- `mypy src` - clean across **167 source files**.
+- `python scripts/run_evals.py --workspace <workspace_id> --no-vector` - 11/11 cases
   passed with recall@10=1.0 and precision@10=1.0.
 - HTTP health on a project memory reported migrations `0001_init`,
   `0002_chunks_fts`, `0003_theories`, `0004_research_lab`,
-  `0005_agent_capabilities`, and `0006_theory_discipline`.
+  `0005_agent_capabilities`, `0006_theory_discipline`,
+  `0007_memory_integrity_candidates`, and `0008_capability_research_links`.
 
 ## Research-lab and capability deliverables landed
 
@@ -37,6 +42,10 @@ Source:
   `agent_skills`, and `agent_playbooks`.
 - `migrations/0006_theory_discipline.sql` with theory validation criteria,
   dependent decision links, and evidence summary counters.
+- `migrations/0007_memory_integrity_candidates.sql` with reviewable extraction
+  candidates and persistent maintenance events.
+- `migrations/0008_capability_research_links.sql` with role/skill/playbook
+  links to theories, evidence, experiments, insights, candidates, and decisions.
 - Theory models, repository, writer, routes, schemas, MCP registry tools, and
   `<active_theories>` context rendering.
 - Research models, repository, writer, routes, schemas, MCP registry tools, and
@@ -54,6 +63,11 @@ Source:
   base tools.
 - Capability models, repository, writer, routes, schemas, MCP tools, and
   `<agent_capabilities>` context rendering.
+- Capability-link models, repository, writer, routes, schemas, MCP tools, query
+  ranking support, `<capability_links>` context rendering inside theories, and
+  integrity audit checks for dangling capability links.
+- `scripts/memory_audit.py` performs read-only retrieval-integrity audits and
+  explicit backup-first repair/migration workflows.
 
 Docs:
 
@@ -74,6 +88,9 @@ Tests:
   tool exposure.
 - `tests/unit/ingestion/test_capability_writer.py`.
 - `tests/e2e/test_capabilities_routes.py`.
+- `tests/e2e/test_capability_links_route.py`.
+- `tests/unit/maintenance/test_integrity.py`.
+- `tests/e2e/test_health.py` covers retrieval-integrity health summary.
 - `tests/unit/evals/test_runner.py` covers `research_context` eval cases.
 - `tests/e2e/test_get_context_route.py` covers decision capping/query ranking.
 

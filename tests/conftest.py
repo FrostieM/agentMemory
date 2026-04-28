@@ -159,6 +159,14 @@ class FakeVectorStore:
             return len(bucket)
         return sum(1 for row in bucket.values() if row.workspace_id == workspace_id)
 
+    def list_ids(self, namespace: str, *, workspace_id: str | None = None) -> list[str]:
+        bucket = self._tables.get(namespace, {})
+        return [
+            row.id
+            for row in bucket.values()
+            if workspace_id is None or row.workspace_id == workspace_id
+        ]
+
 
 @pytest.fixture
 def fake_embedding_provider() -> FakeEmbeddingProvider:
@@ -209,6 +217,7 @@ def settings_factory(
             "MEMORY_DB_PATH": str(tmp_db_path),
             "VECTOR_DB_PATH": str(tmp_vector_path),
             "MEMORY_WORKSPACE_ID": "default",
+            "MEMORY_FORBID_DEFAULT_WORKSPACE": "false",
             "EMBEDDING_BACKEND": "sentence_transformers",
             "EMBEDDING_MODEL": "intfloat/multilingual-e5-small",
             "VECTOR_BACKEND": "lancedb",

@@ -23,11 +23,13 @@ from agent_memory_lite.fts.chunks_fts import (
     delete_chunk_fts,
     insert_chunk_fts,
 )
+from agent_memory_lite.ingestion.maintenance_writer import write_maintenance_event
 from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.chunks import ChunkIn
-from agent_memory_lite.models.enums import ChunkKind, EpisodeSource, TrustLevel
+from agent_memory_lite.models.enums import ChunkKind, EpisodeSource, MaintenanceSeverity, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.files import FileRecord
+from agent_memory_lite.models.maintenance import MaintenanceEventIn
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.chunks_repo import (
     delete_chunks_by_file,
@@ -231,7 +233,27 @@ def ingest_file(
 
     if embedding_provider is not None and vector_store is not None:
         for chunk_id, text, _symbols in new_chunk_ids:
-            _embed_and_upsert(chunk_id, workspace_id, text, path, embedding_provider, vector_store)
+            embedded = _embed_and_upsert(
+                chunk_id,
+                workspace_id,
+                text,
+                path,
+                embedding_provider,
+                vector_store,
+            )
+            if not embedded:
+                write_maintenance_event(
+                    conn,
+                    MaintenanceEventIn(
+                        workspace_id=workspace_id,
+                        kind="vector_upsert_failed",
+                        severity=MaintenanceSeverity.ERROR,
+                        summary="Vector upsert failed after the file SQLite write committed.",
+                        details={"chunk_id": chunk_id, "path": path},
+                        target_type="chunk",
+                        target_id=chunk_id,
+                    ),
+                )
 
     file_record = get_file_by_path(conn, workspace_id=workspace_id, path=path)
     assert file_record is not None

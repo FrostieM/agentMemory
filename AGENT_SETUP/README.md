@@ -20,15 +20,19 @@ common workspace locations, and finally falls back to asking you.
 After either prompt finishes, the agent should:
 1. Tell you what it set up (paths, files written).
 2. Confirm the memory tools are working (a quick `memory_get_context` round-trip).
-3. Use the project's established workspace id, or `default` only when none is
-   established.
-4. Continue with whatever you wanted to do.
+3. Use the project's established workspace id, or the project directory name
+   when none is established.
+4. Run a read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
+   check when the repo is available.
+5. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the
 first-class research tools instead of burying them inside raw episodes. For
 operations-heavy projects, it tells the agent to preserve reusable roles,
 skills, and playbooks with the capability tools.
+Extraction candidates are review-first: promote supported candidates and reject
+weak ones instead of turning every extracted sentence into an active decision.
 
 If the agent reports that MCP tools aren't visible in its tool list, you
 need to **restart whichever runtime is hosting it**:

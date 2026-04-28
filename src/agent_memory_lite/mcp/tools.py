@@ -13,6 +13,11 @@ from typing import Any
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.candidate_writer import (
+    promote_memory_candidate,
+    reject_memory_candidate,
+)
+from agent_memory_lite.ingestion.capability_link_writer import link_capability
 from agent_memory_lite.ingestion.capability_writer import (
     upsert_agent_playbook,
     upsert_agent_role,
@@ -31,6 +36,7 @@ from agent_memory_lite.ingestion.research_writer import (
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
+from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import (
@@ -43,7 +49,9 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
+from agent_memory_lite.repositories.capability_links_repo import list_capability_links
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
@@ -115,6 +123,132 @@ def _memory_ingest_episode(
         "chunk_id": result.chunk.id,
         "redacted_text": result.episode.raw_text,
         "redacted_kinds": result.redacted_kinds,
+        "candidates_written": result.candidates_written,
+    }
+
+
+def _candidate_payload(candidate: Any) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.id,
+        "workspace_id": candidate.workspace_id,
+        "kind": candidate.kind.value,
+        "subject": candidate.subject,
+        "predicate": candidate.predicate,
+        "object": candidate.object,
+        "evidence": candidate.evidence,
+        "confidence": candidate.confidence,
+        "importance": candidate.importance,
+        "trust_level": candidate.trust_level.value,
+        "source_episode_id": candidate.source_episode_id,
+        "status": candidate.status.value,
+        "promoted_target_type": candidate.promoted_target_type,
+        "promoted_target_id": candidate.promoted_target_id,
+        "created_at": candidate.created_at,
+        "updated_at": candidate.updated_at,
+        "decided_at": candidate.decided_at,
+    }
+
+
+def _capability_link_payload(link: Any) -> dict[str, Any]:
+    return {
+        "link_id": link.id,
+        "workspace_id": link.workspace_id,
+        "target_type": link.target_type.value,
+        "target_id": link.target_id,
+        "capability_type": link.capability_type.value,
+        "capability_id": link.capability_id,
+        "capability_name": link.capability_name,
+        "relation": link.relation.value,
+        "rationale": link.rationale,
+        "strength": link.strength,
+        "source_episode_id": link.source_episode_id,
+        "created_at": link.created_at,
+        "updated_at": link.updated_at,
+    }
+
+
+def _memory_list_candidates(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    statuses: list[str] | None = None,
+    limit: int = 20,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MemoryCandidateStatus  # noqa: PLC0415
+
+    parsed = [MemoryCandidateStatus(item) for item in statuses] if statuses else None
+    return {
+        "candidates": [
+            _candidate_payload(candidate)
+            for candidate in list_candidates(
+                conn,
+                workspace_id=workspace_id,
+                query=query,
+                statuses=parsed,
+                limit=limit,
+            )
+        ]
+    }
+
+
+def _memory_promote_candidate(
+    *,
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    return _candidate_payload(promote_memory_candidate(conn, candidate_id=candidate_id))
+
+
+def _memory_reject_candidate(
+    *,
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    return _candidate_payload(reject_memory_candidate(conn, candidate_id=candidate_id))
+
+
+def _memory_link_capability(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    return _capability_link_payload(link_capability(conn, CapabilityLinkIn(**payload)))
+
+
+def _memory_list_capability_links(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    target_type: str | None = None,
+    target_id: str | None = None,
+    capability_type: str | None = None,
+    capability_id: str | None = None,
+    limit: int = 50,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import (  # noqa: PLC0415
+        CapabilityLinkTargetType,
+        CapabilityType,
+    )
+
+    return {
+        "links": [
+            _capability_link_payload(link)
+            for link in list_capability_links(
+                conn,
+                workspace_id=workspace_id,
+                target_type=CapabilityLinkTargetType(target_type) if target_type else None,
+                target_id=target_id,
+                capability_type=CapabilityType(capability_type) if capability_type else None,
+                capability_id=capability_id,
+                limit=limit,
+            )
+        ]
     }
 
 
@@ -591,6 +725,31 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_ingest_file",
         description="Index a single file into memory, idempotent by content hash.",
         handler=_memory_ingest_file,
+    ),
+    ToolDefinition(
+        name="memory_list_candidates",
+        description="List reviewable memory candidates created by extraction.",
+        handler=_memory_list_candidates,
+    ),
+    ToolDefinition(
+        name="memory_promote_candidate",
+        description="Promote a reviewed memory candidate into its explicit target table.",
+        handler=_memory_promote_candidate,
+    ),
+    ToolDefinition(
+        name="memory_reject_candidate",
+        description="Reject a memory candidate while preserving it as negative evidence.",
+        handler=_memory_reject_candidate,
+    ),
+    ToolDefinition(
+        name="memory_link_capability",
+        description="Link a role, skill, or playbook to a theory, experiment, evidence item, insight, candidate, or decision.",
+        handler=_memory_link_capability,
+    ),
+    ToolDefinition(
+        name="memory_list_capability_links",
+        description="List capability links that explain which roles/skills/playbooks influence research memory objects.",
+        handler=_memory_list_capability_links,
     ),
     ToolDefinition(
         name="memory_write_decision",

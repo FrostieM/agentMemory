@@ -12,6 +12,7 @@ from agent_memory_lite.api.deps import (
     EmbeddingProviderDep,
     SettingsDep,
     VectorStoreDep,
+    ensure_workspace_allowed,
 )
 from agent_memory_lite.api.schemas.evals import RunEvalsRequest, RunEvalsResponse
 from agent_memory_lite.db.connection import close_connection, open_connection
@@ -28,6 +29,9 @@ def run_evals_route(
     provider: EmbeddingProviderDep,
     store: VectorStoreDep,
 ) -> RunEvalsResponse:
+    workspace_id = body.workspace_id or settings.workspace_id
+    ensure_workspace_allowed(workspace_id, settings)
+
     @contextmanager
     def _conn_factory() -> Iterator[sqlite3.Connection]:
         conn = open_connection(":memory:")
@@ -39,7 +43,7 @@ def run_evals_route(
 
     report = run_evals(
         _conn_factory,
-        workspace_id=body.workspace_id or settings.workspace_id,
+        workspace_id=workspace_id,
         embedding_provider=provider,
         vector_store=store,
     )

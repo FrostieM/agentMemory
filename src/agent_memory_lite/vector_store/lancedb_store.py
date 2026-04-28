@@ -142,3 +142,18 @@ class LanceDBStore(VectorStore):
         if workspace_id is None:
             return int(table.count_rows())
         return int(table.count_rows(filter=f"workspace_id = '{workspace_id}'"))
+
+    def list_ids(self, namespace: str, *, workspace_id: str | None = None) -> list[str]:
+        if namespace not in self._table_names():
+            return []
+        table = self._db.open_table(namespace)
+        try:
+            rows = table.to_arrow().to_pylist()
+        except Exception:
+            rows = table.to_pandas().to_dict("records")
+        ids: list[str] = []
+        for row in rows:
+            if workspace_id is not None and str(row.get("workspace_id")) != workspace_id:
+                continue
+            ids.append(str(row["id"]))
+        return ids

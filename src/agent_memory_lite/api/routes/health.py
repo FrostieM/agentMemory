@@ -1,21 +1,31 @@
-"""GET /health — liveness + configuration sanity check.
-
-Reports the configured embedding/LLM provider and the schema version. Phase 0
-ships a static dim until the embedding provider is wired (Phase 1).
-"""
+"""GET /health - liveness plus retrieval-integrity summary."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from typing import Any
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep
+from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict
+
+from agent_memory_lite.api.deps import DbDep, SettingsDep, VectorStoreDep
+from agent_memory_lite.maintenance.integrity import run_integrity_audit
 from agent_memory_lite.version import __version__
 
 router = APIRouter()
 
 
+class RetrievalIntegritySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    counts: dict[str, Any]
+    failures: list[str]
+    repair_hints: list[str]
+
+
 class HealthResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: str
     version: str
     db: str
@@ -26,14 +36,16 @@ class HealthResponse(BaseModel):
     llm_backend: str
     llm_model: str
     applied_migrations: list[str]
+    retrieval_integrity: RetrievalIntegritySummary
 
 
 @router.get("/health", response_model=HealthResponse)
-def health(settings: SettingsDep, conn: DbDep) -> HealthResponse:
+def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthResponse:
     rows = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
     versions = [str(row[0]) for row in rows]
+    report = run_integrity_audit(conn, workspace_id=settings.workspace_id, vector_store=store)
     return HealthResponse(
-        status="ok",
+        status="degraded" if report.status == "degraded" else "ok",
         version=__version__,
         db="ok",
         workspace_id=settings.workspace_id,
@@ -43,4 +55,10 @@ def health(settings: SettingsDep, conn: DbDep) -> HealthResponse:
         llm_backend=settings.llm_backend,
         llm_model=settings.llm_model,
         applied_migrations=versions,
+        retrieval_integrity=RetrievalIntegritySummary(
+            status=report.status,
+            counts=report.counts,
+            failures=report.failures,
+            repair_hints=report.repair_hints,
+        ),
     )

@@ -24,10 +24,12 @@ from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.fts.chunks_fts import insert_chunk_fts
+from agent_memory_lite.ingestion.maintenance_writer import write_maintenance_event
 from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.chunks import Chunk, ChunkIn
-from agent_memory_lite.models.enums import ChunkKind
+from agent_memory_lite.models.enums import ChunkKind, MaintenanceSeverity
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
+from agent_memory_lite.models.maintenance import MaintenanceEventIn
 from agent_memory_lite.redaction import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.chunks_repo import insert_chunk
@@ -47,6 +49,7 @@ class EpisodeIngestResult:
     auto_promoted_decisions: int = 0
     auto_promoted_rules: int = 0
     auto_promoted_core: int = 0
+    candidates_written: int = 0
 
 
 def _persist(
@@ -144,8 +147,22 @@ def ingest_episode(
     embedded = False
     if embedding_provider is not None and vector_store is not None:
         embedded = _embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
+        if not embedded:
+            write_maintenance_event(
+                conn,
+                MaintenanceEventIn(
+                    workspace_id=chunk.workspace_id,
+                    kind="vector_upsert_failed",
+                    severity=MaintenanceSeverity.ERROR,
+                    summary="Vector upsert failed after the episode SQLite write committed.",
+                    details={"chunk_id": chunk.id},
+                    source_episode_id=episode.id,
+                    target_type="chunk",
+                    target_id=chunk.id,
+                ),
+            )
 
-    decisions = rules = core = 0
+    decisions = rules = core = candidates_written = 0
     if auto_promote_settings is not None:
         from agent_memory_lite.ingestion.auto_promote import auto_promote  # noqa: PLC0415
 
@@ -154,6 +171,7 @@ def ingest_episode(
             decisions = stats.decisions_written
             rules = stats.rules_written
             core = stats.core_written
+            candidates_written = stats.candidates_written
         except Exception as exc:
             _log.warning("auto_promote_failed", episode_id=episode.id, error=str(exc))
 
@@ -165,4 +183,5 @@ def ingest_episode(
         auto_promoted_decisions=decisions,
         auto_promoted_rules=rules,
         auto_promoted_core=core,
+        candidates_written=candidates_written,
     )

@@ -76,6 +76,39 @@ def test_pipeline_writes_audit_entry(applied_conn: sqlite3.Connection) -> None:
     assert audit_row["target_type"] == "episode"
 
 
+def test_auto_promote_uses_episode_workspace(
+    applied_conn: sqlite3.Connection, settings_factory
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        _episode(
+            "Decision: keep promoted memory in the project workspace",
+            workspace_id="project-a",
+            trust_level=TrustLevel.VERIFIED_BY_TOOL,
+        ),
+        auto_promote_settings=settings_factory(MEMORY_WORKSPACE_ID="project-a"),
+    )
+
+    assert result.auto_promoted_decisions == 0
+    assert result.candidates_written == 1
+    candidate = applied_conn.execute(
+        "SELECT workspace_id, status FROM memory_candidates WHERE source_episode_id = ?",
+        (result.episode.id,),
+    ).fetchone()
+    assert candidate is not None
+    assert candidate["workspace_id"] == "project-a"
+    assert candidate["status"] == "new"
+    leaked = applied_conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM memory_candidates
+        WHERE source_episode_id = ? AND workspace_id = 'default'
+        """,
+        (result.episode.id,),
+    ).fetchone()
+    assert leaked[0] == 0
+
+
 def test_pipeline_rolls_back_on_failure(
     applied_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

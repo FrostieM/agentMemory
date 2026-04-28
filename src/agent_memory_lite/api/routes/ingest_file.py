@@ -7,7 +7,9 @@ from fastapi import APIRouter
 from agent_memory_lite.api.deps import (
     DbDep,
     EmbeddingProviderDep,
+    SettingsDep,
     VectorStoreDep,
+    ensure_workspace_allowed,
 )
 from agent_memory_lite.api.schemas.ingest import (
     IngestFileRequest,
@@ -24,7 +26,9 @@ def ingest_file_route(
     conn: DbDep,
     provider: EmbeddingProviderDep,
     store: VectorStoreDep,
+    settings: SettingsDep,
 ) -> IngestFileResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     result = ingest_file(
         conn,
         workspace_id=body.workspace_id,

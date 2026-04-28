@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.schemas.task_state import (
     UpdateTaskStateRequest,
     UpdateTaskStateResponse,
@@ -16,7 +16,12 @@ router = APIRouter()
 
 
 @router.post("/memory/update_task_state", response_model=UpdateTaskStateResponse)
-def update_task_state_route(body: UpdateTaskStateRequest, conn: DbDep) -> UpdateTaskStateResponse:
+def update_task_state_route(
+    body: UpdateTaskStateRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> UpdateTaskStateResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     payload = TaskStateIn(
         workspace_id=body.workspace_id,
         task_id=body.task_id,

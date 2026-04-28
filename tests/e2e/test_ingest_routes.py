@@ -71,3 +71,21 @@ def test_ingest_validates_empty_text(client: TestClient) -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_project_mode_rejects_default_workspace(app_factory) -> None:
+    app = app_factory(
+        MEMORY_WORKSPACE_ID="project-a",
+        MEMORY_FORBID_DEFAULT_WORKSPACE="true",
+    )
+    with TestClient(app) as guarded:
+        response = guarded.post(
+            "/memory/ingest_episode",
+            json={
+                "workspace_id": "default",
+                "source_type": "agent_action",
+                "raw_text": "should not leak to default",
+            },
+        )
+    assert response.status_code == 400
+    assert response.json()["error"] == "validation_failed"

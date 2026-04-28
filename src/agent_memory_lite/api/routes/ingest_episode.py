@@ -9,6 +9,7 @@ from agent_memory_lite.api.deps import (
     EmbeddingProviderDep,
     SettingsDep,
     VectorStoreDep,
+    ensure_workspace_allowed,
 )
 from agent_memory_lite.api.schemas.ingest import (
     IngestEpisodeRequest,
@@ -28,6 +29,7 @@ def ingest_episode_route(
     store: VectorStoreDep,
     settings: SettingsDep,
 ) -> IngestEpisodeResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     episode_in = EpisodeIn(
         workspace_id=body.workspace_id,
         session_id=body.session_id,
@@ -56,4 +58,5 @@ def ingest_episode_route(
         auto_promoted_decisions=result.auto_promoted_decisions,
         auto_promoted_rules=result.auto_promoted_rules,
         auto_promoted_core=result.auto_promoted_core,
+        candidates_written=result.candidates_written,
     )

@@ -6,8 +6,13 @@ import json
 import re
 import sqlite3
 
-from agent_memory_lite.models.enums import TheoryEvidenceKind, TheoryStatus
+from agent_memory_lite.models.enums import (
+    CapabilityLinkTargetType,
+    TheoryEvidenceKind,
+    TheoryStatus,
+)
 from agent_memory_lite.models.theories import Theory, TheoryEvidence
+from agent_memory_lite.repositories.capability_links_repo import capability_link_text_by_target
 
 _TOKEN_RE = re.compile(r"[\w.-]+", re.UNICODE)
 _ACTIVE_STATUSES = {
@@ -171,13 +176,14 @@ def get_theory(conn: sqlite3.Connection, theory_id: str) -> Theory | None:
     return _row_to_theory(row) if row is not None else None
 
 
-def _searchable_text(theory: Theory) -> str:
+def _searchable_text(theory: Theory, capability_text: str = "") -> str:
     parts = [
         theory.title,
         theory.domain,
         theory.claim,
         theory.mechanism or "",
         theory.experiment_plan or "",
+        capability_text,
         " ".join(theory.predictions),
         " ".join(theory.validation_criteria),
         " ".join(theory.dependent_decision_ids),
@@ -192,7 +198,7 @@ def _tokens(query: str | None) -> list[str]:
     return [token.lower() for token in _TOKEN_RE.findall(query) if len(token) > 1]
 
 
-def _rank(theory: Theory, tokens: list[str]) -> tuple[float, str]:
+def _rank(theory: Theory, tokens: list[str], capability_text: str = "") -> tuple[float, str]:
     status_bonus = {
         TheoryStatus.TESTING: 0.25,
         TheoryStatus.VALIDATED: 0.25,
@@ -203,7 +209,7 @@ def _rank(theory: Theory, tokens: list[str]) -> tuple[float, str]:
         TheoryStatus.SUPERSEDED: -0.30,
         TheoryStatus.ARCHIVED: -0.35,
     }[theory.status]
-    text = _searchable_text(theory)
+    text = _searchable_text(theory, capability_text)
     token_score = sum(1.0 for token in tokens if token in text)
     score = token_score + theory.importance + (theory.confidence * 0.5) + status_bonus
     return score, theory.updated_at
@@ -223,6 +229,12 @@ def list_theories(
         (workspace_id,),
     ).fetchall()
     theories = [_row_to_theory(row) for row in rows]
+    linked_text = capability_link_text_by_target(
+        conn,
+        workspace_id=workspace_id,
+        target_type=CapabilityLinkTargetType.THEORY,
+        target_ids=[theory.id for theory in theories],
+    )
     if statuses is not None:
         allowed = set(statuses)
         theories = [theory for theory in theories if theory.status in allowed]
@@ -234,9 +246,14 @@ def list_theories(
         theories = [
             theory
             for theory in theories
-            if any(token in _searchable_text(theory) for token in terms)
+            if any(
+                token in _searchable_text(theory, linked_text.get(theory.id, "")) for token in terms
+            )
         ]
-    theories.sort(key=lambda theory: _rank(theory, terms), reverse=True)
+    theories.sort(
+        key=lambda theory: _rank(theory, terms, linked_text.get(theory.id, "")),
+        reverse=True,
+    )
     return theories[:limit]
 
 

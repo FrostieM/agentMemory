@@ -18,6 +18,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from agent_memory_lite.api.errors import ValidationError
 from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -36,6 +37,15 @@ def get_settings_dep() -> Settings:
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
+
+
+def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
+    """Reject implicit default workspace writes when project mode opts in."""
+    if settings.forbid_default_workspace and workspace_id == "default":
+        raise ValidationError(
+            "workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE; "
+            "pass the project workspace_id explicitly"
+        )
 
 
 def _resolve_db_path(request: Request, settings: Settings) -> Path:

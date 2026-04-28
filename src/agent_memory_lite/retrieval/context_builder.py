@@ -33,8 +33,10 @@ from agent_memory_lite.models.capabilities import (
     AgentRole,
     AgentSkill,
 )
+from agent_memory_lite.models.capability_links import CapabilityLink
 from agent_memory_lite.models.core_memory import CoreMemory
 from agent_memory_lite.models.decisions import Decision
+from agent_memory_lite.models.enums import CapabilityLinkTargetType
 from agent_memory_lite.models.procedural import ProceduralRule
 from agent_memory_lite.models.research import ResearchAgenda
 from agent_memory_lite.models.retrieval import (
@@ -45,6 +47,7 @@ from agent_memory_lite.models.retrieval import (
 from agent_memory_lite.models.task_state import TaskState
 from agent_memory_lite.models.theories import Theory, TheoryEvidence
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
+from agent_memory_lite.repositories.capability_links_repo import list_capability_links_for_targets
 from agent_memory_lite.repositories.core_memory_repo import list_active_core
 from agent_memory_lite.repositories.decisions_repo import (
     list_active_decisions,
@@ -90,6 +93,7 @@ CONTEXT_CHUNK_RESERVE_TOKENS = 128
 class TheoryContext:
     theory: Theory
     evidence: list[TheoryEvidence] = field(default_factory=list)
+    capability_links: list[CapabilityLink] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,6 +269,32 @@ def _render_theory_evidence(items: list[TheoryEvidence]) -> list[str]:
     return lines
 
 
+def _render_capability_links(items: list[CapabilityLink]) -> list[str]:
+    if not items:
+        return []
+    lines = ["      <capability_links>"]
+    for link in items:
+        attrs = (
+            f"id={quoteattr(link.id)} "
+            f"capability_type={quoteattr(link.capability_type.value)} "
+            f"capability_id={quoteattr(link.capability_id)} "
+            f"relation={quoteattr(link.relation.value)} "
+            f"strength={quoteattr(f'{link.strength:.2f}')} "
+            f"source={quoteattr(link.source_episode_id or '')}"
+        )
+        lines.append(f"        <link {attrs}>")
+        lines.append(
+            f"          <name>{escape(_clip_text(link.capability_name, MAX_TITLE_CHARS))}</name>"
+        )
+        if link.rationale:
+            lines.append(
+                f"          <rationale>{escape(_clip_text(link.rationale, MAX_TEXT_CHARS))}</rationale>"
+            )
+        lines.append("        </link>")
+    lines.append("      </capability_links>")
+    return lines
+
+
 def _render_theory(bundle: TheoryContext) -> list[str]:
     item = bundle.theory
     lines = [f"    <theory {_theory_attrs(item)}>"]
@@ -311,6 +341,7 @@ def _render_theory(bundle: TheoryContext) -> list[str]:
         )
     )
     lines.extend(_render_theory_evidence(bundle.evidence))
+    lines.extend(_render_capability_links(bundle.capability_links))
     lines.append("    </theory>")
     return lines
 
@@ -717,6 +748,13 @@ def build_context(
         limit=MAX_THEORIES,
         include_archived=query.historical,
     )
+    theory_capability_links = list_capability_links_for_targets(
+        conn,
+        workspace_id=query.workspace_id,
+        target_type=CapabilityLinkTargetType.THEORY,
+        target_ids=[theory.id for theory in theory_items],
+        limit_per_target=3,
+    )
     theories = [
         TheoryContext(
             theory=theory,
@@ -725,6 +763,7 @@ def build_context(
                 theory.id,
                 limit=MAX_THEORY_EVIDENCE,
             ),
+            capability_links=theory_capability_links.get(theory.id, []),
         )
         for theory in theory_items
     ]

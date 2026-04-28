@@ -46,6 +46,10 @@ class Settings(BaseSettings):
 
     # Workspace (single-workspace v1)
     workspace_id: str = Field(default="default", validation_alias="MEMORY_WORKSPACE_ID")
+    forbid_default_workspace: bool = Field(
+        default=False,
+        validation_alias="MEMORY_FORBID_DEFAULT_WORKSPACE",
+    )
 
     # Embeddings
     embedding_backend: EmbeddingBackend = Field(

@@ -7,7 +7,9 @@ from fastapi import APIRouter
 from agent_memory_lite.api.deps import (
     DbDep,
     EmbeddingProviderDep,
+    SettingsDep,
     VectorStoreDep,
+    ensure_workspace_allowed,
 )
 from agent_memory_lite.api.schemas.context import (
     ContextSource,
@@ -26,7 +28,9 @@ def get_context_route(
     conn: DbDep,
     provider: EmbeddingProviderDep,
     store: VectorStoreDep,
+    settings: SettingsDep,
 ) -> GetContextResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     query = RetrievalQuery(
         workspace_id=body.workspace_id,
         session_id=body.session_id,

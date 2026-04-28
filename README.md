@@ -26,6 +26,10 @@ agent roles, reusable skills, and repeatable playbooks so execution knowledge is
 retrievable instead of buried in episodes. See `SESSION_STATE.md` for current
 verification counts.
 
+The integrity extension adds reviewable memory candidates, maintenance events,
+and a retrieval-integrity audit so SQLite, FTS, and vector drift cannot stay
+silent.
+
 ## Requirements
 
 - **Python 3.13 recommended** (3.12 supported, 3.14 supported but `torch` wheels may lag).
@@ -128,20 +132,29 @@ should execute work:
   triggers, ordered steps, success criteria, and required skills.
 - `POST /memory/list_agent_capabilities` retrieves the relevant roles, skills,
   and playbooks for a query.
+- `POST /memory/link_capability` links a role, skill, or playbook to a theory,
+  evidence item, experiment, insight, candidate, or decision with an explicit
+  relation such as `method`, `reviewer`, `critique_lens`, or
+  `validation_playbook`.
+- `POST /memory/list_capability_links` shows which capabilities influence a
+  target object.
 - `POST /memory/get_context` includes an `<agent_capabilities>` section after
-  `<research_agenda>`, so the agent sees execution guidance before raw chunks.
+  `<research_agenda>`, and linked capabilities are rendered inside
+  `<active_theories>` so roles and skills can directly shape hypothesis review.
 
 Recommended flow:
 
 ```text
-define role -> define reusable skill -> define playbook -> verify via get_context
+define role -> define reusable skill -> define playbook
+            -> link capability to theory/experiment
+            -> verify via get_context
 ```
 
 Example playbook:
 
 ```json
 {
-  "workspace_id": "default",
+  "workspace_id": "<workspace_id>",
   "name": "Non-destructive live audit",
   "goal": "Confirm live flow without changing data.",
   "triggers": ["The user asks whether the live system works"],
@@ -149,6 +162,21 @@ Example playbook:
   "success_criteria": ["No reset was performed", "The report cites exact evidence"],
   "required_skills": ["Live flow audit"],
   "confidence": 0.85
+}
+```
+
+Example capability link:
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "target_type": "theory",
+  "target_id": "th_...",
+  "capability_type": "skill",
+  "capability_name": "Replay and backtest design",
+  "relation": "method",
+  "rationale": "This hypothesis must be tested with replay before policy changes.",
+  "strength": 0.9
 }
 ```
 
@@ -164,7 +192,7 @@ Example experiment result:
 
 ```json
 {
-  "workspace_id": "default",
+  "workspace_id": "<workspace_id>",
   "experiment_id": "exp_...",
   "kind": "supporting",
   "summary": "Favorite-side source flips stayed positive after fee assumptions.",
@@ -178,7 +206,7 @@ Example theory:
 
 ```json
 {
-  "workspace_id": "default",
+  "workspace_id": "<workspace_id>",
   "title": "Source-flip tennis favorites",
   "domain": "trading.paper.edge",
   "claim": "Source-flip trades on tennis favorites may carry short-lived edge.",
@@ -242,6 +270,23 @@ Health check at any time:
 
 ```bash
 curl http://127.0.0.1:8765/health
+```
+
+`/health` includes `retrieval_integrity`. A degraded FTS/vector/workspace check,
+open maintenance event, or dangling capability link changes health status to
+`degraded`; repair is never automatic.
+
+Read-only audit:
+
+```bash
+python scripts/memory_audit.py --workspace <workspace_id> --json
+```
+
+Explicit repair, with backups first:
+
+```bash
+python scripts/memory_audit.py --workspace <workspace_id> --repair-fts --backup-first
+python scripts/memory_audit.py --workspace <workspace_id> --repair-vectors --backup-first
 ```
 
 To start over with a clean memory:
@@ -347,7 +392,8 @@ The script (either mode) is idempotent. It:
 After this, in any new chat the agent has three layers of "don't forget":
 
 - **Tools layer**: base memory tools plus theory/research/capability tools
-  (`memory_write_theory`, `memory_register_snapshot`,
+  (`memory_list_candidates`, `memory_promote_candidate`,
+  `memory_reject_candidate`, `memory_write_theory`, `memory_register_snapshot`,
   `memory_write_experiment`, `memory_add_experiment_result`,
   `memory_list_research_agenda`, `memory_upsert_agent_role`,
   `memory_upsert_agent_skill`, `memory_upsert_agent_playbook`,
@@ -361,9 +407,9 @@ After this, in any new chat the agent has three layers of "don't forget":
   any tools.
 
 Re-run `python scripts/status.py` at any time to see the current state.
-Use `python scripts/research_status.py --workspace <WORKSPACE_ID>` to inspect
+Use `python scripts/research_status.py --workspace <workspace_id>` to inspect
 the research memory backlog. Use
-`python scripts/run_evals.py --workspace <WORKSPACE_ID> --no-vector` for a fast
+`python scripts/run_evals.py --workspace <workspace_id> --no-vector` for a fast
 offline eval run that does not load an embedding model or vector store.
 
 Flags:
@@ -403,7 +449,7 @@ Index a whole project tree (respects `.gitignore` + builtin denylist + optional
 `.memoryignore`):
 
 ```bash
-python scripts/ingest_workspace.py --workspace default --path /path/to/repo
+python scripts/ingest_workspace.py --workspace <workspace_id> --path /path/to/repo
 ```
 
 ## Reindex vectors

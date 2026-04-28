@@ -109,3 +109,50 @@ class MemoryCandidateKind(StrEnum):
     CORRECTION = "correction"
     BUG = "bug"
     FIX = "fix"
+
+
+class MemoryCandidateStatus(StrEnum):
+    NEW = "new"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    PROMOTED = "promoted"
+
+
+class MaintenanceEventStatus(StrEnum):
+    OPEN = "open"
+    RESOLVED = "resolved"
+    IGNORED = "ignored"
+
+
+class MaintenanceSeverity(StrEnum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+class CapabilityType(StrEnum):
+    ROLE = "role"
+    SKILL = "skill"
+    PLAYBOOK = "playbook"
+
+
+class CapabilityLinkTargetType(StrEnum):
+    THEORY = "theory"
+    THEORY_EVIDENCE = "theory_evidence"
+    EXPERIMENT = "experiment"
+    EXPERIMENT_RESULT = "experiment_result"
+    RESEARCH_INSIGHT = "research_insight"
+    MEMORY_CANDIDATE = "memory_candidate"
+    DECISION = "decision"
+
+
+class CapabilityLinkRelation(StrEnum):
+    OWNER = "owner"
+    REVIEWER = "reviewer"
+    CRITIQUE_LENS = "critique_lens"
+    METHOD = "method"
+    REQUIRED_SKILL = "required_skill"
+    VALIDATION_PLAYBOOK = "validation_playbook"
+    EVIDENCE_METHOD = "evidence_method"
+    IMPLEMENTATION_ROLE = "implementation_role"

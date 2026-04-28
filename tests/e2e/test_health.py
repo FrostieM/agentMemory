@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 
 import pytest
@@ -29,6 +30,8 @@ def test_health_returns_ok(client: TestClient) -> None:
     assert body["llm_backend"] == "ollama"
     assert "0001_init" in body["applied_migrations"]
     assert "0002_chunks_fts" in body["applied_migrations"]
+    assert body["retrieval_integrity"]["status"] in {"ok", "unknown"}
+    assert isinstance(body["retrieval_integrity"]["counts"], dict)
 
 
 def test_health_reports_version(client: TestClient) -> None:
@@ -36,3 +39,34 @@ def test_health_reports_version(client: TestClient) -> None:
     body = response.json()
     assert body["version"]
     assert isinstance(body["version"], str)
+
+
+def test_health_degrades_on_fts_drift(app_factory, tmp_db_path) -> None:
+    app = app_factory()
+    with TestClient(app) as client:
+        ingest = client.post(
+            "/memory/ingest_episode",
+            json={
+                "workspace_id": "default",
+                "source_type": "agent_action",
+                "raw_text": "health drift control token",
+            },
+        )
+        assert ingest.status_code == 200
+        chunk_id = ingest.json()["chunk_id"]
+
+    conn = sqlite3.connect(tmp_db_path)
+    try:
+        conn.execute("UPDATE chunks_fts SET workspace_id = 'other' WHERE chunk_id = ?", (chunk_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        body = response.json()
+
+    assert response.status_code == 200
+    assert body["status"] == "degraded"
+    assert body["retrieval_integrity"]["status"] == "degraded"
+    assert "fts" in body["retrieval_integrity"]["failures"]

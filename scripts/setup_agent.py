@@ -297,6 +297,8 @@ def claude_mcp_entry(
     env: dict[str, str] = {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")}
     if workspace_id:
         env["MEMORY_WORKSPACE_ID"] = workspace_id
+        if workspace_id != "default":
+            env["MEMORY_FORBID_DEFAULT_WORKSPACE"] = "true"
     if project_root is not None:
         env["MEMORY_DB_PATH"] = str(project_root / ".agent_memory" / "memory.db")
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
@@ -526,6 +528,8 @@ def configure_project(  # noqa: PLR0915
         env["MEMORY_DB_PATH"] = str(db_path)
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
         env["MEMORY_WORKSPACE_ID"] = workspace_id
+        if workspace_id != "default":
+            env["MEMORY_FORBID_DEFAULT_WORKSPACE"] = "true"
         subprocess.run(
             [str(diag.venv_python), str(REPO_ROOT / "scripts" / "bootstrap_db.py")],
             check=True,
@@ -600,7 +604,7 @@ def main() -> int:
     parser.add_argument("--yes", action="store_true", help="Non-interactive (assume yes).")
     parser.add_argument(
         "--workspace",
-        default="default",
+        default=None,
         help="Logical workspace_id to use inside the selected memory database.",
     )
     parser.add_argument(
@@ -632,12 +636,13 @@ def main() -> int:
 
     if args.project is not None:
         project_root = Path(args.project).resolve()
-        configure_project(diag, project_root, workspace_id=args.workspace)
+        workspace_id = args.workspace or project_root.name
+        configure_project(diag, project_root, workspace_id=workspace_id)
         section("Done (project mode)")
         print(
             f"This project ({project_root.name}) now has its own memory at\n"
             f"  {project_root / '.agent_memory'}\n"
-            f"using workspace_id={args.workspace!r}, and its own CLAUDE.md / AGENTS.md contract.\n"
+            f"using workspace_id={workspace_id!r}, and its own CLAUDE.md / AGENTS.md contract.\n"
             "Restart your agent runtime and it will see ONLY this project's memory.\n"
         )
         smoke_test_mcp(diag)

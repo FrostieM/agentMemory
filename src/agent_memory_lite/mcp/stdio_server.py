@@ -47,6 +47,11 @@ from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.candidate_writer import (
+    promote_memory_candidate,
+    reject_memory_candidate,
+)
+from agent_memory_lite.ingestion.capability_link_writer import link_capability
 from agent_memory_lite.ingestion.capability_writer import (
     upsert_agent_playbook,
     upsert_agent_role,
@@ -66,6 +71,7 @@ from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
+from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import (
@@ -78,7 +84,9 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
+from agent_memory_lite.repositories.capability_links_repo import list_capability_links
 from agent_memory_lite.repositories.research_repo import (
     build_research_agenda,
     list_concepts,
@@ -269,6 +277,75 @@ _TOOLS: list[types.Tool] = [
                 "language": {"type": "string"},
             },
             "required": ["path", "content"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_candidates",
+        description="List reviewable memory candidates created by extraction.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "statuses": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_promote_candidate",
+        description="Promote a reviewed memory candidate into its explicit target table.",
+        inputSchema={
+            "type": "object",
+            "properties": {"candidate_id": {"type": "string", "minLength": 1}},
+            "required": ["candidate_id"],
+        },
+    ),
+    types.Tool(
+        name="memory_reject_candidate",
+        description="Reject a memory candidate while preserving it for audit.",
+        inputSchema={
+            "type": "object",
+            "properties": {"candidate_id": {"type": "string", "minLength": 1}},
+            "required": ["candidate_id"],
+        },
+    ),
+    types.Tool(
+        name="memory_link_capability",
+        description=(
+            "Link a role, skill, or playbook to a research object so it can "
+            "influence hypothesis retrieval and context."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "target_type": {"type": "string"},
+                "target_id": {"type": "string", "minLength": 1},
+                "capability_type": {"type": "string"},
+                "capability_id": {"type": "string"},
+                "capability_name": {"type": "string"},
+                "relation": {"type": "string", "default": "method"},
+                "rationale": {"type": "string"},
+                "strength": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "source_episode_id": {"type": "string"},
+            },
+            "required": ["target_type", "target_id", "capability_type"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_capability_links",
+        description="List links from roles, skills, and playbooks to research memory objects.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "target_type": {"type": "string"},
+                "target_id": {"type": "string"},
+                "capability_type": {"type": "string"},
+                "capability_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+            },
         },
     ),
     types.Tool(
@@ -566,7 +643,19 @@ def _drop_none(payload: dict[str, Any]) -> dict[str, Any]:
 def _with_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned = _drop_none(payload)
     cleaned.setdefault("workspace_id", _runtime.settings.workspace_id)
+    _ensure_workspace_allowed(str(cleaned["workspace_id"]))
     return cleaned
+
+
+def _ensure_workspace_allowed(workspace_id: str) -> None:
+    if _runtime.settings.forbid_default_workspace and workspace_id == "default":
+        raise ValueError("workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE")
+
+
+def _workspace_from_args(args: dict[str, Any]) -> str:
+    workspace_id = str(args.get("workspace_id", _runtime.settings.workspace_id))
+    _ensure_workspace_allowed(workspace_id)
+    return workspace_id
 
 
 def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
@@ -592,7 +681,7 @@ def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     query = args["query"]
     limit = int(args.get("limit", 10))
     hits = search_chunks_fts(
@@ -636,6 +725,7 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
         "auto_promoted_decisions": result.auto_promoted_decisions,
         "auto_promoted_rules": result.auto_promoted_rules,
         "auto_promoted_core": result.auto_promoted_core,
+        "candidates_written": result.candidates_written,
     }
 
 
@@ -661,7 +751,8 @@ def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
     payload = _drop_none(args)
-    workspace_id = payload.pop("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = str(payload.pop("workspace_id", _runtime.settings.workspace_id))
+    _ensure_workspace_allowed(workspace_id)
     result = ingest_file(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -675,6 +766,113 @@ def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
         "chunks_written": result.chunks_written,
         "skipped": result.skipped,
         "last_indexed_at": result.file.last_indexed_at,
+    }
+
+
+def _candidate_payload(candidate: Any) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.id,
+        "workspace_id": candidate.workspace_id,
+        "kind": candidate.kind.value,
+        "subject": candidate.subject,
+        "predicate": candidate.predicate,
+        "object": candidate.object,
+        "evidence": candidate.evidence,
+        "confidence": candidate.confidence,
+        "importance": candidate.importance,
+        "trust_level": candidate.trust_level.value,
+        "source_episode_id": candidate.source_episode_id,
+        "status": candidate.status.value,
+        "promoted_target_type": candidate.promoted_target_type,
+        "promoted_target_id": candidate.promoted_target_id,
+        "created_at": candidate.created_at,
+        "updated_at": candidate.updated_at,
+        "decided_at": candidate.decided_at,
+    }
+
+
+def _capability_link_payload(link: Any) -> dict[str, Any]:
+    return {
+        "link_id": link.id,
+        "workspace_id": link.workspace_id,
+        "target_type": link.target_type.value,
+        "target_id": link.target_id,
+        "capability_type": link.capability_type.value,
+        "capability_id": link.capability_id,
+        "capability_name": link.capability_name,
+        "relation": link.relation.value,
+        "rationale": link.rationale,
+        "strength": link.strength,
+        "source_episode_id": link.source_episode_id,
+        "created_at": link.created_at,
+        "updated_at": link.updated_at,
+    }
+
+
+def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import MemoryCandidateStatus  # noqa: PLC0415
+
+    workspace_id = _workspace_from_args(args)
+    raw_statuses = args.get("statuses")
+    statuses = [MemoryCandidateStatus(item) for item in raw_statuses] if raw_statuses else None
+    return {
+        "candidates": [
+            _candidate_payload(candidate)
+            for candidate in list_candidates(
+                _runtime.db(),
+                workspace_id=workspace_id,
+                query=args.get("query"),
+                statuses=statuses,
+                limit=int(args.get("limit", 20)),
+            )
+        ]
+    }
+
+
+def _handle_promote_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    return _candidate_payload(
+        promote_memory_candidate(_runtime.db(), candidate_id=str(args["candidate_id"]))
+    )
+
+
+def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    return _candidate_payload(
+        reject_memory_candidate(_runtime.db(), candidate_id=str(args["candidate_id"]))
+    )
+
+
+def _handle_link_capability(args: dict[str, Any]) -> dict[str, Any]:
+    return _capability_link_payload(
+        link_capability(_runtime.db(), CapabilityLinkIn(**_with_workspace(args)))
+    )
+
+
+def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import (  # noqa: PLC0415
+        CapabilityLinkTargetType,
+        CapabilityType,
+    )
+
+    workspace_id = _workspace_from_args(args)
+    return {
+        "links": [
+            _capability_link_payload(link)
+            for link in list_capability_links(
+                _runtime.db(),
+                workspace_id=workspace_id,
+                target_type=(
+                    CapabilityLinkTargetType(args["target_type"])
+                    if args.get("target_type")
+                    else None
+                ),
+                target_id=args.get("target_id"),
+                capability_type=(
+                    CapabilityType(args["capability_type"]) if args.get("capability_type") else None
+                ),
+                capability_id=args.get("capability_id"),
+                limit=int(args.get("limit", 50)),
+            )
+        ]
     }
 
 
@@ -701,7 +899,7 @@ def _handle_add_theory_evidence(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_theories(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     include_evidence = bool(args.get("include_evidence", False))
     evidence_limit = int(args.get("evidence_limit", 3))
     theories = list_theories(
@@ -802,7 +1000,7 @@ def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     agenda = build_research_agenda(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -858,7 +1056,7 @@ def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_concepts(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     concepts = list_concepts(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -882,7 +1080,7 @@ def _handle_list_concepts(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_insights(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     insights = list_insights(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -939,7 +1137,7 @@ def _handle_upsert_agent_playbook(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = args.get("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = _workspace_from_args(args)
     capabilities = build_agent_capabilities(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -988,6 +1186,11 @@ _HANDLERS = {
     "memory_write_decision": _handle_write_decision,
     "memory_update_task_state": _handle_update_task_state,
     "memory_ingest_file": _handle_ingest_file,
+    "memory_list_candidates": _handle_list_candidates,
+    "memory_promote_candidate": _handle_promote_candidate,
+    "memory_reject_candidate": _handle_reject_candidate,
+    "memory_link_capability": _handle_link_capability,
+    "memory_list_capability_links": _handle_list_capability_links,
     "memory_write_theory": _handle_write_theory,
     "memory_add_theory_evidence": _handle_add_theory_evidence,
     "memory_list_theories": _handle_list_theories,

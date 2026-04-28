@@ -35,6 +35,7 @@ class IngestEpisodeResponse(BaseModel):
     auto_promoted_decisions: int = 0
     auto_promoted_rules: int = 0
     auto_promoted_core: int = 0
+    candidates_written: int = 0
 
 
 class IngestFileRequest(BaseModel):

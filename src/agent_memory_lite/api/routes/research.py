@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.schemas.research import (
     AddExperimentResultRequest,
     ConceptResponse,
@@ -155,7 +155,9 @@ def _insight_response(insight: ResearchInsight) -> InsightResponse:
 def register_snapshot_route(
     body: RegisterSnapshotRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> MemorySnapshotResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     snapshot = register_snapshot(
         conn,
         MemorySnapshotIn(
@@ -185,7 +187,9 @@ def register_snapshot_route(
 def write_experiment_route(
     body: WriteExperimentRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> ExperimentResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     experiment = write_experiment(
         conn,
         ExperimentIn(
@@ -212,7 +216,9 @@ def write_experiment_route(
 def add_experiment_result_route(
     body: AddExperimentResultRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> ExperimentResultResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     result = add_experiment_result(
         conn,
         ExperimentResultIn(
@@ -232,7 +238,12 @@ def add_experiment_result_route(
 
 
 @router.post("/memory/upsert_concept", response_model=ConceptResponse)
-def upsert_concept_route(body: UpsertConceptRequest, conn: DbDep) -> ConceptResponse:
+def upsert_concept_route(
+    body: UpsertConceptRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> ConceptResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     concept = upsert_domain_concept(
         conn,
         DomainConceptIn(
@@ -251,7 +262,12 @@ def upsert_concept_route(body: UpsertConceptRequest, conn: DbDep) -> ConceptResp
 
 
 @router.post("/memory/distill_insight", response_model=InsightResponse)
-def distill_insight_route(body: DistillInsightRequest, conn: DbDep) -> InsightResponse:
+def distill_insight_route(
+    body: DistillInsightRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> InsightResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     insight = distill_insight(
         conn,
         ResearchInsightIn(
@@ -274,7 +290,9 @@ def distill_insight_route(body: DistillInsightRequest, conn: DbDep) -> InsightRe
 def list_research_agenda_route(
     body: ListResearchAgendaRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> ResearchAgendaResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     agenda = build_research_agenda(
         conn,
         workspace_id=body.workspace_id,
@@ -290,7 +308,12 @@ def list_research_agenda_route(
 
 
 @router.post("/memory/list_concepts", response_model=ListConceptsResponse)
-def list_concepts_route(body: ListConceptsRequest, conn: DbDep) -> ListConceptsResponse:
+def list_concepts_route(
+    body: ListConceptsRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> ListConceptsResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     concepts = list_concepts(
         conn,
         workspace_id=body.workspace_id,
@@ -302,7 +325,12 @@ def list_concepts_route(body: ListConceptsRequest, conn: DbDep) -> ListConceptsR
 
 
 @router.post("/memory/list_insights", response_model=ListInsightsResponse)
-def list_insights_route(body: ListInsightsRequest, conn: DbDep) -> ListInsightsResponse:
+def list_insights_route(
+    body: ListInsightsRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> ListInsightsResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     insights = list_insights(
         conn,
         workspace_id=body.workspace_id,

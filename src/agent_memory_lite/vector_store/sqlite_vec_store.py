@@ -171,3 +171,18 @@ class SqliteVecStore(VectorStore):
         except sqlite3.OperationalError:
             return 0
         return int(row[0]) if row else 0
+
+    def list_ids(self, namespace: str, *, workspace_id: str | None = None) -> list[str]:
+        self.open()
+        assert self._conn is not None
+        try:
+            if workspace_id is None:
+                rows = self._conn.execute(f"SELECT id FROM {namespace}_meta").fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"SELECT id FROM {namespace}_meta WHERE workspace_id = ?",
+                    (workspace_id,),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [str(row[0]) for row in rows]

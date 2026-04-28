@@ -94,15 +94,9 @@ Determine `WORKSPACE_ID` before running setup or making any memory call:
   exact value.
 - Else if an existing project memory clearly already uses one workspace id, keep
   it.
-- Otherwise use `default`.
+- Otherwise use the project directory name.
 
-If `WORKSPACE_ID` is `default`, execute:
-
-```
-<VENV_PYTHON> <REPO_ROOT>/scripts/setup_agent.py --project <PROJECT_ROOT>
-```
-
-If `WORKSPACE_ID` is not `default`, execute:
+Execute:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/setup_agent.py --project <PROJECT_ROOT> --workspace <WORKSPACE_ID>
@@ -160,6 +154,15 @@ If the project already has capability memory, also call
 This confirms that roles, skills, and playbooks are visible from the same
 service the agent will use.
 
+Also run a read-only retrieval integrity audit:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_audit.py --workspace <WORKSPACE_ID> --json
+```
+
+If it reports `degraded`, do not repair silently. Report the failing checks and
+ask for permission unless the user already explicitly requested repair.
+
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
    reads its MCP config file at startup, not on every prompt. The new
@@ -210,8 +213,15 @@ What this means for our future chats in this project:
 - After meaningful actions I will call memory_ingest_episode.
 - After architectural choices I will call memory_write_decision.
 - Before specialized workflows I will call memory_list_agent_capabilities.
+- Before trusting memory after deploy/migration/restart anomalies I will run a
+  read-only memory_audit check.
+- Extracted decisions/rules now enter memory_candidates first; I will promote
+  or reject them explicitly.
 - When reusable roles, skills, or playbooks emerge I will save them with the
   capability memory tools.
+- When a role, skill, or playbook must influence a specific theory,
+  experiment, evidence item, insight, candidate, or decision I will link it
+  with memory_link_capability.
 - After task progress I will call memory_update_task_state.
 All of this writes to <project>/.agent_memory/memory.db only — no
 cross-project leakage.

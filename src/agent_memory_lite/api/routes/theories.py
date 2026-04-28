@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.schemas.theories import (
     AddTheoryEvidenceRequest,
     ListTheoriesRequest,
@@ -67,7 +67,12 @@ def _evidence_response(evidence: TheoryEvidence) -> TheoryEvidenceResponse:
 
 
 @router.post("/memory/write_theory", response_model=TheoryResponse)
-def write_theory_route(body: WriteTheoryRequest, conn: DbDep) -> TheoryResponse:
+def write_theory_route(
+    body: WriteTheoryRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> TheoryResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     theory = write_theory(
         conn,
         TheoryIn(
@@ -95,7 +100,9 @@ def write_theory_route(body: WriteTheoryRequest, conn: DbDep) -> TheoryResponse:
 def add_theory_evidence_route(
     body: AddTheoryEvidenceRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> TheoryEvidenceResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     evidence = add_theory_evidence(
         conn,
         TheoryEvidenceIn(
@@ -114,7 +121,12 @@ def add_theory_evidence_route(
 
 
 @router.post("/memory/list_theories", response_model=ListTheoriesResponse)
-def list_theories_route(body: ListTheoriesRequest, conn: DbDep) -> ListTheoriesResponse:
+def list_theories_route(
+    body: ListTheoriesRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> ListTheoriesResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     theories = list_theories(
         conn,
         workspace_id=body.workspace_id,

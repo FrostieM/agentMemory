@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.schemas.capabilities import (
     AgentPlaybookResponse,
     AgentRoleResponse,
@@ -92,7 +92,9 @@ def _playbook_response(playbook: AgentPlaybook) -> AgentPlaybookResponse:
 def upsert_agent_role_route(
     body: UpsertAgentRoleRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> AgentRoleResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     role = upsert_agent_role(
         conn,
         AgentRoleIn(
@@ -115,7 +117,9 @@ def upsert_agent_role_route(
 def upsert_agent_skill_route(
     body: UpsertAgentSkillRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> AgentSkillResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     skill = upsert_agent_skill(
         conn,
         AgentSkillIn(
@@ -139,7 +143,9 @@ def upsert_agent_skill_route(
 def upsert_agent_playbook_route(
     body: UpsertAgentPlaybookRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> AgentPlaybookResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     playbook = upsert_agent_playbook(
         conn,
         AgentPlaybookIn(
@@ -162,7 +168,9 @@ def upsert_agent_playbook_route(
 def list_agent_capabilities_route(
     body: ListAgentCapabilitiesRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> ListAgentCapabilitiesResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     capabilities = build_agent_capabilities(
         conn,
         workspace_id=body.workspace_id,

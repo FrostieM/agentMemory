@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.schemas.decisions import (
     WriteDecisionRequest,
     WriteDecisionResponse,
@@ -16,7 +16,12 @@ router = APIRouter()
 
 
 @router.post("/memory/write_decision", response_model=WriteDecisionResponse)
-def write_decision_route(body: WriteDecisionRequest, conn: DbDep) -> WriteDecisionResponse:
+def write_decision_route(
+    body: WriteDecisionRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+) -> WriteDecisionResponse:
+    ensure_workspace_allowed(body.workspace_id, settings)
     payload = DecisionIn(
         workspace_id=body.workspace_id,
         title=body.title,
