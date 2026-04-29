@@ -13,6 +13,7 @@ from typing import Any
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
 from agent_memory_lite.ingestion.candidate_writer import (
     promote_memory_candidate,
     reject_memory_candidate,
@@ -36,6 +37,7 @@ from agent_memory_lite.ingestion.research_writer import (
 )
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
+from agent_memory_lite.models.behavior import BehaviorInstructionIn
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.decisions import DecisionIn
@@ -51,6 +53,7 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.behavior_repo import list_behavior_instructions
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
@@ -188,6 +191,26 @@ def _maintenance_event_payload(event: Any) -> dict[str, Any]:
         "target_id": event.target_id,
         "created_at": event.created_at,
         "resolved_at": event.resolved_at,
+    }
+
+
+def _behavior_instruction_payload(item: Any) -> dict[str, Any]:
+    return {
+        "instruction_id": item.id,
+        "workspace_id": item.workspace_id,
+        "name": item.name,
+        "kind": item.kind.value,
+        "scope": item.scope.value,
+        "priority": item.priority.value,
+        "rule": item.rule,
+        "rationale": item.rationale,
+        "applies_to": item.applies_to,
+        "conflict_policy": item.conflict_policy.value,
+        "source_episode_id": item.source_episode_id,
+        "confidence": item.confidence,
+        "active": item.active,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
     }
 
 
@@ -790,6 +813,44 @@ def _memory_list_agent_capabilities(
     }
 
 
+def _memory_upsert_behavior_instruction(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    instruction = upsert_behavior_instruction(conn, BehaviorInstructionIn(**payload))
+    return _behavior_instruction_payload(instruction)
+
+
+def _memory_list_behavior_instructions(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    kinds: list[str] | None = None,
+    include_inactive: bool = False,
+    limit: int = 10,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import BehaviorInstructionKind  # noqa: PLC0415
+
+    parsed_kinds = [BehaviorInstructionKind(kind) for kind in kinds] if kinds else None
+    return {
+        "instructions": [
+            _behavior_instruction_payload(item)
+            for item in list_behavior_instructions(
+                conn,
+                workspace_id=workspace_id,
+                query=query,
+                kinds=parsed_kinds,
+                include_inactive=include_inactive,
+                limit=limit,
+            )
+        ]
+    }
+
+
 TOOLS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="memory_get_context",
@@ -845,6 +906,16 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_list_capability_links",
         description="List capability links that explain which roles/skills/playbooks influence research memory objects.",
         handler=_memory_list_capability_links,
+    ),
+    ToolDefinition(
+        name="memory_upsert_behavior_instruction",
+        description="Create or update a persistent behavior instruction with explicit scope, priority, and conflict policy.",
+        handler=_memory_upsert_behavior_instruction,
+    ),
+    ToolDefinition(
+        name="memory_list_behavior_instructions",
+        description="List persistent behavior instructions that should shape agent communication and operating behavior.",
+        handler=_memory_list_behavior_instructions,
     ),
     ToolDefinition(
         name="memory_write_decision",

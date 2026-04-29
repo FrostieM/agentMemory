@@ -48,6 +48,7 @@ from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
 from agent_memory_lite.ingestion.candidate_writer import (
     promote_memory_candidate,
     reject_memory_candidate,
@@ -72,6 +73,7 @@ from agent_memory_lite.ingestion.research_writer import (
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.logging_setup import configure_logging, get_logger
+from agent_memory_lite.models.behavior import BehaviorInstructionIn
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.decisions import DecisionIn
@@ -87,6 +89,7 @@ from agent_memory_lite.models.research import (
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
+from agent_memory_lite.repositories.behavior_repo import list_behavior_instructions
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
@@ -192,9 +195,10 @@ _TOOLS: list[types.Tool] = [
         name="memory_get_context",
         description=(
             "Retrieve the agent's memory context for the given query. Returns an "
-            "XML envelope with core_memory, task_state, active_decisions, "
-            "active_theories, research_agenda, agent_capabilities, "
-            "procedural_rules, retrieved_facts, and retrieved_chunks."
+            "XML envelope with core_memory, behavior_instructions, task_state, "
+            "active_decisions, active_theories, research_agenda, "
+            "agent_capabilities, procedural_rules, retrieved_facts, and "
+            "retrieved_chunks."
         ),
         inputSchema={
             "type": "object",
@@ -392,6 +396,78 @@ _TOOLS: list[types.Tool] = [
                 "capability_type": {"type": "string"},
                 "capability_id": {"type": "string"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+            },
+        },
+    ),
+    types.Tool(
+        name="memory_upsert_behavior_instruction",
+        description=(
+            "Create or update a persistent behavior instruction with explicit "
+            "kind, scope, priority, and conflict policy."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "name": {"type": "string", "minLength": 1},
+                "rule": {"type": "string", "minLength": 1},
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "communication_style",
+                        "operating_rule",
+                        "project_convention",
+                        "workflow_preference",
+                        "role_guidance",
+                    ],
+                    "default": "operating_rule",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "workspace", "project", "task", "role"],
+                    "default": "workspace",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": [
+                        "system_bound",
+                        "user_preference",
+                        "project_convention",
+                        "suggestion",
+                    ],
+                    "default": "user_preference",
+                },
+                "rationale": {"type": "string"},
+                "applies_to": {"type": "array", "items": {"type": "string"}},
+                "conflict_policy": {
+                    "type": "string",
+                    "enum": [
+                        "system_wins",
+                        "current_user_wins",
+                        "higher_priority_wins",
+                        "most_specific_wins",
+                        "latest_wins",
+                    ],
+                    "default": "current_user_wins",
+                },
+                "source_episode_id": {"type": "string"},
+                "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "active": {"type": "boolean"},
+            },
+            "required": ["name", "rule"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_behavior_instructions",
+        description="List persistent behavior instructions for agent communication and operating behavior.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "kinds": {"type": "array", "items": {"type": "string"}},
+                "include_inactive": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
             },
         },
     ),
@@ -889,6 +965,26 @@ def _maintenance_event_payload(event: Any) -> dict[str, Any]:
     }
 
 
+def _behavior_instruction_payload(item: Any) -> dict[str, Any]:
+    return {
+        "instruction_id": item.id,
+        "workspace_id": item.workspace_id,
+        "name": item.name,
+        "kind": item.kind.value,
+        "scope": item.scope.value,
+        "priority": item.priority.value,
+        "rule": item.rule,
+        "rationale": item.rationale,
+        "applies_to": item.applies_to,
+        "conflict_policy": item.conflict_policy.value,
+        "source_episode_id": item.source_episode_id,
+        "confidence": item.confidence,
+        "active": item.active,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
 def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MemoryCandidateStatus  # noqa: PLC0415
 
@@ -985,6 +1081,35 @@ def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:
                 ),
                 capability_id=args.get("capability_id"),
                 limit=int(args.get("limit", 50)),
+            )
+        ]
+    }
+
+
+def _handle_upsert_behavior_instruction(args: dict[str, Any]) -> dict[str, Any]:
+    instruction = upsert_behavior_instruction(
+        _runtime.db(),
+        BehaviorInstructionIn(**_with_workspace(args)),
+    )
+    return _behavior_instruction_payload(instruction)
+
+
+def _handle_list_behavior_instructions(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.models.enums import BehaviorInstructionKind  # noqa: PLC0415
+
+    workspace_id = _workspace_from_args(args)
+    raw_kinds = args.get("kinds")
+    kinds = [BehaviorInstructionKind(item) for item in raw_kinds] if raw_kinds else None
+    return {
+        "instructions": [
+            _behavior_instruction_payload(item)
+            for item in list_behavior_instructions(
+                _runtime.db(),
+                workspace_id=workspace_id,
+                query=args.get("query"),
+                kinds=kinds,
+                include_inactive=bool(args.get("include_inactive", False)),
+                limit=int(args.get("limit", 10)),
             )
         ]
     }
@@ -1319,6 +1444,8 @@ _HANDLERS = {
     "memory_resolve_maintenance_event": _handle_resolve_maintenance_event,
     "memory_link_capability": _handle_link_capability,
     "memory_list_capability_links": _handle_list_capability_links,
+    "memory_upsert_behavior_instruction": _handle_upsert_behavior_instruction,
+    "memory_list_behavior_instructions": _handle_list_behavior_instructions,
     "memory_write_theory": _handle_write_theory,
     "memory_add_theory_evidence": _handle_add_theory_evidence,
     "memory_list_theories": _handle_list_theories,

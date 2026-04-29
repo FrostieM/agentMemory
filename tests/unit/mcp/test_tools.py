@@ -23,6 +23,8 @@ def test_known_tools_present() -> None:
         "memory_resolve_maintenance_event",
         "memory_link_capability",
         "memory_list_capability_links",
+        "memory_upsert_behavior_instruction",
+        "memory_list_behavior_instructions",
         "memory_write_decision",
         "memory_update_task_state",
         "memory_write_theory",

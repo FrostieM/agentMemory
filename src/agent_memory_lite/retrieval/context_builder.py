@@ -4,6 +4,7 @@ Produces the XML-like envelope the agent consumes:
 
     <memory_context>
       <core_memory>...</core_memory>
+      <behavior_instructions>...</behavior_instructions>
       <task_state>...</task_state>
       <active_decisions>...</active_decisions>
       <active_theories>...</active_theories>
@@ -27,6 +28,7 @@ from dataclasses import dataclass, field
 from xml.sax.saxutils import escape, quoteattr
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.models.behavior import BehaviorInstruction, BehaviorInstructionSet
 from agent_memory_lite.models.capabilities import (
     AgentCapabilities,
     AgentPlaybook,
@@ -46,6 +48,7 @@ from agent_memory_lite.models.retrieval import (
 )
 from agent_memory_lite.models.task_state import TaskState
 from agent_memory_lite.models.theories import Theory, TheoryEvidence
+from agent_memory_lite.repositories.behavior_repo import build_behavior_instruction_set
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links_for_targets
 from agent_memory_lite.repositories.core_memory_repo import list_active_core
@@ -79,6 +82,7 @@ MAX_HISTORICAL_DECISIONS = 20
 MAX_THEORIES = 2
 MAX_THEORY_EVIDENCE = 1
 MAX_RESEARCH_AGENDA = 2
+MAX_BEHAVIOR_INSTRUCTIONS = 4
 MAX_AGENT_CAPABILITIES = 1
 MAX_TITLE_CHARS = 180
 MAX_TEXT_CHARS = 280
@@ -109,6 +113,7 @@ class BuiltContext:
     decisions: list[Decision] = field(default_factory=list)
     theories: list[TheoryContext] = field(default_factory=list)
     research_agenda: ResearchAgenda | None = None
+    behavior_instructions: BehaviorInstructionSet | None = None
     agent_capabilities: AgentCapabilities | None = None
     rules: list[ProceduralRule] = field(default_factory=list)
 
@@ -468,6 +473,45 @@ def _render_research_agenda_with_links(
     return lines
 
 
+def _render_behavior_instruction(item: BehaviorInstruction) -> list[str]:
+    attrs = (
+        f"id={quoteattr(item.id)} "
+        f"kind={quoteattr(item.kind.value)} "
+        f"scope={quoteattr(item.scope.value)} "
+        f"priority={quoteattr(item.priority.value)} "
+        f"conflict_policy={quoteattr(item.conflict_policy.value)} "
+        f"confidence={quoteattr(f'{item.confidence:.2f}')} "
+        f"source={quoteattr(item.source_episode_id or '')}"
+    )
+    lines = [f"    <instruction {attrs}>"]
+    lines.append(f"      <name>{escape(_clip_text(item.name, MAX_TITLE_CHARS))}</name>")
+    lines.append(f"      <rule>{escape(_clip_text(item.rule, MAX_TEXT_CHARS))}</rule>")
+    if item.rationale:
+        lines.append(
+            f"      <rationale>{escape(_clip_text(item.rationale, MAX_TEXT_CHARS))}</rationale>"
+        )
+    lines.extend(
+        _render_string_items(
+            container_tag="applies_to",
+            item_tag="item",
+            items=item.applies_to,
+            indent="      ",
+        )
+    )
+    lines.append("    </instruction>")
+    return lines
+
+
+def _render_behavior_instructions(items: BehaviorInstructionSet | None) -> list[str]:
+    if items is None or not items.instructions:
+        return ["  <behavior_instructions/>"]
+    lines = ["  <behavior_instructions>"]
+    for instruction in items.instructions:
+        lines.extend(_render_behavior_instruction(instruction))
+    lines.append("  </behavior_instructions>")
+    return lines
+
+
 def _capability_attrs(
     *,
     item_id: str,
@@ -622,6 +666,7 @@ def _render(
     research_agenda: ResearchAgenda | None,
     research_experiment_links: dict[str, list[CapabilityLink]],
     research_insight_links: dict[str, list[CapabilityLink]],
+    behavior_instructions: BehaviorInstructionSet | None,
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -629,6 +674,7 @@ def _render(
 ) -> str:
     lines = ["<memory_context>"]
     lines.extend(_render_core(core))
+    lines.extend(_render_behavior_instructions(behavior_instructions))
     lines.extend(_render_task(task))
     lines.extend(_render_decisions(decisions))
     lines.extend(_render_theories(theories))
@@ -656,6 +702,7 @@ def _render_structured_only(
     research_agenda: ResearchAgenda | None,
     research_experiment_links: dict[str, list[CapabilityLink]],
     research_insight_links: dict[str, list[CapabilityLink]],
+    behavior_instructions: BehaviorInstructionSet | None,
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -668,6 +715,7 @@ def _render_structured_only(
         research_agenda=research_agenda,
         research_experiment_links=research_experiment_links,
         research_insight_links=research_insight_links,
+        behavior_instructions=behavior_instructions,
         agent_capabilities=agent_capabilities,
         rules=rules,
         facts=facts,
@@ -686,6 +734,7 @@ def _fit_structured_sections(
     research_agenda: ResearchAgenda | None,
     research_experiment_links: dict[str, list[CapabilityLink]],
     research_insight_links: dict[str, list[CapabilityLink]],
+    behavior_instructions: BehaviorInstructionSet | None,
     agent_capabilities: AgentCapabilities | None,
     rules: list[ProceduralRule],
     facts: list[RetrievalCandidate],
@@ -706,6 +755,7 @@ def _fit_structured_sections(
             research_agenda=research_agenda,
             research_experiment_links=research_experiment_links,
             research_insight_links=research_insight_links,
+            behavior_instructions=behavior_instructions,
             agent_capabilities=agent_capabilities,
             rules=rules,
             facts=facts,
@@ -723,6 +773,7 @@ def _fit_structured_sections(
                         research_agenda=agenda,
                         research_experiment_links=research_experiment_links,
                         research_insight_links=research_insight_links,
+                        behavior_instructions=behavior_instructions,
                         agent_capabilities=cap,
                         rules=rules,
                         facts=facts,
@@ -825,6 +876,13 @@ def build_context(
         target_ids=[insight.id for insight in research_agenda.insights],
         limit_per_target=3,
     )
+    behavior_instructions = build_behavior_instruction_set(
+        conn,
+        workspace_id=query.workspace_id,
+        query=query.query,
+        include_inactive=query.historical,
+        limit=MAX_BEHAVIOR_INSTRUCTIONS,
+    )
     agent_capabilities = build_agent_capabilities(
         conn,
         workspace_id=query.workspace_id,
@@ -848,6 +906,7 @@ def build_context(
             research_agenda=research_agenda,
             research_experiment_links=research_experiment_links,
             research_insight_links=research_insight_links,
+            behavior_instructions=behavior_instructions,
             agent_capabilities=agent_capabilities,
             rules=rules,
             facts=facts,
@@ -861,6 +920,7 @@ def build_context(
         research_agenda=render_research_agenda,
         research_experiment_links=research_experiment_links,
         research_insight_links=research_insight_links,
+        behavior_instructions=behavior_instructions,
         agent_capabilities=render_agent_capabilities,
         rules=rules,
         facts=facts,
@@ -879,6 +939,7 @@ def build_context(
         research_agenda=render_research_agenda,
         research_experiment_links=research_experiment_links,
         research_insight_links=research_insight_links,
+        behavior_instructions=behavior_instructions,
         agent_capabilities=render_agent_capabilities,
         rules=rules,
         facts=facts,
@@ -894,6 +955,7 @@ def build_context(
         decisions=render_decisions,
         theories=render_theories,
         research_agenda=render_research_agenda,
+        behavior_instructions=behavior_instructions,
         agent_capabilities=render_agent_capabilities,
         rules=rules,
     )

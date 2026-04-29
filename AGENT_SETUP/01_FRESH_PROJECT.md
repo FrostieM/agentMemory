@@ -154,6 +154,17 @@ If the project already has capability memory, also call
 This confirms that roles, skills, and playbooks are visible from the same
 service the agent will use.
 
+If the project already has behavior instruction memory, also call
+`memory_list_behavior_instructions` with:
+
+```json
+{"workspace_id": "<WORKSPACE_ID>", "query": "self-test communication operating behavior", "limit": 10}
+```
+
+This confirms that communication style, operating behavior, project
+conventions, and conflict policies are visible from the same service the agent
+will use.
+
 Also run a read-only retrieval integrity audit:
 
 ```
@@ -246,6 +257,9 @@ What this means for our future chats in this project:
 - After meaningful actions I will call memory_ingest_episode.
 - After architectural choices I will call memory_write_decision.
 - Before specialized workflows I will call memory_list_agent_capabilities.
+- I will read behavior_instructions from memory_get_context and use
+  memory_list_behavior_instructions when persistent communication style or
+  operating behavior is relevant.
 - Before trusting memory after deploy/migration/restart anomalies I will run a
   read-only memory_audit check.
 - I will treat memory_audit warnings as maintenance items, not as ignorable log
@@ -254,6 +268,9 @@ What this means for our future chats in this project:
   or reject them explicitly.
 - When reusable roles, skills, or playbooks emerge I will save them with the
   capability memory tools.
+- When persistent communication style, user preferences, project conventions,
+  or operating instructions emerge I will save them with
+  memory_upsert_behavior_instruction.
 - When a role, skill, or playbook must influence a specific theory,
   experiment, evidence item, insight, candidate, or decision I will link it
   with memory_link_capability.

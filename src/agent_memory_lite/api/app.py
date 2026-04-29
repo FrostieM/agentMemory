@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.routes import (
+    behavior,
     candidates,
     capabilities,
     capability_links,
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_handlers(app)
     app.include_router(health.router)
     app.include_router(hygiene.router)
+    app.include_router(behavior.router)
     app.include_router(candidates.router)
     app.include_router(capability_links.router)
     app.include_router(ingest_episode.router)

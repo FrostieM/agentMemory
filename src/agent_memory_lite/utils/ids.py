@@ -26,6 +26,7 @@ class IdKind(StrEnum):
     AGENT_SKILL = "skill"
     AGENT_PLAYBOOK = "play"
     CAPABILITY_LINK = "caplink"
+    BEHAVIOR_INSTRUCTION = "beh"
     MEMORY_CANDIDATE = "cand"
     MAINTENANCE_EVENT = "maint"
     TASK_STATE = "task"

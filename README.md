@@ -23,7 +23,9 @@ ingestion, compaction + evals + MCP tool registry). The research-lab extension
 adds theories, snapshots, experiments, results, concepts, insights, query-ranked
 context sections, and a status CLI. The capability extension adds first-class
 agent roles, reusable skills, and repeatable playbooks so execution knowledge is
-retrievable instead of buried in episodes. See `SESSION_STATE.md` for current
+retrievable instead of buried in episodes. The behavior-instruction extension
+adds first-class communication style, operating rules, project conventions,
+priority, scope, and conflict-policy memory. See `SESSION_STATE.md` for current
 verification counts.
 
 The integrity extension adds reviewable memory candidates, maintenance events,
@@ -178,6 +180,47 @@ Example capability link:
   "relation": "method",
   "rationale": "This hypothesis must be tested with replay before policy changes.",
   "strength": 0.9
+}
+```
+
+## Behavior instruction memory
+
+Procedural rules are still supported for simple durable rules. Use behavior
+instructions when the agent should consistently change how it communicates or
+operates:
+
+- `POST /memory/upsert_behavior_instruction` stores a named instruction with
+  `kind`, `scope`, `priority`, `rule`, `rationale`, `applies_to`,
+  `conflict_policy`, confidence, source, and active state.
+- `POST /memory/list_behavior_instructions` retrieves relevant behavior
+  instructions for review.
+- `POST /memory/get_context` includes a high-priority
+  `<behavior_instructions>` section directly after `<core_memory>`, before task
+  state, decisions, theories, and retrieved chunks.
+
+Supported kinds: `communication_style`, `operating_rule`,
+`project_convention`, `workflow_preference`, and `role_guidance`.
+
+Supported conflict policies: `current_user_wins`, `system_wins`,
+`higher_priority_wins`, `most_specific_wins`, and `latest_wins`. Store user
+preferences with `current_user_wins` unless the rule is a non-negotiable safety
+or project constraint. Current user instructions and higher-level system
+instructions still outrank stored memory.
+
+Example behavior instruction:
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "name": "Evidence-first operational reports",
+  "kind": "communication_style",
+  "scope": "workspace",
+  "priority": "user_preference",
+  "rule": "When reporting incidents, lead with exact issue, evidence, fix, and remaining risk.",
+  "rationale": "The user needs concrete operational evidence rather than generic status language.",
+  "applies_to": ["incident reports", "runtime audits"],
+  "conflict_policy": "current_user_wins",
+  "confidence": 0.95
 }
 ```
 
@@ -460,7 +503,8 @@ After this, in any new chat the agent has three layers of "don't forget":
   `memory_write_experiment`, `memory_add_experiment_result`,
   `memory_list_research_agenda`, `memory_upsert_agent_role`,
   `memory_upsert_agent_skill`, `memory_upsert_agent_playbook`,
-  `memory_list_agent_capabilities`, `memory_list_maintenance_events`,
+  `memory_list_agent_capabilities`, `memory_upsert_behavior_instruction`,
+  `memory_list_behavior_instructions`, `memory_list_maintenance_events`,
   `memory_resolve_maintenance_event`, and related concept/insight tools) appear
   in the tool list natively (via MCP), no system prompt required.
 - **Instructions layer**: the contract markdown is auto-loaded into the

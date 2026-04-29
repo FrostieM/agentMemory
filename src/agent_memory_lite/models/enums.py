@@ -156,3 +156,34 @@ class CapabilityLinkRelation(StrEnum):
     VALIDATION_PLAYBOOK = "validation_playbook"
     EVIDENCE_METHOD = "evidence_method"
     IMPLEMENTATION_ROLE = "implementation_role"
+
+
+class BehaviorInstructionKind(StrEnum):
+    COMMUNICATION_STYLE = "communication_style"
+    OPERATING_RULE = "operating_rule"
+    PROJECT_CONVENTION = "project_convention"
+    WORKFLOW_PREFERENCE = "workflow_preference"
+    ROLE_GUIDANCE = "role_guidance"
+
+
+class BehaviorInstructionScope(StrEnum):
+    GLOBAL = "global"
+    WORKSPACE = "workspace"
+    PROJECT = "project"
+    TASK = "task"
+    ROLE = "role"
+
+
+class BehaviorInstructionPriority(StrEnum):
+    SYSTEM_BOUND = "system_bound"
+    USER_PREFERENCE = "user_preference"
+    PROJECT_CONVENTION = "project_convention"
+    SUGGESTION = "suggestion"
+
+
+class BehaviorConflictPolicy(StrEnum):
+    SYSTEM_WINS = "system_wins"
+    CURRENT_USER_WINS = "current_user_wins"
+    HIGHER_PRIORITY_WINS = "higher_priority_wins"
+    MOST_SPECIFIC_WINS = "most_specific_wins"
+    LATEST_WINS = "latest_wins"
