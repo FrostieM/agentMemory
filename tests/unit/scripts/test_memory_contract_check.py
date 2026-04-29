@@ -64,3 +64,32 @@ scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
 
     assert payload["status"] == "ok"
     assert payload["findings"] == []
+
+
+def test_contract_check_allows_project_specific_workspace_correction(
+    tmp_path: Path,
+) -> None:
+    script = _load_script("memory_contract_check.py")
+    (tmp_path / "AGENTS.md").write_text(
+        """
+<!-- agent-memory-lite-contract:begin -->
+This project is copyBot, not default.
+Use workspace_id="copyBot"; fix old rows with workspace_id='default' only by
+migrating them back to copyBot.
+memory_get_context memory_search memory_ingest_episode memory_write_theory
+memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
+scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
+<!-- agent-memory-lite-contract:end -->
+""",
+        encoding="utf-8",
+    )
+
+    payload = script.run_contract_check(
+        root=tmp_path,
+        workspace_id="copyBot",
+        explicit_paths=[],
+        allowed_project_names={"copyBot"},
+    )
+
+    assert payload["status"] == "ok"
+    assert payload["findings"] == []

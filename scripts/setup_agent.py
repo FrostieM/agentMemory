@@ -228,6 +228,36 @@ def bootstrap_db() -> None:
     )
 
 
+def seed_memory_bootstrap(
+    python_exe: Path,
+    *,
+    db_path: Path,
+    workspace_id: str,
+) -> None:
+    proc = subprocess.run(
+        [
+            str(python_exe),
+            str(REPO_ROOT / "scripts" / "seed_project_memory.py"),
+            "--workspace",
+            workspace_id,
+            "--db-path",
+            str(db_path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+    if proc.returncode != 0:
+        if proc.stdout:
+            info(f"seed stdout tail: {proc.stdout[-1000:]}")
+        if proc.stderr:
+            info(f"seed stderr tail: {proc.stderr[-1000:]}")
+        proc.check_returncode()
+    ok("neutral memory bootstrap seeded (skills/playbooks/concepts only; no behavior instructions)")
+
+
 def write_env(diag: Diagnosis) -> None:
     env_path = REPO_ROOT / ".env"
     if not env_path.exists():
@@ -437,11 +467,12 @@ def configure_cursor(diag: Diagnosis) -> None:
     ok(f"contract {status} in {contract}")
 
 
-def configure_project(  # noqa: PLR0915
+def configure_project(  # noqa: PLR0912, PLR0915
     diag: Diagnosis,
     project_root: Path,
     *,
     workspace_id: str,
+    seed_bootstrap: bool,
 ) -> None:
     section(f"Project mode: {project_root}")
     if project_root == REPO_ROOT:
@@ -537,6 +568,8 @@ def configure_project(  # noqa: PLR0915
             env=env,
         )
         ok(f"bootstrapped {db_path}")
+    if seed_bootstrap:
+        seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
 
 
 def emit_generic_snippets(diag: Diagnosis) -> None:
@@ -618,6 +651,15 @@ def main() -> int:
         "<project>/AGENTS.md, and bootstraps <project>/.agent_memory/. "
         "Each project gets its own MEMORY_DB_PATH so memories stay isolated.",
     )
+    parser.add_argument(
+        "--no-seed-memory-bootstrap",
+        action="store_true",
+        help=(
+            "Skip the neutral memory-population seed. By default setup writes only "
+            "generic skills/playbooks/concepts that help agents populate memory; it "
+            "does not write behavior instructions, style, language, or project roles."
+        ),
+    )
     args = parser.parse_args()
 
     diag = diagnose()
@@ -637,7 +679,12 @@ def main() -> int:
     if args.project is not None:
         project_root = Path(args.project).resolve()
         workspace_id = args.workspace or project_root.name
-        configure_project(diag, project_root, workspace_id=workspace_id)
+        configure_project(
+            diag,
+            project_root,
+            workspace_id=workspace_id,
+            seed_bootstrap=not args.no_seed_memory_bootstrap,
+        )
         section("Done (project mode)")
         print(
             f"This project ({project_root.name}) now has its own memory at\n"
@@ -649,11 +696,19 @@ def main() -> int:
         return 0
 
     section("Bootstrap database")
+    global_workspace_id = args.workspace or os.environ.get("MEMORY_WORKSPACE_ID", "default")
     if not diag.db_exists:
         bootstrap_db()
         ok("database created")
     else:
         ok("database already present")
+    if not args.no_seed_memory_bootstrap:
+        assert diag.db_path is not None
+        seed_memory_bootstrap(
+            diag.venv_python,
+            db_path=diag.db_path,
+            workspace_id=global_workspace_id,
+        )
 
     if diag.runtimes["claude-code"]:
         configure_claude_code(diag, install_hook=not args.no_hook)

@@ -472,6 +472,11 @@ Writes:
   `MEMORY_DB_PATH` and `VECTOR_DB_PATH` to `<project>/.agent_memory/`.
 - `<project>/CLAUDE.md` and `<project>/AGENTS.md` — the agent contract
   (Claude Code reads CLAUDE.md, Codex reads AGENTS.md).
+- A neutral memory bootstrap inside the DB: one memory-population skill, one
+  memory-population playbook, and shared vocabulary concepts. This seed never
+  writes behavior instructions, language preferences, communication style,
+  personality, or project-specific roles. Skip it with
+  `--no-seed-memory-bootstrap`.
 - `<project>/.agent_memory/memory.db` — bootstrapped fresh.
 
 **Project isolation works on any runtime.** The MCP server has three
@@ -508,8 +513,10 @@ The script (either mode) is idempotent. It:
 1. Verifies the venv has `agent-memory-lite` + the `[mcp]` extra installed.
 2. Detects Ollama (binary, daemon, `qwen2.5:7b-instruct`) and the memory db.
 3. Bootstraps the database if missing.
-4. Sets `OLLAMA_PROBE_SKIP` based on whether Ollama is reachable.
-5. For every agent runtime present on the machine, writes:
+4. Seeds neutral memory-population helpers unless `--no-seed-memory-bootstrap`
+   is passed.
+5. Sets `OLLAMA_PROBE_SKIP` based on whether Ollama is reachable.
+6. For every agent runtime present on the machine, writes:
    - **Claude Code** (`~/.claude/`):
      `settings.json` MCP server entry + `CLAUDE.md` contract +
      `UserPromptSubmit` hook (calls `scripts/inject_memory_context.py`,
@@ -518,8 +525,8 @@ The script (either mode) is idempotent. It:
      `config.toml` MCP server entry + `AGENTS.md` contract.
    - **Cursor** (`~/.cursor/`):
      `mcp.json` MCP server entry + `rules/agent-memory-lite.md` contract.
-6. Emits a generic JSON snippet for any other MCP-aware agent.
-7. Smoke-tests the MCP stdio server (initialize + tools/list).
+7. Emits a generic JSON snippet for any other MCP-aware agent.
+8. Smoke-tests the MCP stdio server (initialize + tools/list).
 
 After this, in any new chat the agent has three layers of "don't forget":
 
@@ -547,9 +554,19 @@ the research memory backlog. Use `python scripts/memory_hygiene.py --workspace
 `python scripts/run_evals.py --workspace <workspace_id> --no-vector` for a fast
 offline eval run that does not load an embedding model or vector store.
 
+To apply only the neutral memory-population seed to an existing local DB:
+
+```bash
+python scripts/seed_project_memory.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+```
+
+The seed is idempotent and intentionally non-behavioral. It exists only to make
+future agents populate memory with the right first-class objects.
+
 Flags:
 - `--check-only` — diagnose only, no writes.
 - `--no-hook` — skip the Claude Code hook (tools + contract still installed).
+- `--no-seed-memory-bootstrap` skips the neutral memory-population seed.
 
 ### What you still need to start manually
 

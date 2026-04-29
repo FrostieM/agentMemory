@@ -571,6 +571,17 @@ For a fast local eval that avoids loading an embedding model, run:
 python scripts/run_evals.py --workspace <workspace_id> --no-vector
 ```
 
+For a newly created local DB, setup can seed neutral memory-population helpers:
+
+```bash
+python scripts/seed_project_memory.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+```
+
+This seed is only about filling memory correctly. It writes a generic skill,
+playbook, and vocabulary concepts; it must not write language preferences,
+communication style, personality, project-specific behavior, or
+`behavior_instructions`.
+
 For a detailed hygiene report and recurring watchdog:
 
 ```bash

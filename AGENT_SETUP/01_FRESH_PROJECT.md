@@ -105,6 +105,11 @@ Execute:
 Capture stdout and stderr. The script is idempotent — safe to re-run if it
 fails partway. Expected effects:
 - Creates `<PROJECT_ROOT>/.agent_memory/memory.db`
+- Seeds only neutral memory-population helpers into that DB: one generic skill,
+  one generic playbook, and vocabulary concepts for workspace isolation,
+  candidate review, snapshots, and audits. This seed must not create
+  behavior instructions, language preferences, communication style,
+  personality rules, or project-specific roles.
 - Writes `<PROJECT_ROOT>/.claude/settings.json` with the MCP entry whose
   env pins MEMORY_DB_PATH and VECTOR_DB_PATH to this project
 - Writes `<PROJECT_ROOT>/CLAUDE.md` and `<PROJECT_ROOT>/AGENTS.md`

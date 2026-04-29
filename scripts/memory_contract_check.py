@@ -93,12 +93,24 @@ def _line_number(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _line_at(text: str, offset: int) -> str:
+    start = text.rfind("\n", 0, offset) + 1
+    end = text.find("\n", offset)
+    if end == -1:
+        end = len(text)
+    return text[start:end]
+
+
 def _scan_file(path: Path, root: Path, allowed_project_names: set[str]) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     rel = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
     findings: list[dict[str, Any]] = []
+    allowed_name_tokens = {item.lower() for item in allowed_project_names if item}
     for pattern in _DEFAULT_WORKSPACE_PATTERNS:
         for match in pattern.finditer(text):
+            line_text = _line_at(text, match.start()).lower()
+            if any(token in line_text for token in allowed_name_tokens):
+                continue
             findings.append(
                 {
                     "kind": "hard_coded_default_workspace",
@@ -109,7 +121,7 @@ def _scan_file(path: Path, root: Path, allowed_project_names: set[str]) -> list[
                     "summary": "Generic memory docs should use <workspace_id>, not default.",
                 }
             )
-    if "copybot" not in {item.lower() for item in allowed_project_names}:
+    if "copybot" not in allowed_name_tokens:
         for match in _PROJECT_NAME_RE.finditer(text):
             findings.append(
                 {

@@ -196,7 +196,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
             settings.workspace_id,
             "--json",
         ]
-        for project_name in args.allow_project_name:
+        allowed_project_names = {
+            settings.workspace_id,
+            project_root.name,
+            *{str(project_name) for project_name in args.allow_project_name},
+        }
+        for project_name in sorted(item for item in allowed_project_names if item):
             contract_cmd.extend(["--allow-project-name", str(project_name)])
         components["contract"] = _run_json("memory_contract_check", contract_cmd, ok_codes={0})
 
