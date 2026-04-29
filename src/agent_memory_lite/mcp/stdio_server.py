@@ -21,10 +21,12 @@ Register in Claude Code (`~/.claude/settings.json` or project
       }
     }
 
-The server runs in-process: it owns one SQLite connection, lazy-loads the
-embedding provider on first use, and shares the same SQLite database the
-HTTP service uses (LanceDB likewise). Multiple processes hitting the same
-DB are safe under SQLite WAL.
+The server runs in-process for lightweight tools and owns one SQLite
+connection. Retrieval and ingestion tools delegate to the local HTTP service
+when possible so the MCP stdio process does not block while loading the
+embedding model; if HTTP is unavailable, retrieval returns an in-process
+FTS-only context and ingestion falls back to the local pipeline.
+Multiple processes hitting the same DB are safe under SQLite WAL.
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ import asyncio
 import json
 import os
 import sqlite3
+import urllib.error
+import urllib.request
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -111,6 +115,33 @@ from agent_memory_lite.vector_store.factory import get_vector_store
 from agent_memory_lite.version import __version__
 
 _log = get_logger("mcp.stdio_server")
+_HTTP_GET_CONTEXT_DEFAULT_TIMEOUT_SECONDS = 2.0
+_HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_float(name: str, *, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _memory_http_base_url(settings: Settings) -> str:
+    raw = os.environ.get("MEMORY_HTTP_BASE_URL") or os.environ.get("AGENT_MEMORY_HTTP_BASE_URL")
+    if raw:
+        return raw.rstrip("/")
+    return f"http://127.0.0.1:{settings.api_port}"
 
 
 def _resolve_paths_from_cwd(settings: Settings) -> Settings:
@@ -797,13 +828,114 @@ def _workspace_from_args(args: dict[str, Any]) -> str:
     return workspace_id
 
 
+def _http_memory_request(
+    *,
+    path: str,
+    payload: dict[str, Any],
+    enabled_env: str,
+    timeout_env: str,
+    default_timeout: float,
+    log_label: str,
+) -> dict[str, Any] | None:
+    """Delegate a memory call to the warm local HTTP service when possible."""
+
+    if not _env_flag(enabled_env, default=True):
+        return None
+
+    base_url = _memory_http_base_url(_runtime.settings)
+    timeout = _env_float(timeout_env, default=default_timeout)
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        f"{base_url}{path}",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "X-Memory-DB-Path": str(_runtime.settings.db_path),
+            "X-Memory-Vector-Path": str(_runtime.settings.vector_db_path),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw_body: Any = json.loads(response.read().decode("utf-8"))
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        _log.warning("MCP %s HTTP delegation failed; using local fallback: %s", log_label, exc)
+        return None
+
+    if not isinstance(raw_body, dict):
+        _log.warning("MCP %s HTTP delegation returned an unexpected payload", log_label)
+        return None
+    return raw_body
+
+
+def _http_get_context(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Delegate MCP context retrieval to the warm local HTTP service when possible.
+
+    The stdio MCP process is frequently short-lived. Loading the embedding model
+    inside that process can block tool calls for minutes, while the local HTTP
+    service already owns a warmed provider/vector store. If HTTP is unavailable,
+    callers fall back to an in-process FTS-only context below.
+    """
+
+    body = _http_memory_request(
+        path="/memory/get_context",
+        payload=payload,
+        enabled_env="MCP_GET_CONTEXT_HTTP_DELEGATE",
+        timeout_env="MCP_GET_CONTEXT_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_GET_CONTEXT_DEFAULT_TIMEOUT_SECONDS,
+        log_label="get_context",
+    )
+    if body is None:
+        return None
+    if not isinstance(body.get("context_text"), str):
+        _log.warning("MCP get_context HTTP delegation returned an unexpected payload")
+        return None
+    sources = body.get("sources")
+    if not isinstance(sources, list):
+        body["sources"] = []
+    return body
+
+
+def _http_ingest_episode(payload: dict[str, Any]) -> dict[str, Any] | None:
+    body = _http_memory_request(
+        path="/memory/ingest_episode",
+        payload=payload,
+        enabled_env="MCP_INGEST_HTTP_DELEGATE",
+        timeout_env="MCP_INGEST_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS,
+        log_label="ingest_episode",
+    )
+    if body is not None and {"episode_id", "chunk_id"}.issubset(body):
+        return body
+    return None
+
+
+def _http_ingest_file(payload: dict[str, Any]) -> dict[str, Any] | None:
+    body = _http_memory_request(
+        path="/memory/ingest_file",
+        payload=payload,
+        enabled_env="MCP_INGEST_HTTP_DELEGATE",
+        timeout_env="MCP_INGEST_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS,
+        log_label="ingest_file",
+    )
+    if body is not None and {"file_id", "path"}.issubset(body):
+        return body
+    return None
+
+
 def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
-    query = RetrievalQuery(**_with_workspace(args))
+    payload = _with_workspace(args)
+    delegated = _http_get_context(payload)
+    if delegated is not None:
+        return delegated
+
+    query = RetrievalQuery(**payload)
     built = build_context(
         _runtime.db(),
         query,
-        embedding_provider=_runtime.provider(),
-        vector_store=_runtime.store(),
+        embedding_provider=None,
+        vector_store=None,
     )
     return {
         "context_text": built.text,
@@ -848,6 +980,10 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
     payload = _with_workspace(args)
     payload.setdefault("source_type", "agent_action")
     payload.setdefault("trust_level", "agent_observed")
+    delegated = _http_ingest_episode(payload)
+    if delegated is not None:
+        return delegated
+
     result = ingest_episode(
         _runtime.db(),
         EpisodeIn(**payload),
@@ -892,6 +1028,11 @@ def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
     payload = _drop_none(args)
     workspace_id = str(payload.pop("workspace_id", _runtime.settings.workspace_id))
     _ensure_workspace_allowed(workspace_id)
+    payload["workspace_id"] = workspace_id
+    delegated = _http_ingest_file(payload)
+    if delegated is not None:
+        return delegated
+
     result = ingest_file(
         _runtime.db(),
         workspace_id=workspace_id,

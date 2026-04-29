@@ -55,6 +55,7 @@ def ingest_episode_route(
         redacted_text=result.episode.raw_text,
         redacted_kinds=result.redacted_kinds,
         created_at=result.episode.created_at,
+        embedded=result.embedded,
         auto_promoted_decisions=result.auto_promoted_decisions,
         auto_promoted_rules=result.auto_promoted_rules,
         auto_promoted_core=result.auto_promoted_core,

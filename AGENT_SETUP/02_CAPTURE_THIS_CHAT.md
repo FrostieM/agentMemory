@@ -150,8 +150,13 @@ the user's request.
 
 Run `scripts/memory_hygiene.py --workspace <WORKSPACE_ID> --json` when the
 session produced theories, experiments, insights, candidates, decisions, roles,
-skills, or playbooks. If the project has `.agent_memory/retrieval_sentinels.yaml`,
-run `scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --sentinels
+skills, or playbooks. Also run
+`scripts/memory_candidate_triage.py --workspace <WORKSPACE_ID> --json` when
+candidate extraction is active, and run
+`scripts/memory_mcp_smoke.py --workspace <WORKSPACE_ID> --require-behavior --require-capabilities --json`
+after MCP or behavior/capability changes. If the project has
+`.agent_memory/retrieval_sentinels.yaml`, run
+`scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --sentinels
 <PROJECT_ROOT>/.agent_memory/retrieval_sentinels.yaml --json` and report any
 watchdog maintenance event id.
 

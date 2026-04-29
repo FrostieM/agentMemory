@@ -352,6 +352,15 @@ suggestions above the configured `--min-strength` and `--min-match-score`
 thresholds, and leaves semantic gaps such as weak theories or stale experiments
 for explicit review.
 
+Read-only candidate review queue:
+
+```bash
+python scripts/memory_candidate_triage.py --workspace <workspace_id> --json
+```
+
+This groups unreviewed candidates by kind/status and flags stale or high-value
+items that need explicit promote/reject review.
+
 Live watchdog over integrity, retrieval sentinels, and hygiene:
 
 ```bash
@@ -362,6 +371,23 @@ python scripts/memory_watchdog.py --workspace-id <workspace_id> --sentinels .age
 The watchdog writes JSON artifacts under `.agent_memory/audit_runs/`, updates
 the workspace manifest audit timestamp, and opens a maintenance event only when
 integrity, retrieval quality, or hygiene is degraded/warning. It never repairs.
+
+MCP and contract smoke checks:
+
+```bash
+python scripts/memory_mcp_smoke.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --require-behavior --require-capabilities --json
+python scripts/memory_contract_check.py --root . --workspace <workspace_id> --json
+python scripts/memory_backup_restore_check.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --json
+python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root . --json
+```
+
+`memory_mcp_smoke.py` launches a fresh Python process and checks that the MCP
+`memory_get_context` handler returns quickly with behavior/capability sections.
+`memory_contract_check.py` catches stale generic instructions such as hard-coded
+`default` workspace examples. `memory_backup_restore_check.py` copies the DB and
+vector store to a temporary restore target and audits the copy. The trust
+dashboard composes the audit, hygiene, watchdog, MCP, candidate, contract, and
+restore checks into one report.
 
 Sentinel files are YAML lists. They should contain project-specific ids kept
 outside generic docs, for example:

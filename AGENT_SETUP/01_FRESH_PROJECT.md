@@ -183,6 +183,24 @@ Also run the detailed hygiene report:
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_hygiene.py --workspace <WORKSPACE_ID> --json
 ```
 
+Also run the MCP fresh-process smoke check:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_mcp_smoke.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --require-behavior --require-capabilities --json
+```
+
+This confirms that the agent-facing MCP handler returns quickly and includes
+behavior/capability context, not just that the HTTP service is healthy.
+
+Also run the candidate review queue report:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_candidate_triage.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+```
+
+This keeps review-first extraction honest by surfacing stale or high-value
+candidates that need explicit promote/reject handling.
+
 If hygiene reports only missing capability links and includes suggestions, run
 auto-triage in dry-run mode first:
 
@@ -205,6 +223,12 @@ If the project has a local retrieval sentinel YAML, run the watchdog:
 
 The watchdog is detect-only. It may create a maintenance event when memory is
 warning/degraded, but it must not repair indexes or change research content.
+
+For a combined trust report, run:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_trust_dashboard.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --project-root <PROJECT_ROOT> --json
+```
 
 b) The tool is not in your tool list (you cannot call it) — every MCP
    client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)

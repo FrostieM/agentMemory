@@ -1,3 +1,5 @@
+<!-- agent-memory-lite-contract:begin -->
+
 # Agent contract
 
 Drop this entire document into the system prompt, `CLAUDE.md`, or `AGENTS.md`
@@ -573,6 +575,7 @@ For a detailed hygiene report and recurring watchdog:
 
 ```bash
 python scripts/memory_hygiene.py --workspace <workspace_id> --json
+python scripts/memory_candidate_triage.py --workspace <workspace_id> --json
 python scripts/memory_auto_triage.py --workspace <workspace_id> --json
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
 ```
@@ -592,6 +595,22 @@ For a strict deploy gate:
 ```bash
 python scripts/memory_ci_gate.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance
 ```
+
+For a full local trust check:
+
+```bash
+python scripts/memory_mcp_smoke.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --require-behavior --require-capabilities --json
+python scripts/memory_contract_check.py --root . --workspace <workspace_id> --json
+python scripts/memory_backup_restore_check.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --json
+python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root . --json
+```
+
+Use `memory_mcp_smoke.py` after MCP changes or a runtime restart. Use
+`memory_contract_check.py` when generic agent instructions change. Use
+`memory_backup_restore_check.py` before trusting backup/restore procedures. Use
+`memory_trust_dashboard.py` when you need one report that combines integrity,
+hygiene, retrieval sentinels, MCP behavior/capability context, candidate review,
+contract drift, and restore proof.
 
 ## How to call
 
@@ -662,3 +681,5 @@ The `workspace_id` is a logical namespace inside that physical database. Use
 the namespace chosen during setup and keep it consistent across HTTP, MCP,
 hooks, scripts, and SQLite rows. In project mode, do not silently switch to a
 different namespace.
+
+<!-- agent-memory-lite-contract:end -->
