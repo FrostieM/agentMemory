@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -42,12 +44,23 @@ def _copy_vector_store(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def _backup_sqlite_db(source: Path, target: Path) -> None:
+    """Copy a live SQLite DB safely, including committed WAL contents."""
+
+    source_uri = f"file:{source.as_posix()}?mode=ro"
+    with (
+        closing(sqlite3.connect(source_uri, uri=True)) as source_conn,
+        closing(sqlite3.connect(target)) as target_conn,
+    ):
+        source_conn.backup(target_conn)
+
+
 def run_backup_restore_check(settings: Settings) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="memory_restore_check_") as raw_tmp:
         tmp = Path(raw_tmp)
         db_copy = tmp / "memory.db"
         vector_copy = tmp / settings.vector_db_path.name
-        shutil.copy2(settings.db_path, db_copy)
+        _backup_sqlite_db(settings.db_path, db_copy)
         _copy_vector_store(settings.vector_db_path, vector_copy)
         audit_cmd = [
             sys.executable,
