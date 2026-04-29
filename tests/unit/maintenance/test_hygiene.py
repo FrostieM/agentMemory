@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.ingestion.capability_writer import (
+    upsert_agent_playbook,
+    upsert_agent_role,
+    upsert_agent_skill,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.research_writer import write_experiment
 from agent_memory_lite.ingestion.theory_writer import write_theory
 from agent_memory_lite.maintenance.hygiene import run_hygiene_report
+from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.decisions import DecisionIn
 from agent_memory_lite.models.enums import EpisodeSource
 from agent_memory_lite.models.episodes import EpisodeIn
@@ -123,3 +129,78 @@ def test_hygiene_accepts_object_success_criteria(
         finding.kind == "experiment_without_success_criteria" and finding.target_id == experiment.id
         for finding in report.findings
     )
+
+
+def test_hygiene_suggests_capability_links_for_unlinked_decision(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    role = upsert_agent_role(
+        applied_conn,
+        AgentRoleIn(
+            workspace_id="project-a",
+            name="Runtime Reliability Architect",
+            purpose="Reviews API watchdogs, PM2 deploy safety, and event-loop pressure.",
+            responsibilities=[
+                "Design API health watchdog policy",
+                "Review deploy and backpressure decisions",
+            ],
+            confidence=0.9,
+        ),
+    )
+    skill = upsert_agent_skill(
+        applied_conn,
+        AgentSkillIn(
+            workspace_id="project-a",
+            name="API watchdog diagnostics",
+            summary="Diagnose API health, PM2 restarts, event-loop pressure, and backpressure.",
+            when_to_use=["API health warning", "PM2 deploy issue", "event-loop pressure"],
+            confidence=0.95,
+        ),
+    )
+    upsert_agent_playbook(
+        applied_conn,
+        AgentPlaybookIn(
+            workspace_id="project-a",
+            name="Deploy health watchdog review",
+            goal="Verify API health and PM2 deploy behavior before trusting runtime state.",
+            steps=["Check health endpoint", "Inspect PM2 status", "Review backpressure"],
+            confidence=0.8,
+        ),
+    )
+    decision = write_decision(
+        applied_conn,
+        DecisionIn(
+            workspace_id="project-a",
+            title="Throttle discovery when API backpressure is active",
+            decision_text=(
+                "Discovery must pause when the API watchdog observes event-loop pressure "
+                "during PM2 deploy recovery."
+            ),
+            rationale="Backpressure protects live API health.",
+            importance=0.95,
+        ),
+    )
+
+    report = run_hygiene_report(applied_conn, workspace_id="project-a")
+
+    finding = next(
+        item
+        for item in report.findings
+        if item.kind == "missing_capability_link" and item.target_id == decision.id
+    )
+    suggestions = finding.details["suggested_capability_links"]
+    assert suggestions
+    assert any(
+        item["capability_type"] == "skill"
+        and item["capability_id"] == skill.id
+        and item["relation"] == "method"
+        for item in suggestions
+    )
+    assert any(
+        item["capability_type"] == "role"
+        and item["capability_id"] == role.id
+        and item["relation"] == "implementation_role"
+        for item in suggestions
+    )
+    assert all(item["target_id"] == decision.id for item in suggestions)
+    assert all(item["matched_terms"] for item in suggestions)

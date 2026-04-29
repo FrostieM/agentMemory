@@ -87,8 +87,9 @@ Apply these rules every session. They are not optional.
     `scripts/memory_hygiene.py --workspace <workspace_id> --json` to inspect
     specific stale candidates, weak theories, overdue experiments, unlinked
     insights, weak decision provenance, and missing capability links. Use
-    `scripts/memory_watchdog.py` for recurring integrity + retrieval sentinel +
-    hygiene checks.
+    `suggested_capability_links` from missing-link findings as review candidates
+    for `memory_link_capability`. Use `scripts/memory_watchdog.py` for recurring
+    integrity + retrieval sentinel + hygiene checks.
 23. **Treat audit warnings as maintenance work.** Stale candidates,
     undisciplined theories, stale experiments, and missing workspace manifest
     rows do not always mean retrieval is broken, but they do mean the memory is
@@ -490,7 +491,9 @@ GET /memory/hygiene_report?workspace_id=<workspace_id>
 Returns specific content-discipline findings: stale candidates, theories
 without validation/evidence, overdue or stale experiments, unlinked insights,
 important decisions without provenance, and important objects without
-role/skill/playbook influence.
+role/skill/playbook influence. Missing capability-link findings include
+`suggested_capability_links` payloads that are ready to review and pass to
+`memory_link_capability`; the report never writes links automatically.
 
 ### POST /memory/resolve_maintenance_event (write - maintenance review)
 

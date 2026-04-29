@@ -292,6 +292,11 @@ python scripts/memory_hygiene.py --workspace <workspace_id> --json
 curl "http://127.0.0.1:8765/memory/hygiene_report?workspace_id=<workspace_id>"
 ```
 
+`missing_capability_link` findings include `suggested_capability_links` payloads
+with the target id, capability id/name, relation, rationale, and strength. Use
+those payloads as review candidates for `memory_link_capability`; hygiene does
+not create links automatically.
+
 Live watchdog over integrity, retrieval sentinels, and hygiene:
 
 ```bash

@@ -9,12 +9,110 @@ must be linked, and important objects should be influenced by roles/skills.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from agent_memory_lite.utils.time import iso_now
+
+_TOKEN_RE = re.compile(r"\w+(?:[-.]\w+)*", re.UNICODE)
+_STOPWORDS = {
+    "about",
+    "active",
+    "across",
+    "also",
+    "and",
+    "any",
+    "are",
+    "after",
+    "agent",
+    "because",
+    "before",
+    "between",
+    "bot",
+    "but",
+    "call",
+    "can",
+    "check",
+    "clear",
+    "could",
+    "current",
+    "decision",
+    "does",
+    "done",
+    "during",
+    "event",
+    "exact",
+    "existing",
+    "explicit",
+    "explicitly",
+    "file",
+    "files",
+    "for",
+    "from",
+    "full",
+    "general",
+    "has",
+    "have",
+    "important",
+    "instead",
+    "into",
+    "keep",
+    "labels",
+    "least",
+    "make",
+    "memory",
+    "must",
+    "new",
+    "not",
+    "object",
+    "old",
+    "only",
+    "one",
+    "over",
+    "pass",
+    "path",
+    "phase",
+    "plus",
+    "rather",
+    "real",
+    "remains",
+    "required",
+    "research",
+    "row",
+    "rows",
+    "run",
+    "runs",
+    "same",
+    "show",
+    "shows",
+    "should",
+    "small",
+    "state",
+    "status",
+    "still",
+    "that",
+    "the",
+    "their",
+    "there",
+    "this",
+    "too",
+    "under",
+    "used",
+    "using",
+    "via",
+    "wait",
+    "waiting",
+    "when",
+    "where",
+    "while",
+    "with",
+    "without",
+    "work",
+    "would",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +153,15 @@ class HygieneReport:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _CapabilityCandidate:
+    capability_type: str
+    capability_id: str
+    capability_name: str
+    text: str
+    confidence: float
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE name = ? AND type IN ('table', 'virtual table')",
@@ -83,6 +190,253 @@ def _json_len(raw: str | None) -> int:
     if isinstance(data, list | dict):
         return len(data)
     return 0
+
+
+def _json_text(raw: str | None) -> str:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return ""
+
+    def _flatten(value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str | int | float | bool):
+            return [str(value)]
+        if isinstance(value, list):
+            items: list[str] = []
+            for item in value:
+                items.extend(_flatten(item))
+            return items
+        if isinstance(value, dict):
+            items = []
+            for key, item in value.items():
+                items.append(str(key))
+                items.extend(_flatten(item))
+            return items
+        return [str(value)]
+
+    return " ".join(_flatten(data))
+
+
+def _tokens(text: str | None) -> set[str]:
+    if not text:
+        return set()
+    return {
+        token.lower()
+        for token in _TOKEN_RE.findall(text)
+        if len(token) > 2 and token.lower() not in _STOPWORDS
+    }
+
+
+def _capability_text(row: sqlite3.Row, fields: list[str]) -> str:
+    parts = [str(row["name"])]
+    for field_name in fields:
+        raw = row[field_name]
+        if field_name.endswith("_json"):
+            parts.append(_json_text(str(raw) if raw is not None else None))
+        elif raw:
+            parts.append(str(raw))
+    return " ".join(parts)
+
+
+def _load_active_capabilities(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+) -> list[_CapabilityCandidate]:
+    candidates: list[_CapabilityCandidate] = []
+    if _table_exists(conn, "agent_roles"):
+        rows = conn.execute(
+            """
+            SELECT id, name, purpose, responsibilities_json, boundaries_json,
+                   handoff_triggers_json, tools_json, confidence
+            FROM agent_roles
+            WHERE workspace_id = ? AND active = 1
+            """,
+            (workspace_id,),
+        ).fetchall()
+        candidates.extend(
+            _CapabilityCandidate(
+                capability_type="role",
+                capability_id=str(row["id"]),
+                capability_name=str(row["name"]),
+                text=_capability_text(
+                    row,
+                    [
+                        "purpose",
+                        "responsibilities_json",
+                        "boundaries_json",
+                        "handoff_triggers_json",
+                        "tools_json",
+                    ],
+                ),
+                confidence=float(row["confidence"]),
+            )
+            for row in rows
+        )
+    if _table_exists(conn, "agent_skills"):
+        rows = conn.execute(
+            """
+            SELECT id, name, summary, when_to_use_json, inputs_json, outputs_json,
+                   tools_json, related_roles_json, confidence
+            FROM agent_skills
+            WHERE workspace_id = ? AND active = 1
+            """,
+            (workspace_id,),
+        ).fetchall()
+        candidates.extend(
+            _CapabilityCandidate(
+                capability_type="skill",
+                capability_id=str(row["id"]),
+                capability_name=str(row["name"]),
+                text=_capability_text(
+                    row,
+                    [
+                        "summary",
+                        "when_to_use_json",
+                        "inputs_json",
+                        "outputs_json",
+                        "tools_json",
+                        "related_roles_json",
+                    ],
+                ),
+                confidence=float(row["confidence"]),
+            )
+            for row in rows
+        )
+    if _table_exists(conn, "agent_playbooks"):
+        rows = conn.execute(
+            """
+            SELECT id, name, goal, triggers_json, steps_json, success_criteria_json,
+                   required_skills_json, confidence
+            FROM agent_playbooks
+            WHERE workspace_id = ? AND active = 1
+            """,
+            (workspace_id,),
+        ).fetchall()
+        candidates.extend(
+            _CapabilityCandidate(
+                capability_type="playbook",
+                capability_id=str(row["id"]),
+                capability_name=str(row["name"]),
+                text=_capability_text(
+                    row,
+                    [
+                        "goal",
+                        "triggers_json",
+                        "steps_json",
+                        "success_criteria_json",
+                        "required_skills_json",
+                    ],
+                ),
+                confidence=float(row["confidence"]),
+            )
+            for row in rows
+        )
+    return candidates
+
+
+def _suggested_relation(target_type: str, capability_type: str) -> str:
+    relation_map = {
+        ("theory", "role"): "critique_lens",
+        ("theory", "skill"): "evidence_method",
+        ("theory", "playbook"): "validation_playbook",
+        ("experiment", "role"): "reviewer",
+        ("experiment", "skill"): "required_skill",
+        ("experiment", "playbook"): "validation_playbook",
+        ("decision", "role"): "implementation_role",
+        ("decision", "skill"): "method",
+        ("decision", "playbook"): "validation_playbook",
+    }
+    return relation_map.get((target_type, capability_type), "method")
+
+
+def _capability_type_bonus(target_type: str, capability_type: str) -> float:
+    bonus_map = {
+        ("theory", "role"): 0.15,
+        ("theory", "skill"): 0.25,
+        ("theory", "playbook"): 0.25,
+        ("experiment", "role"): 0.15,
+        ("experiment", "skill"): 0.25,
+        ("experiment", "playbook"): 0.30,
+        ("decision", "role"): 0.35,
+        ("decision", "skill"): 0.0,
+        ("decision", "playbook"): 0.25,
+    }
+    return bonus_map.get((target_type, capability_type), 0.0)
+
+
+def _suggest_capability_links(
+    capabilities: list[_CapabilityCandidate],
+    *,
+    workspace_id: str,
+    target_type: str,
+    target_id: str,
+    target_label: str,
+    target_text: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    target_terms = _tokens(f"{target_label} {target_text}")
+    capability_terms: list[tuple[_CapabilityCandidate, set[str]]] = [
+        (capability, _tokens(capability.text)) for capability in capabilities
+    ]
+    term_counts: dict[str, int] = {}
+    for _, terms in capability_terms:
+        for term in terms:
+            term_counts[term] = term_counts.get(term, 0) + 1
+
+    ranked: list[tuple[float, float, str, _CapabilityCandidate, list[str]]] = []
+    match_scores: dict[str, float] = {}
+    common_term_limit = max(2, len(capability_terms) // 3)
+    for capability, terms in capability_terms:
+        matched_terms = target_terms & terms
+        if not matched_terms:
+            continue
+        rare_matches = [term for term in matched_terms if term_counts[term] <= common_term_limit]
+        weighted_match_score = sum(1.0 / term_counts[term] for term in matched_terms)
+        if not rare_matches and weighted_match_score < 1.2:
+            continue
+        ordered_terms = sorted(
+            matched_terms,
+            key=lambda term: (1.0 / term_counts[term], len(term), term),
+            reverse=True,
+        )
+        score = (
+            weighted_match_score
+            + capability.confidence
+            + _capability_type_bonus(target_type, capability.capability_type)
+        )
+        match_scores[capability.capability_id] = weighted_match_score
+        ranked.append(
+            (score, capability.confidence, capability.capability_name, capability, ordered_terms)
+        )
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    suggestions: list[dict[str, Any]] = []
+    for _, confidence, _, capability, ordered_matches in ranked[:limit]:
+        relation = _suggested_relation(target_type, capability.capability_type)
+        weighted_score = match_scores[capability.capability_id]
+        strength = min(0.9, round(0.45 + 0.06 * weighted_score + 0.10 * confidence, 2))
+        matched_preview = ordered_matches[:8]
+        suggestions.append(
+            {
+                "workspace_id": workspace_id,
+                "target_type": target_type,
+                "target_id": target_id,
+                "capability_type": capability.capability_type,
+                "capability_id": capability.capability_id,
+                "capability_name": capability.capability_name,
+                "relation": relation,
+                "strength": strength,
+                "match_score": round(weighted_score, 3),
+                "matched_terms": matched_preview,
+                "rationale": (
+                    "Suggested by hygiene because the target and capability share terms: "
+                    f"{', '.join(matched_preview)}."
+                ),
+            }
+        )
+    return suggestions
 
 
 def _find_stale_candidates(
@@ -307,25 +661,59 @@ def _find_unlinked_capability_targets(
 ) -> list[HygieneFinding]:
     if not _table_exists(conn, "capability_links"):
         return []
+    capabilities = _load_active_capabilities(conn, workspace_id=workspace_id)
     specs = [
         (
             "theory",
             "theories",
-            "id, title AS label, importance, status",
+            """
+            id,
+            title AS label,
+            importance,
+            status,
+            COALESCE(title, '') || ' ' ||
+            COALESCE(domain, '') || ' ' ||
+            COALESCE(claim, '') || ' ' ||
+            COALESCE(mechanism, '') || ' ' ||
+            COALESCE(experiment_plan, '') || ' ' ||
+            COALESCE(predictions_json, '') || ' ' ||
+            COALESCE(validation_criteria_json, '') || ' ' ||
+            COALESCE(tags_json, '') AS search_text
+            """,
             "importance >= ? AND status IN ('proposed', 'testing', 'supported', 'validated', 'rejected')",
             "importance",
         ),
         (
             "experiment",
             "research_experiments",
-            "id, title AS label, priority AS importance, status",
+            """
+            id,
+            title AS label,
+            priority AS importance,
+            status,
+            COALESCE(title, '') || ' ' ||
+            COALESCE(hypothesis, '') || ' ' ||
+            COALESCE(cohort_definition, '') || ' ' ||
+            COALESCE(success_criteria_json, '') || ' ' ||
+            COALESCE(command, '') || ' ' ||
+            COALESCE(owner, '') || ' ' ||
+            COALESCE(metadata_json, '') AS search_text
+            """,
             "priority >= ? AND status IN ('planned', 'running', 'blocked')",
             "priority",
         ),
         (
             "decision",
             "decisions",
-            "id, title AS label, importance, status",
+            """
+            id,
+            title AS label,
+            importance,
+            status,
+            COALESCE(title, '') || ' ' ||
+            COALESCE(decision_text, '') || ' ' ||
+            COALESCE(rationale, '') AS search_text
+            """,
             "importance >= ? AND status = 'active'",
             "importance",
         ),
@@ -352,17 +740,28 @@ def _find_unlinked_capability_targets(
             (workspace_id, importance_threshold, target_type),
         ).fetchall()
         for row in rows:
+            target_id = str(row["id"])
+            label = str(row["label"])
+            search_text = str(row["search_text"])
             findings.append(
                 HygieneFinding(
                     kind="missing_capability_link",
                     severity="warning",
                     target_type=target_type,
-                    target_id=str(row["id"]),
+                    target_id=target_id,
                     summary="Important object has no role/skill/playbook influence link.",
                     details={
-                        "label": row["label"],
+                        "label": label,
                         "status": row["status"],
                         "importance": row["importance"],
+                        "suggested_capability_links": _suggest_capability_links(
+                            capabilities,
+                            workspace_id=workspace_id,
+                            target_type=target_type,
+                            target_id=target_id,
+                            target_label=label,
+                            target_text=search_text,
+                        ),
                     },
                 )
             )
