@@ -297,6 +297,18 @@ with the target id, capability id/name, relation, rationale, and strength. Use
 those payloads as review candidates for `memory_link_capability`; hygiene does
 not create links automatically.
 
+Bounded auto-triage for those suggestions:
+
+```bash
+python scripts/memory_auto_triage.py --workspace <workspace_id> --json
+python scripts/memory_auto_triage.py --workspace <workspace_id> --apply --backup-first --json
+```
+
+The default is dry-run. Mutating mode requires `--backup-first`, applies only
+suggestions above the configured `--min-strength` and `--min-match-score`
+thresholds, and leaves semantic gaps such as weak theories or stale experiments
+for explicit review.
+
 Live watchdog over integrity, retrieval sentinels, and hygiene:
 
 ```bash

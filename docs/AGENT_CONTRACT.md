@@ -90,6 +90,9 @@ Apply these rules every session. They are not optional.
     `suggested_capability_links` from missing-link findings as review candidates
     for `memory_link_capability`. Use `scripts/memory_watchdog.py` for recurring
     integrity + retrieval sentinel + hygiene checks.
+    If the only hygiene gap is missing capability links and suggestions pass
+    the configured quality thresholds, run `scripts/memory_auto_triage.py`
+    first as dry-run, then with `--apply --backup-first`.
 23. **Treat audit warnings as maintenance work.** Stale candidates,
     undisciplined theories, stale experiments, and missing workspace manifest
     rows do not always mean retrieval is broken, but they do mean the memory is
@@ -520,6 +523,7 @@ For a detailed hygiene report and recurring watchdog:
 
 ```bash
 python scripts/memory_hygiene.py --workspace <workspace_id> --json
+python scripts/memory_auto_triage.py --workspace <workspace_id> --json
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
 ```
 

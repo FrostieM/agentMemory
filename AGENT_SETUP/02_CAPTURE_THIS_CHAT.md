@@ -155,6 +155,12 @@ run `scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --sentinels
 <PROJECT_ROOT>/.agent_memory/retrieval_sentinels.yaml --json` and report any
 watchdog maintenance event id.
 
+If the only hygiene issue is missing capability links and the report includes
+`suggested_capability_links`, run
+`scripts/memory_auto_triage.py --workspace <WORKSPACE_ID> --json` first. Apply
+with `--apply --backup-first` only when the suggestions pass thresholds; do not
+use auto-triage for stale experiments, weak theories, or unsupported insights.
+
 If the query returns nothing relevant, write one more summary episode that
 explicitly mentions the keywords, then stop. Do not loop.
 

@@ -172,6 +172,20 @@ Also run the detailed hygiene report:
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_hygiene.py --workspace <WORKSPACE_ID> --json
 ```
 
+If hygiene reports only missing capability links and includes suggestions, run
+auto-triage in dry-run mode first:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_auto_triage.py --workspace <WORKSPACE_ID> --json
+```
+
+Apply auto-triage only when suggestions pass the configured thresholds, and
+only with backup-first:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_auto_triage.py --workspace <WORKSPACE_ID> --apply --backup-first --json
+```
+
 If the project has a local retrieval sentinel YAML, run the watchdog:
 
 ```

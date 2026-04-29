@@ -25,7 +25,10 @@ After either prompt finishes, the agent should:
 4. Run read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
    and `scripts/memory_hygiene.py --workspace <workspace_id> --json` checks
    when the repo is available.
-5. Continue with whatever you wanted to do.
+5. If hygiene only reports missing capability links, run
+   `scripts/memory_auto_triage.py --workspace <workspace_id> --json`; apply
+   with `--apply --backup-first` only after reviewing the dry-run output.
+6. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the
