@@ -28,6 +28,7 @@ scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
 scripts/memory_operator_report.py
 scripts/memory_service_task.ps1 scripts/memory_trend_report.py
 MEMORY_STRICT_WORKSPACE_ISOLATION
+/ui /memory/ui/state
 /memory/explain_context /memory/record_usage_feedback
 {"workspace_id":"default"}
 <!-- agent-memory-lite-contract:end -->
@@ -61,6 +62,7 @@ scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
 scripts/memory_operator_report.py
 scripts/memory_service_task.ps1 scripts/memory_trend_report.py
 MEMORY_STRICT_WORKSPACE_ISOLATION
+/ui /memory/ui/state
 /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,
@@ -96,6 +98,7 @@ scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
 scripts/memory_operator_report.py
 scripts/memory_service_task.ps1 scripts/memory_trend_report.py
 MEMORY_STRICT_WORKSPACE_ISOLATION
+/ui /memory/ui/state
 /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,

@@ -335,6 +335,19 @@ Health check at any time:
 curl http://127.0.0.1:8765/health
 ```
 
+Local visual UI:
+
+```text
+http://127.0.0.1:8765/ui
+```
+
+The UI is served by the same FastAPI process. It shows a live animated memory
+graph, health and count cards, recent object timeline, exact search, and
+`memory_get_context` preview. The graph is powered by
+`GET /memory/ui/state?workspace_id=<workspace_id>` and polls every few seconds
+so new episodes, chunks, theories, decisions, roles, skills, and capability
+links visibly pulse as they appear.
+
 `/health` includes `retrieval_integrity`. A degraded FTS/vector/workspace
 manifest/workspace pollution check, open maintenance event, or dangling
 capability link changes health status to `degraded`; repair is never automatic.

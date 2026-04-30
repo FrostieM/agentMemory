@@ -54,7 +54,7 @@ agent-memory-lite-mcp = "agent_memory_lite.mcp.stdio_server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_memory_lite = ["py.typed", "evals/fixtures/*.yaml"]
+agent_memory_lite = ["py.typed", "evals/fixtures/*.yaml", "ui/*"]
 
 [tool.ruff]
 line-length = 100

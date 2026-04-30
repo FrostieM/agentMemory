@@ -36,6 +36,8 @@ _REQUIRED_CONTRACT_TOKENS = [
     "scripts/memory_service_task.ps1",
     "scripts/memory_trend_report.py",
     "MEMORY_STRICT_WORKSPACE_ISOLATION",
+    "/ui",
+    "/memory/ui/state",
     "/memory/explain_context",
     "/memory/record_usage_feedback",
 ]

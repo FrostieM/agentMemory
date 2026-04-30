@@ -14,6 +14,8 @@ sessions. All data is local; there are no cloud calls. The service binds to
 `127.0.0.1` only. Some installations may also enable an optional local bearer
 token for `/memory/*` endpoints with `MEMORY_REQUIRE_API_TOKEN=true`; `/health`
 remains unauthenticated for local monitoring.
+When the HTTP service is running, a local browser UI is available at `/ui`.
+It visualizes the memory graph and live changes using `/memory/ui/state`.
 
 Workspace isolation is normally provided by separate per-project database files.
 Use the `workspace_id` already established for the project. If none is specified

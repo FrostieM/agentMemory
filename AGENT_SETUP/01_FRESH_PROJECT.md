@@ -302,6 +302,15 @@ For a combined trust report, run:
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_operator_report.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --project-root <PROJECT_ROOT>
 ```
 
+If the HTTP service is running, open the local visual UI:
+
+```
+http://127.0.0.1:8765/ui
+```
+
+It uses the same local service and shows health, live counts, recent changes,
+search/context preview, and an animated graph of memory objects and links.
+
 For a Windows autostart service, install a project-local scheduled task:
 
 ```

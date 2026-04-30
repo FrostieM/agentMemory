@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent-memory-lite UI</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <svg class="mark" viewBox="0 0 42 42" role="img" aria-label="Memory graph mark">
+            <path d="M12 25 L21 12 L30 23 L22 30 Z"></path>
+            <circle cx="12" cy="25" r="3"></circle>
+            <circle cx="21" cy="12" r="3"></circle>
+            <circle cx="30" cy="23" r="3"></circle>
+            <circle cx="22" cy="30" r="3"></circle>
+          </svg>
+          <div>
+            <strong>Memory</strong>
+            <span>local graph</span>
+          </div>
+        </div>
+        <label class="field">
+          <span>Workspace</span>
+          <input id="workspaceInput" autocomplete="off" placeholder="workspace_id" />
+        </label>
+        <label class="field">
+          <span>API token</span>
+          <input id="tokenInput" autocomplete="off" type="password" placeholder="optional" />
+        </label>
+        <div class="actions">
+          <button id="refreshBtn" type="button">Refresh</button>
+          <button id="pauseBtn" type="button">Pause live</button>
+        </div>
+        <nav class="legend" aria-label="Graph legend">
+          <span><i class="dot episodic"></i> Episodic</span>
+          <span><i class="dot research"></i> Research</span>
+          <span><i class="dot capability"></i> Capability</span>
+          <span><i class="dot governance"></i> Governance</span>
+          <span><i class="dot operations"></i> Operations</span>
+          <span><i class="dot retrieval"></i> Retrieval</span>
+        </nav>
+      </aside>
+
+      <section class="main">
+        <header class="topbar">
+          <div>
+            <div class="eyebrow">local memory observer</div>
+            <h1>Memory graph cockpit</h1>
+          </div>
+          <div class="status-strip">
+            <span id="healthChip" class="chip idle">health</span>
+            <span id="liveChip" class="chip live">live</span>
+            <span id="updatedChip" class="chip">waiting</span>
+          </div>
+        </header>
+
+        <section class="metrics" id="metrics"></section>
+
+        <section class="workspace">
+          <div class="graph-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Relationship graph</h2>
+                <p>Live view of tables, recent objects, and source links.</p>
+              </div>
+              <span id="signatureChip" class="chip">signature</span>
+            </div>
+            <svg id="graphSvg" role="img" aria-label="Memory relationship graph"></svg>
+          </div>
+
+          <aside class="inspector">
+            <section class="panel">
+              <h2>Search memory</h2>
+              <div class="query-row">
+                <input id="queryInput" placeholder="heap watchdog, source flip, file path..." />
+                <button id="searchBtn" type="button">Search</button>
+              </div>
+              <div id="searchResults" class="result-list"></div>
+            </section>
+
+            <section class="panel">
+              <h2>Context preview</h2>
+              <button id="contextBtn" type="button">Get context</button>
+              <pre id="contextBox"></pre>
+            </section>
+
+            <section class="panel">
+              <h2>Selected node</h2>
+              <div id="nodeDetails" class="node-details">Click a graph node.</div>
+            </section>
+          </aside>
+        </section>
+
+        <section class="timeline-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Live changes</h2>
+              <p>Newest memory objects across the workspace.</p>
+            </div>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>
