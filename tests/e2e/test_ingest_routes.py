@@ -89,3 +89,40 @@ def test_project_mode_rejects_default_workspace(app_factory) -> None:
         )
     assert response.status_code == 400
     assert response.json()["error"] == "validation_failed"
+
+
+def test_strict_project_mode_rejects_foreign_workspace(app_factory) -> None:
+    app = app_factory(
+        MEMORY_WORKSPACE_ID="project-a",
+        MEMORY_STRICT_WORKSPACE_ISOLATION="true",
+    )
+    with TestClient(app) as guarded:
+        response = guarded.post(
+            "/memory/ingest_episode",
+            json={
+                "workspace_id": "project-b",
+                "source_type": "agent_action",
+                "raw_text": "should not leak to another project namespace",
+            },
+        )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"] == "validation_failed"
+    assert "MEMORY_STRICT_WORKSPACE_ISOLATION" in str(body)
+
+
+def test_strict_project_mode_allows_configured_workspace(app_factory) -> None:
+    app = app_factory(
+        MEMORY_WORKSPACE_ID="project-a",
+        MEMORY_STRICT_WORKSPACE_ISOLATION="true",
+    )
+    with TestClient(app) as guarded:
+        response = guarded.post(
+            "/memory/ingest_episode",
+            json={
+                "workspace_id": "project-a",
+                "source_type": "agent_action",
+                "raw_text": "strict project workspace stays accepted",
+            },
+        )
+    assert response.status_code == 200, response.text

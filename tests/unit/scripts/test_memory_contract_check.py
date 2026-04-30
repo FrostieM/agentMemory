@@ -24,7 +24,10 @@ memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
 scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
-scripts/memory_workspace_doctor.py scripts/memory_trend_report.py
+scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
+scripts/memory_operator_report.py
+scripts/memory_service_task.ps1 scripts/memory_trend_report.py
+MEMORY_STRICT_WORKSPACE_ISOLATION
 /memory/explain_context /memory/record_usage_feedback
 {"workspace_id":"default"}
 <!-- agent-memory-lite-contract:end -->
@@ -54,7 +57,10 @@ memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
 scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
-scripts/memory_workspace_doctor.py scripts/memory_trend_report.py
+scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
+scripts/memory_operator_report.py
+scripts/memory_service_task.ps1 scripts/memory_trend_report.py
+MEMORY_STRICT_WORKSPACE_ISOLATION
 /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,
@@ -86,7 +92,10 @@ memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
 scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
-scripts/memory_workspace_doctor.py scripts/memory_trend_report.py
+scripts/memory_workspace_doctor.py scripts/memory_feedback_report.py
+scripts/memory_operator_report.py
+scripts/memory_service_task.ps1 scripts/memory_trend_report.py
+MEMORY_STRICT_WORKSPACE_ISOLATION
 /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,

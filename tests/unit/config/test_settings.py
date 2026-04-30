@@ -9,6 +9,7 @@ def test_settings_defaults_match_env(settings_factory) -> None:
     assert s.allow_remote_providers is False
     assert s.api_port == 8765
     assert s.workspace_id == "default"
+    assert s.strict_workspace_isolation is False
     assert s.enforce_workspace_manifest is True
     assert s.embedding_backend == "sentence_transformers"
     assert s.embedding_model == "intfloat/multilingual-e5-small"
@@ -30,6 +31,15 @@ def test_settings_url_fields_includes_embedding_when_set(settings_factory) -> No
         "LLM_BASE_URL": "http://127.0.0.1:11434",
         "EMBEDDING_BASE_URL": "http://127.0.0.1:11434",
     }
+
+
+def test_settings_reads_strict_workspace_isolation(settings_factory) -> None:
+    s = settings_factory(
+        MEMORY_WORKSPACE_ID="project-a",
+        MEMORY_STRICT_WORKSPACE_ISOLATION="true",
+    )
+    assert s.workspace_id == "project-a"
+    assert s.strict_workspace_isolation is True
 
 
 def test_settings_is_frozen() -> None:

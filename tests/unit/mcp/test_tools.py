@@ -57,6 +57,22 @@ def test_stdio_server_exposes_registry_tools() -> None:
     assert registry_names.issubset(stdio_names)
 
 
+def test_stdio_server_strict_workspace_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_memory_lite.mcp import stdio_server  # noqa: PLC0415
+
+    guarded_settings = stdio_server._runtime.settings.model_copy(
+        update={
+            "workspace_id": "project-a",
+            "strict_workspace_isolation": True,
+        }
+    )
+    monkeypatch.setattr(stdio_server._runtime, "settings", guarded_settings)
+
+    assert stdio_server._workspace_from_args({"workspace_id": "project-a"}) == "project-a"
+    with pytest.raises(ValueError, match="MEMORY_STRICT_WORKSPACE_ISOLATION"):
+        stdio_server._workspace_from_args({"workspace_id": "project-b"})
+
+
 def test_dispatch_unknown_tool_raises() -> None:
     with pytest.raises(KeyError, match="unknown MCP tool"):
         dispatch("memory_does_not_exist")

@@ -261,6 +261,7 @@ Check stored text encoding and recent trust trend:
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_encoding_audit.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_workspace_doctor.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_feedback_report.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_trend_report.py --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
 ```
 
@@ -298,7 +299,19 @@ For a combined trust report, run:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_trust_dashboard.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --project-root <PROJECT_ROOT> --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_operator_report.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --project-root <PROJECT_ROOT>
 ```
+
+For a Windows autostart service, install a project-local scheduled task:
+
+```
+powershell -ExecutionPolicy Bypass -File <REPO_ROOT>/scripts/memory_service_task.ps1 -Action Install -WorkspaceId <WORKSPACE_ID> -ProjectRoot <PROJECT_ROOT> -RepoRoot <REPO_ROOT>
+powershell -ExecutionPolicy Bypass -File <REPO_ROOT>/scripts/memory_service_health.ps1 -WorkspaceId <WORKSPACE_ID>
+```
+
+The generated runner sets `MEMORY_FORBID_DEFAULT_WORKSPACE=1` and
+`MEMORY_STRICT_WORKSPACE_ISOLATION=1`, so the service rejects accidental writes
+to any workspace except `<WORKSPACE_ID>`.
 
 If an agent runtime cannot load MCP tools but can reach the HTTP service, use
 the workflow wrapper:

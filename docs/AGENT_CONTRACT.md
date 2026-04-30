@@ -20,6 +20,8 @@ Use the `workspace_id` already established for the project. If none is specified
 for a shared global memory, use `workspace_id="<workspace_id>"` in examples and
 replace it with the actual namespace before calling tools. Do not silently
 switch a project that already uses a named workspace.
+In strict project mode, `MEMORY_STRICT_WORKSPACE_ISOLATION=1` rejects any
+request whose `workspace_id` differs from `MEMORY_WORKSPACE_ID`.
 
 ## Operating contract
 
@@ -674,6 +676,7 @@ python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memo
 python scripts/memory_benchmark.py --workspace <workspace_id> --db-path .agent_memory/memory.db --query "workspace manifest" --runs 3 --json
 python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 python scripts/memory_workspace_doctor.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+python scripts/memory_feedback_report.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 python scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json
 ```
 
@@ -713,6 +716,7 @@ python scripts/memory_mcp_smoke.py --workspace <workspace_id> --db-path .agent_m
 python scripts/memory_contract_check.py --root . --workspace <workspace_id> --json
 python scripts/memory_backup_restore_check.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --json
 python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root . --json
+python scripts/memory_operator_report.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root .
 ```
 
 Use `memory_mcp_smoke.py` after MCP changes or a runtime restart. Use
@@ -721,7 +725,8 @@ Use `memory_mcp_smoke.py` after MCP changes or a runtime restart. Use
 `memory_trust_dashboard.py` when you need one report that combines integrity,
 workspace isolation samples, hygiene, retrieval sentinels, MCP
 behavior/capability context, candidate review, contract drift, and restore
-proof.
+proof. Use `memory_operator_report.py` when a human needs the same evidence as a
+short Markdown status report.
 Use `memory_workflow.py preflight` before a non-trivial task when the agent
 does not have MCP tools but can reach HTTP. Use `memory_workflow.py complete`
 after work to write an episode and task state through the same HTTP surface.
@@ -734,6 +739,17 @@ Use `POST /memory/record_usage_feedback` when a returned chunk, decision,
 theory, insight, or capability was clearly useful or noisy. Chunk feedback is
 bounded and only adjusts future retrieval ranking; it never overrides FTS/vector
 evidence.
+
+For a Windows project service, install the local scheduled-task wrapper with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\memory_service_task.ps1 -Action Install -WorkspaceId <workspace_id> -ProjectRoot <PROJECT_ROOT> -RepoRoot <REPO_ROOT>
+powershell -ExecutionPolicy Bypass -File scripts\memory_service_health.ps1 -WorkspaceId <workspace_id>
+```
+
+The service runner sets `MEMORY_FORBID_DEFAULT_WORKSPACE=1` and
+`MEMORY_STRICT_WORKSPACE_ISOLATION=1`. The health helper is read-only unless
+`-RestartTask` is passed explicitly.
 
 ## How to call
 

@@ -358,6 +358,9 @@ The workspace doctor is read-only by default. Quarantine mode first copies
 `memory.db`, exports the foreign rows to JSON under `.agent_memory/backups/`,
 then deletes only explicitly foreign workspace rows. Add `--include-default`
 only after reviewing whether `default` rows are also project pollution.
+Set `MEMORY_STRICT_WORKSPACE_ISOLATION=1` together with
+`MEMORY_WORKSPACE_ID=<workspace_id>` when a project service must reject every
+request for any other workspace, not only `default`.
 
 Detailed memory hygiene report:
 
@@ -405,6 +408,17 @@ python scripts/memory_candidate_triage.py --workspace <workspace_id> --json
 
 This groups unreviewed candidates by kind/status and flags stale or high-value
 items that need explicit promote/reject review.
+
+Usage-feedback report:
+
+```bash
+python scripts/memory_feedback_report.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+```
+
+Use `POST /memory/record_usage_feedback` when returned memory was clearly
+helpful or noisy. The report aggregates that signal by source id so operators
+can see which chunks, decisions, theories, insights, or capabilities are being
+demoted or reinforced.
 
 Live watchdog over integrity, retrieval sentinels, and hygiene:
 
@@ -463,6 +477,7 @@ python scripts/memory_mcp_smoke.py --workspace <workspace_id> --db-path .agent_m
 python scripts/memory_contract_check.py --root . --workspace <workspace_id> --json
 python scripts/memory_backup_restore_check.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --json
 python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root . --json
+python scripts/memory_operator_report.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance --project-root .
 ```
 
 `memory_mcp_smoke.py` launches a fresh Python process and checks that the MCP
@@ -470,8 +485,24 @@ python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .a
 `memory_contract_check.py` catches stale generic instructions such as hard-coded
 `default` workspace examples. `memory_backup_restore_check.py` copies the DB and
 vector store to a temporary restore target and audits the copy. The trust
-dashboard composes the audit, workspace doctor, hygiene, watchdog, encoding,
-trend, MCP, candidate, contract, and restore checks into one report.
+dashboard composes the audit, workspace doctor, hygiene, usage feedback,
+watchdog, encoding, trend, MCP, candidate, contract, and restore checks into
+one machine-readable report. `memory_operator_report.py` renders the same
+evidence as a concise Markdown operator report.
+
+Windows service/autostart helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\memory_service_task.ps1 -Action Install -WorkspaceId <workspace_id> -ProjectRoot <PROJECT_ROOT> -RepoRoot <REPO_ROOT>
+powershell -ExecutionPolicy Bypass -File scripts\memory_service_task.ps1 -Action Start -WorkspaceId <workspace_id>
+powershell -ExecutionPolicy Bypass -File scripts\memory_service_health.ps1 -WorkspaceId <workspace_id>
+```
+
+The scheduled-task helper writes a project-local runner under
+`<PROJECT_ROOT>/.agent_memory/`, starts `python -m agent_memory_lite`, and sets
+`MEMORY_FORBID_DEFAULT_WORKSPACE=1` plus
+`MEMORY_STRICT_WORKSPACE_ISOLATION=1`. The health helper is read-only unless
+you pass `-RestartTask` explicitly.
 
 Agent workflow wrapper:
 

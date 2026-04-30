@@ -62,6 +62,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="MEMORY_FORBID_DEFAULT_WORKSPACE",
     )
+    strict_workspace_isolation: bool = Field(
+        default=False,
+        validation_alias="MEMORY_STRICT_WORKSPACE_ISOLATION",
+    )
     enforce_workspace_manifest: bool = Field(
         default=True,
         validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST",

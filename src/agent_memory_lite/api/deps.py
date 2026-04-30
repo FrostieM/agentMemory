@@ -40,11 +40,16 @@ SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 
 
 def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
-    """Reject implicit default workspace writes when project mode opts in."""
+    """Reject workspaces disabled by project-mode guards."""
     if settings.forbid_default_workspace and workspace_id == "default":
         raise ValidationError(
             "workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE; "
             "pass the project workspace_id explicitly"
+        )
+    if settings.strict_workspace_isolation and workspace_id != settings.workspace_id:
+        raise ValidationError(
+            f"workspace_id={workspace_id!r} is disabled by MEMORY_STRICT_WORKSPACE_ISOLATION; "
+            f"expected {settings.workspace_id!r}"
         )
 
 

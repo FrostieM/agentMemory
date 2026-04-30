@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
@@ -56,7 +56,7 @@ def _script(name: str) -> str:
 def _run_json(name: str, cmd: list[str], *, ok_codes: set[int]) -> dict[str, Any]:
     completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
     try:
-        payload = json.loads(completed.stdout)
+        payload = cast(dict[str, Any], json.loads(completed.stdout))
     except json.JSONDecodeError:
         payload = {
             "status": "degraded",
@@ -140,6 +140,14 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         "--json",
     ]
     components["hygiene"] = _run_json("memory_hygiene", hygiene_cmd, ok_codes={0, 2})
+
+    feedback_cmd = [
+        sys.executable,
+        _script("memory_feedback_report.py"),
+        *_base_args(settings),
+        "--json",
+    ]
+    components["feedback"] = _run_json("memory_feedback_report", feedback_cmd, ok_codes={0, 2})
 
     encoding_cmd = [
         sys.executable,

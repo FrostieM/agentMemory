@@ -863,6 +863,14 @@ def _with_workspace(payload: dict[str, Any]) -> dict[str, Any]:
 def _ensure_workspace_allowed(workspace_id: str) -> None:
     if _runtime.settings.forbid_default_workspace and workspace_id == "default":
         raise ValueError("workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE")
+    if (
+        _runtime.settings.strict_workspace_isolation
+        and workspace_id != _runtime.settings.workspace_id
+    ):
+        raise ValueError(
+            f"workspace_id={workspace_id!r} is disabled by MEMORY_STRICT_WORKSPACE_ISOLATION; "
+            f"expected {_runtime.settings.workspace_id!r}"
+        )
 
 
 def _workspace_from_args(args: dict[str, Any]) -> str:
