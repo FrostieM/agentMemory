@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from fastapi import APIRouter
 
 from agent_memory_lite.api.deps import (
@@ -17,12 +20,64 @@ from agent_memory_lite.api.schemas.context import (
     GetContextRequest,
     GetContextResponse,
 )
-from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.ui_telemetry import MemoryOperationTrace, trace_memory_operation
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.retrieval.context_builder import build_context
-from agent_memory_lite.retrieval.explain import explain_context
+from agent_memory_lite.retrieval.explain import (
+    explain_context,
+    used_context_objects,
+)
 
 router = APIRouter()
+
+_TABLE_TO_OBJECT_TYPE = {
+    "episodes": "episode",
+    "chunks": "chunk",
+    "files": "file",
+    "decisions": "decision",
+    "theories": "theory",
+    "theory_evidence": "theory_evidence",
+    "research_experiments": "experiment",
+    "experiment_results": "experiment_result",
+    "memory_snapshots": "snapshot",
+    "research_insights": "insight",
+    "domain_concepts": "concept",
+    "agent_roles": "role",
+    "agent_skills": "skill",
+    "agent_playbooks": "playbook",
+    "capability_links": "capability_link",
+    "task_state": "task_state",
+    "behavior_instructions": "behavior_instruction",
+    "maintenance_events": "maintenance_event",
+    "procedural_rules": "procedural_rule",
+    "retrieved_facts": "retrieved_fact",
+}
+
+
+def _object_type_for_table(table: str) -> str:
+    return _TABLE_TO_OBJECT_TYPE.get(table, table.rstrip("s") or "memory_object")
+
+
+def _trace_used_context_objects(
+    trace: MemoryOperationTrace,
+    objects: Sequence[Any],
+    *,
+    limit: int = 18,
+) -> None:
+    for item in objects[:limit]:
+        trace.graph_delta(
+            object_type=_object_type_for_table(item.table),
+            object_id=item.id,
+            action="used",
+            label=item.label,
+            stage="context",
+            counts={
+                "table": item.table,
+                "relation": item.relation,
+                "rank": item.rank,
+                "updated_at": item.updated_at or "",
+            },
+        )
 
 
 @router.post("/memory/get_context", response_model=GetContextResponse)
@@ -92,6 +147,13 @@ def get_context_route(
                 "sources": len(response.sources),
                 "chars": len(response.context_text),
             },
+        )
+        used_objects = used_context_objects(built)
+        _trace_used_context_objects(trace, used_objects)
+        trace.stage_done(
+            "context",
+            "Context objects traced",
+            counts={"used_context_objects": len(used_objects)},
         )
         trace.stage_done(
             "response", "Context response ready", counts={"sources": len(response.sources)}
@@ -164,6 +226,12 @@ def explain_context_route(
             },
         )
         response = ExplainContextResponse.model_validate(payload)
+        _trace_used_context_objects(trace, list(response.used_context_objects))
+        trace.stage_done(
+            "context",
+            "Context objects traced",
+            counts={"used_context_objects": len(response.used_context_objects)},
+        )
         trace.stage_done(
             "response",
             "Explain response ready",

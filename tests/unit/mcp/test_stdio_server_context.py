@@ -74,6 +74,66 @@ def test_get_context_falls_back_to_fts_only_without_loading_provider(
     }
 
 
+def test_search_uses_http_delegation_for_live_ui_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_local_search(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("local FTS should not run when HTTP search delegation succeeds")
+
+    def fake_http(payload: dict[str, Any]) -> dict[str, Any]:
+        assert payload["workspace_id"] == "copyBot"
+        assert payload["query"] == "live observer"
+        assert payload["mode"] == "fts"
+        return {
+            "mode": "fts",
+            "hits": [
+                {
+                    "chunk_id": "chk_1",
+                    "score": -1.0,
+                    "path": "",
+                    "text": "live observer",
+                    "summary": None,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(stdio_server, "_http_search", fake_http)
+    monkeypatch.setattr(stdio_server, "search_chunks_fts", fail_local_search)
+
+    result = stdio_server._handle_search(
+        {"workspace_id": "copyBot", "query": "live observer", "limit": 5}
+    )
+
+    assert result["hits"][0]["chunk_id"] == "chk_1"
+
+
+def test_search_falls_back_to_local_fts_when_http_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_local_search(*_args: object, **kwargs: object) -> list[SimpleNamespace]:
+        assert kwargs["workspace_id"] == "copyBot"
+        assert kwargs["query"] == "fallback observer"
+        return [
+            SimpleNamespace(
+                chunk_id="chk_local",
+                score=-2.0,
+                path="",
+                text="fallback observer",
+                summary=None,
+            )
+        ]
+
+    monkeypatch.setattr(stdio_server, "_http_search", lambda _payload: None)
+    monkeypatch.setattr(stdio_server._runtime, "db", lambda: "db")
+    monkeypatch.setattr(stdio_server, "search_chunks_fts", fake_local_search)
+
+    result = stdio_server._handle_search(
+        {"workspace_id": "copyBot", "query": "fallback observer", "limit": 5}
+    )
+
+    assert result["hits"][0]["chunk_id"] == "chk_local"
+
+
 def test_ingest_episode_uses_http_delegation_without_loading_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,3 +202,68 @@ def test_ingest_file_uses_http_delegation_without_loading_provider(
 
     assert result["file_id"] == "file_1"
     assert result["chunks_written"] == 1
+
+
+def test_write_decision_uses_http_delegation_for_live_ui_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_local_write(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("local decision write should not run when HTTP delegation succeeds")
+
+    def fake_http(path: str, payload: dict[str, Any], *, log_label: str) -> dict[str, Any]:
+        assert path == "/memory/write_decision"
+        assert log_label == "write_decision"
+        assert payload["workspace_id"] == "copyBot"
+        assert payload["title"] == "Observer bridge"
+        return {
+            "decision_id": "dec_1",
+            "status": "active",
+            "valid_from": "2026-01-01T00:00:00Z",
+            "superseded_decision_id": None,
+        }
+
+    monkeypatch.setattr(stdio_server, "_http_write", fake_http)
+    monkeypatch.setattr(stdio_server, "write_decision", fail_local_write)
+
+    result = stdio_server._handle_write_decision(
+        {
+            "workspace_id": "copyBot",
+            "title": "Observer bridge",
+            "decision_text": "Route MCP writes through HTTP telemetry.",
+        }
+    )
+
+    assert result["decision_id"] == "dec_1"
+
+
+def test_upsert_agent_role_uses_http_delegation_for_graph_delta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_local_upsert(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("local role upsert should not run when HTTP delegation succeeds")
+
+    def fake_http(path: str, payload: dict[str, Any], *, log_label: str) -> dict[str, Any]:
+        assert path == "/memory/upsert_agent_role"
+        assert log_label == "upsert_agent_role"
+        assert payload["workspace_id"] == "copyBot"
+        assert payload["name"] == "Live observer role"
+        return {
+            "role_id": "role_1",
+            "name": "Live observer role",
+            "confidence": 0.9,
+            "active": True,
+            "updated_at": "2026-01-01T00:00:00Z",
+        }
+
+    monkeypatch.setattr(stdio_server, "_http_write", fake_http)
+    monkeypatch.setattr(stdio_server, "upsert_agent_role", fail_local_upsert)
+
+    result = stdio_server._handle_upsert_agent_role(
+        {
+            "workspace_id": "copyBot",
+            "name": "Live observer role",
+            "purpose": "Verify telemetry graph behavior.",
+        }
+    )
+
+    assert result["role_id"] == "role_1"

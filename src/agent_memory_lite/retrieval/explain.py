@@ -54,6 +54,16 @@ class SuppressedBehaviorExplanation:
 
 
 @dataclass(frozen=True, slots=True)
+class UsedContextObjectExplanation:
+    table: str
+    id: str
+    label: str
+    relation: str
+    updated_at: str | None = None
+    rank: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class ContextExplanation:
     workspace_id: str
     query: str
@@ -63,6 +73,7 @@ class ContextExplanation:
     source_candidates: list[SourceCandidateExplanation]
     scored_candidates: list[ScoredCandidateExplanation]
     included_ids: list[str]
+    used_context_objects: list[UsedContextObjectExplanation] = field(default_factory=list)
     suppressed_behavior_instructions: list[SuppressedBehaviorExplanation] = field(
         default_factory=list
     )
@@ -98,6 +109,17 @@ class ContextExplanation:
                 for item in self.scored_candidates
             ],
             "included_ids": self.included_ids,
+            "used_context_objects": [
+                {
+                    "table": item.table,
+                    "id": item.id,
+                    "label": item.label,
+                    "relation": item.relation,
+                    "updated_at": item.updated_at,
+                    "rank": item.rank,
+                }
+                for item in self.used_context_objects
+            ],
             "suppressed_behavior_instructions": [
                 {
                     "id": item.id,
@@ -151,6 +173,107 @@ def _section_counts(context: object) -> dict[str, int]:
         "facts": len(getattr(context, "facts", [])),
         "chunks": len(getattr(context, "hits", [])),
     }
+
+
+def _object_label(item: object) -> str:
+    for attr in ("title", "name", "summary", "goal", "path", "text", "claim"):
+        value = getattr(item, attr, None)
+        if value:
+            return str(value)
+    return str(getattr(item, "id", "memory object"))
+
+
+def _object_time(item: object) -> str | None:
+    for attr in ("updated_at", "created_at", "observed_at", "valid_from", "last_indexed_at"):
+        value = getattr(item, attr, None)
+        if value:
+            return str(value)
+    metadata = getattr(item, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("updated_at", "created_at", "observed_at"):
+            if metadata.get(key):
+                return str(metadata[key])
+    return None
+
+
+def _append_used_object(
+    out: list[UsedContextObjectExplanation],
+    *,
+    table: str,
+    item: object,
+    relation: str,
+) -> None:
+    item_id = str(getattr(item, "id", "") or "")
+    if not item_id:
+        return
+    out.append(
+        UsedContextObjectExplanation(
+            table=table,
+            id=item_id,
+            label=_object_label(item),
+            relation=relation,
+            updated_at=_object_time(item),
+            rank=len(out),
+        )
+    )
+
+
+def _append_research_objects(
+    out: list[UsedContextObjectExplanation], context: object
+) -> None:
+    for theory_context in getattr(context, "theories", []):
+        theory = getattr(theory_context, "theory", None)
+        if theory is not None:
+            _append_used_object(out, table="theories", item=theory, relation="theory")
+        for item in getattr(theory_context, "evidence", []):
+            _append_used_object(
+                out, table="theory_evidence", item=item, relation="evidence"
+            )
+    agenda = getattr(context, "research_agenda", None)
+    for table, attr, relation in (
+        ("memory_snapshots", "snapshots", "snapshot"),
+        ("research_experiments", "experiments", "experiment"),
+        ("research_insights", "insights", "insight"),
+        ("domain_concepts", "concepts", "concept"),
+    ):
+        for item in getattr(agenda, attr, []) if agenda else []:
+            _append_used_object(out, table=table, item=item, relation=relation)
+
+
+def _append_capability_objects(
+    out: list[UsedContextObjectExplanation], context: object
+) -> None:
+    capabilities = getattr(context, "agent_capabilities", None)
+    for table, attr, relation in (
+        ("agent_roles", "roles", "role"),
+        ("agent_skills", "skills", "skill"),
+        ("agent_playbooks", "playbooks", "playbook"),
+    ):
+        for item in getattr(capabilities, attr, []) if capabilities else []:
+            _append_used_object(out, table=table, item=item, relation=relation)
+
+
+def used_context_objects(context: object) -> list[UsedContextObjectExplanation]:
+    out: list[UsedContextObjectExplanation] = []
+    task = getattr(context, "task_state", None)
+    if task is not None:
+        _append_used_object(out, table="task_state", item=task, relation="task state")
+    behavior = getattr(context, "behavior_instructions", None)
+    for item in getattr(behavior, "instructions", []) if behavior else []:
+        _append_used_object(
+            out, table="behavior_instructions", item=item, relation="instruction"
+        )
+    for item in getattr(context, "decisions", []):
+        _append_used_object(out, table="decisions", item=item, relation="decision")
+    _append_research_objects(out, context)
+    _append_capability_objects(out, context)
+    for item in getattr(context, "rules", []):
+        _append_used_object(out, table="procedural_rules", item=item, relation="rule")
+    for item in getattr(context, "facts", []):
+        _append_used_object(out, table="retrieved_facts", item=item, relation="fact")
+    for item in getattr(context, "hits", []):
+        _append_used_object(out, table="chunks", item=item, relation="retrieved chunk")
+    return out
 
 
 def explain_context(
@@ -237,5 +360,6 @@ def explain_context(
         source_candidates=_source_explanations(rankings)[:candidate_limit],
         scored_candidates=scored_explanations,
         included_ids=included_ids,
+        used_context_objects=used_context_objects(built),
         suppressed_behavior_instructions=suppressed_behavior,
     )

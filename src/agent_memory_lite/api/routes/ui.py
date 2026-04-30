@@ -12,6 +12,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
 from agent_memory_lite.api.ui_telemetry import event_stream, ui_telemetry
+from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.models.enums import MaintenanceEventStatus
+from agent_memory_lite.repositories.maintenance_repo import list_maintenance_events
 from agent_memory_lite.utils.time import iso_now
 
 router = APIRouter(include_in_schema=False)
@@ -191,6 +194,30 @@ def _count(conn: sqlite3.Connection, table: str, *, workspace_id: str) -> int:
     return int(row[0] or 0)
 
 
+def _available_workspaces(conn: sqlite3.Connection, settings: Settings) -> list[str]:
+    if settings.strict_workspace_isolation:
+        return [settings.workspace_id]
+    workspaces = {settings.workspace_id}
+    for spec in _TABLES:
+        table = spec["table"]
+        columns = _columns(conn, table)
+        if "workspace_id" not in columns:
+            continue
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT workspace_id
+            FROM {_quote_ident(table)}
+            WHERE workspace_id IS NOT NULL AND workspace_id != ''
+            ORDER BY workspace_id
+            LIMIT 50
+            """
+        ).fetchall()
+        workspaces.update(str(row[0]) for row in rows if row[0])
+    if settings.forbid_default_workspace:
+        workspaces.discard("default")
+    return sorted(workspaces)
+
+
 def _time_column(columns: set[str]) -> str | None:
     return next((column for column in _TIME_COLUMNS if column in columns), None)
 
@@ -311,12 +338,24 @@ def _add_reference(
     row: sqlite3.Row,
 ) -> None:
     keys = set(row.keys())
+    source_type_tables = {
+        "chunk": "chunks",
+        "decision": "decisions",
+        "theory": "theories",
+        "insight": "research_insights",
+    }
+    source_table = (
+        source_type_tables.get(str(row["source_type"]))
+        if "source_type" in keys and row["source_type"]
+        else ""
+    )
     references = [
         ("source_episode_id", "episodes", "source"),
         ("episode_id", "episodes", "episode"),
         ("theory_id", "theories", "theory"),
         ("snapshot_id", "memory_snapshots", "snapshot"),
         ("experiment_id", "research_experiments", "experiment"),
+        ("source_id", source_table or "", "rates"),
         (
             "target_id",
             str(row["target_type"]) if "target_type" in keys and row["target_type"] else "",
@@ -373,7 +412,7 @@ def _build_graph(
         )
         _add_edge(edges, source=workspace_node, target=group_node, label="contains", kind="group")
 
-    per_table_limit = max(1, min(recent_limit, 6))
+    per_table_limit = max(1, min(recent_limit, 80))
     for spec in _TABLES:
         table = spec["table"]
         count = _count(conn, table, workspace_id=workspace_id)
@@ -505,12 +544,42 @@ def _signature(counts: dict[str, int], recent: list[dict[str, Any]]) -> str:
     return hashlib.blake2s(raw.encode("utf-8"), digest_size=8).hexdigest()
 
 
+def _maintenance_warnings(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    if not _table_exists(conn, "maintenance_events"):
+        return []
+    events = list_maintenance_events(
+        conn,
+        workspace_id=workspace_id,
+        statuses=[MaintenanceEventStatus.OPEN],
+        limit=limit,
+    )
+    return [
+        {
+            "event_id": event.id,
+            "kind": event.kind,
+            "severity": event.severity.value,
+            "status": event.status.value,
+            "summary": event.summary,
+            "details": event.details,
+            "target_type": event.target_type,
+            "target_id": event.target_id,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
+
+
 @router.get("/memory/ui/state")
 def memory_ui_state(
     conn: DbDep,
     settings: SettingsDep,
     workspace_id: str | None = Query(default=None),
-    recent_limit: int = Query(default=4, ge=1, le=12),
+    recent_limit: int = Query(default=80, ge=1, le=100),
 ) -> dict[str, Any]:
     selected_workspace = workspace_id or settings.workspace_id
     ensure_workspace_allowed(selected_workspace, settings)
@@ -531,10 +600,12 @@ def memory_ui_state(
     return {
         "status": "ok",
         "workspace_id": selected_workspace,
+        "workspaces": _available_workspaces(conn, settings),
         "generated_at": iso_now(),
         "db_path": str(settings.db_path),
         "vector_path": str(settings.vector_db_path),
         "counts": counts,
+        "warnings": _maintenance_warnings(conn, workspace_id=selected_workspace),
         "graph": {"nodes": nodes, "edges": edges},
         "process": process,
         "recent": recent,

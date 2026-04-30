@@ -5,6 +5,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_memory_lite.api.ui_telemetry import ui_telemetry
+
 
 @pytest.fixture
 def client(app_factory) -> Iterator[TestClient]:
@@ -71,6 +73,7 @@ def test_capability_routes_feed_context(client: TestClient) -> None:
     assert body["skills"][0]["name"] == "Live flow audit"
     assert body["playbooks"][0]["name"] == "Non-destructive live audit"
 
+    ui_telemetry.clear()
     context = client.post(
         "/memory/get_context",
         json={
@@ -85,3 +88,13 @@ def test_capability_routes_feed_context(client: TestClient) -> None:
     assert "Runtime operator" in text
     assert "Live flow audit" in text
     assert "Non-destructive live audit" in text
+
+    state = client.get("/memory/ui/state?workspace_id=default")
+    assert state.status_code == 200, state.text
+    used_events = [
+        event
+        for event in state.json()["latest_events"]
+        if event["type"] == "graph_delta" and event["counts"].get("action") == "used"
+    ]
+    used_object_types = {event["counts"].get("object_type") for event in used_events}
+    assert {"role", "skill", "playbook"}.issubset(used_object_types)

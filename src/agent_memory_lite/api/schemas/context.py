@@ -69,6 +69,17 @@ class ExplainSuppressedBehaviorInstruction(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class ExplainUsedContextObject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table: str
+    id: str
+    label: str
+    relation: str
+    updated_at: str | None = None
+    rank: int = 0
+
+
 class ExplainContextResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -80,6 +91,7 @@ class ExplainContextResponse(BaseModel):
     source_candidates: list[ExplainSourceCandidate]
     scored_candidates: list[ExplainScoredCandidate]
     included_ids: list[str]
+    used_context_objects: list[ExplainUsedContextObject] = Field(default_factory=list)
     suppressed_behavior_instructions: list[ExplainSuppressedBehaviorInstruction] = Field(
         default_factory=list
     )

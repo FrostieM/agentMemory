@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>agent-memory-lite observatory</title>
-    <link rel="stylesheet" href="/ui/styles.css?v=20260430-live-observatory" />
+    <link rel="stylesheet" href="/ui/styles.css?v=20260501-graph-pointerup-fix" />
   </head>
   <body>
     <main class="shell">
@@ -24,7 +24,7 @@
 
         <label class="field">
           <span>Workspace</span>
-          <input id="workspaceInput" autocomplete="off" placeholder="workspace_id" />
+          <select id="workspaceInput" autocomplete="off"></select>
         </label>
         <label class="field">
           <span>API token</span>
@@ -35,13 +35,12 @@
           <button id="pauseBtn" type="button">Pause</button>
         </div>
 
-        <nav class="legend" aria-label="Color semantics">
-          <span><i class="dot cyan"></i> active request</span>
-          <span><i class="dot green"></i> created or used</span>
-          <span><i class="dot violet"></i> reasoning/context</span>
-          <span><i class="dot amber"></i> warning/review</span>
-          <span><i class="dot red"></i> failed</span>
-        </nav>
+        <div class="read-guide" aria-label="How to read the graph">
+          <strong>How to read</strong>
+          <span>Run Search or Explain.</span>
+          <span>Green paths show memory used by the current request.</span>
+          <span>Click a large node for its objects, or a small node for details.</span>
+        </div>
       </aside>
 
       <section class="main">
@@ -58,20 +57,44 @@
           </div>
         </header>
 
-        <section class="hero-grid" aria-label="Live memory flow">
-          <article class="live-stage">
-            <div class="panel-head">
-              <div>
-                <div class="eyebrow">request stage</div>
-                <h2 id="activeTitle">Waiting for memory activity</h2>
-                <p id="activeMeta">Run Search or Explain to see the request moving through the graph.</p>
-              </div>
-              <span id="requestChip" class="chip cyan">idle</span>
+        <section id="warningsPanel" class="warnings-panel" aria-label="Memory warnings">
+          <div class="panel-head compact">
+            <div>
+              <div class="eyebrow">warnings</div>
+              <h2>Memory needs attention</h2>
+              <p>Open maintenance events that can make retrieval or context less trustworthy.</p>
             </div>
-            <svg id="liveGraphSvg" role="img" aria-label="Animated memory request graph"></svg>
-            <div id="stageRail" class="stage-rail"></div>
-          </article>
+            <span id="warningsCountChip" class="chip">0 open</span>
+          </div>
+          <div id="warningsList" class="warnings-list"></div>
+        </section>
 
+        <section class="memory-map-section" aria-label="Live memory relationship graph">
+          <article class="memory-map-panel">
+            <div class="panel-head compact">
+              <div>
+                <div class="eyebrow">live memory graph</div>
+                <h2>Memory relationships</h2>
+                <p>Project starts in the center. Large nodes are memory families. Small nodes appear only when a request uses them.</p>
+              </div>
+              <div class="memory-map-toolbar" aria-label="Memory graph controls">
+                <div class="graph-controls">
+                  <button id="graphZoomOut" type="button" class="icon-button" aria-label="Zoom graph out">-</button>
+                  <span id="graphZoomLabel" class="graph-scale">100%</span>
+                  <button id="graphZoomIn" type="button" class="icon-button" aria-label="Zoom graph in">+</button>
+                  <button id="graphZoomReset" type="button" class="ghost small">Reset</button>
+                  <button id="graphTestBtn" type="button" class="ghost small">Test</button>
+                </div>
+              </div>
+            </div>
+            <div id="graphViewport" class="memory-map-viewport" aria-label="Scrollable zoomable memory map">
+              <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
+            </div>
+            <div id="graphInspector" class="graph-inspector" hidden></div>
+          </article>
+        </section>
+
+        <section class="hero-grid" aria-label="Live memory activity">
           <aside class="life-feed-panel">
             <div class="panel-head compact">
               <div>
@@ -105,7 +128,7 @@
             <div class="panel-head compact">
               <div>
                 <div class="eyebrow">agent context graph</div>
-                <h2>Used vs ignored memory</h2>
+                <h2>Context selection</h2>
                 <p id="taskGraphMeta">No query selected yet.</p>
               </div>
               <button id="rawContextBtn" type="button" class="ghost">Raw XML</button>
@@ -127,16 +150,6 @@
                 <span id="signatureChip" class="chip">signature</span>
               </div>
               <div id="metrics" class="metrics"></div>
-            </article>
-
-            <article class="detail-panel">
-              <div class="panel-head compact">
-                <div>
-                  <h2>Structural graph</h2>
-                  <p>Database object families, not the primary operator view.</p>
-                </div>
-              </div>
-              <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
             </article>
 
             <article class="detail-panel">
@@ -177,6 +190,6 @@
         </details>
       </section>
     </main>
-    <script src="/ui/app.js?v=20260430-live-observatory"></script>
+    <script src="/ui/app.js?v=20260501-graph-pointerup-fix"></script>
   </body>
 </html>

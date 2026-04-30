@@ -119,6 +119,7 @@ from agent_memory_lite.version import __version__
 
 _log = get_logger("mcp.stdio_server")
 _HTTP_GET_CONTEXT_DEFAULT_TIMEOUT_SECONDS = 2.0
+_HTTP_SEARCH_DEFAULT_TIMEOUT_SECONDS = 5.0
 _HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
@@ -947,6 +948,20 @@ def _http_get_context(payload: dict[str, Any]) -> dict[str, Any] | None:
     return body
 
 
+def _http_search(payload: dict[str, Any]) -> dict[str, Any] | None:
+    body = _http_memory_request(
+        path="/memory/search",
+        payload={**payload, "mode": payload.get("mode", "fts")},
+        enabled_env="MCP_SEARCH_HTTP_DELEGATE",
+        timeout_env="MCP_SEARCH_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_SEARCH_DEFAULT_TIMEOUT_SECONDS,
+        log_label="search",
+    )
+    if body is not None and isinstance(body.get("hits"), list):
+        return body
+    return None
+
+
 def _http_ingest_episode(payload: dict[str, Any]) -> dict[str, Any] | None:
     body = _http_memory_request(
         path="/memory/ingest_episode",
@@ -973,6 +988,17 @@ def _http_ingest_file(payload: dict[str, Any]) -> dict[str, Any] | None:
     if body is not None and {"file_id", "path"}.issubset(body):
         return body
     return None
+
+
+def _http_write(path: str, payload: dict[str, Any], *, log_label: str) -> dict[str, Any] | None:
+    return _http_memory_request(
+        path=path,
+        payload=payload,
+        enabled_env="MCP_WRITE_HTTP_DELEGATE",
+        timeout_env="MCP_WRITE_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS,
+        log_label=log_label,
+    )
 
 
 def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
@@ -1003,7 +1029,13 @@ def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    payload = _with_workspace(args)
+    payload.setdefault("mode", "fts")
+    delegated = _http_search(payload)
+    if delegated is not None:
+        return delegated
+
+    workspace_id = str(payload["workspace_id"])
     query = args["query"]
     limit = int(args.get("limit", 10))
     hits = search_chunks_fts(
@@ -1056,7 +1088,12 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
-    decision = write_decision(_runtime.db(), DecisionIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/write_decision", payload, log_label="write_decision")
+    if delegated is not None:
+        return delegated
+
+    decision = write_decision(_runtime.db(), DecisionIn(**payload))
     return {
         "decision_id": decision.id,
         "status": decision.status.value,
@@ -1106,7 +1143,12 @@ def _handle_list_decisions(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
-    state = write_task_state(_runtime.db(), TaskStateIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/update_task_state", payload, log_label="update_task_state")
+    if delegated is not None:
+        return delegated
+
+    state = write_task_state(_runtime.db(), TaskStateIn(**payload))
     return {
         "state_id": state.id,
         "task_id": state.task_id,
@@ -1284,8 +1326,13 @@ def _handle_resolve_maintenance_event(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_link_capability(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/link_capability", payload, log_label="link_capability")
+    if delegated is not None:
+        return delegated
+
     return _capability_link_payload(
-        link_capability(_runtime.db(), CapabilityLinkIn(**_with_workspace(args)))
+        link_capability(_runtime.db(), CapabilityLinkIn(**payload))
     )
 
 
@@ -1319,9 +1366,18 @@ def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_upsert_behavior_instruction(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/upsert_behavior_instruction",
+        payload,
+        log_label="upsert_behavior_instruction",
+    )
+    if delegated is not None:
+        return delegated
+
     instruction = upsert_behavior_instruction(
         _runtime.db(),
-        BehaviorInstructionIn(**_with_workspace(args)),
+        BehaviorInstructionIn(**payload),
     )
     return _behavior_instruction_payload(instruction)
 
@@ -1348,7 +1404,12 @@ def _handle_list_behavior_instructions(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
-    theory = write_theory(_runtime.db(), TheoryIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/write_theory", payload, log_label="write_theory")
+    if delegated is not None:
+        return delegated
+
+    theory = write_theory(_runtime.db(), TheoryIn(**payload))
     return {
         "theory_id": theory.id,
         "status": theory.status.value,
@@ -1360,7 +1421,16 @@ def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_add_theory_evidence(args: dict[str, Any]) -> dict[str, Any]:
-    evidence = add_theory_evidence(_runtime.db(), TheoryEvidenceIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/add_theory_evidence",
+        payload,
+        log_label="add_theory_evidence",
+    )
+    if delegated is not None:
+        return delegated
+
+    evidence = add_theory_evidence(_runtime.db(), TheoryEvidenceIn(**payload))
     return {
         "evidence_id": evidence.id,
         "theory_id": evidence.theory_id,
@@ -1416,7 +1486,12 @@ def _handle_list_theories(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_register_snapshot(args: dict[str, Any]) -> dict[str, Any]:
-    snapshot = register_snapshot(_runtime.db(), MemorySnapshotIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/register_snapshot", payload, log_label="register_snapshot")
+    if delegated is not None:
+        return delegated
+
+    snapshot = register_snapshot(_runtime.db(), MemorySnapshotIn(**payload))
     return {
         "snapshot_id": snapshot.id,
         "snapshot_key": snapshot.snapshot_key,
@@ -1427,7 +1502,12 @@ def _handle_register_snapshot(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_write_experiment(args: dict[str, Any]) -> dict[str, Any]:
-    experiment = write_experiment(_runtime.db(), ExperimentIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/write_experiment", payload, log_label="write_experiment")
+    if delegated is not None:
+        return delegated
+
+    experiment = write_experiment(_runtime.db(), ExperimentIn(**payload))
     return {
         "experiment_id": experiment.id,
         "theory_id": experiment.theory_id,
@@ -1438,7 +1518,16 @@ def _handle_write_experiment(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_add_experiment_result(args: dict[str, Any]) -> dict[str, Any]:
-    result = add_experiment_result(_runtime.db(), ExperimentResultIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/add_experiment_result",
+        payload,
+        log_label="add_experiment_result",
+    )
+    if delegated is not None:
+        return delegated
+
+    result = add_experiment_result(_runtime.db(), ExperimentResultIn(**payload))
     return {
         "result_id": result.id,
         "experiment_id": result.experiment_id,
@@ -1449,7 +1538,12 @@ def _handle_add_experiment_result(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_upsert_concept(args: dict[str, Any]) -> dict[str, Any]:
-    concept = upsert_domain_concept(_runtime.db(), DomainConceptIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/upsert_concept", payload, log_label="upsert_concept")
+    if delegated is not None:
+        return delegated
+
+    concept = upsert_domain_concept(_runtime.db(), DomainConceptIn(**payload))
     return {
         "concept_id": concept.id,
         "name": concept.name,
@@ -1460,7 +1554,12 @@ def _handle_upsert_concept(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
-    insight = distill_insight(_runtime.db(), ResearchInsightIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/distill_insight", payload, log_label="distill_insight")
+    if delegated is not None:
+        return delegated
+
+    insight = distill_insight(_runtime.db(), ResearchInsightIn(**payload))
     return {
         "insight_id": insight.id,
         "insight_type": insight.insight_type.value,
@@ -1471,7 +1570,12 @@ def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_update_insight(args: dict[str, Any]) -> dict[str, Any]:
-    insight = update_insight(_runtime.db(), ResearchInsightUpdateIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/update_insight", payload, log_label="update_insight")
+    if delegated is not None:
+        return delegated
+
+    insight = update_insight(_runtime.db(), ResearchInsightUpdateIn(**payload))
     return {
         "insight_id": insight.id,
         "insight_type": insight.insight_type.value,
@@ -1587,7 +1691,12 @@ def _handle_list_insights(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_upsert_agent_role(args: dict[str, Any]) -> dict[str, Any]:
-    role = upsert_agent_role(_runtime.db(), AgentRoleIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/upsert_agent_role", payload, log_label="upsert_agent_role")
+    if delegated is not None:
+        return delegated
+
+    role = upsert_agent_role(_runtime.db(), AgentRoleIn(**payload))
     return {
         "role_id": role.id,
         "name": role.name,
@@ -1598,7 +1707,12 @@ def _handle_upsert_agent_role(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_upsert_agent_skill(args: dict[str, Any]) -> dict[str, Any]:
-    skill = upsert_agent_skill(_runtime.db(), AgentSkillIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write("/memory/upsert_agent_skill", payload, log_label="upsert_agent_skill")
+    if delegated is not None:
+        return delegated
+
+    skill = upsert_agent_skill(_runtime.db(), AgentSkillIn(**payload))
     return {
         "skill_id": skill.id,
         "name": skill.name,
@@ -1609,7 +1723,16 @@ def _handle_upsert_agent_skill(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_upsert_agent_playbook(args: dict[str, Any]) -> dict[str, Any]:
-    playbook = upsert_agent_playbook(_runtime.db(), AgentPlaybookIn(**_with_workspace(args)))
+    payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/upsert_agent_playbook",
+        payload,
+        log_label="upsert_agent_playbook",
+    )
+    if delegated is not None:
+        return delegated
+
+    playbook = upsert_agent_playbook(_runtime.db(), AgentPlaybookIn(**payload))
     return {
         "playbook_id": playbook.id,
         "name": playbook.name,
@@ -1664,6 +1787,14 @@ def _handle_list_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
 
 def _handle_record_usage_feedback(args: dict[str, Any]) -> dict[str, Any]:
     payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/record_usage_feedback",
+        payload,
+        log_label="record_usage_feedback",
+    )
+    if delegated is not None:
+        return delegated
+
     feedback = record_usage_feedback(
         _runtime.db(),
         workspace_id=str(payload["workspace_id"]),

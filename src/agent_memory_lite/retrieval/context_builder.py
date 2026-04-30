@@ -878,10 +878,10 @@ def _fit_structured_sections(
             facts=facts,
         )
     )
-    for agenda in agenda_variants:
-        for theory_items in theory_variants:
-            for decision_items in decision_variants:
-                for cap in capability_variants:
+    for cap in capability_variants:
+        for agenda in agenda_variants:
+            for theory_items in theory_variants:
+                for decision_items in decision_variants:
                     text = _render_structured_only(
                         core=core,
                         task=task,

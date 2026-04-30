@@ -316,6 +316,7 @@ class MemoryOperationTrace:
         object_id: str,
         action: str,
         label: str,
+        stage: str = "persist",
         status: str = "ok",
         counts: Mapping[str, Any] | None = None,
     ) -> None:
@@ -325,7 +326,7 @@ class MemoryOperationTrace:
             event_type="graph_delta",
             endpoint=self.endpoint,
             operation=self.operation,
-            stage="persist",
+            stage=stage,
             label=label,
             status=status,
             counts={
