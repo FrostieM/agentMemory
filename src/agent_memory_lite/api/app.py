@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from agent_memory_lite.api.auth import install_api_token_guard
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.routes import (
     behavior,
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url=None,
     )
     install_handlers(app)
+    install_api_token_guard(app, settings)
     app.include_router(health.router)
     app.include_router(hygiene.router)
     app.include_router(behavior.router)

@@ -14,6 +14,11 @@ from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.maintenance.hygiene import run_hygiene_report
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.repositories.maintenance_repo import count_open_maintenance_events
+from agent_memory_lite.repositories.vector_metadata_repo import (
+    CHUNKING_STRATEGY,
+    VECTOR_SCHEMA_VERSION,
+    get_vector_index_metadata,
+)
 from agent_memory_lite.repositories.workspace_manifest_repo import get_workspace_manifest
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.vector_store.base import VectorStore
@@ -267,10 +272,13 @@ def _fts_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
     )
 
 
-def _vector_check(
+def _vector_check(  # noqa: PLR0912
     conn: sqlite3.Connection,
     workspace_id: str,
     vector_store: VectorStore | None,
+    *,
+    expected_provider_name: str | None = None,
+    expected_vector_backend: str | None = None,
 ) -> IntegrityCheck:
     chunk_ids = {
         str(row[0])
@@ -309,9 +317,59 @@ def _vector_check(
         )
     else:
         missing_embedding_ids = 0
-    if missing or extra:
+    metadata = get_vector_index_metadata(
+        conn,
+        workspace_id=workspace_id,
+        namespace=NAMESPACE_CHUNKS,
+    )
+    metadata_status = "ok"
+    metadata_details: dict[str, Any] = {}
+    if metadata is None:
+        metadata_status = "warning" if vector_ids else "unknown"
+        metadata_details["reason"] = "vector_index_metadata_missing"
+    else:
+        metadata_details = {
+            "provider_name": metadata.provider_name,
+            "embedding_dim": metadata.embedding_dim,
+            "vector_backend": metadata.vector_backend,
+            "chunking_strategy": metadata.chunking_strategy,
+            "schema_version": metadata.schema_version,
+            "row_count": metadata.row_count,
+            "updated_at": metadata.updated_at,
+        }
+        metadata_mismatches: dict[str, dict[str, Any]] = {}
+        if metadata.row_count != len(vector_ids):
+            metadata_mismatches["row_count"] = {
+                "expected": len(vector_ids),
+                "actual": metadata.row_count,
+            }
+        if expected_provider_name and metadata.provider_name != expected_provider_name:
+            metadata_mismatches["provider_name"] = {
+                "expected": expected_provider_name,
+                "actual": metadata.provider_name,
+            }
+        if expected_vector_backend and metadata.vector_backend != expected_vector_backend:
+            metadata_mismatches["vector_backend"] = {
+                "expected": expected_vector_backend,
+                "actual": metadata.vector_backend,
+            }
+        if metadata.chunking_strategy != CHUNKING_STRATEGY:
+            metadata_mismatches["chunking_strategy"] = {
+                "expected": CHUNKING_STRATEGY,
+                "actual": metadata.chunking_strategy,
+            }
+        if metadata.schema_version != VECTOR_SCHEMA_VERSION:
+            metadata_mismatches["schema_version"] = {
+                "expected": VECTOR_SCHEMA_VERSION,
+                "actual": metadata.schema_version,
+            }
+        if metadata_mismatches:
+            metadata_status = "degraded"
+            metadata_details["mismatches"] = metadata_mismatches
+
+    if missing or extra or metadata_status == "degraded":
         status = "degraded"
-    elif missing_embedding_ids:
+    elif missing_embedding_ids or metadata_status == "warning":
         status = "warning"
     else:
         status = "ok"
@@ -325,6 +383,8 @@ def _vector_check(
             "missing_embedding_ids": missing_embedding_ids,
             "missing_ids_sample": missing[:10],
             "extra_ids_sample": extra[:10],
+            "metadata_status": metadata_status,
+            "metadata": metadata_details,
         },
     )
 
@@ -616,13 +676,21 @@ def run_integrity_audit(  # noqa: PLR0912
     workspace_id: str,
     vector_store: VectorStore | None = None,
     db_path: str | Path | None = None,
+    expected_provider_name: str | None = None,
+    expected_vector_backend: str | None = None,
 ) -> IntegrityReport:
     checks = {
         "sqlite": _sqlite_check(conn),
         "workspace_manifest": _workspace_manifest_check(conn, workspace_id),
         "workspace_pollution": _workspace_pollution_check(conn, workspace_id),
         "fts": _fts_check(conn, workspace_id),
-        "vector": _vector_check(conn, workspace_id, vector_store),
+        "vector": _vector_check(
+            conn,
+            workspace_id,
+            vector_store,
+            expected_provider_name=expected_provider_name,
+            expected_vector_backend=expected_vector_backend,
+        ),
         "retrieval_roundtrip": _roundtrip_check(conn, workspace_id),
         "maintenance_events": _maintenance_check(conn, workspace_id),
         "capability_links": _capability_links_check(conn, workspace_id),
@@ -651,7 +719,15 @@ def run_integrity_audit(  # noqa: PLR0912
     if vector_status == "degraded":
         repair_hints.append("Run scripts/memory_audit.py --repair-vectors --backup-first.")
     elif vector_status == "warning":
-        repair_hints.append("Run scripts/memory_audit.py --repair-embedding-refs --backup-first.")
+        metadata_status = checks["vector"].details.get("metadata_status")
+        if metadata_status == "warning":
+            repair_hints.append(
+                "Run scripts/memory_audit.py --repair-vectors --backup-first to stamp vector metadata."
+            )
+        else:
+            repair_hints.append(
+                "Run scripts/memory_audit.py --repair-embedding-refs --backup-first."
+            )
     if checks["workspace_pollution"].status == "degraded":
         repair_hints.append("Inspect workspace_id rows before migrating or deleting them.")
     if checks["maintenance_events"].status == "degraded":
@@ -703,6 +779,7 @@ def run_integrity_audit(  # noqa: PLR0912
             "stray_db_warnings": len(checks["stray_dbs"].details.get("stray_dbs", [])),
             "manifest_status": checks["workspace_manifest"].status,
             "hygiene_status": checks["hygiene"].status,
+            "vector_metadata_status": checks["vector"].details.get("metadata_status"),
         },
         failures=failures,
         warnings=warnings,

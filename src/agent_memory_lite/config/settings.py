@@ -33,6 +33,14 @@ class Settings(BaseSettings):
 
     # API
     api_port: int = Field(default=8765, ge=1, le=65535, validation_alias="MEMORY_API_PORT")
+    require_api_token: bool = Field(
+        default=False,
+        validation_alias="MEMORY_REQUIRE_API_TOKEN",
+    )
+    api_token_file: Path = Field(
+        default=Path(".agent_memory/token"),
+        validation_alias="MEMORY_API_TOKEN_FILE",
+    )
 
     # Storage
     db_path: Path = Field(

@@ -50,6 +50,38 @@ def test_behavior_instruction_upserts_reuse_name_per_workspace(
     assert "exact evidence" in updated.rule
 
 
+def test_behavior_instruction_governance_fields_round_trip(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    stored = upsert_behavior_instruction(
+        applied_conn,
+        BehaviorInstructionIn(
+            workspace_id="default",
+            name="Reviewed operating contract",
+            kind=BehaviorInstructionKind.OPERATING_RULE,
+            scope=BehaviorInstructionScope.PROJECT,
+            priority=BehaviorInstructionPriority.PROJECT_CONVENTION,
+            rule="Use the reviewed project operating contract for memory writes.",
+            conflict_policy=BehaviorConflictPolicy.HIGHER_PRIORITY_WINS,
+            source_type="candidate_review",
+            source_id="cand_reviewed_contract",
+            reviewed_by="test-reviewer",
+            reviewed_at="2026-04-30T00:00:00+00:00",
+            expires_at="2999-01-01T00:00:00+00:00",
+            conflict_group="memory-write-contract",
+            confidence=0.91,
+        ),
+    )
+
+    assert stored.source_type == "candidate_review"
+    assert stored.source_id == "cand_reviewed_contract"
+    assert stored.reviewed_by == "test-reviewer"
+    assert stored.reviewed_at == "2026-04-30T00:00:00+00:00"
+    assert stored.expires_at == "2999-01-01T00:00:00+00:00"
+    assert stored.conflict_group == "memory-write-contract"
+    assert stored.application_count == 0
+
+
 def test_behavior_instructions_rank_by_query_priority_and_scope(
     applied_conn: sqlite3.Connection,
 ) -> None:
@@ -86,3 +118,38 @@ def test_behavior_instructions_rank_by_query_priority_and_scope(
     )
 
     assert [item.name for item in items] == ["Evidence-first operations"]
+
+
+def test_expired_behavior_instruction_is_not_applicable_by_default(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    upsert_behavior_instruction(
+        applied_conn,
+        BehaviorInstructionIn(
+            workspace_id="default",
+            name="Expired workflow preference",
+            kind=BehaviorInstructionKind.WORKFLOW_PREFERENCE,
+            scope=BehaviorInstructionScope.WORKSPACE,
+            priority=BehaviorInstructionPriority.USER_PREFERENCE,
+            rule="This old preference should not be applied.",
+            expires_at="2000-01-01T00:00:00+00:00",
+            confidence=0.9,
+        ),
+    )
+
+    applicable = list_behavior_instructions(
+        applied_conn,
+        workspace_id="default",
+        query="old preference",
+        limit=5,
+    )
+    all_items = list_behavior_instructions(
+        applied_conn,
+        workspace_id="default",
+        query="old preference",
+        include_inactive=True,
+        limit=5,
+    )
+
+    assert applicable == []
+    assert [item.name for item in all_items] == ["Expired workflow preference"]

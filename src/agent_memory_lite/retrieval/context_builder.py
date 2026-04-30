@@ -481,7 +481,9 @@ def _render_behavior_instruction(item: BehaviorInstruction) -> list[str]:
         f"priority={quoteattr(item.priority.value)} "
         f"conflict_policy={quoteattr(item.conflict_policy.value)} "
         f"confidence={quoteattr(f'{item.confidence:.2f}')} "
-        f"source={quoteattr(item.source_episode_id or '')}"
+        f"source={quoteattr(item.source_episode_id or '')} "
+        f"source_type={quoteattr(item.source_type)} "
+        f"source_id={quoteattr(item.source_id or '')}"
     )
     lines = [f"    <instruction {attrs}>"]
     lines.append(f"      <name>{escape(_clip_text(item.name, MAX_TITLE_CHARS))}</name>")
@@ -490,6 +492,14 @@ def _render_behavior_instruction(item: BehaviorInstruction) -> list[str]:
         lines.append(
             f"      <rationale>{escape(_clip_text(item.rationale, MAX_TEXT_CHARS))}</rationale>"
         )
+    if item.reviewed_at or item.expires_at or item.conflict_group:
+        governance_attrs = (
+            f"reviewed_at={quoteattr(item.reviewed_at or '')} "
+            f"expires_at={quoteattr(item.expires_at or '')} "
+            f"conflict_group={quoteattr(item.conflict_group or '')} "
+            f"application_count={quoteattr(str(item.application_count))}"
+        )
+        lines.append(f"      <governance {governance_attrs}/>")
     lines.extend(
         _render_string_items(
             container_tag="applies_to",

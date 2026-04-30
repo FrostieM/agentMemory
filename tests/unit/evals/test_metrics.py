@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from agent_memory_lite.evals.metrics import (
     EvalReport,
+    hit_rate,
+    ndcg_at_k,
     precision_at_k,
     recall_at_k,
+    reciprocal_rank,
 )
 
 
@@ -29,6 +32,15 @@ def test_precision_no_overlap() -> None:
 
 def test_precision_empty_retrieved() -> None:
     assert precision_at_k([], ["a"], k=10) == 0.0
+
+
+def test_rank_metrics_score_expected_order() -> None:
+    retrieved = ["x", "b", "a", "c"]
+    expected = ["a", "b"]
+
+    assert reciprocal_rank(retrieved, expected, k=4) == 0.5
+    assert 0.0 < ndcg_at_k(retrieved, expected, k=4) < 1.0
+    assert hit_rate(["a"], expected) == 0.5
 
 
 def test_report_dict_round_trips() -> None:

@@ -26,6 +26,12 @@ def test_behavior_instruction_routes_feed_context(client: TestClient) -> None:
             "rationale": "The user prefers concrete issue/evidence/fix/risk reports.",
             "applies_to": ["status updates", "incident reports"],
             "conflict_policy": "current_user_wins",
+            "source_type": "user_direct",
+            "source_id": "chat-123",
+            "reviewed_by": "operator",
+            "reviewed_at": "2026-04-30T00:00:00+00:00",
+            "expires_at": "2999-01-01T00:00:00+00:00",
+            "conflict_group": "incident-report-style",
             "confidence": 0.95,
         },
     )
@@ -40,6 +46,8 @@ def test_behavior_instruction_routes_feed_context(client: TestClient) -> None:
     body = listed.json()
     assert body["instructions"][0]["name"] == "Direct technical communication"
     assert body["instructions"][0]["conflict_policy"] == "current_user_wins"
+    assert body["instructions"][0]["source_type"] == "user_direct"
+    assert body["instructions"][0]["source_id"] == "chat-123"
 
     context = client.post(
         "/memory/get_context",
@@ -54,3 +62,5 @@ def test_behavior_instruction_routes_feed_context(client: TestClient) -> None:
     assert "<behavior_instructions>" in text
     assert "Direct technical communication" in text
     assert "current_user_wins" in text
+    assert 'source_type="user_direct"' in text
+    assert 'conflict_group="incident-report-style"' in text

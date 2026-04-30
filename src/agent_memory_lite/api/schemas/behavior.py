@@ -25,12 +25,20 @@ class UpsertBehaviorInstructionRequest(BaseModel):
     applies_to: list[str] = Field(default_factory=list)
     conflict_policy: BehaviorConflictPolicy = BehaviorConflictPolicy.CURRENT_USER_WINS
     source_episode_id: str | None = None
+    source_type: str = Field(default="manual", min_length=1)
+    source_id: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    expires_at: str | None = None
+    conflict_group: str | None = None
     confidence: float = Field(default=0.85, ge=0.0, le=1.0)
     active: bool = True
 
 
 class BehaviorInstructionResponse(UpsertBehaviorInstructionRequest):
     instruction_id: str
+    last_applied_at: str | None = None
+    application_count: int = 0
     created_at: str
     updated_at: str
 

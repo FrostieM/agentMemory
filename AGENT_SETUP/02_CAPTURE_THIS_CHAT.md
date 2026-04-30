@@ -151,6 +151,8 @@ the user's request.
 Run `scripts/memory_hygiene.py --workspace <WORKSPACE_ID> --json` when the
 session produced theories, experiments, insights, candidates, decisions, roles,
 skills, or playbooks. Also run
+`scripts/memory_quality_gate.py --workspace <WORKSPACE_ID> --json` when the
+session changed research objects or important decisions. Also run
 `scripts/memory_candidate_triage.py --workspace <WORKSPACE_ID> --json` when
 candidate extraction is active, and run
 `scripts/memory_mcp_smoke.py --workspace <WORKSPACE_ID> --require-behavior --require-capabilities --json`

@@ -25,21 +25,25 @@ After either prompt finishes, the agent should:
 4. Run read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
    and `scripts/memory_hygiene.py --workspace <workspace_id> --json` checks
    when the repo is available.
-5. Run `scripts/memory_mcp_smoke.py --workspace <workspace_id> --json` after
+5. Run `scripts/memory_quality_gate.py --workspace <workspace_id> --json` when
+   the repo is available, so research trust is blocked by untestable theories,
+   evidence-free terminal theories, weak experiment criteria, or weak decision
+   provenance.
+6. Run `scripts/memory_mcp_smoke.py --workspace <workspace_id> --json` after
    MCP setup or restart so the actual agent-facing handler is proven fast.
-6. Run `scripts/memory_candidate_triage.py --workspace <workspace_id> --json`
+7. Run `scripts/memory_candidate_triage.py --workspace <workspace_id> --json`
    when candidate extraction is enabled, so stale/high-value candidates are
    reviewed instead of becoming invisible backlog.
-7. Confirm the neutral setup seed is present when a local DB was created:
+8. Confirm the neutral setup seed is present when a local DB was created:
    it should add only memory-population skills/playbooks/concepts, never
    language preferences, communication style, personality rules, or
    project-specific behavior instructions.
-8. If hygiene only reports missing capability links, run
+9. If hygiene only reports missing capability links, run
    `scripts/memory_auto_triage.py --workspace <workspace_id> --json`; apply
    with `--apply --backup-first` only after reviewing the dry-run output.
-9. For a one-command trust report, run
+10. For a one-command trust report, run
    `scripts/memory_trust_dashboard.py --workspace <workspace_id> --project-root . --json`.
-10. Continue with whatever you wanted to do.
+11. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the

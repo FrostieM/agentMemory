@@ -111,6 +111,34 @@ def test_integrity_warns_when_vector_reference_missing(
     assert report.checks["vector"].details["missing_embedding_ids"] == 1
 
 
+def test_integrity_detects_stale_vector_metadata(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    ingest_episode(
+        applied_conn,
+        _episode("vector metadata stale model token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+
+    report = run_integrity_audit(
+        applied_conn,
+        workspace_id="project-a",
+        vector_store=fake_vector_store,
+        expected_provider_name="fake:other-model",
+        expected_vector_backend=fake_vector_store.backend,
+    )
+
+    assert report.status == "degraded"
+    assert report.checks["vector"].details["metadata_status"] == "degraded"
+    assert (
+        report.checks["vector"].details["metadata"]["mismatches"]["provider_name"]["actual"]
+        == "fake:test-64"
+    )
+
+
 def test_integrity_detects_default_workspace_pollution(
     applied_conn: sqlite3.Connection,
 ) -> None:

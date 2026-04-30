@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,14 @@ from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.maintenance.integrity import repair_fts, run_integrity_audit
+from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
 from agent_memory_lite.repositories.workspace_manifest_repo import (
     ensure_workspace_manifest,
     update_workspace_manifest_repair,
 )
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.factory import get_vector_store
+from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 from agent_memory_lite.vector_store.reindex import reindex_chunks, repair_chunk_embedding_refs
 
 
@@ -163,7 +166,15 @@ def _repair_plan(
     return plan
 
 
-def main() -> int:
+def _chunk_count(conn: sqlite3.Connection, *, workspace_id: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE workspace_id = ?",
+        (workspace_id,),
+    ).fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def main() -> int:  # noqa: PLR0912
     args = _parser().parse_args()
     settings = _settings(args)
     repairing = bool(args.repair_fts or args.repair_vectors or args.repair_embedding_refs)
@@ -188,14 +199,18 @@ def main() -> int:
         if args.repair_fts and not args.dry_run_repair:
             repair_fts(conn, workspace_id=settings.workspace_id)
         if args.repair_vectors and not args.dry_run_repair:
-            provider = get_embedding_provider(settings)
-            reindex_chunks(
-                conn,
-                workspace_id=settings.workspace_id,
-                provider=provider,
-                store=store,
-                batch_size=settings.embedding_batch_size,
-            )
+            if _chunk_count(conn, workspace_id=settings.workspace_id) == 0:
+                store.open()
+                store.drop_namespace(NAMESPACE_CHUNKS)
+            else:
+                provider = get_embedding_provider(settings)
+                reindex_chunks(
+                    conn,
+                    workspace_id=settings.workspace_id,
+                    provider=provider,
+                    store=store,
+                    batch_size=settings.embedding_batch_size,
+                )
         if args.repair_embedding_refs and not args.dry_run_repair:
             repair_chunk_embedding_refs(
                 conn,
@@ -209,6 +224,11 @@ def main() -> int:
             workspace_id=settings.workspace_id,
             vector_store=store,
             db_path=settings.db_path,
+            expected_provider_name=provider_name_from_settings(
+                embedding_backend=settings.embedding_backend,
+                embedding_model=settings.embedding_model,
+            ),
+            expected_vector_backend=settings.vector_backend,
         )
         payload = report.to_dict()
         if backups:

@@ -34,6 +34,7 @@ from agent_memory_lite.redaction import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.chunks_repo import insert_chunk, set_chunk_embedding_id
 from agent_memory_lite.repositories.episodes_repo import insert_episode
+from agent_memory_lite.repositories.vector_metadata_repo import upsert_vector_index_metadata
 from agent_memory_lite.vector_store.base import VectorRow, VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
@@ -149,6 +150,14 @@ def ingest_episode(
         embedded = _embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
         if embedded:
             set_chunk_embedding_id(conn, chunk_id=chunk.id, embedding_id=chunk.id)
+            upsert_vector_index_metadata(
+                conn,
+                workspace_id=chunk.workspace_id,
+                namespace=NAMESPACE_CHUNKS,
+                provider=embedding_provider,
+                store=vector_store,
+                row_count=vector_store.count(NAMESPACE_CHUNKS, workspace_id=chunk.workspace_id),
+            )
             chunk = chunk.model_copy(update={"embedding_id": chunk.id})
         if not embedded:
             write_maintenance_event(

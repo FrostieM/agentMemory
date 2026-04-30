@@ -15,6 +15,7 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.evals.metrics import hit_rate, ndcg_at_k, recall_at_k, reciprocal_rank
 from agent_memory_lite.models.retrieval import RetrievalQuery
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.vector_store.base import VectorStore
@@ -25,6 +26,7 @@ class RetrievalQualityCase:
     name: str
     query: str
     expected_ids: list[str] = field(default_factory=list)
+    expected_context_ids: list[str] = field(default_factory=list)
     expected_substrings: list[str] = field(default_factory=list)
     expected_sections: list[str] = field(default_factory=list)
     expected_sources: list[str] = field(default_factory=list)
@@ -39,6 +41,13 @@ class RetrievalQualityCase:
             name=name,
             query=query,
             expected_ids=[str(item) for item in data.get("expected_ids", [])],
+            expected_context_ids=[
+                str(item)
+                for item in data.get(
+                    "expected_context_ids",
+                    data.get("expected_object_ids", []),
+                )
+            ],
             expected_substrings=[str(item) for item in data.get("expected_substrings", [])],
             expected_sections=[str(item) for item in data.get("expected_sections", [])],
             expected_sources=[str(item) for item in data.get("expected_sources", [])],
@@ -56,8 +65,11 @@ class RetrievalQualityResult:
     expected_ids: list[str]
     matched_ids: list[str]
     retrieved_ids: list[str]
+    expected_context_ids: list[str]
+    matched_context_ids: list[str]
     expected_sources: list[str]
     source_map: dict[str, list[str]]
+    metrics: dict[str, float]
     failures: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,8 +81,11 @@ class RetrievalQualityResult:
             "expected_ids": self.expected_ids,
             "matched_ids": self.matched_ids,
             "retrieved_ids": self.retrieved_ids,
+            "expected_context_ids": self.expected_context_ids,
+            "matched_context_ids": self.matched_context_ids,
             "expected_sources": self.expected_sources,
             "source_map": self.source_map,
+            "metrics": self.metrics,
             "failures": self.failures,
         }
 
@@ -81,6 +96,10 @@ class RetrievalQualityReport:
     workspace_id: str
     cases_run: int
     cases_passed: int
+    recall_at_k: float
+    mrr: float
+    ndcg_at_k: float
+    context_hit_rate: float
     failures: list[str]
     results: list[RetrievalQualityResult]
 
@@ -90,6 +109,10 @@ class RetrievalQualityReport:
             "workspace_id": self.workspace_id,
             "cases_run": self.cases_run,
             "cases_passed": self.cases_passed,
+            "recall_at_k": round(self.recall_at_k, 4),
+            "mrr": round(self.mrr, 4),
+            "ndcg_at_k": round(self.ndcg_at_k, 4),
+            "context_hit_rate": round(self.context_hit_rate, 4),
             "failures": self.failures,
             "results": [result.to_dict() for result in self.results],
         }
@@ -124,16 +147,30 @@ def _run_case(
     retrieved_ids = [hit.id for hit in top_hits]
     source_map = {hit.id: list(hit.sources) for hit in top_hits}
     matched_ids = [item for item in case.expected_ids if item in retrieved_ids]
+    expected_context_ids = list(dict.fromkeys([*case.expected_ids, *case.expected_context_ids]))
+    matched_context_ids = [
+        item for item in expected_context_ids if f'id="{item}"' in built.text or item in built.text
+    ]
     failures: list[str] = []
 
     missing_ids = [item for item in case.expected_ids if item not in retrieved_ids]
     if missing_ids:
         failures.append(f"missing expected ids in top {case.top_k}: {missing_ids}")
+    missing_context_ids = [
+        item for item in case.expected_context_ids if item not in matched_context_ids
+    ]
+    if missing_context_ids:
+        failures.append(f"missing expected context ids: {missing_context_ids}")
 
     for expected_source in case.expected_sources:
         source_ok = False
-        if case.expected_ids:
+        if expected_source == "both":
             source_ok = any(
+                {"fts", "vector"}.issubset(set(source_map.get(expected_id, [])))
+                for expected_id in matched_ids
+            )
+        if case.expected_ids:
+            source_ok = source_ok or any(
                 expected_source in source_map.get(expected_id, []) for expected_id in matched_ids
             )
         else:
@@ -157,8 +194,20 @@ def _run_case(
         expected_ids=case.expected_ids,
         matched_ids=matched_ids,
         retrieved_ids=retrieved_ids,
+        expected_context_ids=expected_context_ids,
+        matched_context_ids=matched_context_ids,
         expected_sources=case.expected_sources,
         source_map=source_map,
+        metrics={
+            "recall_at_k": recall_at_k(retrieved_ids, case.expected_ids, k=case.top_k),
+            "reciprocal_rank": reciprocal_rank(
+                retrieved_ids,
+                case.expected_ids,
+                k=case.top_k,
+            ),
+            "ndcg_at_k": ndcg_at_k(retrieved_ids, case.expected_ids, k=case.top_k),
+            "context_hit_rate": hit_rate(matched_context_ids, expected_context_ids),
+        },
         failures=failures,
     )
 
@@ -191,8 +240,16 @@ def run_retrieval_quality_evals(
                 expected_ids=case.expected_ids,
                 matched_ids=[],
                 retrieved_ids=[],
+                expected_context_ids=case.expected_context_ids,
+                matched_context_ids=[],
                 expected_sources=case.expected_sources,
                 source_map={},
+                metrics={
+                    "recall_at_k": 0.0,
+                    "reciprocal_rank": 0.0,
+                    "ndcg_at_k": 0.0,
+                    "context_hit_rate": 0.0,
+                },
                 failures=[f"{type(exc).__name__}: {exc}"],
             )
         results.append(result)
@@ -205,11 +262,17 @@ def run_retrieval_quality_evals(
         status = "degraded"
     else:
         status = "ok"
+    denominator = len(results) or 1
     return RetrievalQualityReport(
         status=status,
         workspace_id=workspace_id,
         cases_run=len(cases),
         cases_passed=cases_passed,
+        recall_at_k=sum(result.metrics["recall_at_k"] for result in results) / denominator,
+        mrr=sum(result.metrics["reciprocal_rank"] for result in results) / denominator,
+        ndcg_at_k=sum(result.metrics["ndcg_at_k"] for result in results) / denominator,
+        context_hit_rate=sum(result.metrics["context_hit_rate"] for result in results)
+        / denominator,
         failures=failures,
         results=results,
     )

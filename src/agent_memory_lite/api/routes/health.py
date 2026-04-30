@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, VectorStoreDep
 from agent_memory_lite.maintenance.integrity import run_integrity_audit
+from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
 from agent_memory_lite.version import __version__
 
 router = APIRouter()
@@ -49,6 +50,11 @@ def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthR
         workspace_id=settings.workspace_id,
         vector_store=store,
         db_path=settings.db_path,
+        expected_provider_name=provider_name_from_settings(
+            embedding_backend=settings.embedding_backend,
+            embedding_model=settings.embedding_model,
+        ),
+        expected_vector_backend=settings.vector_backend,
     )
     return HealthResponse(
         status="degraded" if report.status == "degraded" else "ok",

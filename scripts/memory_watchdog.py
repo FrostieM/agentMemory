@@ -22,6 +22,7 @@ from agent_memory_lite.maintenance.retrieval_quality import (
 )
 from agent_memory_lite.models.enums import MaintenanceEventStatus, MaintenanceSeverity
 from agent_memory_lite.models.maintenance import MaintenanceEventIn
+from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
 from agent_memory_lite.repositories.workspace_manifest_repo import (
     ensure_workspace_manifest,
     get_workspace_manifest,
@@ -153,6 +154,13 @@ def main(argv: list[str] | None = None) -> int:
             workspace_id=settings.workspace_id,
             vector_store=store,
             db_path=settings.db_path,
+            expected_provider_name=provider_name_from_settings(
+                embedding_backend=settings.embedding_backend,
+                embedding_model=settings.embedding_model,
+            )
+            if store is not None
+            else None,
+            expected_vector_backend=settings.vector_backend if store is not None else None,
         )
         retrieval_eval = run_retrieval_quality_evals(
             conn,

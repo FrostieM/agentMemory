@@ -183,3 +183,67 @@ def test_get_context_preserves_exact_fts_hit_under_structured_pressure(
     assert exact["chunk_id"] in [source["id"] for source in body["sources"]]
     assert "heap_watchdog v2" in body["context_text"]
     assert estimate_tokens(body["context_text"]) <= 900
+
+
+def test_explain_context_reports_included_and_scored_candidates(client: TestClient) -> None:
+    ingested = _ingest(client, "Context explainability should show why this exact token wins.")
+
+    response = client.post(
+        "/memory/explain_context",
+        json={
+            "workspace_id": "default",
+            "query": "context explainability exact token",
+            "max_tokens": 1200,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["workspace_id"] == "default"
+    assert body["context_tokens"] <= body["max_tokens"]
+    assert ingested["chunk_id"] in body["included_ids"]
+    scored = {item["id"]: item for item in body["scored_candidates"]}
+    assert scored[ingested["chunk_id"]]["included"] is True
+    assert scored[ingested["chunk_id"]]["reason"] == "included_in_context"
+
+
+def test_explain_context_reports_suppressed_behavior_instructions(
+    client: TestClient,
+) -> None:
+    expired = client.post(
+        "/memory/upsert_behavior_instruction",
+        json={
+            "workspace_id": "default",
+            "name": "Expired incident style",
+            "kind": "communication_style",
+            "scope": "workspace",
+            "priority": "user_preference",
+            "rule": "Use a stale incident report style.",
+            "conflict_policy": "current_user_wins",
+            "expires_at": "2000-01-01T00:00:00+00:00",
+            "confidence": 0.9,
+        },
+    )
+    assert expired.status_code == 200, expired.text
+
+    context = client.post(
+        "/memory/get_context",
+        json={"workspace_id": "default", "query": "incident style"},
+    )
+    assert context.status_code == 200, context.text
+    assert "Expired incident style" not in context.json()["context_text"]
+
+    explained = client.post(
+        "/memory/explain_context",
+        json={"workspace_id": "default", "query": "incident style"},
+    )
+    assert explained.status_code == 200, explained.text
+    suppressed = explained.json()["suppressed_behavior_instructions"]
+    assert suppressed == [
+        {
+            "id": expired.json()["instruction_id"],
+            "name": "Expired incident style",
+            "reason": "expired",
+            "details": {"expires_at": "2000-01-01T00:00:00+00:00"},
+        }
+    ]

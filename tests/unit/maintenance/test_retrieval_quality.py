@@ -36,6 +36,7 @@ def test_retrieval_quality_detects_expected_chunk_and_sources(
                 name="heap_watchdog",
                 query="heap_watchdog memory pressure",
                 expected_ids=[result.chunk.id],
+                expected_context_ids=[result.chunk.id],
                 expected_sources=["fts", "vector"],
                 top_k=3,
             )
@@ -46,6 +47,11 @@ def test_retrieval_quality_detects_expected_chunk_and_sources(
 
     assert report.status == "ok"
     assert report.cases_passed == 1
+    assert report.recall_at_k == 1.0
+    assert report.mrr == 1.0
+    assert report.ndcg_at_k == 1.0
+    assert report.context_hit_rate == 1.0
+    assert report.results[0].matched_context_ids == [result.chunk.id]
 
 
 def test_retrieval_quality_degrades_on_missing_expected_id(

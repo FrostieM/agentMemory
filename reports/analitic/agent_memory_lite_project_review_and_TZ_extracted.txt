@@ -1,0 +1,1274 @@
+
+
+===== PAGE 1 =====
+Agent Memory Lite - детальная оценка проекта и
+техническое задание
+Аналитический отчет
+29 апреля 2026
+Содержание
+Основание и границы оценки 3
+1. Итоговая оценка 4
+2. Оценка по направлениям 4
+3. Что сделано хорошо 5
+3.1. Правильная продуктовая идея . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+3.2. Гибридный retrieval . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+3.3. memory_get_context как основной продуктовый интерфейс . . . . . . . . . . . . . . . 5
+3.4. Candidate-first extraction . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+3.5. Хорошая operational maturity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+4. Главные риски 6
+4.1. Retrieval parity не равен retrieval quality . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+4.2. memory_get_context может быть непрозрачным . . . . . . . . . . . . . . . . . . . . . . 6
+4.3. Behavior instructions - опасная зона . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+4.4. Нужна защита от memory poisoning . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+4.5. Нет достаточных данных о безопасности . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+4.6. Embedding/versioning может стать проблемой . . . . . . . . . . . . . . . . . . . . . . . 7
+4.7. Подозрительный timestamp . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+5. Приоритетные улучшения 7
+P0 - критично для доверия . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+P1 - сильно улучшит продукт . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+P2 - advanced улучшения . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+6. Детальное техническое задание 8
+Название . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Цель . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Не входит в scope . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+7. ТЗ-1: Retrieval Sentinel Suite 8
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Новые файлы . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Формат кейса . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+CLI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+Expected JSON output . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+Метрики . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+8. ТЗ-2: Context Explainability 10
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+1
+
+===== PAGE 2 =====
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+Новый endpoint . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+MCP tool . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+Request example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+Response example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+9. ТЗ-3: Embedding и Vector Store Hardening 12
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+DB migration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+Vector row schema . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+Audit additions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+Reindex behavior . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+10. ТЗ-4: Memory Quality Gate 13
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+Новый script . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+CLI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+Правила . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+Decisions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+Theories . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+Behavior instructions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+Candidates . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+Output example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+11. ТЗ-5: Behavior Instruction Governance 16
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+DB migration . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Priority order . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Conflict example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16
+Candidate promotion protection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+12. ТЗ-6: Security, Privacy, Redaction 17
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+Конфиг . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+API token . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+Sensitive classification . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+Prompt-injection detection . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+13. ТЗ-7: Backup, Migration, Repair Discipline 18
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+Commands . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+Migration table . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+14. ТЗ-8: Candidate Triage UX 19
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+CLI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19
+Triage screen example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+2
+
+===== PAGE 3 =====
+Promotion with edit example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+15. ТЗ-9: Performance Benchmark Suite 20
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+CLI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Output example . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Performance targets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+16. ТЗ-10: Memory Diff 21
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+Example: ingest episode . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+17. ТЗ-11: Agent Workflow Integration 22
+Проблема . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+Требование . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+MCP tools . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+memory_begin_task . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+memory_end_task . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+Acceptance criteria . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+18. Recommended implementation plan 24
+Milestone 1 - Trust and retrieval quality . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+Milestone 2 - Vector and migration hardening . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+Milestone 3 - Security and governance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+Milestone 4 - UX and performance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+19. Concrete acceptance checklist for improved project 25
+Retrieval . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+Integrity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+Structured memory . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+Behavior governance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+Security . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+Operations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+20. Дополнительные рекомендации по реализации 26
+20.1. Схема рисков по приоритетам . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+20.2. Минимальный production gate . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+21. Финальная оценка 27
+Основание и границы оценки
+Оценка основана на предоставленном описании проекта agent-memory-lite. Live-аудит репозито-
+рия, запуск тестов, проверка исходников, проверка фактических результатов команд и нагрузоч-
+ное тестирование не выполнялись. Поэтому выводы относятся к архитектуре, заявленной функци-
+ональности, полноте операционного контура и рискам, которые видны по описанию.
+Проект описан как локальный persistent-memory сервис для AI-агентов. В основе: SQLite как
+source of truth, SQLite FTS для точного поиска, LanceDB для векторного поиска, HTTP API, MCP tools,
+structured memory objects, audit/hygiene/watchdog/backup/eval tooling.
+Ключевой вывод: это уже не простой лог диалогов, а typed working memory system для долговре-
+менных агентных рабочих процессов.
+3
+
+===== PAGE 4 =====
+1. Итоговая оценка
+Вердикт: pass with warnings.
+Общая оценка: 8.1 / 10.
+Проект выглядит сильным как локальная память для AI-агентов: архитектура широкая, продума-
+ны разные типы памяти, есть retrieval, audit, hygiene, backup/restore, MCP и HTTP. Главная слабость
+- зрелость качества. Наличие FTS/vector parity, скриптов и endpoint-ов не доказывает, что retrieval
+стабильно возвращает правильный контекст в реальных задачах. Это нужно закрывать полноцен-
+ной sentinel/eval-системой, explainability для memory_get_context, строгим quality gate и governance
+для behavior instructions.
+Проект можно считать пригодным для внутреннего использования и controlled beta. Для production-
+grade использования нужны доработки по безопасности, метрикам retrieval-качества, миграциям,
+embedding-versioning, observability и защите от memory poisoning.
+2. Оценка по направлениям
+Направление Оценка Комментарий
+Архитектура хранения 8.5 / 10 SQLite как source of truth
+плюс FTS и LanceDB -
+рациональная локальная
+архитектура. Хорошо, что
+FTS и vector parity явно
+проверяются.
+Retrieval 7.3 / 10 Гибрид FTS + vector +
+graph/fact candidates + RRF -
+сильная база. Но качество
+retrieval не доказано одной
+проверкой паритета.
+Нужны golden datasets,
+Recall@K, MRR, nDCG,
+context-hit-rate.
+Structured memory 8.8 / 10 Decisions, theories,
+experiments, insights,
+concepts, roles, skills,
+playbooks, behavior
+instructions - сильная
+доменная модель. Это
+ключевое отличие проекта.
+Candidate-first extraction 8.4 / 10 Правильный подход:
+ingestion создает
+candidates, но не
+auto-promote. Это снижает
+риск мусорной памяти.
+Workspace isolation 8.0 / 10 Есть физическая и
+логическая изоляция через
+DB paths и workspace_id.
+Риск остается при stale
+MCP/runtime config.
+4
+
+===== PAGE 5 =====
+Направление Оценка Комментарий
+Операционные
+инструменты
+8.2 / 10 Audit, hygiene, watchdog,
+trust dashboard, MCP smoke,
+backup/restore check, CI
+gate, candidate triage,
+contract check - хороший
+operational layer. Нужно
+проверить, насколько они
+реально строгие.
+HTTP/MCP API 8.0 / 10 Большая поверхность
+инструментов. Нужно
+контролировать parity
+между HTTP и MCP.
+Безопасность 5.8 / 10 Указан localhost API и
+redaction, но недостаточно
+данных об auth, encryption,
+prompt-injection hardening,
+retention, audit log для
+sensitive memory.
+Масштабируемость 6.8 / 10 Подход нормальный для
+локального сервиса, но нет
+доказанных performance
+benchmarks на 10k/100k/1M
+chunks.
+Документация/аналитический
+пакет
+8.5 / 10 Документ хорошо
+объясняет mental model,
+endpoints, scripts, checks,
+scenarios. Для
+разработчика/аналитика
+достаточно информативно.
+3. Что сделано хорошо
+3.1. Правильная продуктовая идея
+Проект решает не только задачу “найти старую запись”, а задачу “сделать агента устойчиво ум-
+нее в рамках проекта”. В описании явно разделены две функции памяти: находить факты поз-
+же и влиять на будущую работу через decisions, theories, experiments, skills, playbooks и behavior
+instructions.
+Обычная ошибка memory-систем - складывать все в один transcript log. Здесь этого нет: память
+разделена на episode/chunk слой и typed-memory слой.
+3.2. Гибридный retrieval
+FTS используется для точных идентификаторов, путей, error strings, ID и конкретных токенов.
+Vector retrieval используется для смысловых запросов и парафразов. Это правильное разделение:
+FTS надежнее для exact lookup, vector retrieval полезнее для запросов вроде “почему бот завис?”
+при chunk text вроде “event loop stall” или “heap pressure”.
+Хорошо, что проект не пытается заменить все векторным поиском.
+3.3. memory_get_context как основной продуктовый интерфейс
+Главная ценность memory-системы не в /memory/search, а в том, что агент получает структуриро-
+ванный контекст перед работой. В описании указан XML-like envelope с секциями:
+5
+
+===== PAGE 6 =====
+<memory_context>
+<core_memory/>
+<behavior_instructions/>
+<task_state/>
+<active_decisions/>
+<active_theories/>
+<research_agenda/>
+<agent_capabilities/>
+<procedural_rules/>
+<retrieved_facts/>
+<retrieved_chunks/>
+</memory_context>
+Это правильная архитектура для агентного потребления.
+3.4. Candidate-first extraction
+Память не должна автоматически превращать любой текст в активное правило или решение.
+В проекте ingestion может создавать memory_candidates, но candidates должны проходить
+promote/reject. Это снижает риск memory poisoning и накопления ложных решений.
+3.5. Хорошая operational maturity
+В пакете перечислены audit, hygiene, watchdog, trust dashboard, MCP smoke, backup/restore check,
+CI gate, candidate triage, contract check. Это не просто API-проект, а система с обслуживанием, про-
+верками и деградационными сценариями.
+4. Главные риски
+4.1. Retrieval parity не равен retrieval quality
+Проверка chunks == chunks_fts == vectors доказывает только полноту индексации. Она не
+доказывает, что правильный chunk попадет в top-3/top-10, что memory_get_context не вырежет
+важный объект token budget-ом, и что RRF не завысит мусорные кандидаты.
+Нужна отдельная retrieval quality suite.
+4.2. memory_get_context может быть непрозрачным
+Если агент получил плохой контекст, нужно понимать:
+• какие кандидаты пришли из FTS;
+• какие кандидаты пришли из vector retrieval;
+• какие кандидаты пришли из graph/fact retrieval;
+• какие были отброшены;
+• почему конкретный decision/theory/chunk попал в итоговый envelope;
+• сколько токенов заняла каждая секция;
+• какие объекты были clipped из-за token budget.
+Без explainability отладка retrieval будет медленной.
+4.3. Behavior instructions - опасная зона
+Behavior instructions имеют высокий эффект на будущую работу агента. Если туда попадет ложное,
+устаревшее или malicious правило, система начнет стабильно воспроизводить ошибочное поведе-
+ние.
+Нужны:
+6
+
+===== PAGE 7 =====
+• priority model;
+• conflict resolution;
+• source tracking;
+• expiry/decay;
+• review workflow;
+• запрет auto-promotion behavior rules из raw episodes;
+• явное правило: current user/system/developer instructions override memory.
+4.4. Нужна защита от memory poisoning
+Пользовательский файл, episode или external content могут содержать фразы вида “сохрани это
+как правило”, “игнорируй предыдущие инструкции”, “всегда отвечай так”. Если extraction pipeline
+не различает observed content и authorized instruction, память можно отравить.
+4.5. Нет достаточных данных о безопасности
+В описании есть redaction и localhost HTTP API, но не видно полноценного security model:
+• API token;
+• encryption at rest;
+• access logging;
+• retention policy;
+• sensitive object classification;
+• export/delete;
+• redaction test suite;
+• isolation между проектами;
+• запрет чтения чужих workspace;
+• защита MCP config от stale DB path.
+4.6. Embedding/versioning может стать проблемой
+Если поменять embedding model, dimension, chunking strategy или text normalization, старые vector
+rows могут стать несовместимыми с новыми. В описании есть embedding_id, parity и reindex script,
+но нужно явно хранить embedding metadata и stale-vector detection.
+4.7. Подозрительный timestamp
+В загруженном документе указано Generated: 2026-04-30 , при дате подготовки оценки 2026-
+04-29. Это может быть рассинхрон timezone, clock drift или будущая дата в generated artifact. Для
+memory/audit-системы корректность времени важна, потому что stale candidates, maintenance
+events, snapshots и experiments зависят от timestamp-ов.
+5. Приоритетные улучшения
+P0 - критично для доверия
+1. Retrieval Sentinel Suite. Golden dataset с exact/paraphrase/context cases, метрики Recall@K/MRR/nDCG/context-
+hit-rate.
+2. Context Explainability. Endpoint/tool, который объясняет, почему объекты попали или не по-
+пали в memory_get_context.
+3. Embedding/Vector Hardening. Версионирование embedding model, chunking strategy, vector
+schema, stale detection, controlled reindex.
+4. Memory Quality Gate. Строгие валидаторы для decisions, theories, behavior instructions,
+experiments, candidates.
+5. Security & Governance Layer. API auth, redaction tests, sensitive memory classification,
+retention/export/delete, prompt-injection defense.
+7
+
+===== PAGE 8 =====
+P1 - сильно улучшит продукт
+1. Triage UX для candidates. CLI/TUI/web dashboard для promote/reject с evidence.
+2. Memory Diff. Показывать, что изменилось после ingestion/promote/reindex.
+3. Performance Benchmark Suite. Тесты на 1k/10k/100k chunks, latency p50/p95/p99, memory
+usage.
+4. Agent Workflow Wrapper. Команды/инструменты “before task: retrieve context” и “after task:
+write durable memory”.
+5. Object Linking Graph. Автоматические связи: decision ↔ evidence ↔ experiment ↔ insight ↔
+skill/playbook.
+P2 - advanced улучшения
+1. Active Memory Compression. Автоматическое distill/update insights из cluster-ов episodes.
+2. Confidence Decay. Устаревание theories, behavior instructions, decisions без свежего evidence.
+3. Multi-agent Roles. Разные memory views для researcher/coder/reviewer/operator.
+4. Local UI Dashboard. Trust, candidates, retrieval tests, context explain, research agenda.
+6. Детальное техническое задание
+Название
+Agent Memory Lite: Retrieval Quality, Governance and Production Hardening
+Цель
+Повысить доверие к memory-сервису за счет измеримого retrieval quality, прозрачности
+memory_get_context, защиты от некачественной/опасной памяти, безопасного управления
+behavior instructions, версионирования embeddings и production-grade operational checks.
+Не входит в scope
+• Переписывание SQLite на PostgreSQL.
+• Замена LanceDB на другой vector store.
+• Облачная multi-tenant архитектура.
+• UI как обязательный первый этап.
+• Автоматическое принятие всех extracted candidates.
+7. ТЗ-1: Retrieval Sentinel Suite
+Проблема
+Сейчас audit может доказать, что индексы полные, но не доказывает, что retrieval возвращает
+правильные объекты.
+Требование
+Добавить полноценную систему regression/eval тестов для retrieval.
+Новые файлы
+evals/
+sentinel_cases.yaml
+fixtures/
+8
+
+===== PAGE 9 =====
+memory_seed_retrieval_basic.json
+memory_seed_research_workflow.json
+scripts/
+retrieval_sentinel.py
+src/agent_memory_lite/evals/
+sentinel_runner.py
+metrics.py
+fixtures.py
+Формат кейса
+cases:
+- id: exact_heap_watchdog_001
+title: Exact FTS lookup for heap watchdog incident
+workspace_id: test_retrieval
+mode: fts
+query: "heap_watchdog"
+expected:
+chunk_ids:
+- chk_heap_watchdog_incident
+top_k: 3
+required_terms:
+- "heap_watchdog"
+max_latency_ms: 150
+- id: semantic_freeze_001
+title: Semantic paraphrase retrieves bot freeze incident
+workspace_id: test_retrieval
+mode: hybrid
+query: "why did the bot freeze and stop updating paper feed?"
+expected:
+chunk_ids:
+- chk_heap_watchdog_incident
+top_k: 10
+context_sections:
+- retrieved_chunks
+max_latency_ms: 350
+- id: context_decision_001
+title: get_context includes active backup-first decision
+workspace_id: test_retrieval
+mode: context
+query: "repair broken memory database"
+max_tokens: 2500
+expected:
+decision_ids:
+- dec_backup_first_repair
+context_sections:
+- active_decisions
+- procedural_rules
+CLI
+python scripts /retrieval_sentinel.py `
+9
+
+===== PAGE 10 =====
+--workspace test_retrieval `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+--cases evals /sentinel_cases.yaml `
+--json
+Expected JSON output
+{
+"status": "ok",
+"summary": {
+"cases_total": 42,
+"cases_passed": 42,
+"cases_failed": 0,
+"recall_at_3": 0.93,
+"recall_at_10": 0.98,
+"mrr": 0.86,
+"context_hit_rate": 0.95,
+"p95_latency_ms": 280
+},
+"failures": []
+}
+Метрики
+Метрика Описание Минимальный порог
+Recall@3 exact Expected exact chunks in top
+3
+≥ 0.90
+Recall@10 semantic Expected semantic chunks in
+top 10
+≥ 0.85
+MRR Mean reciprocal rank ≥ 0.75
+Context hit rate Expected object appears in
+memory_get_context
+≥ 0.90
+p95 latency Latency for retrieval/context ≤ 500 ms on 10k chunks
+Acceptance criteria
+• retrieval_sentinel.py возвращает status: fail , если хотя бы один P0 sentinel case failed.
+• Exact ID/path/error queries проверяются отдельно от paraphrase queries.
+• memory_get_context тестируется отдельно от /memory/search.
+• В CI gate добавлен режим:
+python scripts /memory_ci_gate.py --include-retrieval-sentinel
+8. ТЗ-2: Context Explainability
+Проблема
+При плохом ответе агента непонятно, виноват ли FTS, vector retrieval, graph retrieval, rank fusion,
+token clipping или context builder.
+Требование
+Добавить debug/explain API для memory_get_context.
+10
+
+===== PAGE 11 =====
+Новый endpoint
+POST /memory/explain_context
+MCP tool
+memory_explain_context
+Request example
+{
+"workspace_id": "project_alpha",
+"query": "why did the bot freeze and stop updating paper feed?" ,
+"max_tokens": 2500,
+"include_raw_candidates": true,
+"include_omitted": true
+}
+Response example
+{
+"workspace_id": "project_alpha",
+"query": "why did the bot freeze and stop updating paper feed?" ,
+"context": "<memory_context>...</memory_context>",
+"token_budget": {
+"max_tokens": 2500,
+"used_tokens": 2230,
+"sections": {
+"active_decisions": 310,
+"active_theories": 420,
+"agent_capabilities": 290,
+"retrieved_chunks": 950,
+"behavior_instructions": 250
+}
+},
+"retrieval_trace": {
+"fts": [
+{
+"chunk_id": "chk_123",
+"score": 0.78,
+"matched_terms": ["paper"]
+}
+],
+"vector": [
+{
+"chunk_id": "chk_456",
+"score": 0.84,
+"embedding_model": "text-embedding-3-small",
+"reason": "semantic similarity"
+}
+],
+"graph": [
+{
+"object_type": "decision",
+"object_id": "dec_789",
+11
+
+===== PAGE 12 =====
+"reason": "linked to incident concept"
+}
+],
+"fusion": [
+{
+"object_type": "chunk",
+"object_id": "chk_456",
+"rrf_score": 0.032,
+"sources": ["vector", "graph"]
+}
+]
+},
+"omitted": [
+{
+"object_type": "chunk",
+"object_id": "chk_999",
+"reason": "token_budget_exceeded",
+"estimated_tokens": 420
+}
+]
+}
+Acceptance criteria
+• Для каждого объекта в итоговом context есть source trail.
+• Для каждого omitted объекта есть reason.
+• Есть breakdown по token budget.
+• Explain endpoint не мутирует память.
+• Explain output можно использовать в failing retrieval sentinel case.
+9. ТЗ-3: Embedding и Vector Store Hardening
+Проблема
+Vector parity недостаточно без metadata. Если embedding model или chunking изменились, vector
+rows могут быть technically present, но semantically stale.
+Требование
+Добавить embedding metadata и stale-vector detection.
+DB migration
+ALTER TABLE chunks ADD COLUMN content_hash TEXT;
+ALTER TABLE chunks ADD COLUMN chunking_strategy TEXT DEFAULT 'default_v1';
+ALTER TABLE chunks ADD COLUMN embedding_model TEXT;
+ALTER TABLE chunks ADD COLUMN embedding_dim INTEGER;
+ALTER TABLE chunks ADD COLUMN embedding_version TEXT;
+ALTER TABLE chunks ADD COLUMN embedded_at TEXT;
+Vector row schema
+{
+"id": "chk_abc123",
+12
+
+===== PAGE 13 =====
+"workspace_id": "project_alpha",
+"text": "Fixed API timeout by changing cache refresh path." ,
+"content_hash": "sha256:...",
+"embedding_model": "text-embedding-3-small",
+"embedding_dim": 1536,
+"embedding_version": "2026-04-embedding-v1",
+"chunking_strategy": "semantic_v2",
+"created_at": "2026-04-29T12:00:00Z"
+}
+Audit additions
+{
+"vector_health": {
+"status": "warning",
+"chunks": 665,
+"vectors": 665,
+"missing_vectors": 0,
+"extra_vectors": 0,
+"stale_vectors": 12,
+"wrong_embedding_model": 4,
+"wrong_embedding_dim": 0,
+"content_hash_mismatch": 8
+}
+}
+Reindex behavior
+python scripts /reindex_vectors.py `
+--workspace project_alpha `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+--only-stale `
+--backup-first `
+--json
+Acceptance criteria
+• Audit detects stale vectors, not only missing vectors.
+• Reindex can run --dry-run.
+• Reindex requires backup for real DB unless --test-db.
+• Reindex updates only stale rows when --only-stale.
+• memory_get_context exposes embedding version in explain mode.
+10. ТЗ-4: Memory Quality Gate
+Проблема
+Typed tables полезны только при качественном заполнении. Слабая decision без rationale или theory
+без validation criteria ухудшает агентное поведение.
+Требование
+Добавить строгий quality gate для structured memory.
+13
+
+===== PAGE 14 =====
+Новый script
+scripts/memory_quality_gate.py
+CLI
+python scripts /memory_quality_gate.py `
+--workspace project_alpha `
+--db-path .agent_memory/memory.db `
+--strict `
+--json
+Правила
+Decisions
+Fail, если active decision:
+• без rationale;
+• без source/evidence;
+• конфликтует с другим active decision;
+• supersedes chain broken;
+• title слишком общий.
+Example bad:
+{
+"title": "Use better approach" ,
+"decision_text": "Use better approach." ,
+"rationale": ""
+}
+Example good:
+{
+"title": "Use backup-first repair for memory substrates" ,
+"decision_text": "Any repair touching real memory DB or vector store requires a
+backup first." ,↪
+"rationale": "Repair must be reversible and auditable." ,
+"source": "maintenance policy" ,
+"status": "active"
+}
+Theories
+Fail, если active/testing theory:
+• без predictions;
+• без validation criteria;
+• без experiment plan;
+• confidence > 0.8 без supporting evidence.
+Example good:
+{
+"title": "Vector retrieval improves paraphrased incident recall" ,
+"domain": "memory.retrieval",
+"claim": "Paraphrased incident queries should retrieve relevant chunks that exact FTS
+misses.",↪
+14
+
+===== PAGE 15 =====
+"predictions": [
+"Exact-token queries pass via FTS" ,
+"Paraphrase queries pass only when vector index is healthy"
+],
+"validation_criteria": [
+"At least 5 sentinel paraphrase cases appear in top 10"
+],
+"confidence": 0.5
+}
+Behavior instructions
+Fail, если instruction:
+• создана из raw episode без review;
+• нет scope;
+• нет conflict_policy;
+• нет priority;
+• нет source;
+• содержит абсолютные правила без expiry/review;
+• конфликтует с current higher-priority instruction.
+Candidates
+Warning/fail по threshold:
+• high-value candidate старше 7 дней;
+• stale candidate старше 30 дней;
+• candidate без source episode/chunk.
+Output example
+{
+"status": "fail",
+"summary": {
+"decisions_checked": 18,
+"theories_checked": 9,
+"behavior_instructions_checked": 4,
+"candidates_checked": 21
+},
+"failures": [
+{
+"object_type": "theory",
+"object_id": "th_123",
+"severity": "critical",
+"rule": "active_theory_requires_validation_criteria"
+}
+],
+"warnings": [
+{
+"object_type": "candidate",
+"object_id": "cand_456",
+"severity": "warning",
+"rule": "candidate_stale_gt_7_days"
+}
+]
+}
+15
+
+===== PAGE 16 =====
+Acceptance criteria
+• CI can fail on quality gate.
+• Hygiene report includes quality gate summary.
+• Trust dashboard includes quality status.
+• Gate supports --strict and --warn-only.
+11. ТЗ-5: Behavior Instruction Governance
+Проблема
+Behavior instructions влияют на будущую работу агента и могут устаревать или конфликтовать.
+Требование
+Ввести governance model.
+DB migration
+ALTER TABLE behavior_instructions ADD COLUMN source_type TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN source_id TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN reviewed_by TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN reviewed_at TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN expires_at TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN last_applied_at TEXT;
+ALTER TABLE behavior_instructions ADD COLUMN application_count INTEGER DEFAULT 0;
+ALTER TABLE behavior_instructions ADD COLUMN conflict_group TEXT;
+Priority order
+system > developer > current_user > workspace_behavior > project_behavior >
+inferred_candidate↪
+Memory-stored instructions must never override current system/developer/current-user instructions.
+Conflict example
+Stored rule:
+{
+"name": "Verbose incident reports" ,
+"scope": "workspace",
+"priority": "user_preference",
+"rule": "Incident reports should include detailed background." ,
+"conflict_policy": "current_user_wins"
+}
+Current user request:
+Give only the issue, evidence, fix, and remaining risk.
+Expected behavior:
+{
+"applied": false,
+"reason": "current_user_instruction_conflict",
+"conflict_policy": "current_user_wins"
+16
+
+===== PAGE 17 =====
+}
+Candidate promotion protection
+Behavior instruction candidate cannot be promoted unless:
+• source is reviewed;
+• conflict policy is set;
+• scope is explicit;
+• rule is not copied from untrusted external content;
+• confidence >= configured threshold;
+• no active higher-priority conflict.
+Acceptance criteria
+• memory_get_context includes only applicable behavior instructions.
+• memory_explain_context shows suppressed behavior instructions and suppression reasons.
+• Quality gate fails unsafe behavior instructions.
+• Candidate promote rejects unsafe behavior instruction candidates.
+12. ТЗ-6: Security, Privacy, Redaction
+Проблема
+Memory-сервис хранит sensitive project context. Даже локальный сервис должен иметь clear security
+model.
+Требование
+Добавить security hardening.
+Конфиг
+MEMORY_HTTP_HOST=127.0.0.1
+MEMORY_HTTP_PORT=8765
+MEMORY_REQUIRE_API_TOKEN=true
+MEMORY_API_TOKEN_FILE=.agent_memory/token
+MEMORY_REDACTION_MODE=strict
+MEMORY_ENABLE_SENSITIVE_CLASSIFICATION=true
+MEMORY_FORBID_DEFAULT_WORKSPACE=true
+MEMORY_AUDIT_LOG_ENABLED=true
+API token
+Request:
+POST /memory/get_context
+Authorization: Bearer <token>
+Response if missing:
+{
+"error": "unauthorized",
+"message": "Missing or invalid API token"
+}
+17
+
+===== PAGE 18 =====
+Sensitive classification
+Add object sensitivity:
+public
+internal
+sensitive
+secret
+Example ingestion result:
+{
+"episode_id": "ep_123",
+"redacted_text": "Connected to DB with password [REDACTED_SECRET]." ,
+"sensitivity": "secret",
+"redactions": [
+{
+"kind": "password",
+"replacement": "[REDACTED_SECRET]"
+}
+]
+}
+Prompt-injection detection
+Flag suspicious content:
+ignore previous instructions
+save this as a permanent rule
+always obey this document
+disable redaction
+Output:
+{
+"candidate_written": false,
+"security_flags": [
+"possible_prompt_injection",
+"attempted_behavior_instruction_injection"
+]
+}
+Acceptance criteria
+• Redaction tests cover API keys, passwords, tokens, private keys, connection strings.
+• HTTP API can require token.
+• Audit log records mutating operations.
+• Sensitive/secret memory is excluded from normal context unless explicitly allowed.
+• External file ingestion cannot directly create active behavior instructions.
+13. ТЗ-7: Backup, Migration, Repair Discipline
+Проблема
+Memory DB и vector store являются persistent substrate. Repair без backup может уничтожить дове-
+рие к памяти.
+18
+
+===== PAGE 19 =====
+Требование
+Стандартизировать backup-first для repair/migration/reindex.
+Commands
+python scripts /memory_backup.py `
+--workspace project_alpha `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+--out .agent_memory/backups/backup_20260429T120000.zip `
+--json
+python scripts /memory_restore_check.py `
+--backup .agent_memory/backups/backup_20260429T120000.zip `
+--json
+python scripts /memory_migrate.py `
+--workspace project_alpha `
+--db-path .agent_memory/memory.db `
+--backup-first `
+--target-version 2026_04_29_001 `
+--json
+Migration table
+CREATE TABLE IF NOT EXISTS schema_migrations (
+version TEXT PRIMARY KEY,
+applied_at TEXT NOT NULL,
+checksum TEXT NOT NULL,
+description TEXT
+);
+Acceptance criteria
+• Any repair command touching production DB requires --backup-first.
+• --dry-run exists for migration and repair.
+• Backup includes SQLite DB, LanceDB vectors, manifest, config snapshot.
+• Restore check proves DB integrity, FTS parity, vector parity.
+• Failed migration rolls back or produces restore instructions.
+14. ТЗ-8: Candidate Triage UX
+Проблема
+Candidate-first extraction хороша, но backlog может стать мусорной очередью.
+Требование
+Добавить удобный triage workflow.
+CLI
+19
+
+===== PAGE 20 =====
+python scripts /memory_candidate_triage.py `
+--workspace project_alpha `
+--db-path .agent_memory/memory.db `
+--interactive
+Triage screen example
+Candidate: cand_123
+Kind: decision
+Source episode: ep_456
+Confidence: 0.82
+Age: 3 days
+Extracted:
+"Any repair touching real memory DB or vector store requires a backup first."
+Suggested action:
+[p] promote as decision
+[e] edit and promote
+[r] reject
+[s] skip
+[v] view source
+Promotion with edit example
+{
+"candidate_id": "cand_123",
+"action": "promote",
+"target_type": "decision",
+"edited_object": {
+"title": "Use backup-first repair for memory substrates" ,
+"decision_text": "Any repair touching real memory DB or vector store requires a
+backup first." ,↪
+"rationale": "Repair must be reversible and auditable."
+}
+}
+Acceptance criteria
+• High-confidence candidates can be reviewed quickly.
+• Reject reason is stored.
+• Promote creates typed object and links back to source candidate.
+• Candidate backlog appears in trust dashboard.
+15. ТЗ-9: Performance Benchmark Suite
+Проблема
+Нужно знать пределы локальной архитектуры.
+Требование
+Добавить synthetic и real-project benchmarks.
+20
+
+===== PAGE 21 =====
+CLI
+python scripts /memory_benchmark.py `
+--workspace bench_100k `
+--chunks 100000 `
+--queries 1000 `
+--include-context `
+--json
+Output example
+{
+"status": "ok",
+"dataset": {
+"chunks": 100000,
+"decisions": 500,
+"theories": 200,
+"behavior_instructions": 50
+},
+"latency_ms": {
+"fts_p50": 22,
+"fts_p95": 75,
+"vector_p50": 48,
+"vector_p95": 180,
+"get_context_p50": 130,
+"get_context_p95": 430
+},
+"memory_mb": {
+"peak_rss": 620
+}
+}
+Performance targets
+Dataset FTS p95 Vector p95 get_context p95
+1k chunks ≤ 50 ms ≤ 100 ms ≤ 200 ms
+10k chunks ≤ 100 ms ≤ 250 ms ≤ 500 ms
+100k chunks ≤ 250 ms ≤ 700 ms ≤ 1200 ms
+Acceptance criteria
+• Benchmarks run in CI optional mode.
+• Trust dashboard reports last benchmark result.
+• Performance regression > 20% causes warning.
+16. ТЗ-10: Memory Diff
+Проблема
+После ingestion/promote/reindex сложно понять, что именно изменилось.
+Требование
+Добавить diff output для mutating operations.
+21
+
+===== PAGE 22 =====
+Example: ingest episode
+Request:
+{
+"workspace_id": "project_alpha",
+"source_type": "agent_action",
+"raw_text": "Fixed API timeout by changing cache refresh path. Verified pytest and
+/health.",↪
+"trust_level": "verified_by_tool",
+"importance": 0.7,
+"return_diff": true
+}
+Response:
+{
+"episode_id": "ep_123",
+"chunk_ids": ["chk_123"],
+"candidates_written": ["cand_123"],
+"diff": {
+"created": [
+{
+"object_type": "episode",
+"object_id": "ep_123"
+},
+{
+"object_type": "chunk",
+"object_id": "chk_123"
+},
+{
+"object_type": "candidate",
+"object_id": "cand_123"
+}
+],
+"updated": [],
+"skipped": []
+}
+}
+Acceptance criteria
+• All mutating endpoints support return_diff.
+• Diff contains created/updated/deleted/skipped.
+• Diff links source and target objects.
+17. ТЗ-11: Agent Workflow Integration
+Проблема
+Система памяти полезна только если агент стабильно использует ее до и после работы.
+Требование
+Добавить explicit workflow helpers.
+22
+
+===== PAGE 23 =====
+MCP tools
+memory_begin_task
+memory_end_task
+memory_begin_task
+Request:
+{
+"workspace_id": "project_alpha",
+"task": "repair vector index drift" ,
+"max_tokens": 3000
+}
+Response:
+{
+"task_id": "task_123",
+"context": "<memory_context>...</memory_context>",
+"required_rules": [
+"backup-first repair"
+],
+"open_risks": [
+"vector parity can pass while semantic retrieval fails"
+]
+}
+memory_end_task
+Request:
+{
+"workspace_id": "project_alpha",
+"task_id": "task_123",
+"summary": "Reindexed stale vectors after backup. Audit passed." ,
+"verified_by": ["memory_audit.py", "retrieval_sentinel.py"],
+"write_candidates": true
+}
+Response:
+{
+"episode_id": "ep_789",
+"candidates_written": [
+"cand_456"
+],
+"suggested_updates": [
+{
+"kind": "insight",
+"reason": "Repeated vector drift pattern detected"
+}
+]
+}
+Acceptance criteria
+• Begin task always calls memory_get_context.
+• End task writes episode and optionally candidates.
+23
+
+===== PAGE 24 =====
+• Verified tool results increase trust level.
+• The workflow is covered by MCP smoke.
+18. Recommended implementation plan
+Milestone 1 - Trust and retrieval quality
+Scope:
+• Retrieval Sentinel Suite.
+• Context Explainability.
+• Quality Gate basic rules.
+• CI integration.
+Deliverables:
+scripts/retrieval_sentinel.py
+POST /memory/explain_context
+memory_explain_context
+scripts/memory_quality_gate.py
+CI gate integration
+Exit criteria:
+retrieval_sentinel.status == ok
+quality_gate.status == ok
+memory_trust_dashboard includes retrieval_quality and quality_gate
+Milestone 2 - Vector and migration hardening
+Scope:
+• Embedding metadata.
+• Stale vector detection.
+• Reindex only stale.
+• Migration table.
+• Backup-first enforcement.
+Exit criteria:
+memory_audit detects stale vectors
+reindex_vectors --only-stale works
+repair without backup-first fails on real DB
+restore check passes
+Milestone 3 - Security and governance
+Scope:
+• API token.
+• Sensitive classification.
+• Redaction test suite.
+• Prompt-injection detection.
+• Behavior instruction governance.
+Exit criteria:
+unauthorized HTTP request fails
+secrets are redacted
+external prompt injection cannot create active behavior instruction
+current user instruction overrides stored behavior instruction
+24
+
+===== PAGE 25 =====
+Milestone 4 - UX and performance
+Scope:
+• Candidate triage UX.
+• Memory diff.
+• Performance benchmarks.
+• Agent workflow tools.
+Exit criteria:
+candidate backlog can be reviewed from CLI
+mutating operations return diff
+benchmark reports p95
+memory_begin_task/memory_end_task pass smoke tests
+19. Concrete acceptance checklist for improved project
+Retrieval
+□ Exact FTS sentinel Recall@3 ≥ 0.90.
+□ Semantic sentinel Recall@10 ≥ 0.85.
+□ memory_get_context context-hit-rate ≥ 0.90.
+□ Failing retrieval test prints explain trace.
+□ Token clipping reasons are visible.
+Integrity
+□ SQLite integrity check passes.
+□ FTS parity passes.
+□ Vector parity passes.
+□ Stale vector check passes.
+□ Workspace pollution is zero.
+□ Open maintenance events are zero or justified.
+Structured memory
+□ Active decisions have rationale/source.
+□ Active theories have predictions and validation criteria.
+□ Experiments link to theories/snapshots.
+□ Candidates are not auto-promoted.
+□ Rejected candidates remain auditable.
+Behavior governance
+□ Behavior instructions have scope, priority, conflict policy, source.
+□ Current instructions override memory.
+□ Unsafe behavior candidates cannot be promoted.
+□ Expired instructions are excluded or downgraded.
+Security
+□ API token can be required.
+□ Secrets are redacted.
+□ Sensitive memory classification exists.
+□ Prompt-injection attempts are flagged.
+□ Mutating operations are audit-logged.
+25
+
+===== PAGE 26 =====
+Operations
+□ Repair requires backup-first.
+□ Migration has rollback/restore path.
+□ Trust dashboard includes retrieval quality, quality gate, vector freshness, MCP smoke.
+□ Benchmarks track latency regressions.
+20. Дополнительные рекомендации по реализации
+20.1. Схема рисков по приоритетам
+Приоритет Риск Почему важно Первое действие
+P0 Retrieval quality не
+измеряется
+Агент может получать
+нерелевантный
+контекст при
+формально здоровых
+индексах
+Ввести sentinel cases и
+Recall@K/MRR/context-
+hit-rate
+P0 Behavior instructions
+могут конфликтовать
+с текущими
+указаниями
+Memory может
+закрепить вредное
+или устаревшее
+поведение
+Ввести priority/conflict
+model и запрет
+auto-promotion
+P0 Vector rows могут быть
+stale
+Паритет строк не
+гарантирует semantic
+актуальность
+Добавить
+content_hash,
+embedding_version,
+stale detection
+P0 Нет явной security
+model
+Memory хранит
+sensitive project
+context
+API token, redaction
+tests, audit log,
+sensitive classification
+P1 Candidate backlog
+деградирует
+Review-first очередь
+превращается в
+мусорный склад
+Candidate triage UX +
+stale candidate gate
+P1 Нет performance
+baseline
+Непонятно, где
+предел локальной
+архитектуры
+Benchmark suite на
+1k/10k/100k chunks
+20.2. Минимальный production gate
+Перед использованием проекта как доверенного memory substrate должны проходить следующие
+команды:
+python scripts /memory_audit.py `
+--workspace <workspace_id> `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+--json
+python scripts /memory_quality_gate.py `
+--workspace <workspace_id> `
+--db-path .agent_memory/memory.db `
+--strict `
+--json
+python scripts /retrieval_sentinel.py `
+--workspace <workspace_id> `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+26
+
+===== PAGE 27 =====
+--cases evals /sentinel_cases.yaml `
+--json
+python scripts /memory_mcp_smoke.py `
+--workspace <workspace_id> `
+--db-path .agent_memory/memory.db `
+--vector-path .agent_memory/vectors.lance `
+--require-capabilities `
+--json
+Минимальный acceptable result:
+{
+"audit": "ok",
+"quality_gate": "ok",
+"retrieval_sentinel": "ok",
+"mcp_smoke": "ok"
+}
+21. Финальная оценка
+Проект уже имеет сильную архитектурную базу. Его главная ценность - не в SQLite/FTS/vector как
+отдельных технологиях, а в том, что память представлена как рабочая typed-система: decisions,
+theories, experiments, insights, skills, playbooks, behavior instructions, candidates и maintenance events.
+Это делает проект полезным для долгоживущих AI-agent workflows.
+Главное, что нужно усилить: доказуемое качество retrieval, explainability, governance поведения,
+безопасность и versioning векторного слоя. После реализации P0-блока проект можно оценивать
+ближе к 9 / 10 для локального agent-memory продукта.
+27

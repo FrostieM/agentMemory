@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 
@@ -45,3 +46,44 @@ def precision_at_k(retrieved: list[str], expected: list[str], *, k: int = 10) ->
         return 0.0
     relevant = sum(1 for chunk in top if chunk in expected)
     return relevant / len(top)
+
+
+def reciprocal_rank(retrieved: list[str], expected: list[str], *, k: int = 10) -> float:
+    if not expected:
+        return 1.0
+    expected_set = set(expected)
+    for index, item_id in enumerate(retrieved[:k], start=1):
+        if item_id in expected_set:
+            return 1.0 / index
+    return 0.0
+
+
+def ndcg_at_k(retrieved: list[str], expected: list[str], *, k: int = 10) -> float:
+    if not expected:
+        return 1.0
+    expected_set = set(expected)
+    top = retrieved[:k]
+    dcg = 0.0
+    for index, item_id in enumerate(top, start=1):
+        if item_id in expected_set:
+            dcg += 1.0 / _log2(index + 1)
+    ideal_hits = min(len(expected_set), k)
+    ideal_dcg = sum(1.0 / _log2(index + 1) for index in range(1, ideal_hits + 1))
+    if ideal_dcg == 0:
+        return 0.0
+    return dcg / ideal_dcg
+
+
+def hit_rate(found: list[str], expected: list[str]) -> float:
+    if not expected:
+        return 1.0
+    found_set = set(found)
+    return sum(1 for item_id in expected if item_id in found_set) / len(expected)
+
+
+def _log2(value: int) -> float:
+    return (
+        float(value.bit_length() - 1)
+        if value > 0 and value & (value - 1) == 0
+        else math.log2(value)
+    )

@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.batching import iter_batches
 from agent_memory_lite.repositories.chunks_repo import set_many_chunk_embedding_ids
+from agent_memory_lite.repositories.vector_metadata_repo import upsert_vector_index_metadata
 from agent_memory_lite.vector_store.base import VectorRow, VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
@@ -78,6 +79,14 @@ def reindex_chunks(
         set_many_chunk_embedding_ids(conn, chunk_ids=[row.id for row in rows])
         total += len(rows)
 
+    upsert_vector_index_metadata(
+        conn,
+        workspace_id=workspace_id,
+        namespace=NAMESPACE_CHUNKS,
+        provider=provider,
+        store=store,
+        row_count=total,
+    )
     return total
 
 

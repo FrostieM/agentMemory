@@ -191,7 +191,8 @@ operates:
 
 - `POST /memory/upsert_behavior_instruction` stores a named instruction with
   `kind`, `scope`, `priority`, `rule`, `rationale`, `applies_to`,
-  `conflict_policy`, confidence, source, and active state.
+  `conflict_policy`, confidence, source/review metadata, optional expiry,
+  conflict group, and active state.
 - `POST /memory/list_behavior_instructions` retrieves relevant behavior
   instructions for review.
 - `POST /memory/get_context` includes a high-priority
@@ -220,9 +221,21 @@ Example behavior instruction:
   "rationale": "The user needs concrete operational evidence rather than generic status language.",
   "applies_to": ["incident reports", "runtime audits"],
   "conflict_policy": "current_user_wins",
+  "source_type": "user_direct",
+  "source_id": "chat-20260430",
+  "reviewed_by": "operator",
+  "reviewed_at": "2026-04-30T00:00:00+00:00",
+  "expires_at": null,
+  "conflict_group": "incident-report-style",
   "confidence": 0.95
 }
 ```
+
+Expired behavior instructions are suppressed from `memory_get_context`. Use
+`/memory/explain_context` to inspect suppressed behavior instructions and
+reasons such as `expired`, `inactive`, or `query_mismatch`. Instructions copied
+from untrusted external content should stay as review candidates until a human
+or trusted agent review assigns safe provenance.
 
 Recommended flow:
 
@@ -340,6 +353,20 @@ with the target id, capability id/name, relation, rationale, and strength. Use
 those payloads as review candidates for `memory_link_capability`; hygiene does
 not create links automatically.
 
+Strict content-quality gate:
+
+```bash
+python scripts/memory_quality_gate.py --workspace <workspace_id> --json
+curl "http://127.0.0.1:8765/memory/quality_gate?workspace_id=<workspace_id>"
+```
+
+The quality gate is stricter than hygiene. It marks important untestable
+theories, terminal theories without evidence, important experiments without
+success criteria, important decisions without provenance, expired active
+behavior instructions, and active behavior instructions sourced from untrusted
+content as `degraded`.
+Use it before treating a memory DB as a research-grade source of truth.
+
 Bounded auto-triage for those suggestions:
 
 ```bash
@@ -396,10 +423,30 @@ outside generic docs, for example:
 - name: known_recent_incident
   query: "exact token plus paraphrase"
   expected_ids: ["chk_..."]
+  expected_context_ids: ["th_...", "dec_..."]
   expected_sources: ["fts", "vector"]
+  expected_sections: ["active_theories", "retrieved_chunks"]
   top_k: 10
   max_tokens: 2500
 ```
+
+Retrieval-quality reports include `recall_at_k`, `mrr`, `ndcg_at_k`, and
+`context_hit_rate`. Use exact-token cases to protect FTS, paraphrase cases to
+protect vector retrieval, and `expected_context_ids` to prove that
+`memory_get_context` included the right theory, decision, or chunk in the final
+agent envelope.
+
+Explain a `memory_get_context` result:
+
+```bash
+curl -s -X POST http://127.0.0.1:8765/memory/explain_context \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":"<workspace_id>","query":"why did this not show up?","max_tokens":2500}'
+```
+
+The explain endpoint is read-only. It reports FTS/vector source candidates,
+merged scores, included ids, section counts, suppressed behavior instructions,
+and the reason a scored chunk was or was not included in the final context.
 
 Explicit repair, with backups first:
 
@@ -408,6 +455,11 @@ python scripts/memory_audit.py --workspace <workspace_id> --repair-fts --backup-
 python scripts/memory_audit.py --workspace <workspace_id> --repair-vectors --backup-first
 python scripts/memory_audit.py --workspace <workspace_id> --repair-embedding-refs --backup-first
 ```
+
+Vector repair also stamps `vector_index_metadata` with provider name,
+embedding dimension, vector backend, chunking strategy, schema version, and row
+count. Audit warns when metadata is missing and degrades when it no longer
+matches the current embedding/vector contract.
 
 Dry-run a repair plan without mutating the DB:
 
@@ -623,6 +675,19 @@ via `ruff`'s `flake8-tidy-imports`.
 To override the guard for a one-off (e.g. local development with a non-loopback host),
 set both `LOCAL_ONLY=false` and `ALLOW_REMOTE_PROVIDERS=true`. **Do not** ship that
 configuration.
+
+Optional HTTP token auth can be enabled for local `/memory/*` endpoints:
+
+```bash
+echo "<local-secret>" > .agent_memory/token
+export MEMORY_REQUIRE_API_TOKEN=true
+export MEMORY_API_TOKEN_FILE=.agent_memory/token
+python -m agent_memory_lite
+```
+
+When enabled, `/health` remains open for local monitoring, while `/memory/*`
+requires `Authorization: Bearer <local-secret>`. If the token file is missing or
+empty, startup fails fast instead of silently running an unprotected API.
 
 ## Project layout
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass, field
+from typing import Any
 
 from agent_memory_lite.models.behavior import BehaviorInstruction, BehaviorInstructionSet
 from agent_memory_lite.models.enums import (
@@ -13,6 +15,7 @@ from agent_memory_lite.models.enums import (
     BehaviorInstructionPriority,
     BehaviorInstructionScope,
 )
+from agent_memory_lite.utils.time import now, parse_iso
 
 _TOKEN_RE = re.compile(r"[\w.-]+", re.UNICODE)
 
@@ -38,6 +41,13 @@ def _json_list(raw: str | None) -> list[str]:
     return [str(item) for item in data]
 
 
+def _row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except IndexError:
+        return default
+
+
 def _tokens(query: str | None) -> list[str]:
     if not query:
         return []
@@ -57,8 +67,16 @@ def _row_to_instruction(row: sqlite3.Row) -> BehaviorInstruction:
         applies_to=_json_list(row["applies_to_json"]),
         conflict_policy=BehaviorConflictPolicy(row["conflict_policy"]),
         source_episode_id=row["source_episode_id"],
+        source_type=str(_row_value(row, "source_type", "manual") or "manual"),
+        source_id=_row_value(row, "source_id"),
+        reviewed_by=_row_value(row, "reviewed_by"),
+        reviewed_at=_row_value(row, "reviewed_at"),
+        expires_at=_row_value(row, "expires_at"),
+        conflict_group=_row_value(row, "conflict_group"),
         confidence=float(row["confidence"]),
         active=bool(row["active"]),
+        last_applied_at=_row_value(row, "last_applied_at"),
+        application_count=int(_row_value(row, "application_count", 0) or 0),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -75,6 +93,9 @@ def _instruction_text(item: BehaviorInstruction) -> str:
             item.rationale,
             " ".join(item.applies_to),
             item.conflict_policy.value,
+            item.source_type,
+            item.source_id or "",
+            item.conflict_group or "",
         ]
     )
 
@@ -100,6 +121,23 @@ def _rank_instruction(item: BehaviorInstruction, tokens: list[str]) -> tuple[flo
     return score, item.updated_at
 
 
+def behavior_instruction_expired(item: BehaviorInstruction) -> bool:
+    if not item.expires_at:
+        return False
+    try:
+        return parse_iso(item.expires_at) <= now()
+    except ValueError:
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class SuppressedBehaviorInstruction:
+    id: str
+    name: str
+    reason: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
 def upsert_behavior_instruction_row(
     conn: sqlite3.Connection,
     *,
@@ -114,6 +152,12 @@ def upsert_behavior_instruction_row(
     applies_to: list[str],
     conflict_policy: BehaviorConflictPolicy,
     source_episode_id: str | None,
+    source_type: str,
+    source_id: str | None,
+    reviewed_by: str | None,
+    reviewed_at: str | None,
+    expires_at: str | None,
+    conflict_group: str | None,
     confidence: float,
     active: bool,
     created_at: str,
@@ -124,8 +168,9 @@ def upsert_behavior_instruction_row(
         INSERT INTO behavior_instructions (
             id, workspace_id, name, kind, scope, priority, rule, rationale,
             applies_to_json, conflict_policy, source_episode_id, confidence,
-            active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            active, source_type, source_id, reviewed_by, reviewed_at, expires_at,
+            conflict_group, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, name) DO UPDATE SET
             kind = excluded.kind,
             scope = excluded.scope,
@@ -135,6 +180,12 @@ def upsert_behavior_instruction_row(
             applies_to_json = excluded.applies_to_json,
             conflict_policy = excluded.conflict_policy,
             source_episode_id = excluded.source_episode_id,
+            source_type = excluded.source_type,
+            source_id = excluded.source_id,
+            reviewed_by = excluded.reviewed_by,
+            reviewed_at = excluded.reviewed_at,
+            expires_at = excluded.expires_at,
+            conflict_group = excluded.conflict_group,
             confidence = excluded.confidence,
             active = excluded.active,
             updated_at = excluded.updated_at
@@ -153,6 +204,12 @@ def upsert_behavior_instruction_row(
             source_episode_id,
             confidence,
             1 if active else 0,
+            source_type,
+            source_id,
+            reviewed_by,
+            reviewed_at,
+            expires_at,
+            conflict_group,
             created_at,
             updated_at,
         ),
@@ -193,12 +250,53 @@ def list_behavior_instructions(
         instructions = [item for item in instructions if item.kind in allowed]
     if not include_inactive:
         instructions = [item for item in instructions if item.active]
+        instructions = [item for item in instructions if not behavior_instruction_expired(item)]
     if not include_unmatched:
         instructions = [
             item for item in instructions if _contains_any(_instruction_text(item), terms)
         ]
     instructions.sort(key=lambda item: _rank_instruction(item, terms), reverse=True)
     return instructions[:limit]
+
+
+def list_suppressed_behavior_instructions(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    query: str | None = None,
+    kinds: list[BehaviorInstructionKind] | None = None,
+    limit: int = 20,
+) -> list[SuppressedBehaviorInstruction]:
+    rows = conn.execute(
+        "SELECT * FROM behavior_instructions WHERE workspace_id = ?",
+        (workspace_id,),
+    ).fetchall()
+    terms = _tokens(query)
+    allowed = set(kinds) if kinds is not None else None
+    suppressed: list[SuppressedBehaviorInstruction] = []
+    for item in [_row_to_instruction(row) for row in rows]:
+        reason = ""
+        details: dict[str, Any] = {}
+        if allowed is not None and item.kind not in allowed:
+            reason = "kind_filtered"
+            details["kind"] = item.kind.value
+        elif not item.active:
+            reason = "inactive"
+        elif behavior_instruction_expired(item):
+            reason = "expired"
+            details["expires_at"] = item.expires_at
+        elif terms and not _contains_any(_instruction_text(item), terms):
+            reason = "query_mismatch"
+        if reason:
+            suppressed.append(
+                SuppressedBehaviorInstruction(
+                    id=item.id,
+                    name=item.name,
+                    reason=reason,
+                    details=details,
+                )
+            )
+    return suppressed[:limit]
 
 
 def build_behavior_instruction_set(
