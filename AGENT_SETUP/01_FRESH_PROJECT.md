@@ -253,10 +253,31 @@ If the project has a local retrieval sentinel YAML, run the watchdog:
 The watchdog is detect-only. It may create a maintenance event when memory is
 warning/degraded, but it must not repair indexes or change research content.
 
+Compare watchdog or audit artifacts when the status changes:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_diff.py --before <OLD_REPORT_JSON> --after <NEW_REPORT_JSON> --json
+```
+
+Run the local performance benchmark before trusting a slow or newly migrated
+memory DB:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_benchmark.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --query "workspace manifest" --runs 3 --json
+```
+
 For a combined trust report, run:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_trust_dashboard.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --vector-path <PROJECT_ROOT>/.agent_memory/vectors.lance --project-root <PROJECT_ROOT> --json
+```
+
+If an agent runtime cannot load MCP tools but can reach the HTTP service, use
+the workflow wrapper:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> preflight --query "task summary" --task-id <TASK_ID> --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> complete --task-id <TASK_ID> --goal "task goal" --raw-text "what was done and verified" --json
 ```
 
 b) The tool is not in your tool list (you cannot call it) — every MCP

@@ -399,6 +399,27 @@ The watchdog writes JSON artifacts under `.agent_memory/audit_runs/`, updates
 the workspace manifest audit timestamp, and opens a maintenance event only when
 integrity, retrieval quality, or hygiene is degraded/warning. It never repairs.
 
+Compare two trust reports:
+
+```bash
+python scripts/memory_diff.py --before .agent_memory/audit_runs/old.json --after .agent_memory/audit_runs/new.json --json
+```
+
+`memory_diff.py` accepts audit, watchdog, or trust-dashboard JSON. It reports
+status regressions, count deltas, component status changes, new failures, and
+resolved warnings so drift between two checks is explicit.
+
+Benchmark memory operations:
+
+```bash
+python scripts/memory_benchmark.py --workspace <workspace_id> --db-path .agent_memory/memory.db --query "workspace manifest" --runs 3 --json
+```
+
+The benchmark measures `PRAGMA quick_check`, integrity audit, hygiene report,
+quality gate, FTS search, and `memory_get_context`. It is FTS-only by default
+for fast CI/deploy checks; pass `--with-vector` when you intentionally want to
+measure embedding/vector latency.
+
 MCP and contract smoke checks:
 
 ```bash
@@ -415,6 +436,18 @@ python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .a
 vector store to a temporary restore target and audits the copy. The trust
 dashboard composes the audit, hygiene, watchdog, MCP, candidate, contract, and
 restore checks into one report.
+
+Agent workflow wrapper:
+
+```bash
+python scripts/memory_workflow.py --workspace <workspace_id> preflight --query "task summary" --task-id task-123 --json
+python scripts/memory_workflow.py --workspace <workspace_id> complete --task-id task-123 --goal "Fix issue" --raw-text "Implemented and verified ..." --json
+```
+
+Use `preflight` before non-trivial work to fetch the same context an agent
+should inspect. Use `complete` after work to write an episode and task state in
+one step. Add `--api-token-file .agent_memory/token` when optional HTTP token
+auth is enabled, and `--dry-run` to inspect payloads without writing.
 
 Sentinel files are YAML lists. They should contain project-specific ids kept
 outside generic docs, for example:
@@ -688,6 +721,9 @@ python -m agent_memory_lite
 When enabled, `/health` remains open for local monitoring, while `/memory/*`
 requires `Authorization: Bearer <local-secret>`. If the token file is missing or
 empty, startup fails fast instead of silently running an unprotected API.
+Set `MEMORY_AUDIT_API_AUTH_FAILURES=true` to record rejected `/memory/*`
+requests as `api_auth_failure` maintenance events without storing the supplied
+token value.
 
 ## Project layout
 

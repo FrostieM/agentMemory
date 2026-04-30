@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias="MEMORY_REQUIRE_API_TOKEN",
     )
+    audit_api_auth_failures: bool = Field(
+        default=False,
+        validation_alias="MEMORY_AUDIT_API_AUTH_FAILURES",
+    )
     api_token_file: Path = Field(
         default=Path(".agent_memory/token"),
         validation_alias="MEMORY_API_TOKEN_FILE",

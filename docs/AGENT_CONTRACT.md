@@ -615,6 +615,10 @@ curl -s -X POST http://127.0.0.1:8765/memory/get_context \
   -d '{"workspace_id":"<workspace_id>","query":"...","max_tokens":2500}'
 ```
 
+If `MEMORY_AUDIT_API_AUTH_FAILURES=true` is enabled, rejected `/memory/*`
+requests are recorded as `api_auth_failure` maintenance events without storing
+the supplied token.
+
 For a fast local eval that avoids loading an embedding model, run:
 
 ```bash
@@ -640,6 +644,7 @@ python scripts/memory_quality_gate.py --workspace <workspace_id> --json
 python scripts/memory_candidate_triage.py --workspace <workspace_id> --json
 python scripts/memory_auto_triage.py --workspace <workspace_id> --json
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
+python scripts/memory_benchmark.py --workspace <workspace_id> --db-path .agent_memory/memory.db --query "workspace manifest" --runs 3 --json
 ```
 
 For known live-memory sentinel retrieval checks, pass a project-local YAML file
@@ -647,6 +652,9 @@ to `--sentinels`. The file should contain expected chunk/theory/decision ids
 that must appear in `memory_get_context` for exact and paraphrased queries.
 The watchdog retrieval report includes `recall_at_k`, `mrr`, `ndcg_at_k`, and
 `context_hit_rate`.
+Use `memory_diff.py --before <old.json> --after <new.json> --json` to compare
+two audit/watchdog/dashboard artifacts and identify status regressions, count
+deltas, new failures, and resolved warnings.
 
 For a human-readable research backlog report, run:
 
@@ -675,6 +683,9 @@ Use `memory_mcp_smoke.py` after MCP changes or a runtime restart. Use
 `memory_trust_dashboard.py` when you need one report that combines integrity,
 hygiene, retrieval sentinels, MCP behavior/capability context, candidate review,
 contract drift, and restore proof.
+Use `memory_workflow.py preflight` before a non-trivial task when the agent
+does not have MCP tools but can reach HTTP. Use `memory_workflow.py complete`
+after work to write an episode and task state through the same HTTP surface.
 
 ## How to call
 
