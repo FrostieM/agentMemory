@@ -97,7 +97,10 @@ Apply these rules every session. They are not optional.
 23. **Before trusting memory after migration, deploy, crash, or unexplained
     retrieval behavior**, run `scripts/memory_audit.py --workspace
     <workspace_id> --json`. Repair only with explicit `--repair-*` and
-    `--backup-first`.
+    `--backup-first`. If audit reports `workspace_pollution`, inspect with
+    `scripts/memory_workspace_doctor.py --workspace <workspace_id> --json`;
+    quarantine only after reviewing the exported rows and only with
+    `--quarantine --backup-first`.
 24. **For content quality, run hygiene/watchdog checks.** Use
     `scripts/memory_hygiene.py --workspace <workspace_id> --json` to inspect
     specific stale candidates, weak theories, overdue experiments, unlinked
@@ -670,8 +673,14 @@ python scripts/memory_auto_triage.py --workspace <workspace_id> --json
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
 python scripts/memory_benchmark.py --workspace <workspace_id> --db-path .agent_memory/memory.db --query "workspace manifest" --runs 3 --json
 python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+python scripts/memory_workspace_doctor.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 python scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json
 ```
+
+If `workspace_pollution` is degraded, inspect with
+`memory_workspace_doctor.py`. Quarantine only after review and only with
+`--quarantine --backup-first`; this exports foreign rows to JSON before
+deleting them.
 
 For known live-memory sentinel retrieval checks, pass a project-local YAML file
 to `--sentinels`. The file should contain expected chunk/theory/decision ids
@@ -710,8 +719,9 @@ Use `memory_mcp_smoke.py` after MCP changes or a runtime restart. Use
 `memory_contract_check.py` when generic agent instructions change. Use
 `memory_backup_restore_check.py` before trusting backup/restore procedures. Use
 `memory_trust_dashboard.py` when you need one report that combines integrity,
-hygiene, retrieval sentinels, MCP behavior/capability context, candidate review,
-contract drift, and restore proof.
+workspace isolation samples, hygiene, retrieval sentinels, MCP
+behavior/capability context, candidate review, contract drift, and restore
+proof.
 Use `memory_workflow.py preflight` before a non-trivial task when the agent
 does not have MCP tools but can reach HTTP. Use `memory_workflow.py complete`
 after work to write an episode and task state through the same HTTP surface.

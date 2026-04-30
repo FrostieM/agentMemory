@@ -260,7 +260,14 @@ Check stored text encoding and recent trust trend:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_encoding_audit.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workspace_doctor.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_trend_report.py --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+```
+
+If workspace pollution is real, quarantine only after review:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workspace_doctor.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --quarantine --backup-first --json
 ```
 
 Compare watchdog or audit artifacts when the status changes:

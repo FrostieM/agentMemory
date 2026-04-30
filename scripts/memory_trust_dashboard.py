@@ -121,6 +121,18 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
     ]
     components["integrity"] = _run_json("memory_audit", audit_cmd, ok_codes={0, 2})
 
+    workspace_doctor_cmd = [
+        sys.executable,
+        _script("memory_workspace_doctor.py"),
+        *_base_args(settings),
+        "--json",
+    ]
+    components["workspace_doctor"] = _run_json(
+        "memory_workspace_doctor",
+        workspace_doctor_cmd,
+        ok_codes={0, 2},
+    )
+
     hygiene_cmd = [
         sys.executable,
         _script("memory_hygiene.py"),

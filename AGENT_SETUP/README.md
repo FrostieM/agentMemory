@@ -48,9 +48,12 @@ After either prompt finishes, the agent should:
    examples; use `--require-sentinels` for strict trust checks.
 12. Run `scripts/memory_encoding_audit.py --workspace <workspace_id> --json`
    and repair only with `--repair --backup-first` if stored text is corrupted.
-13. Use `scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json`
+13. Run `scripts/memory_workspace_doctor.py --workspace <workspace_id> --json`
+   if audit reports workspace pollution. Quarantine only with
+   `--quarantine --backup-first` after reviewing the exported rows.
+14. Use `scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json`
    to confirm the latest trust run is not hiding recent degradation.
-14. Continue with whatever you wanted to do.
+15. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the

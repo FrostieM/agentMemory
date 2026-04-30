@@ -729,7 +729,11 @@ def run_integrity_audit(  # noqa: PLR0912
                 "Run scripts/memory_audit.py --repair-embedding-refs --backup-first."
             )
     if checks["workspace_pollution"].status == "degraded":
-        repair_hints.append("Inspect workspace_id rows before migrating or deleting them.")
+        repair_hints.append(
+            "Run scripts/memory_workspace_doctor.py --workspace <workspace_id> --json "
+            "to inspect foreign rows; quarantine only with --quarantine --backup-first "
+            "after review."
+        )
     if checks["maintenance_events"].status == "degraded":
         repair_hints.append("Inspect open maintenance_events before trusting retrieval.")
     if checks["capability_links"].status == "degraded":

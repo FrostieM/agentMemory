@@ -347,6 +347,18 @@ Read-only audit:
 python scripts/memory_audit.py --workspace <workspace_id> --json
 ```
 
+Inspect cross-workspace rows before trusting an isolated project DB:
+
+```bash
+python scripts/memory_workspace_doctor.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+python scripts/memory_workspace_doctor.py --workspace <workspace_id> --db-path .agent_memory/memory.db --quarantine --backup-first --json
+```
+
+The workspace doctor is read-only by default. Quarantine mode first copies
+`memory.db`, exports the foreign rows to JSON under `.agent_memory/backups/`,
+then deletes only explicitly foreign workspace rows. Add `--include-default`
+only after reviewing whether `default` rows are also project pollution.
+
 Detailed memory hygiene report:
 
 ```bash
@@ -413,12 +425,15 @@ Audit stored text encoding and inspect trust trends:
 ```bash
 python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --repair --backup-first --json
+python scripts/memory_workspace_doctor.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 python scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json
 ```
 
 Encoding repair is explicit and backup-first. It rebuilds FTS when stored chunk
-text is repaired. The trend report reads `.agent_memory/audit_runs/` artifacts
-so a newly green check does not hide earlier degradation.
+text is repaired. The workspace doctor reports rows from another workspace and
+can quarantine them with `--quarantine --backup-first` after review. The trend
+report reads `.agent_memory/audit_runs/` artifacts so a newly green check does
+not hide earlier degradation.
 
 Compare two trust reports:
 
@@ -455,8 +470,8 @@ python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .a
 `memory_contract_check.py` catches stale generic instructions such as hard-coded
 `default` workspace examples. `memory_backup_restore_check.py` copies the DB and
 vector store to a temporary restore target and audits the copy. The trust
-dashboard composes the audit, hygiene, watchdog, encoding, trend, MCP,
-candidate, contract, and restore checks into one report.
+dashboard composes the audit, workspace doctor, hygiene, watchdog, encoding,
+trend, MCP, candidate, contract, and restore checks into one report.
 
 Agent workflow wrapper:
 
