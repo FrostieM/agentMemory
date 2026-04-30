@@ -90,24 +90,30 @@ async function requestJson(url, options = {}) {
 
 async function refresh() {
   if (state.paused) return;
-  const workspaceParam = state.workspace ? `?workspace_id=${encodeURIComponent(state.workspace)}` : "";
-  const [health, memory] = await Promise.all([
-    fetch("/health").then((r) => r.json()),
-    requestJson(`/memory/ui/state${workspaceParam}`),
+  const params = new URLSearchParams({ recent_limit: "2" });
+  if (state.workspace) params.set("workspace_id", state.workspace);
+  const [healthResult, memory] = await Promise.all([
+    fetch("/health").then((r) => (r.ok ? r.json() : Promise.reject(new Error(`health ${r.status}`)))).catch((error) => ({
+      status: "unknown",
+      retrieval_integrity: { status: "unknown" },
+      error: error.message,
+    })),
+    requestJson(`/memory/ui/state?${params.toString()}`),
   ]);
 
   if (!state.workspace) {
     state.workspace = memory.workspace_id;
     els.workspace.value = memory.workspace_id;
   }
-  renderHealth(health);
+  renderHealth(healthResult);
   renderMemory(memory);
 }
 
 function renderHealth(health) {
   const retrieval = health.retrieval_integrity?.status || "unknown";
   const ok = health.status === "ok" && retrieval === "ok";
-  setChip(els.health, `${health.status || "unknown"} / ${retrieval}`, ok ? "ok" : "degraded");
+  const label = health.error ? `health ${health.error}` : `${health.status || "unknown"} / ${retrieval}`;
+  setChip(els.health, label, ok ? "ok" : "degraded");
 }
 
 function renderMemory(memory) {
@@ -160,56 +166,75 @@ function renderTimeline(items) {
 }
 
 function layout(nodes, edges, width, height) {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
   const centerX = width / 2;
   const centerY = height / 2;
-  const rings = { workspace: 0, group: 1, table: 2, reference: 3 };
-  const typeIndex = new Map();
-  nodes.forEach((node) => {
-    const ring = rings[node.kind] ?? 3;
-    const bucket = `${ring}:${node.group}`;
-    const index = typeIndex.get(bucket) || 0;
-    typeIndex.set(bucket, index + 1);
-    const totalInRing = nodes.filter((item) => (rings[item.kind] ?? 3) === ring).length || 1;
-    const angle = (index / totalInRing) * Math.PI * 2 + ring * 0.42 + state.tick * 0.006;
-    const radius = ring === 0 ? 0 : Math.min(width, height) * (0.13 + ring * 0.12);
-    node.x = centerX + Math.cos(angle) * radius;
-    node.y = centerY + Math.sin(angle) * radius;
+  const minSide = Math.min(width, height);
+  const groupRadius = Math.max(88, minSide * 0.18);
+  const tableRadius = Math.max(170, minSide * 0.34);
+  const itemRadius = Math.max(245, minSide * 0.48);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const parentById = new Map();
+  for (const edge of edges) {
+    if (edge.kind === "table" || edge.kind === "latest") {
+      parentById.set(edge.target, edge.source);
+    } else if (edge.kind === "reference" && !parentById.has(edge.target)) {
+      parentById.set(edge.target, edge.source);
+    }
+  }
+
+  const groups = nodes
+    .filter((node) => node.kind === "group")
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const angleById = new Map();
+  groups.forEach((node, index) => {
+    const angle = -Math.PI / 2 + (index / Math.max(1, groups.length)) * Math.PI * 2;
+    angleById.set(node.id, angle);
+    node.x = centerX + Math.cos(angle) * groupRadius;
+    node.y = centerY + Math.sin(angle) * groupRadius;
   });
 
-  for (let i = 0; i < 42; i += 1) {
-    for (const edge of edges) {
-      const a = byId.get(edge.source);
-      const b = byId.get(edge.target);
-      if (!a || !b) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
-      const desired = edge.kind === "reference" ? 105 : 145;
-      const force = (distance - desired) * 0.012;
-      const fx = (dx / distance) * force;
-      const fy = (dy / distance) * force;
-      if (a.kind !== "workspace") {
-        a.x += fx;
-        a.y += fy;
-      }
-      b.x -= fx;
-      b.y -= fy;
-    }
-    for (let a = 0; a < nodes.length; a += 1) {
-      for (let b = a + 1; b < nodes.length; b += 1) {
-        const n1 = nodes[a];
-        const n2 = nodes[b];
-        const dx = n2.x - n1.x;
-        const dy = n2.y - n1.y;
-        const d2 = Math.max(64, dx * dx + dy * dy);
-        const force = 240 / d2;
-        n1.x -= dx * force;
-        n1.y -= dy * force;
-        n2.x += dx * force;
-        n2.y += dy * force;
-      }
-    }
+  const tablesByGroup = new Map();
+  for (const node of nodes.filter((item) => item.kind === "table")) {
+    const parent = parentById.get(node.id);
+    if (!tablesByGroup.has(parent)) tablesByGroup.set(parent, []);
+    tablesByGroup.get(parent).push(node);
+  }
+  for (const [groupId, tables] of tablesByGroup.entries()) {
+    const baseAngle = angleById.get(groupId) ?? 0;
+    const spread = Math.min(0.88, 0.2 + tables.length * 0.08);
+    tables.sort((a, b) => a.label.localeCompare(b.label));
+    tables.forEach((node, index) => {
+      const offset = tables.length === 1 ? 0 : -spread / 2 + (spread * index) / (tables.length - 1);
+      const angle = baseAngle + offset;
+      angleById.set(node.id, angle);
+      node.x = centerX + Math.cos(angle) * tableRadius;
+      node.y = centerY + Math.sin(angle) * tableRadius;
+    });
+  }
+
+  const itemsByParent = new Map();
+  for (const node of nodes.filter((item) => !["workspace", "group", "table"].includes(item.kind))) {
+    const parent = parentById.get(node.id) || `group:${node.group}`;
+    if (!itemsByParent.has(parent)) itemsByParent.set(parent, []);
+    itemsByParent.get(parent).push(node);
+  }
+  for (const [parentId, items] of itemsByParent.entries()) {
+    const parent = nodeById.get(parentId);
+    const baseAngle = angleById.get(parentId) ?? angleById.get(`group:${parent?.group || "research"}`) ?? 0;
+    const spread = Math.min(0.7, 0.16 + items.length * 0.09);
+    items.forEach((node, index) => {
+      const offset = items.length === 1 ? 0 : -spread / 2 + (spread * index) / (items.length - 1);
+      const ringOffset = (index % 3) * 18;
+      const angle = baseAngle + offset + Math.sin(state.tick * 0.04 + index) * 0.006;
+      const radius = itemRadius - ringOffset;
+      node.x = centerX + Math.cos(angle) * radius;
+      node.y = centerY + Math.sin(angle) * radius;
+    });
+  }
+
+  for (const node of nodes.filter((item) => item.kind === "workspace")) {
+    node.x = centerX;
+    node.y = centerY;
   }
 }
 
@@ -260,17 +285,27 @@ function renderGraph(graph) {
     circle.setAttribute("fill-opacity", node.kind === "table" ? "0.74" : "0.92");
     group.appendChild(circle);
 
-    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    text.setAttribute("x", radius + 6);
-    text.setAttribute("y", "4");
-    text.textContent = clip(node.label, 34);
-    group.appendChild(text);
+    const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    title.textContent = `${node.label}${node.count !== null && node.count !== undefined ? ` (${fmt(node.count)})` : ""}`;
+    group.appendChild(title);
 
-    if (node.count !== null && node.count !== undefined) {
+    const showLabel = ["workspace", "group", "table"].includes(node.kind);
+    const labelToLeft = node.x > width - 190;
+    if (showLabel) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", labelToLeft ? -radius - 6 : radius + 6);
+      text.setAttribute("y", "4");
+      if (labelToLeft) text.setAttribute("text-anchor", "end");
+      text.textContent = clip(node.label, 34);
+      group.appendChild(text);
+    }
+
+    if (showLabel && node.count !== null && node.count !== undefined) {
       const count = document.createElementNS("http://www.w3.org/2000/svg", "text");
       count.setAttribute("class", "count-label");
-      count.setAttribute("x", radius + 6);
+      count.setAttribute("x", labelToLeft ? -radius - 6 : radius + 6);
       count.setAttribute("y", "18");
+      if (labelToLeft) count.setAttribute("text-anchor", "end");
       count.textContent = fmt(node.count);
       group.appendChild(count);
     }
