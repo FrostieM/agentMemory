@@ -1331,9 +1331,7 @@ def _handle_link_capability(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    return _capability_link_payload(
-        link_capability(_runtime.db(), CapabilityLinkIn(**payload))
-    )
+    return _capability_link_payload(link_capability(_runtime.db(), CapabilityLinkIn(**payload)))
 
 
 def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:

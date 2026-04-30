@@ -63,7 +63,7 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "lastGraphRoutes" in js.text
     assert "retireLastRoutesBeforeNextJob" in js.text
     assert "priority = false" in js.text
-    assert "source !== \"demo\"" in js.text
+    assert 'source !== "demo"' in js.text
     assert "shouldAnimateGraphEvent" in js.text
     assert "uiStartedAtMs" in js.text
     assert "graphAnimationInProgress" in js.text
@@ -116,12 +116,12 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "showHubInspectorById" in js.text
     assert "showGraphNodeInspectorFromElement" in js.text
     assert "graphInteractiveNode(event.target)" in js.text
-    assert "els.graph?.addEventListener(\"click\"" in js.text
+    assert 'els.graph?.addEventListener("click"' in js.text
     assert "inspector-card" in js.text
     assert "aria-modal" in js.text
-    assert "body.classList.add(\"inspector-open\")" in js.text
+    assert 'body.classList.add("inspector-open")' in js.text
     assert "event.target === els.graphInspector" in js.text
-    assert "event.key === \"Escape\"" in js.text
+    assert 'event.key === "Escape"' in js.text
     assert "graphSummary" not in index.text
     assert "Query uses" not in js.text
     assert "Context route" not in js.text

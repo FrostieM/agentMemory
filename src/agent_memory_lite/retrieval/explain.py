@@ -218,17 +218,13 @@ def _append_used_object(
     )
 
 
-def _append_research_objects(
-    out: list[UsedContextObjectExplanation], context: object
-) -> None:
+def _append_research_objects(out: list[UsedContextObjectExplanation], context: object) -> None:
     for theory_context in getattr(context, "theories", []):
         theory = getattr(theory_context, "theory", None)
         if theory is not None:
             _append_used_object(out, table="theories", item=theory, relation="theory")
         for item in getattr(theory_context, "evidence", []):
-            _append_used_object(
-                out, table="theory_evidence", item=item, relation="evidence"
-            )
+            _append_used_object(out, table="theory_evidence", item=item, relation="evidence")
     agenda = getattr(context, "research_agenda", None)
     for table, attr, relation in (
         ("memory_snapshots", "snapshots", "snapshot"),
@@ -240,9 +236,7 @@ def _append_research_objects(
             _append_used_object(out, table=table, item=item, relation=relation)
 
 
-def _append_capability_objects(
-    out: list[UsedContextObjectExplanation], context: object
-) -> None:
+def _append_capability_objects(out: list[UsedContextObjectExplanation], context: object) -> None:
     capabilities = getattr(context, "agent_capabilities", None)
     for table, attr, relation in (
         ("agent_roles", "roles", "role"),
@@ -260,9 +254,7 @@ def used_context_objects(context: object) -> list[UsedContextObjectExplanation]:
         _append_used_object(out, table="task_state", item=task, relation="task state")
     behavior = getattr(context, "behavior_instructions", None)
     for item in getattr(behavior, "instructions", []) if behavior else []:
-        _append_used_object(
-            out, table="behavior_instructions", item=item, relation="instruction"
-        )
+        _append_used_object(out, table="behavior_instructions", item=item, relation="instruction")
     for item in getattr(context, "decisions", []):
         _append_used_object(out, table="decisions", item=item, relation="decision")
     _append_research_objects(out, context)
