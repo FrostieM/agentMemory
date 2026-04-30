@@ -82,6 +82,69 @@ _TABLES: list[dict[str, str]] = [
 
 _TIME_COLUMNS = ("updated_at", "created_at", "observed_at", "valid_from", "last_indexed_at")
 
+_PROCESS_STAGES: list[dict[str, Any]] = [
+    {
+        "id": "capture",
+        "label": "Capture",
+        "verb": "records raw events",
+        "tables": ["episodes", "ingested_files"],
+    },
+    {
+        "id": "index",
+        "label": "Index",
+        "verb": "chunks and embeds content",
+        "tables": ["chunks", "files"],
+    },
+    {
+        "id": "retrieve",
+        "label": "Retrieve",
+        "verb": "finds exact and semantic matches",
+        "tables": ["chunks", "memory_usage_feedback"],
+    },
+    {
+        "id": "context",
+        "label": "Context",
+        "verb": "builds the agent envelope",
+        "tables": ["behavior_instructions", "decisions", "task_state"],
+    },
+    {
+        "id": "research",
+        "label": "Research",
+        "verb": "tracks hypotheses and evidence",
+        "tables": [
+            "theories",
+            "theory_evidence",
+            "research_experiments",
+            "experiment_results",
+            "memory_snapshots",
+            "research_insights",
+            "domain_concepts",
+        ],
+    },
+    {
+        "id": "capabilities",
+        "label": "Capabilities",
+        "verb": "links roles, skills, playbooks",
+        "tables": ["agent_roles", "agent_skills", "agent_playbooks", "capability_links"],
+    },
+    {
+        "id": "governance",
+        "label": "Govern",
+        "verb": "keeps trust work visible",
+        "tables": ["memory_candidates", "maintenance_events"],
+    },
+]
+
+_TABLE_TO_STAGE = {table: stage["id"] for stage in _PROCESS_STAGES for table in stage["tables"]}
+_PROCESS_EDGES = [
+    {"source": "capture", "target": "index", "label": "chunk"},
+    {"source": "index", "target": "retrieve", "label": "search"},
+    {"source": "retrieve", "target": "context", "label": "rank"},
+    {"source": "context", "target": "research", "label": "reason"},
+    {"source": "research", "target": "capabilities", "label": "shape"},
+    {"source": "capabilities", "target": "governance", "label": "verify"},
+]
+
 
 @router.get("/ui")
 def memory_ui_index() -> FileResponse:
@@ -361,6 +424,76 @@ def _build_graph(
     return list(nodes.values()), list(edges.values()), counts, recent[: max(10, recent_limit * 4)]
 
 
+def _event_label(table: str, row: sqlite3.Row, fallback: str) -> str:
+    keys = set(row.keys())
+    for key in ("title", "name", "summary", "goal", "path", "raw_text", "text", "evidence"):
+        if key in keys and row[key]:
+            return _clip(row[key], 110)
+    return fallback
+
+
+def _stage_latest_event(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    tables: list[str],
+) -> dict[str, Any] | None:
+    latest: dict[str, Any] | None = None
+    for table in tables:
+        rows = _latest_rows(conn, table, workspace_id=workspace_id, limit=1)
+        if not rows:
+            continue
+        row = rows[0]
+        row_time = _row_time(row) or ""
+        event = {
+            "id": _row_id(row),
+            "table": table,
+            "label": _event_label(table, row, _row_id(row)),
+            "status": _status(row),
+            "updated_at": row_time or None,
+        }
+        if latest is None or row_time > str(latest.get("updated_at") or ""):
+            latest = event
+    return latest
+
+
+def _build_process(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    counts: dict[str, int],
+    recent: list[dict[str, Any]],
+) -> dict[str, Any]:
+    stages: list[dict[str, Any]] = []
+    for stage in _PROCESS_STAGES:
+        tables = list(stage["tables"])
+        total = sum(counts.get(table, 0) for table in tables)
+        latest = _stage_latest_event(conn, workspace_id=workspace_id, tables=tables)
+        status = "empty" if total == 0 else "active"
+        if stage["id"] == "governance" and counts.get("maintenance_events", 0):
+            status = "review"
+        stages.append(
+            {
+                "id": stage["id"],
+                "label": stage["label"],
+                "verb": stage["verb"],
+                "tables": tables,
+                "count": total,
+                "status": status,
+                "latest": latest,
+            }
+        )
+
+    events = [
+        {
+            **event,
+            "stage": _TABLE_TO_STAGE.get(event["table"], "capture"),
+        }
+        for event in recent
+    ]
+    return {"stages": stages, "edges": _PROCESS_EDGES, "events": events}
+
+
 def _signature(counts: dict[str, int], recent: list[dict[str, Any]]) -> str:
     raw = repr(
         (
@@ -385,6 +518,12 @@ def memory_ui_state(
         workspace_id=selected_workspace,
         recent_limit=recent_limit,
     )
+    process = _build_process(
+        conn,
+        workspace_id=selected_workspace,
+        counts=counts,
+        recent=recent,
+    )
     return {
         "status": "ok",
         "workspace_id": selected_workspace,
@@ -393,6 +532,7 @@ def memory_ui_state(
         "vector_path": str(settings.vector_db_path),
         "counts": counts,
         "graph": {"nodes": nodes, "edges": edges},
+        "process": process,
         "recent": recent,
         "signature": _signature(counts, recent),
     }

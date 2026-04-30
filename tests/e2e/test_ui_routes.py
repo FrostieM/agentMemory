@@ -15,11 +15,11 @@ def test_ui_index_and_assets(app_factory) -> None:
         css = client.get("/ui/styles.css")
 
     assert index.status_code == 200
-    assert "Memory graph cockpit" in index.text
+    assert "Memory live process" in index.text
     assert js.status_code == 200
-    assert "renderGraph" in js.text
+    assert "renderProcess" in js.text
     assert css.status_code == 200
-    assert ".graph-panel" in css.text
+    assert ".process-panel" in css.text
 
 
 def test_ui_state_returns_graph(
@@ -48,6 +48,9 @@ def test_ui_state_returns_graph(
     assert body["counts"]["chunks"] >= 1
     assert body["graph"]["nodes"]
     assert body["graph"]["edges"]
+    assert body["process"]["stages"]
+    assert body["process"]["edges"]
+    assert body["process"]["events"]
     assert body["recent"]
     assert body["signature"]
 

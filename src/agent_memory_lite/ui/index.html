@@ -4,24 +4,25 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>agent-memory-lite UI</title>
-    <link rel="stylesheet" href="/ui/styles.css?v=20260430-graph-ui" />
+    <link rel="stylesheet" href="/ui/styles.css?v=20260430-process-ui2" />
   </head>
   <body>
     <main class="shell">
       <aside class="rail">
         <div class="brand">
-          <svg class="mark" viewBox="0 0 42 42" role="img" aria-label="Memory graph mark">
-            <path d="M12 25 L21 12 L30 23 L22 30 Z"></path>
-            <circle cx="12" cy="25" r="3"></circle>
-            <circle cx="21" cy="12" r="3"></circle>
-            <circle cx="30" cy="23" r="3"></circle>
-            <circle cx="22" cy="30" r="3"></circle>
+          <svg class="mark" viewBox="0 0 42 42" role="img" aria-label="Memory process mark">
+            <path d="M8 21 H15 L20 12 L26 30 L31 21 H34"></path>
+            <circle cx="8" cy="21" r="3"></circle>
+            <circle cx="20" cy="12" r="3"></circle>
+            <circle cx="26" cy="30" r="3"></circle>
+            <circle cx="34" cy="21" r="3"></circle>
           </svg>
           <div>
             <strong>Memory</strong>
-            <span>local graph</span>
+            <span>live process</span>
           </div>
         </div>
+
         <label class="field">
           <span>Workspace</span>
           <input id="workspaceInput" autocomplete="off" placeholder="workspace_id" />
@@ -34,13 +35,11 @@
           <button id="refreshBtn" type="button">Refresh</button>
           <button id="pauseBtn" type="button">Pause live</button>
         </div>
-        <nav class="legend" aria-label="Graph legend">
-          <span><i class="dot episodic"></i> Episodic</span>
-          <span><i class="dot research"></i> Research</span>
-          <span><i class="dot capability"></i> Capability</span>
-          <span><i class="dot governance"></i> Governance</span>
-          <span><i class="dot operations"></i> Operations</span>
-          <span><i class="dot retrieval"></i> Retrieval</span>
+
+        <nav class="legend" aria-label="Process legend">
+          <span><i class="dot live-dot"></i> active request</span>
+          <span><i class="dot changed-dot"></i> changed data</span>
+          <span><i class="dot quiet-dot"></i> stable stage</span>
         </nav>
       </aside>
 
@@ -48,7 +47,8 @@
         <header class="topbar">
           <div>
             <div class="eyebrow">local memory observer</div>
-            <h1>Memory graph cockpit</h1>
+            <h1>Memory live process</h1>
+            <p>See what the memory service is doing, what changed, and how a query becomes context.</p>
           </div>
           <div class="status-strip">
             <span id="healthChip" class="chip idle">health</span>
@@ -57,54 +57,95 @@
           </div>
         </header>
 
-        <section class="metrics" id="metrics"></section>
+        <section class="overview">
+          <article class="operation-panel">
+            <div class="panel-kicker">current operation</div>
+            <h2 id="activeTitle">Waiting for memory activity</h2>
+            <p id="activeMeta">Live polling will show the next request path here.</p>
+            <div id="activityPath" class="request-path"></div>
+          </article>
 
-        <section class="workspace">
-          <div class="graph-panel">
-            <div class="panel-head">
-              <div>
-                <h2>Relationship graph</h2>
-                <p>Live view of tables, recent objects, and source links.</p>
-              </div>
-              <span id="signatureChip" class="chip">signature</span>
+          <section class="metrics" id="metrics"></section>
+        </section>
+
+        <section class="process-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Processing pipeline</h2>
+              <p>Capture, index, retrieve, context, research, capabilities, and trust work.</p>
             </div>
-            <svg id="graphSvg" role="img" aria-label="Memory relationship graph"></svg>
+            <span id="signatureChip" class="chip">signature</span>
           </div>
+          <svg id="processSvg" role="img" aria-label="Memory processing pipeline"></svg>
+          <div id="stageList" class="stage-list"></div>
+        </section>
 
-          <aside class="inspector">
-            <section class="panel">
-              <h2>Search memory</h2>
-              <div class="query-row">
-                <input id="queryInput" placeholder="heap watchdog, source flip, file path..." />
-                <button id="searchBtn" type="button">Search</button>
+        <section class="workbench">
+          <section class="panel search-panel">
+            <div class="panel-head compact">
+              <div>
+                <h2>Search memory</h2>
+                <p>Exact lookup for IDs, file paths, errors, and known tokens.</p>
               </div>
-              <div id="searchResults" class="result-list"></div>
-            </section>
+            </div>
+            <div class="query-row">
+              <input id="queryInput" placeholder="heap watchdog, source flip, file path..." />
+              <button id="searchBtn" type="button">Search</button>
+            </div>
+            <div id="searchSummary" class="summary-strip"></div>
+            <div id="searchResults" class="result-list"></div>
+          </section>
 
-            <section class="panel">
-              <h2>Context preview</h2>
-              <button id="contextBtn" type="button">Get context</button>
+          <section class="panel context-panel">
+            <div class="panel-head compact">
+              <div>
+                <h2>Context preview</h2>
+                <p>Human summary first. Raw XML stays collapsed.</p>
+              </div>
+              <div class="button-row">
+                <button id="contextBtn" type="button">Explain</button>
+                <button id="rawContextBtn" type="button">Raw XML</button>
+              </div>
+            </div>
+            <div id="contextSummary" class="context-summary"></div>
+            <details class="raw-context">
+              <summary>Raw context</summary>
               <pre id="contextBox"></pre>
-            </section>
+            </details>
+          </section>
 
-            <section class="panel">
-              <h2>Selected node</h2>
-              <div id="nodeDetails" class="node-details">Click a graph node.</div>
-            </section>
-          </aside>
+          <section class="panel activity-panel">
+            <div class="panel-head compact">
+              <div>
+                <h2>Live activity</h2>
+                <p>Requests made by this UI and newest memory writes.</p>
+              </div>
+            </div>
+            <div id="activityLog" class="activity-log"></div>
+          </section>
+        </section>
+
+        <section class="map-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Memory object map</h2>
+              <p>Structural links are secondary; use this to inspect object families.</p>
+            </div>
+          </div>
+          <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
         </section>
 
         <section class="timeline-panel">
           <div class="panel-head">
             <div>
-              <h2>Live changes</h2>
-              <p>Newest memory objects across the workspace.</p>
+              <h2>Recent changes</h2>
+              <p>Newest memory objects grouped as human-readable events.</p>
             </div>
           </div>
           <div id="timeline" class="timeline"></div>
         </section>
       </section>
     </main>
-    <script src="/ui/app.js?v=20260430-graph-ui"></script>
+    <script src="/ui/app.js?v=20260430-process-ui2"></script>
   </body>
 </html>
