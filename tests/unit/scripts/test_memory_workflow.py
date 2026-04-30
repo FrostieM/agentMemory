@@ -5,6 +5,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 
 def _load_script(name: str) -> ModuleType:
     path = Path(__file__).parents[3] / "scripts" / name
@@ -25,6 +27,10 @@ def test_workflow_preflight_payload() -> None:
         files=["src/foo.py"],
         max_tokens=1200,
         historical=True,
+        capability_query=None,
+        role=[],
+        skill=[],
+        playbook=[],
     )
 
     payload = script._preflight_payload(args)
@@ -49,6 +55,16 @@ def test_workflow_completion_payloads_do_not_hide_task_state() -> None:
         status="done",
         next_action="Commit",
         importance=0.8,
+        role=[],
+        skill=[],
+        playbook=[],
+        verification=[],
+        decision_id=[],
+        theory_id=[],
+        experiment_id=[],
+        insight_id=[],
+        strict=False,
+        allow_episode_only=False,
     )
 
     payloads = script._completion_payloads(args)
@@ -57,6 +73,63 @@ def test_workflow_completion_payloads_do_not_hide_task_state() -> None:
     assert payloads["ingest_episode"]["raw_text"] == "Implemented and verified change."
     assert payloads["update_task_state"]["status"] == "done"
     assert payloads["update_task_state"]["next_action"] == "Commit"
+
+
+def test_workflow_strict_completion_records_role_trace_and_verification() -> None:
+    script = _load_script("memory_workflow.py")
+    args = argparse.Namespace(
+        workspace="project",
+        task_id="task-1",
+        goal="Finish task",
+        raw_text="Implemented hardening.",
+        status="done",
+        next_action="",
+        importance=0.8,
+        role=["Memory systems architect"],
+        skill=["Retrieval quality audit"],
+        playbook=[],
+        verification=["pytest tests/unit/maintenance/test_usage_feedback.py -q"],
+        decision_id=["dec_1"],
+        theory_id=[],
+        experiment_id=[],
+        insight_id=[],
+        strict=True,
+        allow_episode_only=False,
+    )
+
+    payloads = script._completion_payloads(args)
+    raw_text = payloads["ingest_episode"]["raw_text"]
+
+    assert "Role activation trace:" in raw_text
+    assert "Memory systems architect" in raw_text
+    assert "Verification evidence:" in raw_text
+    assert "dec_1" in raw_text
+
+
+def test_workflow_strict_completion_requires_verification() -> None:
+    script = _load_script("memory_workflow.py")
+    args = argparse.Namespace(
+        workspace="project",
+        task_id="task-1",
+        goal="Finish task",
+        raw_text="Implemented hardening.",
+        status="done",
+        next_action="",
+        importance=0.8,
+        role=["Memory systems architect"],
+        skill=[],
+        playbook=[],
+        verification=[],
+        decision_id=["dec_1"],
+        theory_id=[],
+        experiment_id=[],
+        insight_id=[],
+        strict=True,
+        allow_episode_only=False,
+    )
+
+    with pytest.raises(ValueError, match="--verification"):
+        script._completion_payloads(args)
 
 
 def test_workflow_headers_read_bearer_token(tmp_path: Path) -> None:

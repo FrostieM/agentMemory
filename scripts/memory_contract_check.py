@@ -29,7 +29,10 @@ _REQUIRED_CONTRACT_TOKENS = [
     "scripts/memory_hygiene.py",
     "scripts/memory_quality_gate.py",
     "scripts/memory_watchdog.py",
+    "scripts/memory_encoding_audit.py",
+    "scripts/memory_trend_report.py",
     "/memory/explain_context",
+    "/memory/record_usage_feedback",
 ]
 _DEFAULT_WORKSPACE_PATTERNS = [
     re.compile(r"workspace_id\s*=\s*['\"]default['\"]"),

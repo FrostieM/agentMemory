@@ -247,11 +247,21 @@ only with backup-first:
 If the project has a local retrieval sentinel YAML, run the watchdog:
 
 ```
-<VENV_PYTHON> <REPO_ROOT>/scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --sentinels <PROJECT_ROOT>/.agent_memory/retrieval_sentinels.yaml --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_watchdog.py --workspace-id <WORKSPACE_ID> --db <PROJECT_ROOT>/.agent_memory/memory.db --vectors <PROJECT_ROOT>/.agent_memory/vectors.lance --json
 ```
 
-The watchdog is detect-only. It may create a maintenance event when memory is
-warning/degraded, but it must not repair indexes or change research content.
+The watchdog auto-discovers `<PROJECT_ROOT>/.agent_memory/retrieval_sentinels.yaml`.
+Use `--require-sentinels` when project memory should not be trusted without
+retrieval proof. It is detect-only. It may create a maintenance event when
+memory is warning/degraded, but it must not repair indexes or change research
+content.
+
+Check stored text encoding and recent trust trend:
+
+```
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_encoding_audit.py --workspace <WORKSPACE_ID> --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_trend_report.py --db-path <PROJECT_ROOT>/.agent_memory/memory.db --json
+```
 
 Compare watchdog or audit artifacts when the status changes:
 
@@ -288,7 +298,7 @@ the workflow wrapper:
 
 ```
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> preflight --query "task summary" --task-id <TASK_ID> --json
-<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> complete --task-id <TASK_ID> --goal "task goal" --raw-text "what was done and verified" --json
+<VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> complete --task-id <TASK_ID> --goal "task goal" --raw-text "what was done and verified" --role "active role" --skill "active skill" --verification "exact check that passed" --allow-episode-only --strict --json
 ```
 
 b) The tool is not in your tool list (you cannot call it) — every MCP

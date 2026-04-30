@@ -44,6 +44,7 @@ def test_known_tools_present() -> None:
         "memory_upsert_agent_skill",
         "memory_upsert_agent_playbook",
         "memory_list_agent_capabilities",
+        "memory_record_usage_feedback",
     }
     assert expected.issubset({tool.name for tool in TOOLS})
 

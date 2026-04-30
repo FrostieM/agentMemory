@@ -401,9 +401,24 @@ python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memo
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --sentinels .agent_memory/retrieval_sentinels.yaml --json
 ```
 
-The watchdog writes JSON artifacts under `.agent_memory/audit_runs/`, updates
-the workspace manifest audit timestamp, and opens a maintenance event only when
-integrity, retrieval quality, or hygiene is degraded/warning. It never repairs.
+The watchdog auto-discovers `.agent_memory/retrieval_sentinels.yaml` next to
+the selected DB. Use `--require-sentinels` when a project memory cannot be
+trusted without live retrieval examples. The watchdog writes JSON artifacts
+under `.agent_memory/audit_runs/`, updates the workspace manifest audit
+timestamp, and opens a maintenance event only when integrity, retrieval quality,
+or hygiene is degraded/warning. It never repairs.
+
+Audit stored text encoding and inspect trust trends:
+
+```bash
+python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --repair --backup-first --json
+python scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json
+```
+
+Encoding repair is explicit and backup-first. It rebuilds FTS when stored chunk
+text is repaired. The trend report reads `.agent_memory/audit_runs/` artifacts
+so a newly green check does not hide earlier degradation.
 
 Compare two trust reports:
 
@@ -440,20 +455,22 @@ python scripts/memory_trust_dashboard.py --workspace <workspace_id> --db-path .a
 `memory_contract_check.py` catches stale generic instructions such as hard-coded
 `default` workspace examples. `memory_backup_restore_check.py` copies the DB and
 vector store to a temporary restore target and audits the copy. The trust
-dashboard composes the audit, hygiene, watchdog, MCP, candidate, contract, and
-restore checks into one report.
+dashboard composes the audit, hygiene, watchdog, encoding, trend, MCP,
+candidate, contract, and restore checks into one report.
 
 Agent workflow wrapper:
 
 ```bash
 python scripts/memory_workflow.py --workspace <workspace_id> preflight --query "task summary" --task-id task-123 --json
-python scripts/memory_workflow.py --workspace <workspace_id> complete --task-id task-123 --goal "Fix issue" --raw-text "Implemented and verified ..." --json
+python scripts/memory_workflow.py --workspace <workspace_id> complete --task-id task-123 --goal "Fix issue" --raw-text "Implemented and verified ..." --role "Runtime operator" --skill "Live flow audit" --verification "pytest -q" --allow-episode-only --strict --json
 ```
 
 Use `preflight` before non-trivial work to fetch the same context an agent
 should inspect. Use `complete` after work to write an episode and task state in
-one step. Add `--api-token-file .agent_memory/token` when optional HTTP token
-auth is enabled, and `--dry-run` to inspect payloads without writing.
+one step. Strict completion records a role/skill/playbook activation trace,
+verification evidence, and linked memory ids when available. Add
+`--api-token-file .agent_memory/token` when optional HTTP token auth is enabled,
+and `--dry-run` to inspect payloads without writing.
 
 Sentinel files are YAML lists. They should contain project-specific ids kept
 outside generic docs, for example:
@@ -511,6 +528,9 @@ Use the strict gate in CI/deploy pipelines:
 ```bash
 python scripts/memory_ci_gate.py --workspace <workspace_id> --db-path .agent_memory/memory.db --vector-path .agent_memory/vectors.lance
 ```
+
+The CI gate now checks retrieval sentinels when it can discover them. Without
+sentinels it emits a warning, which fails unless `--allow-warnings` is used.
 
 To start over with a clean memory:
 

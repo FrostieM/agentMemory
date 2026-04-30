@@ -77,6 +77,7 @@ from agent_memory_lite.ingestion.research_writer import (
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.logging_setup import configure_logging, get_logger
+from agent_memory_lite.maintenance.usage_feedback import record_usage_feedback
 from agent_memory_lite.models.behavior import BehaviorInstructionIn
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.capability_links import CapabilityLinkIn
@@ -814,6 +815,30 @@ _TOOLS: list[types.Tool] = [
                 "include_inactive": {"type": "boolean", "default": False},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 6},
             },
+        },
+    ),
+    types.Tool(
+        name="memory_record_usage_feedback",
+        description=(
+            "Record whether a retrieved memory item was helpful or noisy so "
+            "future ranking can improve."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "source_type": {
+                    "type": "string",
+                    "enum": ["chunk", "decision", "theory", "insight", "capability"],
+                    "default": "chunk",
+                },
+                "source_id": {"type": "string", "minLength": 1},
+                "query": {"type": "string"},
+                "usefulness": {"type": "number", "minimum": -1.0, "maximum": 1.0},
+                "task_id": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["source_id", "usefulness"],
         },
     ),
 ]
@@ -1629,6 +1654,21 @@ def _handle_list_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _handle_record_usage_feedback(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _with_workspace(args)
+    feedback = record_usage_feedback(
+        _runtime.db(),
+        workspace_id=str(payload["workspace_id"]),
+        source_type=str(payload.get("source_type", "chunk")),
+        source_id=str(payload["source_id"]),
+        query=str(payload.get("query", "")),
+        usefulness=float(payload["usefulness"]),
+        task_id=payload.get("task_id"),
+        notes=str(payload.get("notes", "")),
+    )
+    return feedback.to_dict()
+
+
 _HANDLERS = {
     "memory_get_context": _handle_get_context,
     "memory_search": _handle_search,
@@ -1662,6 +1702,7 @@ _HANDLERS = {
     "memory_upsert_agent_skill": _handle_upsert_agent_skill,
     "memory_upsert_agent_playbook": _handle_upsert_agent_playbook,
     "memory_list_agent_capabilities": _handle_list_agent_capabilities,
+    "memory_record_usage_feedback": _handle_record_usage_feedback,
 }
 
 

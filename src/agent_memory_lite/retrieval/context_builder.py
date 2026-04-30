@@ -29,6 +29,7 @@ from datetime import UTC
 from xml.sax.saxutils import escape, quoteattr
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.maintenance.usage_feedback import chunk_feedback_boosts
 from agent_memory_lite.models.behavior import BehaviorInstruction, BehaviorInstructionSet
 from agent_memory_lite.models.capabilities import (
     AgentCapabilities,
@@ -206,6 +207,32 @@ def filter_context_hits(hits: list[ScoredHit], *, historical: bool) -> list[Scor
     """
 
     return [hit for hit in hits if _keep_context_hit(hit, historical=historical)]
+
+
+def _apply_usage_feedback(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    hits: list[ScoredHit],
+) -> list[ScoredHit]:
+    boosts = chunk_feedback_boosts(
+        conn,
+        workspace_id=workspace_id,
+        chunk_ids=[hit.id for hit in hits],
+    )
+    if not boosts:
+        return hits
+    adjusted: list[ScoredHit] = []
+    for hit in hits:
+        boost = boosts.get(hit.id, 0.0)
+        if boost == 0.0:
+            adjusted.append(hit)
+            continue
+        metadata = dict(hit.metadata)
+        metadata["usage_feedback_boost"] = round(boost, 4)
+        adjusted.append(hit.model_copy(update={"score": hit.score + boost, "metadata": metadata}))
+    adjusted.sort(key=lambda item: item.score, reverse=True)
+    return adjusted
 
 
 def _chunk_reserve_tokens(max_tokens: int, *, has_hits: bool) -> int:
@@ -851,10 +878,10 @@ def _fit_structured_sections(
             facts=facts,
         )
     )
-    for cap in capability_variants:
-        for agenda in agenda_variants:
-            for theory_items in theory_variants:
-                for decision_items in decision_variants:
+    for agenda in agenda_variants:
+        for theory_items in theory_variants:
+            for decision_items in decision_variants:
+                for cap in capability_variants:
                     text = _render_structured_only(
                         core=core,
                         task=task,
@@ -893,7 +920,8 @@ def build_context(
     )
     fused = reciprocal_rank_fusion(rankings)
     scored = score_candidates(fused)
-    filtered = filter_active(scored, historical=query.historical)
+    feedback_scored = _apply_usage_feedback(conn, workspace_id=query.workspace_id, hits=scored)
+    filtered = filter_active(feedback_scored, historical=query.historical)
     quality_filtered = filter_context_hits(filtered, historical=query.historical)
     clipped_hits = _clip_hits_for_context(quality_filtered)
 

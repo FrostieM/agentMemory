@@ -43,7 +43,14 @@ After either prompt finishes, the agent should:
    with `--apply --backup-first` only after reviewing the dry-run output.
 10. For a one-command trust report, run
    `scripts/memory_trust_dashboard.py --workspace <workspace_id> --project-root . --json`.
-11. Continue with whatever you wanted to do.
+11. Confirm retrieval sentinels are auto-discovered from
+   `.agent_memory/retrieval_sentinels.yaml` when the project has known memory
+   examples; use `--require-sentinels` for strict trust checks.
+12. Run `scripts/memory_encoding_audit.py --workspace <workspace_id> --json`
+   and repair only with `--repair --backup-first` if stored text is corrupted.
+13. Use `scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json`
+   to confirm the latest trust run is not hiding recent degradation.
+14. Continue with whatever you wanted to do.
 
 For research-heavy projects, the capture prompt also tells the agent to preserve
 research hypotheses, snapshots, experiments, results, and insights with the

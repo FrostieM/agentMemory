@@ -669,11 +669,16 @@ python scripts/memory_candidate_triage.py --workspace <workspace_id> --json
 python scripts/memory_auto_triage.py --workspace <workspace_id> --json
 python scripts/memory_watchdog.py --workspace-id <workspace_id> --db .agent_memory/memory.db --vectors .agent_memory/vectors.lance --json
 python scripts/memory_benchmark.py --workspace <workspace_id> --db-path .agent_memory/memory.db --query "workspace manifest" --runs 3 --json
+python scripts/memory_encoding_audit.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
+python scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json
 ```
 
 For known live-memory sentinel retrieval checks, pass a project-local YAML file
 to `--sentinels`. The file should contain expected chunk/theory/decision ids
 that must appear in `memory_get_context` for exact and paraphrased queries.
+Watchdog, dashboard, and CI gate also auto-discover
+`.agent_memory/retrieval_sentinels.yaml` next to the selected DB. Use
+`--require-sentinels` when a project must not be trusted without sentinel proof.
 The watchdog retrieval report includes `recall_at_k`, `mrr`, `ndcg_at_k`, and
 `context_hit_rate`.
 Use `memory_diff.py --before <old.json> --after <new.json> --json` to compare
@@ -710,6 +715,15 @@ contract drift, and restore proof.
 Use `memory_workflow.py preflight` before a non-trivial task when the agent
 does not have MCP tools but can reach HTTP. Use `memory_workflow.py complete`
 after work to write an episode and task state through the same HTTP surface.
+In strict mode, pass the active `--role`, `--skill`, or `--playbook`, at least
+one `--verification`, and linked memory ids when the work changed a decision,
+theory, experiment, or insight. This turns role/skill influence into an audit
+trace instead of a passive suggestion.
+
+Use `POST /memory/record_usage_feedback` when a returned chunk, decision,
+theory, insight, or capability was clearly useful or noisy. Chunk feedback is
+bounded and only adjusts future retrieval ranking; it never overrides FTS/vector
+evidence.
 
 ## How to call
 

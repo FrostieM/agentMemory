@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -21,6 +22,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--vector-path", "--vectors", dest="vector_path", default=None)
     parser.add_argument("--project-root", default=None)
     parser.add_argument("--sentinels", default=None)
+    parser.add_argument(
+        "--require-sentinels",
+        action="store_true",
+        help="Treat missing project retrieval sentinels as a trust failure.",
+    )
     parser.add_argument("--allow-project-name", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-vector", action="store_true")
@@ -94,9 +100,16 @@ def _base_args(settings: Settings) -> list[str]:
     ]
 
 
-def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
+def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
     settings = _settings(args)
     components: dict[str, dict[str, Any]] = {}
+    project_root = Path(args.project_root).resolve() if args.project_root else None
+    sentinel_discovery = discover_sentinel_file(
+        explicit_path=args.sentinels,
+        db_path=settings.db_path,
+        project_root=project_root,
+        require=args.require_sentinels,
+    )
 
     audit_cmd = [
         sys.executable,
@@ -116,6 +129,14 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
     ]
     components["hygiene"] = _run_json("memory_hygiene", hygiene_cmd, ok_codes={0, 2})
 
+    encoding_cmd = [
+        sys.executable,
+        _script("memory_encoding_audit.py"),
+        *_base_args(settings),
+        "--json",
+    ]
+    components["encoding"] = _run_json("memory_encoding_audit", encoding_cmd, ok_codes={0, 2})
+
     watchdog_cmd = [
         sys.executable,
         _script("memory_watchdog.py"),
@@ -131,9 +152,23 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
     ]
     if args.no_vector:
         watchdog_cmd.append("--no-vector")
-    if args.sentinels:
-        watchdog_cmd.extend(["--sentinels", args.sentinels])
+    if sentinel_discovery.path is not None:
+        watchdog_cmd.extend(["--sentinels", str(sentinel_discovery.path)])
+    if args.require_sentinels:
+        watchdog_cmd.append("--require-sentinels")
     components["watchdog"] = _run_json("memory_watchdog", watchdog_cmd, ok_codes={0, 2})
+    components["watchdog"]["sentinels_discovered"] = sentinel_discovery.to_dict()
+    if (
+        components["watchdog"].get("retrieval_eval", {}).get("status") == "unknown"
+        and sentinel_discovery.path is None
+    ):
+        components["watchdog"].setdefault("warnings", []).append(
+            "retrieval sentinel evals were not run; add .agent_memory/retrieval_sentinels.yaml"
+        )
+        components["watchdog"]["status"] = "warning"
+    if sentinel_discovery.warnings:
+        components["watchdog"].setdefault("failures", []).extend(sentinel_discovery.warnings)
+        components["watchdog"]["status"] = "degraded"
 
     if not args.skip_mcp:
         mcp_cmd = [
@@ -185,7 +220,15 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
             ok_codes={0, 2},
         )
 
-    project_root = Path(args.project_root).resolve() if args.project_root else None
+    trend_cmd = [
+        sys.executable,
+        _script("memory_trend_report.py"),
+        "--db-path",
+        str(settings.db_path),
+        "--json",
+    ]
+    components["trend"] = _run_json("memory_trend_report", trend_cmd, ok_codes={0, 2})
+
     if project_root is not None and not args.skip_contract:
         contract_cmd = [
             sys.executable,
@@ -218,6 +261,7 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
         "workspace_id": settings.workspace_id,
         "db_path": str(settings.db_path),
         "vector_path": str(settings.vector_db_path),
+        "sentinels": sentinel_discovery.to_dict(),
         "components": components,
         "failures": failures,
         "warnings": warnings,

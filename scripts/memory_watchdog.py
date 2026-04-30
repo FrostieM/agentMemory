@@ -20,6 +20,7 @@ from agent_memory_lite.maintenance.retrieval_quality import (
     load_retrieval_quality_cases,
     run_retrieval_quality_evals,
 )
+from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
 from agent_memory_lite.models.enums import MaintenanceEventStatus, MaintenanceSeverity
 from agent_memory_lite.models.maintenance import MaintenanceEventIn
 from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
@@ -38,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--db", "--db-path", dest="db_path", default=None)
     parser.add_argument("--vectors", "--vector-path", dest="vector_path", default=None)
     parser.add_argument("--sentinels", default=None, help="YAML retrieval quality cases.")
+    parser.add_argument(
+        "--require-sentinels",
+        action="store_true",
+        help="Degrade when no retrieval sentinel file is found.",
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-vector", action="store_true")
     parser.add_argument("--migrate", action="store_true")
@@ -146,8 +152,15 @@ def main(argv: list[str] | None = None) -> int:
                     workspace_id=settings.workspace_id,
                     allow_default_workspace=not settings.forbid_default_workspace,
                 )
+        sentinel_discovery = discover_sentinel_file(
+            explicit_path=args.sentinels,
+            db_path=settings.db_path,
+            require=args.require_sentinels,
+        )
         sentinel_cases = (
-            load_retrieval_quality_cases(Path(args.sentinels)) if args.sentinels else []
+            load_retrieval_quality_cases(sentinel_discovery.path)
+            if sentinel_discovery.path is not None
+            else []
         )
         integrity = run_integrity_audit(
             conn,
@@ -169,6 +182,20 @@ def main(argv: list[str] | None = None) -> int:
             embedding_provider=provider,
             vector_store=store,
         )
+        sentinel_failures = list(sentinel_discovery.warnings)
+        if sentinel_failures:
+            retrieval_eval = retrieval_eval.__class__(
+                status="degraded",
+                workspace_id=retrieval_eval.workspace_id,
+                cases_run=retrieval_eval.cases_run,
+                cases_passed=retrieval_eval.cases_passed,
+                recall_at_k=retrieval_eval.recall_at_k,
+                mrr=retrieval_eval.mrr,
+                ndcg_at_k=retrieval_eval.ndcg_at_k,
+                context_hit_rate=retrieval_eval.context_hit_rate,
+                failures=[*retrieval_eval.failures, *sentinel_failures],
+                results=retrieval_eval.results,
+            )
         hygiene = run_hygiene_report(conn, workspace_id=settings.workspace_id)
         status = _combined_status(integrity.status, retrieval_eval.status, hygiene.status)
         update_workspace_manifest_audit(conn, status=status, audited_at=timestamp)
@@ -181,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             "db_path": str(settings.db_path),
             "vector_path": str(settings.vector_db_path),
             "manifest": manifest.model_dump() if manifest is not None else None,
+            "sentinels": sentinel_discovery.to_dict(),
             "integrity": integrity.to_dict(),
             "retrieval_eval": retrieval_eval.to_dict(),
             "hygiene": hygiene.to_dict(),

@@ -37,6 +37,7 @@ from agent_memory_lite.ingestion.research_writer import (
 )
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
+from agent_memory_lite.maintenance.usage_feedback import record_usage_feedback
 from agent_memory_lite.models.behavior import BehaviorInstructionIn
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentRoleIn, AgentSkillIn
 from agent_memory_lite.models.capability_links import CapabilityLinkIn
@@ -857,6 +858,25 @@ def _memory_list_agent_capabilities(
     }
 
 
+def _memory_record_usage_feedback(
+    *,
+    conn: sqlite3.Connection,
+    payload: dict[str, Any],
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    feedback = record_usage_feedback(
+        conn,
+        workspace_id=str(payload.get("workspace_id", "default")),
+        source_type=str(payload.get("source_type", "chunk")),
+        source_id=str(payload["source_id"]),
+        query=str(payload.get("query", "")),
+        usefulness=float(payload["usefulness"]),
+        task_id=payload.get("task_id"),
+        notes=str(payload.get("notes", "")),
+    )
+    return feedback.to_dict()
+
+
 def _memory_upsert_behavior_instruction(
     *,
     conn: sqlite3.Connection,
@@ -1055,6 +1075,11 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_list_agent_capabilities",
         description="List relevant roles, skills, and playbooks for a query.",
         handler=_memory_list_agent_capabilities,
+    ),
+    ToolDefinition(
+        name="memory_record_usage_feedback",
+        description="Record whether a retrieved memory item was helpful or noisy so future ranking can improve.",
+        handler=_memory_record_usage_feedback,
     ),
 )
 

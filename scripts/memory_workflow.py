@@ -27,6 +27,10 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("--max-tokens", type=int, default=2500)
     preflight.add_argument("--historical", action="store_true")
     preflight.add_argument("--file", dest="files", action="append", default=[])
+    preflight.add_argument("--capability-query", default=None)
+    preflight.add_argument("--role", action="append", default=[])
+    preflight.add_argument("--skill", action="append", default=[])
+    preflight.add_argument("--playbook", action="append", default=[])
     preflight.add_argument("--dry-run", action="store_true")
     preflight.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
@@ -37,6 +41,16 @@ def _parser() -> argparse.ArgumentParser:
     complete.add_argument("--status", default="done")
     complete.add_argument("--next-action", default="")
     complete.add_argument("--importance", type=float, default=0.7)
+    complete.add_argument("--role", action="append", default=[])
+    complete.add_argument("--skill", action="append", default=[])
+    complete.add_argument("--playbook", action="append", default=[])
+    complete.add_argument("--verification", action="append", default=[])
+    complete.add_argument("--decision-id", action="append", default=[])
+    complete.add_argument("--theory-id", action="append", default=[])
+    complete.add_argument("--experiment-id", action="append", default=[])
+    complete.add_argument("--insight-id", action="append", default=[])
+    complete.add_argument("--strict", action="store_true")
+    complete.add_argument("--allow-episode-only", action="store_true")
     complete.add_argument("--dry-run", action="store_true")
     complete.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     return parser
@@ -76,13 +90,76 @@ def _preflight_payload(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _role_trace(args: argparse.Namespace) -> dict[str, list[str]]:
+    return {
+        "roles": list(dict.fromkeys(args.role)),
+        "skills": list(dict.fromkeys(args.skill)),
+        "playbooks": list(dict.fromkeys(args.playbook)),
+    }
+
+
+def _linked_memory(args: argparse.Namespace) -> dict[str, list[str]]:
+    return {
+        "decisions": list(dict.fromkeys(args.decision_id)),
+        "theories": list(dict.fromkeys(args.theory_id)),
+        "experiments": list(dict.fromkeys(args.experiment_id)),
+        "insights": list(dict.fromkeys(args.insight_id)),
+    }
+
+
+def _nonempty_link_count(items: dict[str, list[str]]) -> int:
+    return sum(len(values) for values in items.values())
+
+
+def _format_completion_text(args: argparse.Namespace) -> str:
+    lines = [args.raw_text.strip()]
+    trace = _role_trace(args)
+    linked = _linked_memory(args)
+    if _nonempty_link_count(trace):
+        lines.append("")
+        lines.append("Role activation trace:")
+        for label, values in trace.items():
+            if values:
+                lines.append(f"- {label}: {', '.join(values)}")
+    if args.verification:
+        lines.append("")
+        lines.append("Verification evidence:")
+        for item in args.verification:
+            lines.append(f"- {item}")
+    if _nonempty_link_count(linked):
+        lines.append("")
+        lines.append("Linked memory objects:")
+        for label, values in linked.items():
+            if values:
+                lines.append(f"- {label}: {', '.join(values)}")
+    return "\n".join(lines)
+
+
+def _validate_completion(args: argparse.Namespace) -> None:
+    if not args.strict:
+        return
+    if not args.raw_text.strip():
+        raise ValueError("--raw-text is required in strict mode")
+    if not args.verification:
+        raise ValueError("--verification is required in strict mode")
+    if _nonempty_link_count(_role_trace(args)) == 0:
+        raise ValueError("--role, --skill, or --playbook is required in strict mode")
+    if _nonempty_link_count(_linked_memory(args)) == 0 and not args.allow_episode_only:
+        raise ValueError(
+            "strict mode requires --decision-id/--theory-id/--experiment-id/--insight-id "
+            "or explicit --allow-episode-only"
+        )
+
+
 def _completion_payloads(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    _validate_completion(args)
+    raw_text = _format_completion_text(args)
     return {
         "ingest_episode": {
             "workspace_id": args.workspace,
             "task_id": args.task_id,
             "source_type": "agent_action",
-            "raw_text": args.raw_text,
+            "raw_text": raw_text,
             "trust_level": "agent_observed",
             "importance": args.importance,
         },
@@ -92,7 +169,7 @@ def _completion_payloads(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
             "goal": args.goal,
             "status": args.status,
             "current_plan": [],
-            "completed_steps": [args.raw_text],
+            "completed_steps": [raw_text],
             "next_action": args.next_action or None,
             "blockers": [],
             "files_in_scope": [],
@@ -115,18 +192,38 @@ def _print(payload: dict[str, Any], *, as_json: bool) -> None:
 
 def _run_preflight(args: argparse.Namespace, headers: dict[str, str]) -> dict[str, Any]:
     payload = _preflight_payload(args)
+    capability_payload = {
+        "workspace_id": args.workspace,
+        "query": args.capability_query or args.query,
+        "limit": 8,
+    }
     if args.dry_run:
-        return {"status": "ok", "command": "preflight", "dry_run": True, "request": payload}
+        return {
+            "status": "ok",
+            "command": "preflight",
+            "dry_run": True,
+            "request": payload,
+            "capability_request": capability_payload,
+            "role_activation_trace": _role_trace(args),
+        }
     with httpx.Client(base_url=args.base_url, timeout=30.0) as client:
         health = client.get("/health")
         health.raise_for_status()
         context = _post_json(client, "/memory/get_context", payload, headers=headers)
+        capabilities = _post_json(
+            client,
+            "/memory/list_agent_capabilities",
+            capability_payload,
+            headers=headers,
+        )
     return {
         "status": "ok",
         "command": "preflight",
         "health": health.json(),
         "context_text": context.get("context_text", ""),
         "sources": context.get("sources", []),
+        "role_activation_trace": _role_trace(args),
+        "capability_candidates": capabilities,
     }
 
 
@@ -150,6 +247,10 @@ def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str
     return {
         "status": "ok",
         "command": "complete",
+        "strict": args.strict,
+        "role_activation_trace": _role_trace(args),
+        "verification": list(args.verification),
+        "linked_memory": _linked_memory(args),
         "episode_id": episode.get("episode_id"),
         "chunk_id": episode.get("chunk_id"),
         "candidates_written": episode.get("candidates_written"),

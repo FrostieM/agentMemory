@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.ingestion.capability_writer import upsert_agent_role
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
+from agent_memory_lite.ingestion.research_writer import write_experiment
+from agent_memory_lite.ingestion.theory_writer import write_theory
 from agent_memory_lite.maintenance.retrieval_quality import (
     RetrievalQualityCase,
     run_retrieval_quality_evals,
 )
+from agent_memory_lite.models.capabilities import AgentRoleIn
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
+from agent_memory_lite.models.research import ExperimentIn
+from agent_memory_lite.models.retrieval import RetrievalQuery
+from agent_memory_lite.models.theories import TheoryIn
+from agent_memory_lite.retrieval.context_builder import build_context
 
 
 def test_retrieval_quality_detects_expected_chunk_and_sources(
@@ -72,3 +80,51 @@ def test_retrieval_quality_degrades_on_missing_expected_id(
 
     assert report.status == "degraded"
     assert report.failures
+
+
+def test_context_budget_prefers_relevant_research_agenda_over_capability_block(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    write_theory(
+        applied_conn,
+        TheoryIn(
+            workspace_id="project-a",
+            title="Shadow bias theory",
+            claim="Shadow can overstate real paper edge.",
+            validation_criteria=["paired cohort delta"],
+            experiment_plan="Run paired cohort replay.",
+            importance=0.9,
+        ),
+    )
+    write_experiment(
+        applied_conn,
+        ExperimentIn(
+            workspace_id="project-a",
+            title="Shadow vs real-paper edge delta on paired-cohort",
+            hypothesis="Paired cohort delta is positive.",
+            cohort_definition="wallets with paired shadow and paper closes",
+            success_criteria={"min_wallets": 30},
+            priority=0.9,
+        ),
+    )
+    upsert_agent_role(
+        applied_conn,
+        AgentRoleIn(
+            workspace_id="project-a",
+            name="Very verbose research operator",
+            purpose=" ".join(["long capability text"] * 140),
+            confidence=0.95,
+        ),
+    )
+
+    built = build_context(
+        applied_conn,
+        RetrievalQuery(
+            workspace_id="project-a",
+            query="shadow versus real paper edge delta paired cohort experiment",
+            max_tokens=1800,
+        ),
+    )
+
+    assert "Shadow vs real-paper edge delta on paired-cohort" in built.text
+    assert "<research_agenda>" in built.text

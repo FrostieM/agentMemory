@@ -23,7 +23,8 @@ def test_contract_check_detects_hard_coded_default_workspace(tmp_path: Path) -> 
 memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
-scripts/memory_quality_gate.py /memory/explain_context
+scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
+scripts/memory_trend_report.py /memory/explain_context /memory/record_usage_feedback
 {"workspace_id":"default"}
 <!-- agent-memory-lite-contract:end -->
 """,
@@ -51,7 +52,8 @@ Use workspace_id="<workspace_id>".
 memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
-scripts/memory_quality_gate.py /memory/explain_context
+scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
+scripts/memory_trend_report.py /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,
         encoding="utf-8",
@@ -81,7 +83,8 @@ migrating them back to copyBot.
 memory_get_context memory_search memory_ingest_episode memory_write_theory
 memory_upsert_behavior_instruction memory_list_agent_capabilities memory_link_capability
 scripts/memory_audit.py scripts/memory_hygiene.py scripts/memory_watchdog.py
-scripts/memory_quality_gate.py /memory/explain_context
+scripts/memory_quality_gate.py scripts/memory_encoding_audit.py
+scripts/memory_trend_report.py /memory/explain_context /memory/record_usage_feedback
 <!-- agent-memory-lite-contract:end -->
 """,
         encoding="utf-8",
