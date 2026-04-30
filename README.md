@@ -118,7 +118,13 @@ to test those theories:
 
 `memory_get_context` query-ranks and caps active decisions before rendering
 theories and agenda, so old architectural choices do not bury current research
-work as the memory grows.
+work as the memory grows. The highest-ranked decisions that remain in context
+are rendered with full decision text, and low-confidence stale retrieved chunks
+are suppressed unless the caller requests `historical=true` or the hit is an
+exact top FTS match.
+
+Use `POST /memory/list_decisions` when you need a topic-level view such as
+"decisions about live execution" and do not already know the decision id.
 
 ## Agent capability memory
 

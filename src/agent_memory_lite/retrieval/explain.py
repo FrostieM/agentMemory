@@ -15,6 +15,7 @@ from agent_memory_lite.retrieval.context_builder import (
     MAX_FTS_HITS,
     MAX_VECTOR_HITS,
     build_context,
+    filter_context_hits,
 )
 from agent_memory_lite.retrieval.filters import filter_active
 from agent_memory_lite.retrieval.fusion_rrf import reciprocal_rank_fusion
@@ -185,6 +186,8 @@ def explain_context(
         score_candidates(reciprocal_rank_fusion(rankings)),
         historical=query.historical,
     )
+    quality_filtered = filter_context_hits(scored, historical=query.historical)
+    quality_ids = {hit.id for hit in quality_filtered}
     built = build_context(
         conn,
         query,
@@ -215,7 +218,11 @@ def explain_context(
             included=hit.id in included,
             reason="included_in_context"
             if hit.id in included
-            else "not_in_final_context_budget_or_rank",
+            else (
+                "suppressed_low_quality_or_stale"
+                if hit.id not in quality_ids
+                else "not_in_final_context_budget_or_rank"
+            ),
             path=hit.path,
             metadata=hit.metadata,
         )

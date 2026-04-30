@@ -156,7 +156,11 @@ The envelope contains, in priority order:
 - `<retrieved_chunks>`: FTS + vector hits via reciprocal rank fusion.
 
 `<active_decisions>` is query-ranked and capped so durable decisions remain
-useful without burying current theories and research agenda items.
+useful without burying current theories and research agenda items. The highest
+ranked decisions that remain in context are rendered with full decision text so
+critical endings are not silently clipped. `<retrieved_chunks>` suppresses
+stale low-score noise in normal mode while preserving exact top FTS hits; use
+`historical=true` when you intentionally need older chunks.
 
 ### POST /memory/explain_context (read - retrieval explainability)
 
@@ -181,6 +185,21 @@ counts, and whether a scored chunk was included in the final context.
 ```
 
 Use this for exact symbol/path/error-string lookup. Results are BM25 ordered.
+
+### POST /memory/list_decisions (read - topic-level decision lookup)
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "query": "live execution",
+  "include_superseded": false,
+  "limit": 10
+}
+```
+
+Use this when you need the global view of committed architectural choices for a
+topic and do not know the decision id yet. Set `include_superseded=true` for
+architecture archaeology before changing a design.
 
 ### POST /memory/ingest_episode (write - every important action)
 
@@ -604,6 +623,11 @@ unfixed.
 Operational endpoints. Use `/health` to confirm the service is up.
 `/health.retrieval_integrity` reports `status`, `failures`, `warnings`, counts,
 and repair hints. A warning is still a required review item.
+
+The optional `UserPromptSubmit` hook deduplicates identical prompt/context
+injections for a short TTL. Set `AGENT_MEMORY_HOOK_DEDUPE_TTL=0` only for hook
+debugging; normal agents should leave dedupe enabled so memory is not injected
+twice for the same prompt.
 
 If HTTP token auth is enabled, pass the local bearer token for `/memory/*`
 requests:

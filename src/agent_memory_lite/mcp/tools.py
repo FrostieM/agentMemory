@@ -57,6 +57,7 @@ from agent_memory_lite.repositories.behavior_repo import list_behavior_instructi
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
+from agent_memory_lite.repositories.decisions_repo import list_active_decisions, list_all_decisions
 from agent_memory_lite.repositories.maintenance_repo import (
     list_maintenance_events,
     resolve_maintenance_event,
@@ -71,6 +72,7 @@ from agent_memory_lite.repositories.theories_repo import (
     list_theories,
 )
 from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.utils.text_encoding import repair_common_mojibake
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
 
@@ -409,6 +411,40 @@ def _memory_write_decision(
 ) -> dict[str, Any]:
     decision = write_decision(conn, DecisionIn(**payload))
     return {"decision_id": decision.id, "status": decision.status.value}
+
+
+def _decision_payload(item: Any) -> dict[str, Any]:
+    return {
+        "decision_id": item.id,
+        "title": repair_common_mojibake(item.title),
+        "decision_text": repair_common_mojibake(item.decision_text),
+        "rationale": repair_common_mojibake(item.rationale) if item.rationale else None,
+        "status": item.status.value,
+        "supersedes_decision_id": item.supersedes_decision_id,
+        "source_episode_id": item.source_episode_id,
+        "confidence": item.confidence,
+        "importance": item.importance,
+        "valid_from": item.valid_from,
+        "valid_to": item.valid_to,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def _memory_list_decisions(
+    *,
+    conn: sqlite3.Connection,
+    workspace_id: str = "default",
+    query: str | None = None,
+    include_superseded: bool = False,
+    limit: int = 10,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    if include_superseded:
+        decisions = list_all_decisions(conn, workspace_id, query=query, limit=limit)
+    else:
+        decisions = list_active_decisions(conn, workspace_id, query=query, limit=limit)
+    return {"decisions": [_decision_payload(item) for item in decisions]}
 
 
 def _memory_update_task_state(
@@ -929,6 +965,11 @@ TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_write_decision",
         description="Record an architectural decision; supports supersedes chains.",
         handler=_memory_write_decision,
+    ),
+    ToolDefinition(
+        name="memory_list_decisions",
+        description="Search active or historical architectural decisions by topic.",
+        handler=_memory_list_decisions,
     ),
     ToolDefinition(
         name="memory_update_task_state",

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import UTC
 from xml.sax.saxutils import escape, quoteattr
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -71,6 +72,8 @@ from agent_memory_lite.retrieval.fusion_rrf import reciprocal_rank_fusion
 from agent_memory_lite.retrieval.normalize import NormalizedQuery, normalize
 from agent_memory_lite.retrieval.scoring import score_candidates
 from agent_memory_lite.retrieval.token_budget import fit_within_budget
+from agent_memory_lite.utils.text_encoding import repair_common_mojibake
+from agent_memory_lite.utils.time import now, parse_iso
 from agent_memory_lite.utils.tokens import estimate_tokens
 from agent_memory_lite.vector_store.base import VectorStore
 
@@ -90,9 +93,17 @@ MAX_COMMAND_CHARS = 180
 MAX_LIST_ITEMS = 1
 MAX_LIST_ITEM_CHARS = 140
 MAX_CHUNK_TEXT_CHARS = 1200
+MAX_FULL_DECISION_ITEMS = 3
 MIN_CHUNK_RESERVE_TOKENS = 384
 MAX_CHUNK_RESERVE_TOKENS = 1200
 STRUCTURED_SAFETY_RESERVE_TOKENS = 128
+LOW_CONFIDENCE_STALE_SCORE = 0.50
+LOW_CONFIDENCE_RECENT_SCORE = 0.35
+LOW_CONFIDENCE_VECTOR_SCORE = 0.25
+LOW_CONFIDENCE_STALE_DAYS = 14
+KEEP_EXACT_FTS_RANK_BELOW = 3
+MOJIBAKE_REPLACEMENT_MIN = 3
+MOJIBAKE_REPLACEMENT_RATIO = 0.005
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +130,7 @@ class BuiltContext:
 
 
 def _clip_text(text: str, max_chars: int) -> str:
+    text = repair_common_mojibake(text)
     if len(text) <= max_chars:
         return text
     suffix = " ... [truncated]"
@@ -140,6 +152,60 @@ def _clip_hits_for_context(hits: list[ScoredHit]) -> list[ScoredHit]:
     return [
         hit.model_copy(update={"text": _clip_text(hit.text, MAX_CHUNK_TEXT_CHARS)}) for hit in hits
     ]
+
+
+def _has_mojibake_noise(text: str) -> bool:
+    replacements = text.count("\ufffd")
+    if replacements < MOJIBAKE_REPLACEMENT_MIN:
+        return False
+    return replacements / max(len(text), 1) >= MOJIBAKE_REPLACEMENT_RATIO
+
+
+def _hit_age_days(hit: ScoredHit) -> float | None:
+    created_at = hit.metadata.get("created_at")
+    if not isinstance(created_at, str) or not created_at:
+        return None
+    try:
+        created = parse_iso(created_at)
+    except ValueError:
+        return None
+    current = now()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return max(0.0, (current - created).total_seconds() / 86400.0)
+
+
+def _is_exact_fts_hit(hit: ScoredHit) -> bool:
+    rank = hit.metadata.get("fts_rank")
+    return isinstance(rank, int) and 0 <= rank < KEEP_EXACT_FTS_RANK_BELOW
+
+
+def _keep_context_hit(hit: ScoredHit, *, historical: bool) -> bool:
+    if historical:
+        keep = True
+    elif _has_mojibake_noise(hit.text):
+        keep = False
+    elif _is_exact_fts_hit(hit) or hit.score >= LOW_CONFIDENCE_STALE_SCORE:
+        keep = True
+    else:
+        age_days = _hit_age_days(hit)
+        keep = hit.score >= LOW_CONFIDENCE_RECENT_SCORE or (
+            "vector" in hit.sources and hit.score >= LOW_CONFIDENCE_VECTOR_SCORE
+        )
+        if age_days is not None and age_days > LOW_CONFIDENCE_STALE_DAYS:
+            keep = False
+    return keep
+
+
+def filter_context_hits(hits: list[ScoredHit], *, historical: bool) -> list[ScoredHit]:
+    """Suppress stale low-confidence chunk noise before the context budget pass.
+
+    Exact FTS top hits are preserved even when old. Historical contexts also
+    preserve all hits because the caller explicitly requested old decisions and
+    evidence.
+    """
+
+    return [hit for hit in hits if _keep_context_hit(hit, historical=historical)]
 
 
 def _chunk_reserve_tokens(max_tokens: int, *, has_hits: bool) -> int:
@@ -218,15 +284,29 @@ def _render_decisions(items: list[Decision]) -> list[str]:
     if not items:
         return ["  <active_decisions/>"]
     lines = ["  <active_decisions>"]
-    for item in items:
+    for index, item in enumerate(items):
+        full_text = index < MAX_FULL_DECISION_ITEMS
         attrs = (
             f"id={quoteattr(item.id)} "
             f"confidence={quoteattr(f'{item.confidence:.2f}')} "
-            f"source={quoteattr(item.source_episode_id or '')}"
+            f"source={quoteattr(item.source_episode_id or '')} "
+            f"full_text={quoteattr(str(full_text).lower())}"
         )
         lines.append(f"    <decision {attrs}>")
         lines.append(f"      <title>{escape(_clip_text(item.title, MAX_TITLE_CHARS))}</title>")
-        lines.append(f"      <text>{escape(_clip_text(item.decision_text, MAX_TEXT_CHARS))}</text>")
+        decision_text = (
+            repair_common_mojibake(item.decision_text)
+            if full_text
+            else _clip_text(item.decision_text, MAX_TEXT_CHARS)
+        )
+        lines.append(f"      <text>{escape(decision_text)}</text>")
+        if item.rationale:
+            rationale = (
+                repair_common_mojibake(item.rationale)
+                if full_text
+                else _clip_text(item.rationale, MAX_TEXT_CHARS)
+            )
+            lines.append(f"      <rationale>{escape(rationale)}</rationale>")
         lines.append("    </decision>")
     lines.append("  </active_decisions>")
     return lines
@@ -814,7 +894,8 @@ def build_context(
     fused = reciprocal_rank_fusion(rankings)
     scored = score_candidates(fused)
     filtered = filter_active(scored, historical=query.historical)
-    clipped_hits = _clip_hits_for_context(filtered)
+    quality_filtered = filter_context_hits(filtered, historical=query.historical)
+    clipped_hits = _clip_hits_for_context(quality_filtered)
 
     facts = collect_graph(
         conn,

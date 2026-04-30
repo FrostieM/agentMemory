@@ -20,6 +20,9 @@ class ChunkFtsHit:
     path: str
     text: str
     summary: str | None
+    created_at: str
+    kind: str
+    episode_id: str | None
 
 
 def _sanitize(query: str) -> str:
@@ -48,10 +51,14 @@ def search_chunks_fts(
             bm25(chunks_fts)      AS score,
             chunks_fts.path       AS path,
             chunks_fts.text       AS text,
-            chunks_fts.summary    AS summary
+            chunks_fts.summary    AS summary,
+            chunks.created_at     AS created_at,
+            chunks.kind           AS kind,
+            chunks.episode_id     AS episode_id
         FROM chunks_fts
+        JOIN chunks ON chunks.id = chunks_fts.chunk_id
         WHERE chunks_fts MATCH ?
-          AND workspace_id = ?
+          AND chunks_fts.workspace_id = ?
         ORDER BY score
         LIMIT ?
         """,
@@ -65,6 +72,9 @@ def search_chunks_fts(
             path=str(row["path"] or ""),
             text=str(row["text"]),
             summary=row["summary"] if row["summary"] else None,
+            created_at=str(row["created_at"] or ""),
+            kind=str(row["kind"] or ""),
+            episode_id=str(row["episode_id"]) if row["episode_id"] else None,
         )
         for row in rows
     ]

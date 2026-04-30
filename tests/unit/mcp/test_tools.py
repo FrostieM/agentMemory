@@ -26,6 +26,7 @@ def test_known_tools_present() -> None:
         "memory_upsert_behavior_instruction",
         "memory_list_behavior_instructions",
         "memory_write_decision",
+        "memory_list_decisions",
         "memory_update_task_state",
         "memory_write_theory",
         "memory_add_theory_evidence",

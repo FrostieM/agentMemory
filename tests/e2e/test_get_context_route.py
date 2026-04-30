@@ -109,6 +109,36 @@ def test_get_context_limits_decisions_by_query(client: TestClient) -> None:
     assert text.count("<decision ") <= 4
 
 
+def test_get_context_keeps_full_text_for_top_decisions(client: TestClient) -> None:
+    tail_marker = "CRITICAL_DECISION_TAIL_event_loop_watchdog_cache_backed_health"
+    decision = client.post(
+        "/memory/write_decision",
+        json={
+            "workspace_id": "default",
+            "title": "Event loop watchdog decision",
+            "decision_text": " ".join(["The HTTP path must stay responsive."] * 30)
+            + f" {tail_marker}",
+            "rationale": "The operational agent needs the end of the decision, not only a clipped prefix.",
+            "importance": 0.95,
+        },
+    )
+    assert decision.status_code == 200, decision.text
+
+    response = client.post(
+        "/memory/get_context",
+        json={
+            "workspace_id": "default",
+            "query": "event loop watchdog cache backed health",
+            "max_tokens": 3000,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    text = response.json()["context_text"]
+    assert tail_marker in text
+    assert 'full_text="true"' in text
+
+
 def test_get_context_applies_budget_to_structured_sections(client: TestClient) -> None:
     long_text = " ".join(["structured context budget should stay bounded"] * 80)
     for index in range(8):

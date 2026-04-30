@@ -97,6 +97,7 @@ from agent_memory_lite.repositories.behavior_repo import list_behavior_instructi
 from agent_memory_lite.repositories.candidates_repo import list_candidates
 from agent_memory_lite.repositories.capabilities_repo import build_agent_capabilities
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
+from agent_memory_lite.repositories.decisions_repo import list_active_decisions, list_all_decisions
 from agent_memory_lite.repositories.maintenance_repo import (
     list_maintenance_events,
     resolve_maintenance_event,
@@ -109,6 +110,7 @@ from agent_memory_lite.repositories.research_repo import (
 from agent_memory_lite.repositories.theories_repo import list_evidence_for_theory, list_theories
 from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.utils.text_encoding import repair_common_mojibake
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.factory import get_vector_store
@@ -301,6 +303,22 @@ _TOOLS: list[types.Tool] = [
                 "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8},
             },
             "required": ["title", "decision_text"],
+        },
+    ),
+    types.Tool(
+        name="memory_list_decisions",
+        description=(
+            "Search active or historical architectural decisions by topic. Use this "
+            "when you need a global view such as decisions about live execution."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": _workspace_schema(),
+                "query": {"type": "string"},
+                "include_superseded": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
+            },
         },
     ),
     types.Tool(
@@ -1014,6 +1032,46 @@ def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _decision_payload(item: Any) -> dict[str, Any]:
+    return {
+        "decision_id": item.id,
+        "title": repair_common_mojibake(item.title),
+        "decision_text": repair_common_mojibake(item.decision_text),
+        "rationale": repair_common_mojibake(item.rationale) if item.rationale else None,
+        "status": item.status.value,
+        "supersedes_decision_id": item.supersedes_decision_id,
+        "source_episode_id": item.source_episode_id,
+        "confidence": item.confidence,
+        "importance": item.importance,
+        "valid_from": item.valid_from,
+        "valid_to": item.valid_to,
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
+def _handle_list_decisions(args: dict[str, Any]) -> dict[str, Any]:
+    workspace_id = _workspace_from_args(args)
+    query = args.get("query")
+    include_superseded = bool(args.get("include_superseded", False))
+    limit = int(args.get("limit", 10))
+    if include_superseded:
+        decisions = list_all_decisions(
+            _runtime.db(),
+            workspace_id,
+            query=str(query) if query is not None else None,
+            limit=limit,
+        )
+    else:
+        decisions = list_active_decisions(
+            _runtime.db(),
+            workspace_id,
+            query=str(query) if query is not None else None,
+            limit=limit,
+        )
+    return {"decisions": [_decision_payload(item) for item in decisions]}
+
+
 def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
     state = write_task_state(_runtime.db(), TaskStateIn(**_with_workspace(args)))
     return {
@@ -1576,6 +1634,7 @@ _HANDLERS = {
     "memory_search": _handle_search,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
+    "memory_list_decisions": _handle_list_decisions,
     "memory_update_task_state": _handle_update_task_state,
     "memory_ingest_file": _handle_ingest_file,
     "memory_list_candidates": _handle_list_candidates,

@@ -52,6 +52,9 @@ def collect_vector(
                 metadata={
                     "kind": chunk.kind.value,
                     "episode_id": chunk.episode_id,
+                    "created_at": chunk.created_at,
+                    "importance": chunk.importance,
+                    "confidence": chunk.confidence,
                     "vector_score": hit.score,
                 },
             )

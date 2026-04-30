@@ -259,6 +259,17 @@ Compare watchdog or audit artifacts when the status changes:
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_diff.py --before <OLD_REPORT_JSON> --after <NEW_REPORT_JSON> --json
 ```
 
+When a future agent needs architecture history by topic, use
+`/memory/list_decisions` before guessing from random retrieved chunks:
+
+```json
+{"workspace_id":"<WORKSPACE_ID>","query":"live execution","include_superseded":true,"limit":10}
+```
+
+The prompt-injection hook has short duplicate suppression enabled by default.
+Leave it on for normal work; set `AGENT_MEMORY_HOOK_DEDUPE_TTL=0` only while
+debugging hook behavior.
+
 Run the local performance benchmark before trusting a slow or newly migrated
 memory DB:
 

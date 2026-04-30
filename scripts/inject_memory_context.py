@@ -42,9 +42,13 @@ Configure in `~/.claude/settings.json`:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 import httpx
 
@@ -52,6 +56,7 @@ DEFAULT_BASE = os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765")
 DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_INJECT_TOKENS", "1500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_INJECT_TIMEOUT", "30.0"))
+DEFAULT_DEDUPE_TTL_SECONDS = float(os.environ.get("AGENT_MEMORY_HOOK_DEDUPE_TTL", "2.0"))
 
 
 def _read_event() -> dict[str, object]:
@@ -77,6 +82,59 @@ def _emit_context(context_text: str) -> None:
     sys.stdout.write("</agent-memory>\n")
 
 
+def _dedupe_cache_path() -> Path:
+    raw = os.environ.get("AGENT_MEMORY_HOOK_DEDUPE_PATH")
+    if raw:
+        return Path(raw)
+    return Path(tempfile.gettempdir()) / "agent_memory_lite_hook_dedupe.json"
+
+
+def _dedupe_key(event: dict[str, object], *, workspace: str, prompt: str) -> str:
+    session = str(event.get("session_id") or event.get("transcript_path") or "")
+    cwd = str(event.get("cwd") or "")
+    payload = "\n".join([workspace, session, cwd, prompt])
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _should_emit_context(
+    event: dict[str, object],
+    *,
+    workspace: str,
+    prompt: str,
+    cache_path: Path | None = None,
+    ttl_seconds: float = DEFAULT_DEDUPE_TTL_SECONDS,
+) -> bool:
+    if ttl_seconds <= 0:
+        return True
+    key = _dedupe_key(event, workspace=workspace, prompt=prompt)
+    cache_path = cache_path or _dedupe_cache_path()
+    current_time = time.time()
+    try:
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        cache = {}
+    if not isinstance(cache, dict):
+        cache = {}
+
+    previous = cache.get(key)
+    if isinstance(previous, int | float) and current_time - float(previous) < ttl_seconds:
+        return False
+
+    cache[key] = current_time
+    cutoff = current_time - max(ttl_seconds * 4, 10.0)
+    compacted = {
+        str(item_key): float(item_value)
+        for item_key, item_value in cache.items()
+        if isinstance(item_value, int | float) and float(item_value) >= cutoff
+    }
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(compacted, sort_keys=True), encoding="utf-8")
+    except OSError:
+        return True
+    return True
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--db-path", default=os.environ.get("AGENT_MEMORY_DB_PATH"))
@@ -93,9 +151,12 @@ def main() -> int:
     prompt = str(event.get("prompt", "")).strip()
     if not prompt:
         return 0
+    workspace = str(event.get("workspace_id") or args.workspace)
+    if not _should_emit_context(event, workspace=workspace, prompt=prompt):
+        return 0
 
     payload: dict[str, object] = {
-        "workspace_id": str(event.get("workspace_id") or args.workspace),
+        "workspace_id": workspace,
         "query": prompt[:1000],
         "max_tokens": DEFAULT_MAX_TOKENS,
     }
