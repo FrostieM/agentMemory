@@ -11,6 +11,7 @@ from agent_memory_lite.api.schemas.search import (
     SearchRequest,
     SearchResponse,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.fts.query import search_chunks_fts
 
 router = APIRouter()
@@ -21,22 +22,39 @@ def search_route(body: SearchRequest, conn: DbDep, settings: SettingsDep) -> Sea
     ensure_workspace_allowed(body.workspace_id, settings)
     if body.mode != "fts":
         raise ValidationError(f"unsupported search mode: {body.mode!r}")
-    hits = search_chunks_fts(
-        conn,
+    with trace_memory_operation(
         workspace_id=body.workspace_id,
-        query=body.query,
-        limit=body.limit,
-    )
-    return SearchResponse(
-        mode="fts",
-        hits=[
-            SearchHit(
-                chunk_id=h.chunk_id,
-                score=h.score,
-                path=h.path,
-                text=h.text,
-                summary=h.summary,
-            )
-            for h in hits
-        ],
-    )
+        endpoint="/memory/search",
+        operation="search",
+        label="Search memory",
+        snippet=body.query,
+    ) as trace:
+        trace.stage_done(
+            "input",
+            "Search query accepted",
+            counts={"limit": body.limit, "mode": body.mode},
+            snippet=body.query,
+        )
+        trace.stage_started("fts", "Exact memory lookup")
+        hits = search_chunks_fts(
+            conn,
+            workspace_id=body.workspace_id,
+            query=body.query,
+            limit=body.limit,
+        )
+        trace.stage_done("fts", "Exact matches found", counts={"hits": len(hits)})
+        response = SearchResponse(
+            mode="fts",
+            hits=[
+                SearchHit(
+                    chunk_id=h.chunk_id,
+                    score=h.score,
+                    path=h.path,
+                    text=h.text,
+                    summary=h.summary,
+                )
+                for h in hits
+            ],
+        )
+        trace.stage_done("response", "Search response ready", counts={"hits": len(response.hits)})
+        return response

@@ -14,6 +14,7 @@ from agent_memory_lite.api.schemas.theories import (
     TheoryWithEvidenceResponse,
     WriteTheoryRequest,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.models.theories import Theory, TheoryEvidence, TheoryEvidenceIn, TheoryIn
 from agent_memory_lite.repositories.theories_repo import (
@@ -73,27 +74,53 @@ def write_theory_route(
     settings: SettingsDep,
 ) -> TheoryResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    theory = write_theory(
-        conn,
-        TheoryIn(
-            workspace_id=body.workspace_id,
-            title=body.title,
-            claim=body.claim,
-            domain=body.domain,
-            mechanism=body.mechanism,
-            predictions=body.predictions,
-            validation_criteria=body.validation_criteria,
-            experiment_plan=body.experiment_plan,
-            dependent_decision_ids=body.dependent_decision_ids,
-            tags=body.tags,
-            status=body.status,
-            supersedes_theory_id=body.supersedes_theory_id,
-            source_episode_id=body.source_episode_id,
-            confidence=body.confidence,
-            importance=body.importance,
-        ),
-    )
-    return _theory_response(theory)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/write_theory",
+        operation="write_theory",
+        label="Write theory",
+        snippet=body.title,
+    ) as trace:
+        trace.stage_done(
+            "validate",
+            "Theory payload accepted",
+            counts={
+                "validation_criteria": len(body.validation_criteria),
+                "predictions": len(body.predictions),
+            },
+            snippet=body.title,
+        )
+        trace.stage_started("persist", "Persist theory")
+        theory = write_theory(
+            conn,
+            TheoryIn(
+                workspace_id=body.workspace_id,
+                title=body.title,
+                claim=body.claim,
+                domain=body.domain,
+                mechanism=body.mechanism,
+                predictions=body.predictions,
+                validation_criteria=body.validation_criteria,
+                experiment_plan=body.experiment_plan,
+                dependent_decision_ids=body.dependent_decision_ids,
+                tags=body.tags,
+                status=body.status,
+                supersedes_theory_id=body.supersedes_theory_id,
+                source_episode_id=body.source_episode_id,
+                confidence=body.confidence,
+                importance=body.importance,
+            ),
+        )
+        trace.stage_done("persist", "Theory persisted", counts={"status": theory.status})
+        trace.graph_delta(
+            object_type="theory",
+            object_id=theory.id,
+            action="created",
+            label="Theory written",
+        )
+        response = _theory_response(theory)
+        trace.stage_done("response", "Theory response ready", counts={"theory_id": theory.id})
+        return response
 
 
 @router.post("/memory/add_theory_evidence", response_model=TheoryEvidenceResponse)
@@ -103,21 +130,47 @@ def add_theory_evidence_route(
     settings: SettingsDep,
 ) -> TheoryEvidenceResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    evidence = add_theory_evidence(
-        conn,
-        TheoryEvidenceIn(
-            workspace_id=body.workspace_id,
-            theory_id=body.theory_id,
-            kind=body.kind,
-            summary=body.summary,
-            source_episode_id=body.source_episode_id,
-            artifact_path=body.artifact_path,
-            metrics=body.metrics,
-            confidence=body.confidence,
-            observed_at=body.observed_at,
-        ),
-    )
-    return _evidence_response(evidence)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/add_theory_evidence",
+        operation="add_theory_evidence",
+        label="Add theory evidence",
+        snippet=body.summary,
+    ) as trace:
+        trace.stage_done(
+            "validate",
+            "Evidence payload accepted",
+            counts={"kind": body.kind, "has_metrics": bool(body.metrics)},
+            snippet=body.summary,
+        )
+        trace.stage_started("persist", "Persist theory evidence")
+        evidence = add_theory_evidence(
+            conn,
+            TheoryEvidenceIn(
+                workspace_id=body.workspace_id,
+                theory_id=body.theory_id,
+                kind=body.kind,
+                summary=body.summary,
+                source_episode_id=body.source_episode_id,
+                artifact_path=body.artifact_path,
+                metrics=body.metrics,
+                confidence=body.confidence,
+                observed_at=body.observed_at,
+            ),
+        )
+        trace.stage_done("persist", "Theory evidence persisted", counts={"kind": evidence.kind})
+        trace.graph_delta(
+            object_type="theory_evidence",
+            object_id=evidence.id,
+            action="created",
+            label="Theory evidence added",
+            counts={"theory_id": evidence.theory_id},
+        )
+        response = _evidence_response(evidence)
+        trace.stage_done(
+            "response", "Theory evidence response ready", counts={"evidence_id": evidence.id}
+        )
+        return response
 
 
 @router.post("/memory/list_theories", response_model=ListTheoriesResponse)

@@ -3,23 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agent-memory-lite UI</title>
-    <link rel="stylesheet" href="/ui/styles.css?v=20260430-process-ui2" />
+    <title>agent-memory-lite observatory</title>
+    <link rel="stylesheet" href="/ui/styles.css?v=20260430-live-observatory" />
   </head>
   <body>
     <main class="shell">
       <aside class="rail">
         <div class="brand">
-          <svg class="mark" viewBox="0 0 42 42" role="img" aria-label="Memory process mark">
-            <path d="M8 21 H15 L20 12 L26 30 L31 21 H34"></path>
-            <circle cx="8" cy="21" r="3"></circle>
-            <circle cx="20" cy="12" r="3"></circle>
-            <circle cx="26" cy="30" r="3"></circle>
-            <circle cx="34" cy="21" r="3"></circle>
+          <svg class="mark" viewBox="0 0 44 44" role="img" aria-label="Memory graph mark">
+            <path d="M9 25 C14 12 22 11 27 21 S35 31 39 15"></path>
+            <circle cx="9" cy="25" r="3.6"></circle>
+            <circle cx="27" cy="21" r="3.6"></circle>
+            <circle cx="39" cy="15" r="3.6"></circle>
           </svg>
           <div>
             <strong>Memory</strong>
-            <span>live process</span>
+            <span>live observatory</span>
           </div>
         </div>
 
@@ -33,119 +32,151 @@
         </label>
         <div class="actions">
           <button id="refreshBtn" type="button">Refresh</button>
-          <button id="pauseBtn" type="button">Pause live</button>
+          <button id="pauseBtn" type="button">Pause</button>
         </div>
 
-        <nav class="legend" aria-label="Process legend">
-          <span><i class="dot live-dot"></i> active request</span>
-          <span><i class="dot changed-dot"></i> changed data</span>
-          <span><i class="dot quiet-dot"></i> stable stage</span>
+        <nav class="legend" aria-label="Color semantics">
+          <span><i class="dot cyan"></i> active request</span>
+          <span><i class="dot green"></i> created or used</span>
+          <span><i class="dot violet"></i> reasoning/context</span>
+          <span><i class="dot amber"></i> warning/review</span>
+          <span><i class="dot red"></i> failed</span>
         </nav>
       </aside>
 
       <section class="main">
         <header class="topbar">
           <div>
-            <div class="eyebrow">local memory observer</div>
-            <h1>Memory live process</h1>
-            <p>See what the memory service is doing, what changed, and how a query becomes context.</p>
+            <div class="eyebrow">local process telemetry</div>
+            <h1>Live memory flow</h1>
+            <p>Watch requests pass through retrieval, indexing, context building, and graph changes.</p>
           </div>
           <div class="status-strip">
-            <span id="healthChip" class="chip idle">health</span>
-            <span id="liveChip" class="chip live">live</span>
+            <span id="healthChip" class="chip">health unknown</span>
+            <span id="sseChip" class="chip">SSE starting</span>
             <span id="updatedChip" class="chip">waiting</span>
           </div>
         </header>
 
-        <section class="overview">
-          <article class="operation-panel">
-            <div class="panel-kicker">current operation</div>
-            <h2 id="activeTitle">Waiting for memory activity</h2>
-            <p id="activeMeta">Live polling will show the next request path here.</p>
-            <div id="activityPath" class="request-path"></div>
+        <section class="hero-grid" aria-label="Live memory flow">
+          <article class="live-stage">
+            <div class="panel-head">
+              <div>
+                <div class="eyebrow">request stage</div>
+                <h2 id="activeTitle">Waiting for memory activity</h2>
+                <p id="activeMeta">Run Search or Explain to see the request moving through the graph.</p>
+              </div>
+              <span id="requestChip" class="chip cyan">idle</span>
+            </div>
+            <svg id="liveGraphSvg" role="img" aria-label="Animated memory request graph"></svg>
+            <div id="stageRail" class="stage-rail"></div>
           </article>
 
-          <section class="metrics" id="metrics"></section>
-        </section>
-
-        <section class="process-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Processing pipeline</h2>
-              <p>Capture, index, retrieve, context, research, capabilities, and trust work.</p>
-            </div>
-            <span id="signatureChip" class="chip">signature</span>
-          </div>
-          <svg id="processSvg" role="img" aria-label="Memory processing pipeline"></svg>
-          <div id="stageList" class="stage-list"></div>
-        </section>
-
-        <section class="workbench">
-          <section class="panel search-panel">
+          <aside class="life-feed-panel">
             <div class="panel-head compact">
               <div>
-                <h2>Search memory</h2>
-                <p>Exact lookup for IDs, file paths, errors, and known tokens.</p>
+                <div class="eyebrow">life feed</div>
+                <h2>What changed</h2>
+              </div>
+              <span id="eventCountChip" class="chip">0 events</span>
+            </div>
+            <div id="lifeFeed" class="life-feed"></div>
+          </aside>
+        </section>
+
+        <section class="task-zone">
+          <article class="query-panel">
+            <div class="panel-head compact">
+              <div>
+                <div class="eyebrow">task context</div>
+                <h2>Ask memory</h2>
+                <p>Search finds exact facts. Explain shows what would enter the agent context.</p>
               </div>
             </div>
             <div class="query-row">
               <input id="queryInput" placeholder="heap watchdog, source flip, file path..." />
               <button id="searchBtn" type="button">Search</button>
+              <button id="contextBtn" type="button">Explain</button>
             </div>
             <div id="searchSummary" class="summary-strip"></div>
-            <div id="searchResults" class="result-list"></div>
-          </section>
+          </article>
 
-          <section class="panel context-panel">
+          <article class="task-graph-panel">
             <div class="panel-head compact">
               <div>
-                <h2>Context preview</h2>
-                <p>Human summary first. Raw XML stays collapsed.</p>
+                <div class="eyebrow">agent context graph</div>
+                <h2>Used vs ignored memory</h2>
+                <p id="taskGraphMeta">No query selected yet.</p>
               </div>
-              <div class="button-row">
-                <button id="contextBtn" type="button">Explain</button>
-                <button id="rawContextBtn" type="button">Raw XML</button>
-              </div>
+              <button id="rawContextBtn" type="button" class="ghost">Raw XML</button>
             </div>
+            <svg id="taskGraphSvg" role="img" aria-label="Task context graph"></svg>
             <div id="contextSummary" class="context-summary"></div>
-            <details class="raw-context">
-              <summary>Raw context</summary>
-              <pre id="contextBox"></pre>
-            </details>
-          </section>
+          </article>
+        </section>
 
-          <section class="panel activity-panel">
-            <div class="panel-head compact">
-              <div>
-                <h2>Live activity</h2>
-                <p>Requests made by this UI and newest memory writes.</p>
+        <details class="developer-details">
+          <summary>Developer details</summary>
+          <section class="details-grid">
+            <article class="detail-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>Counts and health</h2>
+                  <p>Raw table counts and endpoint status.</p>
+                </div>
+                <span id="signatureChip" class="chip">signature</span>
               </div>
-            </div>
-            <div id="activityLog" class="activity-log"></div>
+              <div id="metrics" class="metrics"></div>
+            </article>
+
+            <article class="detail-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>Structural graph</h2>
+                  <p>Database object families, not the primary operator view.</p>
+                </div>
+              </div>
+              <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
+            </article>
+
+            <article class="detail-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>Pipeline model</h2>
+                  <p>Static stage map plus newest durable rows.</p>
+                </div>
+              </div>
+              <svg id="processSvg" role="img" aria-label="Memory processing pipeline"></svg>
+              <div id="stageList" class="stage-list"></div>
+            </article>
+
+            <article class="detail-panel">
+              <div class="panel-head compact">
+                <div>
+                  <h2>Results and raw context</h2>
+                  <p>Raw XML and exact search output stay here.</p>
+                </div>
+              </div>
+              <div id="searchResults" class="result-list"></div>
+              <details class="raw-context">
+                <summary>Raw context XML</summary>
+                <pre id="contextBox"></pre>
+              </details>
+            </article>
+
+            <article class="detail-panel wide">
+              <div class="panel-head compact">
+                <div>
+                  <h2>Recent durable changes</h2>
+                  <p>Newest SQLite-backed memory objects.</p>
+                </div>
+              </div>
+              <div id="timeline" class="timeline"></div>
+            </article>
           </section>
-        </section>
-
-        <section class="map-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Memory object map</h2>
-              <p>Structural links are secondary; use this to inspect object families.</p>
-            </div>
-          </div>
-          <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
-        </section>
-
-        <section class="timeline-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Recent changes</h2>
-              <p>Newest memory objects grouped as human-readable events.</p>
-            </div>
-          </div>
-          <div id="timeline" class="timeline"></div>
-        </section>
+        </details>
       </section>
     </main>
-    <script src="/ui/app.js?v=20260430-process-ui2"></script>
+    <script src="/ui/app.js?v=20260430-live-observatory"></script>
   </body>
 </html>

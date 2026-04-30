@@ -308,8 +308,11 @@ If the HTTP service is running, open the local visual UI:
 http://127.0.0.1:8765/ui
 ```
 
-It uses the same local service and shows health, live counts, recent changes,
-search/context preview, and an animated graph of memory objects and links.
+It uses the same local service as a live memory observatory: the first screen
+shows request stages, live memory events, Search/Explain context flow, and
+graph changes. Raw XML, table counts, and DB/vector paths stay in Developer
+details. Live UI telemetry is process-local and non-durable; it is not written
+to SQLite.
 
 For a Windows autostart service, install a project-local scheduled task:
 

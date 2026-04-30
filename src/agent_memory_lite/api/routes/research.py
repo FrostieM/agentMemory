@@ -24,6 +24,7 @@ from agent_memory_lite.api.schemas.research import (
     UpsertConceptRequest,
     WriteExperimentRequest,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.research_writer import (
     add_experiment_result,
     distill_insight,
@@ -161,29 +162,49 @@ def register_snapshot_route(
     settings: SettingsDep,
 ) -> MemorySnapshotResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    snapshot = register_snapshot(
-        conn,
-        MemorySnapshotIn(
-            workspace_id=body.workspace_id,
-            snapshot_key=body.snapshot_key,
-            title=body.title,
-            source=body.source,
-            db_path=body.db_path,
-            duckdb_path=body.duckdb_path,
-            parquet_dir=body.parquet_dir,
-            window_start=body.window_start,
-            window_end=body.window_end,
-            build_sha=body.build_sha,
-            build_branch=body.build_branch,
-            build_time=body.build_time,
-            remote_host=body.remote_host,
-            table_counts=body.table_counts,
-            total_rows=body.total_rows,
-            metadata=body.metadata,
-            source_episode_id=body.source_episode_id,
-        ),
-    )
-    return _snapshot_response(snapshot)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/register_snapshot",
+        operation="register_snapshot",
+        label="Register snapshot",
+        snippet=body.title,
+    ) as trace:
+        trace.stage_done("validate", "Snapshot payload accepted", snippet=body.snapshot_key)
+        trace.stage_started("persist", "Persist snapshot")
+        snapshot = register_snapshot(
+            conn,
+            MemorySnapshotIn(
+                workspace_id=body.workspace_id,
+                snapshot_key=body.snapshot_key,
+                title=body.title,
+                source=body.source,
+                db_path=body.db_path,
+                duckdb_path=body.duckdb_path,
+                parquet_dir=body.parquet_dir,
+                window_start=body.window_start,
+                window_end=body.window_end,
+                build_sha=body.build_sha,
+                build_branch=body.build_branch,
+                build_time=body.build_time,
+                remote_host=body.remote_host,
+                table_counts=body.table_counts,
+                total_rows=body.total_rows,
+                metadata=body.metadata,
+                source_episode_id=body.source_episode_id,
+            ),
+        )
+        trace.stage_done(
+            "persist", "Snapshot persisted", counts={"total_rows": snapshot.total_rows}
+        )
+        trace.graph_delta(
+            object_type="snapshot",
+            object_id=snapshot.id,
+            action="created",
+            label="Snapshot registered",
+        )
+        response = _snapshot_response(snapshot)
+        trace.stage_done("response", "Snapshot response ready", counts={"snapshot_id": snapshot.id})
+        return response
 
 
 @router.post("/memory/write_experiment", response_model=ExperimentResponse)
@@ -193,26 +214,46 @@ def write_experiment_route(
     settings: SettingsDep,
 ) -> ExperimentResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    experiment = write_experiment(
-        conn,
-        ExperimentIn(
-            workspace_id=body.workspace_id,
-            theory_id=body.theory_id,
-            snapshot_id=body.snapshot_id,
-            title=body.title,
-            hypothesis=body.hypothesis,
-            cohort_definition=body.cohort_definition,
-            success_criteria=body.success_criteria,
-            command=body.command,
-            status=body.status,
-            priority=body.priority,
-            owner=body.owner,
-            due_at=body.due_at,
-            source_episode_id=body.source_episode_id,
-            metadata=body.metadata,
-        ),
-    )
-    return _experiment_response(experiment)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/write_experiment",
+        operation="write_experiment",
+        label="Write experiment",
+        snippet=body.title,
+    ) as trace:
+        trace.stage_done("validate", "Experiment payload accepted", snippet=body.title)
+        trace.stage_started("persist", "Persist experiment")
+        experiment = write_experiment(
+            conn,
+            ExperimentIn(
+                workspace_id=body.workspace_id,
+                theory_id=body.theory_id,
+                snapshot_id=body.snapshot_id,
+                title=body.title,
+                hypothesis=body.hypothesis,
+                cohort_definition=body.cohort_definition,
+                success_criteria=body.success_criteria,
+                command=body.command,
+                status=body.status,
+                priority=body.priority,
+                owner=body.owner,
+                due_at=body.due_at,
+                source_episode_id=body.source_episode_id,
+                metadata=body.metadata,
+            ),
+        )
+        trace.stage_done("persist", "Experiment persisted", counts={"status": experiment.status})
+        trace.graph_delta(
+            object_type="experiment",
+            object_id=experiment.id,
+            action="created",
+            label="Experiment written",
+        )
+        response = _experiment_response(experiment)
+        trace.stage_done(
+            "response", "Experiment response ready", counts={"experiment_id": experiment.id}
+        )
+        return response
 
 
 @router.post("/memory/add_experiment_result", response_model=ExperimentResultResponse)
@@ -222,22 +263,43 @@ def add_experiment_result_route(
     settings: SettingsDep,
 ) -> ExperimentResultResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    result = add_experiment_result(
-        conn,
-        ExperimentResultIn(
-            workspace_id=body.workspace_id,
-            experiment_id=body.experiment_id,
-            theory_id=body.theory_id,
-            kind=body.kind,
-            summary=body.summary,
-            metrics=body.metrics,
-            artifact_path=body.artifact_path,
-            confidence=body.confidence,
-            observed_at=body.observed_at,
-            source_episode_id=body.source_episode_id,
-        ),
-    )
-    return _result_response(result)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/add_experiment_result",
+        operation="add_experiment_result",
+        label="Add experiment result",
+        snippet=body.summary,
+    ) as trace:
+        trace.stage_done("validate", "Experiment result payload accepted", snippet=body.summary)
+        trace.stage_started("persist", "Persist experiment result")
+        result = add_experiment_result(
+            conn,
+            ExperimentResultIn(
+                workspace_id=body.workspace_id,
+                experiment_id=body.experiment_id,
+                theory_id=body.theory_id,
+                kind=body.kind,
+                summary=body.summary,
+                metrics=body.metrics,
+                artifact_path=body.artifact_path,
+                confidence=body.confidence,
+                observed_at=body.observed_at,
+                source_episode_id=body.source_episode_id,
+            ),
+        )
+        trace.stage_done("persist", "Experiment result persisted", counts={"kind": result.kind})
+        trace.graph_delta(
+            object_type="experiment_result",
+            object_id=result.id,
+            action="created",
+            label="Experiment result added",
+            counts={"experiment_id": result.experiment_id},
+        )
+        response = _result_response(result)
+        trace.stage_done(
+            "response", "Experiment result response ready", counts={"result_id": result.id}
+        )
+        return response
 
 
 @router.post("/memory/upsert_concept", response_model=ConceptResponse)
@@ -247,21 +309,39 @@ def upsert_concept_route(
     settings: SettingsDep,
 ) -> ConceptResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    concept = upsert_domain_concept(
-        conn,
-        DomainConceptIn(
-            workspace_id=body.workspace_id,
-            name=body.name,
-            kind=body.kind,
-            definition=body.definition,
-            aliases=body.aliases,
-            tags=body.tags,
-            source_episode_id=body.source_episode_id,
-            confidence=body.confidence,
-            active=body.active,
-        ),
-    )
-    return _concept_response(concept)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/upsert_concept",
+        operation="upsert_concept",
+        label="Upsert concept",
+        snippet=body.name,
+    ) as trace:
+        trace.stage_done("validate", "Concept payload accepted", snippet=body.name)
+        trace.stage_started("persist", "Persist concept")
+        concept = upsert_domain_concept(
+            conn,
+            DomainConceptIn(
+                workspace_id=body.workspace_id,
+                name=body.name,
+                kind=body.kind,
+                definition=body.definition,
+                aliases=body.aliases,
+                tags=body.tags,
+                source_episode_id=body.source_episode_id,
+                confidence=body.confidence,
+                active=body.active,
+            ),
+        )
+        trace.stage_done("persist", "Concept persisted", counts={"active": concept.active})
+        trace.graph_delta(
+            object_type="concept",
+            object_id=concept.id,
+            action="upserted",
+            label="Concept updated",
+        )
+        response = _concept_response(concept)
+        trace.stage_done("response", "Concept response ready", counts={"concept_id": concept.id})
+        return response
 
 
 @router.post("/memory/distill_insight", response_model=InsightResponse)
@@ -271,22 +351,40 @@ def distill_insight_route(
     settings: SettingsDep,
 ) -> InsightResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    insight = distill_insight(
-        conn,
-        ResearchInsightIn(
-            workspace_id=body.workspace_id,
-            insight_type=body.insight_type,
-            summary=body.summary,
-            proposed_action=body.proposed_action,
-            target_type=body.target_type,
-            target_id=body.target_id,
-            source_episode_ids=body.source_episode_ids,
-            confidence=body.confidence,
-            status=body.status,
-            tags=body.tags,
-        ),
-    )
-    return _insight_response(insight)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/distill_insight",
+        operation="distill_insight",
+        label="Distill insight",
+        snippet=body.summary,
+    ) as trace:
+        trace.stage_done("validate", "Insight payload accepted", snippet=body.summary)
+        trace.stage_started("persist", "Persist insight")
+        insight = distill_insight(
+            conn,
+            ResearchInsightIn(
+                workspace_id=body.workspace_id,
+                insight_type=body.insight_type,
+                summary=body.summary,
+                proposed_action=body.proposed_action,
+                target_type=body.target_type,
+                target_id=body.target_id,
+                source_episode_ids=body.source_episode_ids,
+                confidence=body.confidence,
+                status=body.status,
+                tags=body.tags,
+            ),
+        )
+        trace.stage_done("persist", "Insight persisted", counts={"status": insight.status})
+        trace.graph_delta(
+            object_type="insight",
+            object_id=insight.id,
+            action="created",
+            label="Insight distilled",
+        )
+        response = _insight_response(insight)
+        trace.stage_done("response", "Insight response ready", counts={"insight_id": insight.id})
+        return response
 
 
 @router.post("/memory/update_insight", response_model=InsightResponse)
@@ -296,18 +394,38 @@ def update_insight_route(
     settings: SettingsDep,
 ) -> InsightResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    insight = update_insight(
-        conn,
-        ResearchInsightUpdateIn(
-            workspace_id=body.workspace_id,
-            insight_id=body.insight_id,
-            target_type=body.target_type,
-            target_id=body.target_id,
-            status=body.status,
-            source_episode_id=body.source_episode_id,
-        ),
-    )
-    return _insight_response(insight)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/update_insight",
+        operation="update_insight",
+        label="Update insight",
+        snippet=body.insight_id,
+    ) as trace:
+        trace.stage_done("validate", "Insight update accepted", snippet=body.insight_id)
+        trace.stage_started("persist", "Persist insight update")
+        insight = update_insight(
+            conn,
+            ResearchInsightUpdateIn(
+                workspace_id=body.workspace_id,
+                insight_id=body.insight_id,
+                target_type=body.target_type,
+                target_id=body.target_id,
+                status=body.status,
+                source_episode_id=body.source_episode_id,
+            ),
+        )
+        trace.stage_done("persist", "Insight updated", counts={"status": insight.status})
+        trace.graph_delta(
+            object_type="insight",
+            object_id=insight.id,
+            action="updated",
+            label="Insight updated",
+        )
+        response = _insight_response(insight)
+        trace.stage_done(
+            "response", "Insight update response ready", counts={"insight_id": insight.id}
+        )
+        return response
 
 
 @router.post("/memory/list_research_agenda", response_model=ResearchAgendaResponse)

@@ -11,6 +11,7 @@ from agent_memory_lite.api.schemas.behavior import (
     ListBehaviorInstructionsResponse,
     UpsertBehaviorInstructionRequest,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
 from agent_memory_lite.models.behavior import BehaviorInstruction, BehaviorInstructionIn
 from agent_memory_lite.repositories.behavior_repo import list_behavior_instructions
@@ -53,30 +54,59 @@ def upsert_behavior_instruction_route(
     settings: SettingsDep,
 ) -> BehaviorInstructionResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    instruction = upsert_behavior_instruction(
-        conn,
-        BehaviorInstructionIn(
-            workspace_id=body.workspace_id,
-            name=body.name,
-            rule=body.rule,
-            kind=body.kind,
-            scope=body.scope,
-            priority=body.priority,
-            rationale=body.rationale,
-            applies_to=body.applies_to,
-            conflict_policy=body.conflict_policy,
-            source_episode_id=body.source_episode_id,
-            source_type=body.source_type,
-            source_id=body.source_id,
-            reviewed_by=body.reviewed_by,
-            reviewed_at=body.reviewed_at,
-            expires_at=body.expires_at,
-            conflict_group=body.conflict_group,
-            confidence=body.confidence,
-            active=body.active,
-        ),
-    )
-    return _instruction_response(instruction)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/upsert_behavior_instruction",
+        operation="upsert_behavior",
+        label="Upsert behavior instruction",
+        snippet=body.name,
+    ) as trace:
+        trace.stage_done(
+            "validate",
+            "Behavior instruction payload accepted",
+            counts={"kind": body.kind, "scope": body.scope},
+            snippet=body.name,
+        )
+        trace.stage_started("persist", "Persist behavior instruction")
+        instruction = upsert_behavior_instruction(
+            conn,
+            BehaviorInstructionIn(
+                workspace_id=body.workspace_id,
+                name=body.name,
+                rule=body.rule,
+                kind=body.kind,
+                scope=body.scope,
+                priority=body.priority,
+                rationale=body.rationale,
+                applies_to=body.applies_to,
+                conflict_policy=body.conflict_policy,
+                source_episode_id=body.source_episode_id,
+                source_type=body.source_type,
+                source_id=body.source_id,
+                reviewed_by=body.reviewed_by,
+                reviewed_at=body.reviewed_at,
+                expires_at=body.expires_at,
+                conflict_group=body.conflict_group,
+                confidence=body.confidence,
+                active=body.active,
+            ),
+        )
+        trace.stage_done(
+            "persist", "Behavior instruction persisted", counts={"active": instruction.active}
+        )
+        trace.graph_delta(
+            object_type="behavior_instruction",
+            object_id=instruction.id,
+            action="upserted",
+            label="Behavior instruction updated",
+        )
+        response = _instruction_response(instruction)
+        trace.stage_done(
+            "response",
+            "Behavior instruction response ready",
+            counts={"instruction_id": instruction.id},
+        )
+        return response
 
 
 @router.post("/memory/list_behavior_instructions", response_model=ListBehaviorInstructionsResponse)

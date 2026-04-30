@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.ui_telemetry import event_stream, ui_telemetry
 from agent_memory_lite.utils.time import iso_now
 
 router = APIRouter(include_in_schema=False)
@@ -524,6 +525,9 @@ def memory_ui_state(
         counts=counts,
         recent=recent,
     )
+    latest_events = ui_telemetry.snapshot(workspace_id=selected_workspace, limit=80)
+    graph_deltas = ui_telemetry.graph_deltas(workspace_id=selected_workspace, limit=50)
+    active_requests = ui_telemetry.active_requests(workspace_id=selected_workspace)
     return {
         "status": "ok",
         "workspace_id": selected_workspace,
@@ -534,5 +538,28 @@ def memory_ui_state(
         "graph": {"nodes": nodes, "edges": edges},
         "process": process,
         "recent": recent,
+        "latest_events": latest_events,
+        "graph_deltas": graph_deltas,
+        "active_requests": active_requests,
         "signature": _signature(counts, recent),
     }
+
+
+@router.get("/memory/ui/events")
+def memory_ui_events(
+    settings: SettingsDep,
+    workspace_id: str | None = Query(default=None),
+    since: str | None = Query(default=None),
+    once: bool = Query(default=False),
+) -> StreamingResponse:
+    selected_workspace = workspace_id or settings.workspace_id
+    ensure_workspace_allowed(selected_workspace, settings)
+    return StreamingResponse(
+        event_stream(workspace_id=selected_workspace, since=since, once=once),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

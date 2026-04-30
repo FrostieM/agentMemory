@@ -12,6 +12,7 @@ from agent_memory_lite.api.schemas.decisions import (
     WriteDecisionRequest,
     WriteDecisionResponse,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.models.decisions import Decision, DecisionIn
 from agent_memory_lite.repositories.decisions_repo import list_active_decisions, list_all_decisions
@@ -45,23 +46,53 @@ def write_decision_route(
     settings: SettingsDep,
 ) -> WriteDecisionResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    payload = DecisionIn(
+    with trace_memory_operation(
         workspace_id=body.workspace_id,
-        title=body.title,
-        decision_text=body.decision_text,
-        rationale=body.rationale,
-        supersedes_decision_id=body.supersedes_decision_id,
-        source_episode_id=body.source_episode_id,
-        confidence=body.confidence,
-        importance=body.importance,
-    )
-    decision = write_decision(conn, payload)
-    return WriteDecisionResponse(
-        decision_id=decision.id,
-        status=decision.status.value,
-        valid_from=decision.valid_from,
-        superseded_decision_id=decision.supersedes_decision_id,
-    )
+        endpoint="/memory/write_decision",
+        operation="write_decision",
+        label="Write decision",
+        snippet=body.title,
+    ) as trace:
+        trace.stage_done(
+            "validate",
+            "Decision payload accepted",
+            counts={"has_rationale": body.rationale is not None},
+            snippet=body.title,
+        )
+        payload = DecisionIn(
+            workspace_id=body.workspace_id,
+            title=body.title,
+            decision_text=body.decision_text,
+            rationale=body.rationale,
+            supersedes_decision_id=body.supersedes_decision_id,
+            source_episode_id=body.source_episode_id,
+            confidence=body.confidence,
+            importance=body.importance,
+        )
+        trace.stage_started("persist", "Persist decision")
+        decision = write_decision(conn, payload)
+        trace.stage_done(
+            "persist",
+            "Decision persisted",
+            counts={
+                "status": decision.status.value,
+                "supersedes": bool(decision.supersedes_decision_id),
+            },
+        )
+        trace.graph_delta(
+            object_type="decision",
+            object_id=decision.id,
+            action="created",
+            label="Decision written",
+        )
+        response = WriteDecisionResponse(
+            decision_id=decision.id,
+            status=decision.status.value,
+            valid_from=decision.valid_from,
+            superseded_decision_id=decision.supersedes_decision_id,
+        )
+        trace.stage_done("response", "Decision response ready", counts={"decision_id": decision.id})
+        return response
 
 
 @router.post("/memory/list_decisions", response_model=ListDecisionsResponse)

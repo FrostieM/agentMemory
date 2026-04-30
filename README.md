@@ -341,12 +341,22 @@ Local visual UI:
 http://127.0.0.1:8765/ui
 ```
 
-The UI is served by the same FastAPI process. It shows a live animated memory
-graph, health and count cards, recent object timeline, exact search, and
-`memory_get_context` preview. The graph is powered by
-`GET /memory/ui/state?workspace_id=<workspace_id>` and polls every few seconds
-so new episodes, chunks, theories, decisions, roles, skills, and capability
-links visibly pulse as they appear.
+The UI is served by the same FastAPI process. It is a live memory observatory:
+the first screen shows the active request moving through input, retrieval,
+indexing, ranking, context building, persistence, and response stages. It also
+shows a human-readable life feed, a task-context graph for Search/Explain, and
+keeps raw XML, table counts, DB/vector paths, and structural object maps inside
+Developer details.
+
+The live stream uses process-local, non-durable telemetry. Events are never
+written to SQLite:
+
+- `GET /memory/ui/events?workspace_id=<workspace_id>` streams SSE events.
+- `GET /memory/ui/state?workspace_id=<workspace_id>` remains backward
+  compatible and includes `latest_events`, `graph_deltas`, and
+  `active_requests` for polling fallback.
+- Search, context/explain, ingest, decision/theory/evidence/capability, task,
+  and research write routes emit redacted stage events.
 
 `/health` includes `retrieval_integrity`. A degraded FTS/vector/workspace
 manifest/workspace pollution check, open maintenance event, or dangling

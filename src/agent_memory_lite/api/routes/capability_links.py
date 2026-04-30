@@ -11,6 +11,7 @@ from agent_memory_lite.api.schemas.capability_links import (
     ListCapabilityLinksRequest,
     ListCapabilityLinksResponse,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.capability_link_writer import link_capability
 from agent_memory_lite.models.capability_links import CapabilityLink, CapabilityLinkIn
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
@@ -43,22 +44,45 @@ def link_capability_route(
     settings: SettingsDep,
 ) -> CapabilityLinkResponse:
     ensure_workspace_allowed(body.workspace_id, settings)
-    link = link_capability(
-        conn,
-        CapabilityLinkIn(
-            workspace_id=body.workspace_id,
-            target_type=body.target_type,
-            target_id=body.target_id,
-            capability_type=body.capability_type,
-            capability_id=body.capability_id,
-            capability_name=body.capability_name,
-            relation=body.relation,
-            rationale=body.rationale,
-            strength=body.strength,
-            source_episode_id=body.source_episode_id,
-        ),
-    )
-    return _link_response(link)
+    with trace_memory_operation(
+        workspace_id=body.workspace_id,
+        endpoint="/memory/link_capability",
+        operation="link_capability",
+        label="Link capability",
+        snippet=f"{body.capability_type}:{body.capability_name or body.capability_id}",
+    ) as trace:
+        trace.stage_done(
+            "validate",
+            "Capability link payload accepted",
+            counts={"target_type": body.target_type, "capability_type": body.capability_type},
+        )
+        trace.stage_started("persist", "Persist capability link")
+        link = link_capability(
+            conn,
+            CapabilityLinkIn(
+                workspace_id=body.workspace_id,
+                target_type=body.target_type,
+                target_id=body.target_id,
+                capability_type=body.capability_type,
+                capability_id=body.capability_id,
+                capability_name=body.capability_name,
+                relation=body.relation,
+                rationale=body.rationale,
+                strength=body.strength,
+                source_episode_id=body.source_episode_id,
+            ),
+        )
+        trace.stage_done("persist", "Capability link persisted", counts={"relation": link.relation})
+        trace.graph_delta(
+            object_type="capability_link",
+            object_id=link.id,
+            action="created",
+            label="Capability linked",
+            counts={"target_id": link.target_id},
+        )
+        response = _link_response(link)
+        trace.stage_done("response", "Capability link response ready", counts={"link_id": link.id})
+        return response
 
 
 @router.post("/memory/list_capability_links", response_model=ListCapabilityLinksResponse)

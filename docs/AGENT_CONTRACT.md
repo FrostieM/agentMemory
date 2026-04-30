@@ -15,7 +15,10 @@ sessions. All data is local; there are no cloud calls. The service binds to
 token for `/memory/*` endpoints with `MEMORY_REQUIRE_API_TOKEN=true`; `/health`
 remains unauthenticated for local monitoring.
 When the HTTP service is running, a local browser UI is available at `/ui`.
-It visualizes the memory graph and live changes using `/memory/ui/state`.
+It visualizes the active memory request flow, context selection, graph changes,
+and live write/index events using `/memory/ui/events` (SSE) with
+`/memory/ui/state` as a polling fallback. UI telemetry is process-local and
+non-durable; it is for observability only and is not written to SQLite.
 
 Workspace isolation is normally provided by separate per-project database files.
 Use the `workspace_id` already established for the project. If none is specified
