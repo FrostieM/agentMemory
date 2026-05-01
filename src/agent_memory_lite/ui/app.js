@@ -63,6 +63,7 @@ const state = {
   sseReady: false,
   liveLight: new Map(), // famId → expiresAtMs
   selected: null,
+  inspectorHistory: [],   // back-button stack of previous selections
   detailCache: new Map(), // famId → fetched detail rows
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
   // animation
@@ -602,9 +603,33 @@ function renderObjectsInContext(q) {
 
 // ---- click handlers: real backend calls ------------------------------------
 
-async function selectFamily(fid) {
-  state.selected = { kind: "family", famId: fid };
+function pushSelection(next) {
+  // Keep a back-stack so the × on a deeper inspector pops back to the
+  // previous selection (object → family → null).
+  if (state.selected && !sameSelection(state.selected, next)) {
+    state.inspectorHistory.push(state.selected);
+  }
+  state.selected = next;
   renderInspector();
+}
+function sameSelection(a, b) {
+  if (!a || !b) return false;
+  if (a.kind !== b.kind) return false;
+  if (a.famId !== b.famId) return false;
+  if (a.kind === "object") return (a.obj?.id || "") === (b.obj?.id || "");
+  return true;
+}
+function closeInspector() {
+  if (state.inspectorHistory.length) {
+    state.selected = state.inspectorHistory.pop();
+  } else {
+    state.selected = null;
+  }
+  renderInspector();
+}
+
+async function selectFamily(fid) {
+  pushSelection({ kind: "family", famId: fid });
   let detail = state.detailCache.get(fid);
   if (!detail) {
     try {
@@ -614,22 +639,25 @@ async function selectFamily(fid) {
       detail = { objects: [], error: String(err) };
     }
   }
-  state.selected = { kind: "family", famId: fid, detail };
-  renderInspector();
-  if (detail.objects?.length) {
-    runQueryAnimation({
-      intent: fid,
-      prompt: `Inspecting ${FAMILY_BY_ID[fid].label}`,
-      families: [fid],
-      objects: detail.objects.slice(0, 5),
-      source: "family-click",
-    });
+  // Only enrich if the user is still looking at THIS family — they might
+  // have clicked back / a different node while the fetch was in flight.
+  if (state.selected?.kind === "family" && state.selected.famId === fid) {
+    state.selected.detail = detail;
+    renderInspector();
+    if (detail.objects?.length) {
+      runQueryAnimation({
+        intent: fid,
+        prompt: `Inspecting ${FAMILY_BY_ID[fid].label}`,
+        families: [fid],
+        objects: detail.objects.slice(0, 5),
+        source: "family-click",
+      });
+    }
   }
 }
 
 function selectObject(obj) {
-  state.selected = { kind: "object", famId: obj.famId, obj };
-  renderInspector();
+  pushSelection({ kind: "object", famId: obj.famId, obj });
 }
 
 async function fetchFamilyDetail(fid) {
@@ -678,20 +706,56 @@ async function fetchFamilyDetail(fid) {
 
 // ---- inspector card render -------------------------------------------------
 
+function makeKv(label, value, opts = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "kv";
+  const k = document.createElement("div");
+  k.className = "kv-key";
+  k.textContent = label;
+  const v = document.createElement("div");
+  v.className = "kv-val" + (opts.text ? " kv-val-text" : "");
+  v.textContent = value == null || value === "" ? "—" : String(value);
+  wrap.append(k, v);
+  return wrap;
+}
+
+function makeToolbar(card) {
+  const bar = document.createElement("div");
+  bar.className = "inspector-toolbar";
+  if (state.inspectorHistory.length) {
+    const back = document.createElement("button");
+    back.className = "back-btn";
+    back.type = "button";
+    back.title = "Back";
+    back.textContent = "←";
+    back.addEventListener("click", () => closeInspector());
+    bar.appendChild(back);
+  }
+  const close = document.createElement("button");
+  close.className = "x-btn";
+  close.type = "button";
+  close.title = "Close";
+  close.textContent = "×";
+  close.addEventListener("click", () => {
+    // × always closes fully. Use ← (or click outside) for back.
+    state.inspectorHistory = [];
+    state.selected = null;
+    renderInspector();
+  });
+  bar.appendChild(close);
+  card.appendChild(bar);
+}
+
 function renderInspector() {
   const card = els.inspectorCard;
   card.hidden = !state.selected;
-  if (!state.selected) return;
+  if (!state.selected) {
+    state.inspectorHistory = [];
+    return;
+  }
   clear(card);
   card.style.position = "relative";
-  const close = document.createElement("button");
-  close.className = "x-btn";
-  close.style.position = "absolute";
-  close.style.top = "10px";
-  close.style.right = "12px";
-  close.textContent = "×";
-  close.addEventListener("click", () => { state.selected = null; renderInspector(); });
-  card.appendChild(close);
+  makeToolbar(card);
 
   if (state.selected.kind === "family") {
     const fam = FAMILY_BY_ID[state.selected.famId];
@@ -704,6 +768,8 @@ function renderInspector() {
     const rows = detail?.objects || [];
     if (detail?.error) {
       const e = document.createElement("div"); e.className = "inspector-blurb"; e.textContent = `Error: ${detail.error}`; list.appendChild(e);
+    } else if (!detail) {
+      const e = document.createElement("div"); e.className = "inspector-blurb"; e.textContent = "Loading…"; list.appendChild(e);
     } else if (!rows.length) {
       const e = document.createElement("div"); e.className = "inspector-blurb"; e.textContent = "No objects yet in this family.";
       list.appendChild(e);
@@ -731,12 +797,12 @@ function renderInspector() {
     card.append(k, t);
 
     const grid = document.createElement("div"); grid.className = "kv-grid";
-    grid.innerHTML = `
-      <div class="kv"><span>id</span><code>${escapeHtml(obj.id || raw.id || "—")}</code></div>
-      <div class="kv"><span>table</span><span>${escapeHtml(obj.table || "—")}</span></div>
-      <div class="kv"><span>updated</span><span>${escapeHtml(fmtTime(raw.updated_at || raw.created_at))}</span></div>
-      <div class="kv"><span>label</span><span>${escapeHtml(raw.short_label || raw.label || "—")}</span></div>
-    `;
+    grid.append(
+      makeKv("id", obj.id || raw.id),
+      makeKv("table", obj.table, { text: true }),
+      makeKv("updated", fmtTime(raw.updated_at || raw.created_at), { text: true }),
+      makeKv("label", raw.short_label || raw.label, { text: true }),
+    );
     card.appendChild(grid);
 
     // Body — what content matters depends on the table.
