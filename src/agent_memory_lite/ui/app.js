@@ -1538,6 +1538,11 @@ function resetWorkspaceState() {
   // the previous one is now stale. Drop them so the new workspace's
   // SSE stream starts cleanly without mixing in old events.
   resetSse();
+  setSseChip("connecting…", "is-warn");
+  // Cancel any pending debounced refresh — it would still target the
+  // current selectedWorkspace() but spurious double-fetches confuse
+  // the state.workspace consistency window.
+  if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
   state.events = [];
   state.eventIds = new Set();
   state.queue = [];
@@ -1555,12 +1560,32 @@ function resetWorkspaceState() {
   state.recentLabels = new Map();
   state.countDeltas = new Map();
   state.reverseStart = 0;
+  // Drop the cached /memory/ui/state from the previous workspace so the
+  // family centre counters and graph don't render stale numbers during
+  // the brief window between dropdown change and the new fetchState
+  // arriving. Without this, the user sees "old workspace's 22 episodes"
+  // for ~200 ms and assumes the switch didn't take effect.
+  state.memory = null;
   renderFeed();
   renderInspector();
+  // Force one paint immediately so the visual reset is visible the
+  // same frame as the dropdown change, not on the next tick.
+  if (shellMounted) paintFrame();
 }
 
-els.workspace.addEventListener("change", () => { resetWorkspaceState(); fetchState({ manual: true }); });
-els.token.addEventListener("change", () => { state.token = els.token.value.trim(); resetWorkspaceState(); fetchState({ manual: true }); });
+els.workspace.addEventListener("change", () => {
+  // Pin state.workspace to the new value the moment the user picks it,
+  // so the SSE cross-workspace guard accepts replay events from the
+  // new workspace's stream as soon as they arrive.
+  state.workspace = els.workspace.value || state.workspace;
+  resetWorkspaceState();
+  fetchState({ manual: true });
+});
+els.token.addEventListener("change", () => {
+  state.token = els.token.value.trim();
+  resetWorkspaceState();
+  fetchState({ manual: true });
+});
 els.refresh.addEventListener("click", () => fetchState({ manual: true }));
 els.pause.addEventListener("click", () => {
   state.paused = !state.paused;
