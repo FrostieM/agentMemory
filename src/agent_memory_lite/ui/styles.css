@@ -466,11 +466,18 @@ code, pre, .mono {
 
 /* ===== SVG node styles =================================================== */
 
-.fam-node text, .obj-node text, .centre text {
+.fam-node text, .obj-node text, .centre-layer text {
   fill: var(--text-0);
   font-family: ui-sans-serif, system-ui, sans-serif;
   pointer-events: none;
 }
+.centre-layer .centre-label { fill: var(--text-0); }
+.centre-layer .centre-sub { fill: var(--text-3); }
+.centre-layer .centre-stage { fill: var(--accent); }
+.fam-node.is-highlight .fam-base {
+  stroke-width: 2.5px;
+}
+.fam-node.is-highlight .fam-aura { opacity: 0.95 !important; }
 .fam-label-inside { font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
 .fam-count-inside {
   font-size: 10px; font-family: ui-monospace, monospace;

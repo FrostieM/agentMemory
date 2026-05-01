@@ -386,7 +386,12 @@ function paintFrame() {
   const progress = state.progress;
   const phase = state.phase;
   const counts = state.memory?.counts || {};
-  const showAnimation = !!q && state.cycleStart > 0;
+  const cycleRunning = !!q && state.cycleStart > 0;
+  // After the cycle ends, freeze the last frame at progress=1 so the
+  // result of a Search / Explain stays visible while the user inspects.
+  const drawFamilies = q?.families || [];
+  const visualProgress = cycleRunning ? progress : (q ? 1 : 0);
+  const visualPhase = cycleRunning ? phase : (q ? "hold" : "idle");
 
   // Family base style + counter
   for (const f of FAMILIES) {
@@ -397,19 +402,25 @@ function paintFrame() {
     if (counter) counter.textContent = String(total);
 
     let lit = 0;
-    if (q && q.families.includes(f.id)) {
-      if (showAnimation) {
+    if (drawFamilies.includes(f.id)) {
+      if (cycleRunning) {
         const start = FAMILY_ARRIVAL - 0.08, end = FAMILY_ARRIVAL;
         lit = Math.max(0, Math.min(1, (progress - start) / (end - start)));
         if (phase === "reverse") lit = Math.min(lit, progress);
       } else {
-        // post-cycle: keep selected family softly lit so the user still sees focus
-        lit = state.selected?.kind === "family" && state.selected.famId === f.id ? 0.5 : 0;
+        lit = 0.85;
       }
     }
     const liveTtl = state.liveLight.get(f.id) || 0;
     if (liveTtl > performance.now()) lit = Math.max(lit, 0.85);
+
+    const isSelectedFamily = state.selected?.kind === "family" && state.selected.famId === f.id;
+    const isObjectFamily   = state.selected?.kind === "object" && state.selected.famId === f.id;
+    const isHighlighted    = isSelectedFamily || isObjectFamily;
+    if (isHighlighted) lit = Math.max(lit, 0.9);
+
     g.classList.toggle("is-lit", lit > 0.4);
+    g.classList.toggle("is-highlight", isHighlighted);
     const aura = g.querySelector(".fam-aura");
     if (aura) aura.style.opacity = String(lit);
     const base = g.querySelector(".fam-base");
@@ -420,13 +431,15 @@ function paintFrame() {
     }
   }
 
-  // dynamic layer: edges + objects, only while a cycle is running
+  // Dynamic layer: persists between cycles. Holds the last query's
+  // edges + object nodes at progress=1 so post-cycle the graph reads
+  // like a frozen result, not a blank canvas.
   clear(dynamicLayer);
-  if (q && showAnimation && q.families.length) {
-    for (const fid of q.families) {
+  if (q && drawFamilies.length) {
+    for (const fid of drawFamilies) {
       const fp = POS_BY_ID[fid];
       const fam = FAMILY_BY_ID[fid];
-      const trunkProg = Math.max(0, Math.min(1, progress / FAMILY_ARRIVAL));
+      const trunkProg = Math.max(0, Math.min(1, visualProgress / FAMILY_ARRIVAL));
       drawEdge(dynamicLayer, trunkPath(fp), trunkProg, fam.hue, 1.8);
 
       const objs = q.objects.filter(o => o.famId === fid);
@@ -435,11 +448,15 @@ function paintFrame() {
         const op = positions[i] || { x: fp.x, y: fp.y, ring: 0 };
         const arrival = Math.min(0.96, FAMILY_ARRIVAL + 0.15 + op.ring * PER_RING_DELTA);
         const spurStart = FAMILY_ARRIVAL + 0.02;
-        const spurProg = Math.max(0, Math.min(1, (progress - spurStart) / (arrival - spurStart)));
+        const spurProg = Math.max(0, Math.min(1, (visualProgress - spurStart) / (arrival - spurStart)));
         drawEdge(dynamicLayer, spurPath(fp, op), spurProg, fam.hue, 1.4);
         const start = arrival - 0.04, end = arrival + 0.04;
-        const vis = Math.max(0, Math.min(1, (progress - start) / (end - start)));
-        if (vis > 0.02) drawObject(dynamicLayer, op, fp, fam, objs[i], vis);
+        const vis = Math.max(0, Math.min(1, (visualProgress - start) / (end - start)));
+        if (vis > 0.02) {
+          const obj = objs[i];
+          const isSelectedObj = state.selected?.kind === "object" && state.selected.obj?.id === obj.id;
+          drawObject(dynamicLayer, op, fp, fam, obj, vis, isSelectedObj);
+        }
       }
     }
   }
@@ -513,20 +530,33 @@ function drawEdge(layer, d, prog, hue, width) {
   }
 }
 
-function drawObject(layer, pos, parent, fam, obj, vis) {
+function drawObject(layer, pos, parent, fam, obj, vis, isHighlighted = false) {
   const r = OBJECT_R * vis;
   const haloR = OBJECT_R + 10 * vis;
-  const g = svg("g", { class: "obj-node", transform: `translate(${pos.x},${pos.y})` }, layer);
+  const g = svg("g", {
+    class: `obj-node ${isHighlighted ? "is-highlight" : ""}`,
+    transform: `translate(${pos.x},${pos.y})`,
+  }, layer);
   g.addEventListener("click", (ev) => { ev.stopPropagation(); selectObject(obj); });
+  if (isHighlighted) {
+    svg("circle", {
+      r: OBJECT_R + 14,
+      fill: "none",
+      stroke: `oklch(0.96 0.2 ${fam.hue})`,
+      "stroke-width": 2,
+      opacity: 0.85,
+      filter: "url(#big-glow)",
+    }, g);
+  }
   svg("circle", {
     class: "obj-halo", r: haloR,
-    fill: `oklch(0.85 0.18 ${fam.hue} / ${0.25 * vis})`,
+    fill: `oklch(0.85 0.18 ${fam.hue} / ${(isHighlighted ? 0.45 : 0.25) * vis})`,
     filter: "url(#big-glow)",
   }, g);
   svg("circle", {
     r, fill: `oklch(0.24 0.05 ${fam.hue})`,
     stroke: `oklch(0.92 0.18 ${fam.hue} / ${vis})`,
-    "stroke-width": 1.4,
+    "stroke-width": isHighlighted ? 2 : 1.4,
     filter: "url(#stroke-glow)",
   }, g);
   svg("circle", { r: 1.6 * vis, fill: `oklch(0.98 0.16 ${fam.hue})`, opacity: vis }, g);
@@ -629,7 +659,12 @@ function closeInspector() {
 }
 
 async function selectFamily(fid) {
+  // Click = highlight only. We do NOT redraw the graph or run a new
+  // animation cycle — whatever was drawn from the last Search/Explain
+  // stays visible. The user reads the family's full list in the rail
+  // and drills into specific objects from there.
   pushSelection({ kind: "family", famId: fid });
+  paintFrame();
   let detail = state.detailCache.get(fid);
   if (!detail) {
     try {
@@ -639,25 +674,17 @@ async function selectFamily(fid) {
       detail = { objects: [], error: String(err) };
     }
   }
-  // Only enrich if the user is still looking at THIS family — they might
-  // have clicked back / a different node while the fetch was in flight.
   if (state.selected?.kind === "family" && state.selected.famId === fid) {
     state.selected.detail = detail;
     renderInspector();
-    if (detail.objects?.length) {
-      runQueryAnimation({
-        intent: fid,
-        prompt: `Inspecting ${FAMILY_BY_ID[fid].label}`,
-        families: [fid],
-        objects: detail.objects.slice(0, 5),
-        source: "family-click",
-      });
-    }
+    paintFrame();
   }
 }
 
 function selectObject(obj) {
+  // Click = highlight + open body in rail. No new edges drawn.
   pushSelection({ kind: "object", famId: obj.famId, obj });
+  paintFrame();
 }
 
 async function fetchFamilyDetail(fid) {
