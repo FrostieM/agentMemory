@@ -151,16 +151,39 @@ _PROCESS_EDGES = [
 ]
 
 
+_NO_CACHE = {
+    # The observatory ships a single page + two static assets that
+    # change with every code release. We deliberately tell the browser
+    # to revalidate on every request so a developer running serve.py
+    # always sees the freshly-edited UI without a manual hard refresh.
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @router.get("/ui")
 def memory_ui_index() -> FileResponse:
-    return FileResponse(_UI_ROOT / "index.html", media_type="text/html; charset=utf-8")
+    return FileResponse(
+        _UI_ROOT / "index.html",
+        media_type="text/html; charset=utf-8",
+        headers=_NO_CACHE,
+    )
 
 
 @router.get("/ui/{asset_name}")
 def memory_ui_asset(asset_name: str) -> FileResponse:
     if asset_name not in _ASSETS:
-        return FileResponse(_UI_ROOT / "index.html", media_type="text/html; charset=utf-8")
-    return FileResponse(_UI_ROOT / asset_name, media_type=_ASSETS[asset_name])
+        return FileResponse(
+            _UI_ROOT / "index.html",
+            media_type="text/html; charset=utf-8",
+            headers=_NO_CACHE,
+        )
+    return FileResponse(
+        _UI_ROOT / asset_name,
+        media_type=_ASSETS[asset_name],
+        headers=_NO_CACHE,
+    )
 
 
 def _quote_ident(value: str) -> str:
