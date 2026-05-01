@@ -53,6 +53,76 @@ pip install -e ".[dev]"
 If `torch` wheels are unavailable for your Python version, install Python 3.13 alongside
 (via `pyenv-win`, `rye`, or the official installer) and recreate the venv.
 
+## Getting started — new user, first run
+
+```
+1. clone & install   →  pip install -e ".[dev]"
+2. start service     →  python scripts/serve.py        (auto hub mode)
+3. attach a project  →  python scripts/setup_agent.py --project /path/to/X
+4. open a chat       →  in /path/to/X — agent auto-loads X's memory
+5. inspect           →  http://127.0.0.1:8765/ui
+```
+
+What each step does:
+
+1. **Install.** One venv, one `pip install`. No Docker, no databases to
+   provision. SQLite + LanceDB live next to your project as a `.agent_memory/`
+   folder. Ollama is recommended for LLM extraction but optional
+   (`OLLAMA_PROBE_SKIP=true` to skip).
+
+2. **Start the HTTP service.** `scripts/serve.py` boots FastAPI on
+   `127.0.0.1:8765`. With no projects yet registered it runs in single-anchor
+   mode; once at least one project is registered (step 3) it automatically
+   switches to **hub mode** so one service can serve many projects. Pass
+   `--hub` or `--strict` to override. To autostart on Windows login:
+
+       powershell -ExecutionPolicy Bypass -File scripts/memory_service_task.ps1 \
+           -Action Install -WorkspaceId <name> -ProjectRoot <path> -HubMode
+
+3. **Attach a project.** `setup_agent.py --project <path>` does everything
+   needed to make a project memory-aware:
+   - creates `<path>/.agent_memory/memory.db` and `vectors.lance`,
+   - writes `<path>/.claude/settings.json` with an MCP server entry that
+     pins `MEMORY_DB_PATH`, `MEMORY_WORKSPACE_ID`,
+     `MEMORY_FORBID_DEFAULT_WORKSPACE=true`, and
+     `MEMORY_STRICT_WORKSPACE_ISOLATION=true` — the safe project default,
+   - installs a `UserPromptSubmit` hook that auto-injects memory context
+     before every prompt,
+   - drops a copy of the agent contract into `CLAUDE.md` and `AGENTS.md`,
+   - registers the project in `~/.agent_memory/workspaces.json` so the hub
+     service and UI can route to it.
+
+   Pass `--workspace <id>` to choose a specific name (default: project
+   folder name).
+
+4. **Open a chat in the project root.** Any MCP-aware runtime (Claude Code,
+   Codex, Cursor) will find the project-scoped MCP server, the agent will
+   see memory tools in its tool list, and the hook will auto-prepend
+   relevant past context to each prompt.
+
+5. **Inspect.** The UI at `http://127.0.0.1:8765/ui` shows a live graph of
+   what's in memory, a workspace dropdown to switch between projects, the
+   current request flow, and recent durable changes.
+
+### What's safe by default
+
+When you set up a project with `--project`, the resulting chat enforces
+**asymmetric isolation**:
+
+| Operation | Same workspace | Other registered workspace | `default` workspace |
+|---|---|---|---|
+| **Read** (`get_context`, `search`, `list_*`) | ✅ | ✅ if user explicitly asks | ❌ |
+| **Write** (`ingest_episode`, `write_decision`, ...) | ✅ | ❌ blocked by strict guard | ❌ |
+
+In practice: you can ask an agent in project A to *read* project B's
+memory ("посмотри copyBot decisions"), but the agent cannot *write*
+anything into project B without you opening a chat there. To get full
+cross-workspace access (both read and write), open a chat in the parent
+directory — that's a hub chat and it has no strict guard.
+
+See `docs/AGENT_CONTRACT.md` for the full agent operating contract,
+including the cross-workspace access protocol and every endpoint.
+
 ## Set up Ollama (recommended for full feature set)
 
 ```bash

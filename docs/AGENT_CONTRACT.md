@@ -23,8 +23,10 @@ Use the `workspace_id` already established for the project. If none is specified
 for a shared global memory, use `workspace_id="<workspace_id>"` in examples and
 replace it with the actual namespace before calling tools. Do not silently
 switch a project that already uses a named workspace.
-In strict project mode, `MEMORY_STRICT_WORKSPACE_ISOLATION=1` rejects any
-request whose `workspace_id` differs from `MEMORY_WORKSPACE_ID`.
+In strict project mode, `MEMORY_STRICT_WORKSPACE_ISOLATION=1` rejects
+**writes** whose `workspace_id` differs from `MEMORY_WORKSPACE_ID`. Reads
+to other registered workspaces are still allowed (asymmetric isolation —
+see "Project mode vs hub mode" below).
 
 ## Operating contract
 
@@ -830,23 +832,34 @@ The service has two operating modes that determine what cross-workspace
 access is allowed. The mode is decided at HTTP service startup and at MCP
 stdio server boot, independently.
 
-**Project mode (default for project chats)**
+**Project mode (default for project chats) — asymmetric isolation**
 A chat opened in a project root (e.g. `agent-memory-lite/` or `copyBot/`)
 loads that project's `.claude/settings.json`, which sets
 `MEMORY_DB_PATH`, `MEMORY_WORKSPACE_ID`, `MEMORY_FORBID_DEFAULT_WORKSPACE=true`,
 and `MEMORY_STRICT_WORKSPACE_ISOLATION=true`. The MCP server in that chat
-refuses any `workspace_id` other than the project's own — both reads and
-writes. This is the safe default: an AI agent cannot accidentally read or
-write another project's memory.
+applies an asymmetric guard:
+
+- **Reads to any registered workspace are allowed.** The user can explicitly
+  ask the agent to look at another project's memory ("посмотри copyBot
+  decisions"), and `memory_get_context(workspace_id="X")` will route to
+  that project's DB. Reads do not pollute the calling chat's audit log.
+- **Writes to any workspace other than the project's own are blocked.**
+  `memory_ingest_episode`, `memory_write_decision`, `memory_update_task_state`,
+  and every other writer raises `ValidationError: writes ... are blocked by
+  MEMORY_STRICT_WORKSPACE_ISOLATION` when called with a foreign
+  `workspace_id`. A project chat must never pollute another project's
+  episodes, decisions, or behavior instructions — even when asked.
 
 **Hub mode (parent dir / shared service)**
 A chat opened in a parent directory (or a service launched with
 `MEMORY_HUB_MODE=true`) routes per-call. The MCP server reads
 `~/.agent_memory/workspaces.json` and routes each request to the right
 SQLite+LanceDB pair via the `X-Memory-DB-Path` / `X-Memory-Vector-Path`
-headers. The strict guard is off, so any registered `workspace_id` is
-allowed. Use this when the user explicitly asks you to look at another
-project's memory.
+headers. Both the strict guard and the read/write asymmetry are off: the
+operator has chosen a shared hub service, so any registered `workspace_id`
+is a valid target for both reads and writes. Use hub mode for cross-project
+maintenance, batch ingestion across projects, or when the agent runtime
+genuinely needs write access to multiple workspaces.
 
 The HTTP service (`scripts/serve.py`) defaults to hub mode whenever the
 registry has at least one entry; pass `--strict` to force single-workspace
@@ -880,17 +893,27 @@ can switch between project memories without restarting the service.
 ## Cross-workspace access protocol
 
 When the user explicitly asks you (the agent) to look at another project's
-memory, you have two options:
+memory:
 
-1. **Open a hub chat.** Start the agent runtime in the parent directory
-   (or anywhere not pinned to a project). The MCP server boots in hub
-   mode, the strict guard is off, and `memory_get_context(workspace_id="X")`
-   for any registered `X` will route to the right DB.
+1. **Just call the read tool.** From any chat (project or hub), reads are
+   allowed: `memory_get_context(workspace_id="X")`,
+   `memory_search(workspace_id="X")`, `memory_list_decisions(...)` etc. for
+   any registered `X` will route to that project's DB. Treat the result as
+   reference material — do not echo it into the calling project's memory.
 
-2. **Direct HTTP call** with `X-Memory-DB-Path` headers picked up from the
-   registry — useful for scripts.
+When the user asks you to *write* something into another project's memory:
 
-Do **not** flip strict isolation off inside a project chat just to read
-another workspace. That defeats the purpose of project-scoped memory.
-Treat strict isolation as a first-class invariant; only the user's explicit
-request justifies stepping out.
+2. **Refuse and ask the user to switch contexts.** Writes from a project
+   chat into a foreign workspace are blocked at the guard level and will
+   fail with `MEMORY_STRICT_WORKSPACE_ISOLATION`. If the write genuinely
+   belongs in the other project, tell the user to either open a chat in
+   that project's root, or open a hub chat in a parent directory.
+
+3. **Direct HTTP call from a script** with `X-Memory-DB-Path` headers
+   picked up from the registry — for batch maintenance only, not for
+   in-conversation writes.
+
+Never flip `MEMORY_STRICT_WORKSPACE_ISOLATION` off inside a project chat
+to enable a write. That defeats the purpose of project-scoped memory.
+Strict isolation is a first-class invariant; the user's explicit request
+justifies a cross-workspace **read**, not a cross-workspace write.
