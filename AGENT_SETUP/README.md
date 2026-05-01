@@ -63,6 +63,25 @@ skills, and playbooks with the capability tools.
 Extraction candidates are review-first: promote supported candidates and reject
 weak ones instead of turning every extracted sentence into an active decision.
 
+## What's safe by default after these prompts run
+
+`setup_agent.py --project` (which both prompts call) bakes the
+asymmetric isolation contract into the project's MCP env:
+
+- Reads from this project's chat to ANY registered workspace are allowed —
+  the user can ask "look at copyBot decisions" and the agent will route
+  the read to that DB via the workspace registry.
+- Writes from this project's chat to ANY workspace other than its own
+  are blocked at the strict-isolation guard. The agent must refuse and
+  ask the user to switch contexts.
+
+For full cross-workspace access (both read and write — useful for batch
+maintenance), open a chat in the **parent directory** (no project pin)
+or run the HTTP service with `MEMORY_HUB_MODE=true`. The PowerShell
+autostart wrapper takes `-HubMode`. The serve.py launcher accepts
+`--hub` / `--strict` overrides. Default is hub mode whenever the
+registry has at least one entry.
+
 If the agent reports that MCP tools aren't visible in its tool list, you
 need to **restart whichever runtime is hosting it**:
 

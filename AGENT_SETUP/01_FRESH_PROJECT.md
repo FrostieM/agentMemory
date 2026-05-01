@@ -59,13 +59,14 @@ VENV_PYTHON = `<REPO_ROOT>/.venv/Scripts/python.exe` on Windows, or
 back to whichever `python` is on PATH and note the deviation in the final
 report.
 
-# Step 2 — understand the three isolation layers
+# Step 2 — understand the four isolation layers
 
-agent-memory-lite isolates per-project memory through three independent
+agent-memory-lite isolates per-project memory through four independent
 mechanisms. Knowing which one applies depends on your runtime:
 
 a) **MCP env vars** (used by Claude Code in project mode) — the spawned
-   MCP server reads `MEMORY_DB_PATH` from its env. Set in
+   MCP server reads `MEMORY_DB_PATH`, `MEMORY_WORKSPACE_ID`, and
+   `MEMORY_STRICT_WORKSPACE_ISOLATION=true` from its env. Set in
    `<project>/.claude/settings.json`. Highest precedence.
 b) **MCP cwd auto-detect** (works in ANY runtime that spawns the MCP
    server with `cwd=<project root>`) — if `<cwd>/.agent_memory/memory.db`
@@ -76,8 +77,39 @@ b) **MCP cwd auto-detect** (works in ANY runtime that spawns the MCP
 c) **HTTP header** (used by the optional UserPromptSubmit hook) — the
    hook sends `X-Memory-DB-Path: <project>/.agent_memory/memory.db` so
    the global HTTP service serves the right DB per request.
+d) **Hub workspace registry** (`~/.agent_memory/workspaces.json`,
+   override via `MEMORY_WORKSPACES_FILE`) — a list of every registered
+   project's `(workspace_id, db_path, vector_path, project_root)`. The
+   global HTTP service in hub mode and the MCP server's per-call
+   delegation both consult this registry to route a `workspace_id` to
+   its physical DB. Updated automatically by every
+   `setup_agent.py --project` call. Inspect or edit offline:
+
+       python scripts/register_workspace.py list
+       python scripts/register_workspace.py register --workspace <id> --project <path>
+       python scripts/register_workspace.py remove --workspace <id>
 
 For most agents you only need (a) and (b). Continue.
+
+# Step 2b — asymmetric isolation contract
+
+When `setup_agent.py --project` finishes, the resulting MCP server
+enforces an asymmetric guard:
+
+- **Reads to any registered workspace are allowed.** A user can
+  explicitly ask you "look at workspace X memory" and your
+  `memory_get_context(workspace_id="X")` call will route to that DB.
+- **Writes to any workspace other than the project's own are blocked.**
+  Every `memory_ingest_episode`, `memory_write_decision`,
+  `memory_update_task_state`, etc. with a foreign `workspace_id` will
+  raise `MEMORY_STRICT_WORKSPACE_ISOLATION`. Do not try to bypass this;
+  if a write genuinely belongs in another project, tell the user to
+  open a chat there or in the parent ("hub") directory.
+
+Hub mode (chat opened in a parent dir, or service started with
+`MEMORY_HUB_MODE=true`) opts out of strict isolation entirely — both
+reads and writes are allowed across all registered workspaces. Use hub
+mode for cross-project maintenance, never for ordinary project work.
 
 # Step 3 — check whether memory is already wired for THIS project
 
