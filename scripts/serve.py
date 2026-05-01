@@ -58,11 +58,12 @@ def bootstrap_if_needed() -> None:
     )
 
 
-def registry_has_entries(path: Path = DEFAULT_REGISTRY) -> bool:
-    if not path.exists():
+def registry_has_entries(path: Path | None = None) -> bool:
+    target = path if path is not None else DEFAULT_REGISTRY
+    if not target.exists():
         return False
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     return bool(isinstance(payload, dict) and payload.get("workspaces"))

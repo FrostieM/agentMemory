@@ -4,31 +4,44 @@ Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
 ## Current phase
 
-**Research-lab, capability, and integrity hardening layers complete.** The
-original v1 memory subsystem is feature-complete and now includes first-class
-theory/research workflow objects plus roles, skills, playbooks, reviewable
-memory candidates, retrieval-integrity audit/health, maintenance events, and
-capability links. A workspace manifest now records the owning workspace inside
-the DB itself so mismatched startups are rejected. Context rendering is
-query-ranked so active execution and research guidance stays visible before raw
-chunks. The theory layer stores
-validation criteria, dependent decision links, evidence counts/strength, and
-explicit `validated`/`rejected`/`superseded` lifecycle states. Capability links
-let roles, skills, and playbooks directly influence theories, experiments, and
-insights instead of staying as passive guidance.
+**Multi-project hub mode + asymmetric isolation landed.** A single local
+HTTP service can now serve many per-project SQLite+LanceDB pairs through
+a workspace registry (`~/.agent_memory/workspaces.json`). The MCP stdio
+server is registry-aware: every tool call resolves the right physical
+DB from `workspace_id` via per-call `X-Memory-DB-Path` headers. Default
+for project chats is asymmetric isolation: reads to any registered
+workspace are allowed (the user can explicitly ask the agent to look at
+another project), but writes to a foreign workspace are blocked at the
+strict-isolation guard. Hub chats (parent dir / `MEMORY_HUB_MODE=true`)
+opt out of strict isolation for cross-project maintenance.
+
+Earlier layers remain in place: research-lab (theories, snapshots,
+experiments, results, concepts, insights), agent capabilities (roles,
+skills, playbooks, capability links), behavior instructions, retrieval
+integrity audit, candidate review, workspace manifest, and live UI
+observatory.
 
 ## Last verified
 
 All gates green on Python 3.14.3 (Windows):
 
-- `pytest` - full suite passed.
+- `pytest -q` - full suite passed (425+ tests).
 - `ruff check src tests scripts` - clean.
 - `ruff format --check src tests scripts` - clean.
-- `mypy src` - clean across **167 source files**.
 - `python scripts/run_evals.py --workspace <workspace_id> --no-vector` - 11/11 cases
   passed with recall@10=1.0 and precision@10=1.0.
-- HTTP health on a project memory reported migrations through
-  `0009_workspace_manifest`.
+- HTTP `/health` reports `status: ok` after agentLight workspace_pollution
+  cleanup; both `agentLight` and `copyBot` registered in
+  `~/.agent_memory/workspaces.json` and visible at `/memory/workspaces`.
+
+## Next phase
+
+The four-layer isolation contract is the foundation for the next
+operational concerns: `macOS launchd` / `Linux systemd` autostart units
+(parity with the Windows scheduled task), per-call `usage_feedback`
+ranking improvements, and a structured way for an AI agent to request
+cross-workspace write delegation when the user explicitly authorizes it
+(currently writes are a hard boundary in project mode — by design).
 
 ## Research-lab and capability deliverables landed
 
