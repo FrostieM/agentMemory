@@ -105,6 +105,18 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "short_label" in js.text
     # Polling fallback when SSE is offline.
     assert "REFRESH_MS" in js.text or "setInterval" in js.text
+    # SSE-driven animation queue: events become queries, queue plays
+    # them sequentially, last one freezes when queue empty.
+    assert "state.queue" in js.text
+    assert "enqueueQuery" in js.text
+    assert "buildQueryFromEvent" in js.text
+    assert "startNextFromQueue" in js.text
+    # Object body fields surface in the inspector.
+    assert "decision_text" in js.text
+    assert "predictions" in js.text
+    assert "validation_criteria" in js.text
+    # Click on a node = highlight only (no new edges).
+    assert "is-highlight" in js.text
 
     # --- styles.css: design identity (oklch, dark theme, tweaks panel) ---
     assert css.status_code == 200

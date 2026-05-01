@@ -66,12 +66,18 @@ const state = {
   inspectorHistory: [],   // back-button stack of previous selections
   detailCache: new Map(), // famId → fetched detail rows
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
-  // animation
+  // animation pipeline:
+  //   • SSE graph_delta events → buildQueryFromEvent → state.queue
+  //   • tick() pulls from queue when idle, plays one cycle
+  //   • when queue empties, the last activeQuery stays drawn (frozen)
+  //     because paintFrame falls back to visualProgress = 1 / phase = "hold"
+  queue: [],
   activeQuery: null,           // { intent, prompt, families, objects, source }
-  cycleStart: 0,               // ms timestamp of the running cycle, or 0 if idle
+  cycleStart: 0,               // ms timestamp of the running cycle, or 0 if frozen
   phase: "idle",
   progress: 0,
 };
+const QUEUE_CAP = 8;
 
 const els = {
   workspace: document.getElementById("workspaceInput"),
@@ -246,10 +252,26 @@ const STAGE_BY_PHASE = (phase, p) => {
 };
 
 function runQueryAnimation(query) {
+  // Explicit Search / Explain — bypass the queue and start immediately.
   state.activeQuery = query;
   state.cycleStart = performance.now();
   state.phase = "forward";
   state.progress = 0;
+}
+
+function enqueueQuery(query) {
+  if (!query || !query.families?.length) return;
+  state.queue.push(query);
+  if (state.queue.length > QUEUE_CAP) state.queue.shift();
+}
+
+function startNextFromQueue() {
+  if (!state.queue.length) return false;
+  state.activeQuery = state.queue.shift();
+  state.cycleStart = performance.now();
+  state.phase = "forward";
+  state.progress = 0;
+  return true;
 }
 
 function tick() {
@@ -257,21 +279,30 @@ function tick() {
   if (state.paused) return;
   if (!shellMounted) return;
 
-  if (!state.activeQuery || !state.cycleStart) {
+  // No cycle running — pull next from queue, or freeze whatever's left.
+  if (!state.cycleStart) {
+    if (startNextFromQueue()) {
+      paintFrame();
+      return;
+    }
     state.phase = "idle";
     state.progress = 0;
     paintFrame();
     return;
   }
+
   const sp = Math.max(0.3, state.tweaks.speed);
   const F = PHASE_MS.forward / sp, H = PHASE_MS.hold / sp, R = PHASE_MS.reverse / sp;
   const elapsed = performance.now() - state.cycleStart;
   if (elapsed >= F + H + R) {
-    // cycle done — settle to idle but keep activeQuery so the rail
-    // continues to display the last result.
-    state.phase = "idle";
-    state.progress = 0;
-    state.cycleStart = 0;
+    // Cycle done. If more events are queued, chain straight in;
+    // otherwise leave activeQuery in place so its objects + edges stay
+    // visible (paintFrame freezes them at progress=1 when cycleStart=0).
+    if (!startNextFromQueue()) {
+      state.cycleStart = 0;
+      state.phase = "idle";
+      state.progress = 0;
+    }
     paintFrame();
     return;
   }
@@ -985,17 +1016,80 @@ function setSseChip(text, cls = "") { els.sseChip.textContent = text; els.sseChi
 function onMemoryEvent(ev) {
   if (ev.id && state.eventIds.has(ev.id)) return;
   if (ev.id) state.eventIds.add(ev.id);
+
+  // Trail row (always)
   state.events.unshift({
     kind: trailKindOf(ev),
     t: fmtTime(ev.timestamp || new Date()),
     text: ev.label || ev.endpoint || ev.operation || ev.kind || "memory event",
   });
   state.events = state.events.slice(0, 60);
-  if (ev.kind === "graph_delta" && ev.counts && typeof ev.counts.table === "string") {
+  renderFeed();
+
+  // Family additive light (kept for non-queued events too — gives
+  // background activity a soft pulse independent of the cycle queue).
+  if (ev.kind === "graph_delta" && ev.counts?.table) {
     const fid = FAMILY_BY_TABLE[ev.counts.table];
     if (fid) state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
   }
-  renderFeed();
+
+  // Queue an animation. We skip events from Search / Explain because
+  // those run an explicit full-result animation via runQueryAnimation
+  // already; the SSE stream for those calls would just play them again
+  // in fragmentary form.
+  const operation = String(ev.operation || ev.endpoint || "").toLowerCase();
+  const userInitiated =
+    operation.includes("search") ||
+    operation.includes("get_context") ||
+    operation.includes("explain_context");
+  if (!userInitiated) {
+    const built = buildQueryFromEvent(ev);
+    if (built) enqueueQuery(built);
+  }
+}
+
+function buildQueryFromEvent(ev) {
+  // Object-level event: graph_delta with table + object_id → 1 family,
+  // 1 object. This is the most useful kind for the observatory because
+  // each ingest / write_decision / write_theory etc. emits one graph_delta
+  // per row produced.
+  if (ev.kind === "graph_delta" && ev.counts?.table) {
+    const c = ev.counts;
+    const fid = FAMILY_BY_TABLE[c.table];
+    if (!fid) return null;
+    const objId = c.object_id || c.target_id || ev.id || `${c.table}:auto`;
+    const objLabel = c.label || c.object_id || `${c.action || ev.kind} ${c.table}`;
+    return {
+      intent: ev.operation || c.action || "memory",
+      prompt: ev.label || ev.snippet || `${c.action || "active"} ${c.table}`,
+      families: [fid],
+      objects: [{
+        id: objId,
+        label: objLabel,
+        famId: fid,
+        table: c.table,
+        raw: ev,
+      }],
+      source: "sse-graph-delta",
+    };
+  }
+  // Stage-level event: stage_done with a list of tables → multi-family
+  // light without specific objects. Useful for high-level operations
+  // (compaction, audit) that don't write to a single row.
+  if (ev.kind === "stage" && Array.isArray(ev.tables)) {
+    const fams = Array.from(new Set(
+      ev.tables.map((t) => FAMILY_BY_TABLE[t]).filter(Boolean)
+    ));
+    if (!fams.length) return null;
+    return {
+      intent: ev.operation || ev.stage || "stage",
+      prompt: ev.label || `${ev.stage || ""} ${ev.endpoint || ""}`.trim() || "memory stage",
+      families: fams,
+      objects: [],
+      source: "sse-stage",
+    };
+  }
+  return null;
 }
 function trailKindOf(ev) {
   if (ev.kind === "graph_delta") return "pick";
