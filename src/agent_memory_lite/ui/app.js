@@ -135,6 +135,11 @@ const REQUEST_FLUSH_AFTER_MS = 1500;
 // queue dozens of past cycles when the user opens the UI or switches
 // workspaces.
 const REPLAY_LIVE_WINDOW_MS = 10_000;
+// How long a "this is our own search/explain" fingerprint stays valid.
+// SSE for the local read usually arrives within ~200 ms, so 5 s is a
+// generous window without clobbering legitimate reads from other
+// agents that happen seconds later.
+const LOCAL_READ_TTL_MS = 5_000;
 
 const els = {
   workspace: document.getElementById("workspaceInput"),
@@ -1281,17 +1286,23 @@ function onMemoryEvent(ev) {
   // five tables would flicker five tiny graphs in a row instead of
   // showing the actual operation.
   //
-  // We skip user-initiated reads (search / get_context / explain_context):
-  // those have explicit Search / Explain buttons that run the full
-  // animation via runQueryAnimation, and the SSE re-play would just
-  // overlap that animation with fragmentary frames.
+  // We skip ONLY OUR OWN read events. Search/Explain triggered from this
+  // UI's buttons play their animation directly via runQueryAnimation
+  // with the full HTTP response, so the SSE re-play would just queue a
+  // duplicate cycle behind it. Reads triggered by ANY other client
+  // (another agent, MCP server, curl, second browser tab) come through
+  // SSE and absolutely SHOULD animate — that's the whole point of a
+  // live observatory. We tell them apart via a short-lived endpoint +
+  // snippet fingerprint that searchMemory / explainContext set right
+  // before they fetch.
   const requestId = ev.request_id || "";
+  if (!requestId) return;
   const operation = String(ev.operation || ev.endpoint || "").toLowerCase();
-  const userInitiated =
+  const isReadEndpoint =
     operation.includes("search") ||
     operation.includes("get_context") ||
     operation.includes("explain_context");
-  if (!requestId || userInitiated) return;
+  if (isReadEndpoint && isLocalRead(ev)) return;
 
   // SSE replay guard: when the client subscribes to /memory/ui/events,
   // the server replays its recent snapshot (up to 80 events). Without
@@ -1545,10 +1556,37 @@ function buildQueryFromHits(prompt, intent, hits, defaultFamId = "episodes") {
   return { intent, prompt, families, objects, source: intent };
 }
 
+// Local read fingerprints: when the local Search/Explain button fires
+// an HTTP request, we record (endpoint, query, timestamp) so the SSE
+// replay of THAT specific request can be skipped (we already animate it
+// via runQueryAnimation). Reads from other agents/MCP/curl don't have a
+// matching fingerprint and animate normally.
+const _localReadFingerprints = [];
+function markLocalRead(endpoint, query) {
+  const now = Date.now();
+  // Drop expired entries while we're here.
+  while (_localReadFingerprints.length && now - _localReadFingerprints[0].t > LOCAL_READ_TTL_MS) {
+    _localReadFingerprints.shift();
+  }
+  _localReadFingerprints.push({ endpoint, query: (query || "").trim(), t: now });
+}
+function isLocalRead(ev) {
+  const endpoint = String(ev.endpoint || "").trim();
+  const snippet = String(ev.snippet || "").trim();
+  const now = Date.now();
+  for (let i = _localReadFingerprints.length - 1; i >= 0; i--) {
+    const f = _localReadFingerprints[i];
+    if (now - f.t > LOCAL_READ_TTL_MS) continue;
+    if (endpoint.endsWith(f.endpoint) && snippet === f.query) return true;
+  }
+  return false;
+}
+
 async function searchMemory() {
   const q = els.query.value.trim();
   if (!q) return;
   els.searchSummary.textContent = "searching…";
+  markLocalRead("/memory/search", q);
   try {
     const data = await postJson("/memory/search", { workspace_id: state.workspace, query: q, mode: "fts", limit: 6 });
     const hits = data.hits || data.results || [];
@@ -1561,6 +1599,7 @@ async function explainContext() {
   const q = els.query.value.trim();
   if (!q) return;
   els.searchSummary.textContent = "fetching context…";
+  markLocalRead("/memory/get_context", q);
   try {
     const data = await postJson("/memory/get_context", { workspace_id: state.workspace, query: q, max_tokens: 1500 });
     els.contextBox.textContent = data.context_text || "";
