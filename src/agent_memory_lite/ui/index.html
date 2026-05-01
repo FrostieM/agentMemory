@@ -85,11 +85,30 @@
         </section>
 
         <aside class="rail">
-          <div class="rail-card" id="inspectorCard">
+          <div class="rail-card live-intent-card" id="liveIntent">
+            <div class="inspector-kicker">live · <span id="liveIntentKind">idle</span></div>
+            <div class="inspector-title" id="liveIntentPrompt">Awaiting next request…</div>
+            <div class="metric-row" id="liveMetrics">
+              <div class="metric"><div class="metric-val" id="metricObjects">0</div><div class="metric-label">objects</div></div>
+              <div class="metric"><div class="metric-val" id="metricFamilies">0</div><div class="metric-label">families</div></div>
+              <div class="metric"><div class="metric-val" id="metricStage">IDLE</div><div class="metric-label">stage</div></div>
+              <div class="metric"><div class="metric-val" id="metricPhase">—</div><div class="metric-label">phase</div></div>
+            </div>
+            <div class="inspector-section">
+              <div class="section-h">families touched</div>
+              <div class="link-row" id="familiesTouched"></div>
+            </div>
+            <div class="inspector-section">
+              <div class="section-h">objects in context</div>
+              <div class="inspector-list" id="objectsInContext"></div>
+            </div>
+          </div>
+
+          <div class="rail-card" id="inspectorCard" hidden>
             <div class="inspector-empty">
               <div class="empty-circle"></div>
-              <div class="empty-title">Live overview</div>
-              <div class="empty-sub">Click any family or object to inspect. The center node is the current workspace.</div>
+              <div class="empty-title">Inspector</div>
+              <div class="empty-sub">Click any family or object node to dive in.</div>
             </div>
           </div>
 
