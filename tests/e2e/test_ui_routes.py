@@ -106,11 +106,17 @@ def test_ui_index_and_assets(app_factory) -> None:
     # Polling fallback when SSE is offline.
     assert "REFRESH_MS" in js.text or "setInterval" in js.text
     # SSE-driven animation queue: events become queries, queue plays
-    # them sequentially, last one freezes when queue empty.
+    # them sequentially. After a cycle, REVERSE retracts visuals and
+    # the graph empties; an idle gap then triggers the next query
+    # (SSE first, otherwise auto-rotate from real recent rows).
     assert "state.queue" in js.text
     assert "enqueueQuery" in js.text
     assert "buildQueryFromEvent" in js.text
     assert "startNextFromQueue" in js.text
+    assert "deriveAutoQueries" in js.text
+    assert "startNextAuto" in js.text
+    assert "IDLE_GAP_MS" in js.text
+    assert "lastIntent" in js.text
     # Object body fields surface in the inspector.
     assert "decision_text" in js.text
     assert "predictions" in js.text

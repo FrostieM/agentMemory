@@ -68,16 +68,24 @@ const state = {
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
   // animation pipeline:
   //   • SSE graph_delta events → buildQueryFromEvent → state.queue
-  //   • tick() pulls from queue when idle, plays one cycle
-  //   • when queue empties, the last activeQuery stays drawn (frozen)
-  //     because paintFrame falls back to visualProgress = 1 / phase = "hold"
+  //   • tick() plays one cycle (forward → hold → reverse), then a
+  //     short IDLE gap with an empty graph, then the next query.
+  //   • Queue priority: real SSE events first, otherwise rotate through
+  //     state.autoQueries (built from /memory/ui/state.recent).
+  //   • Centre sub-label keeps state.lastIntent visible during the gap
+  //     so the user can still see "what just played".
   queue: [],
-  activeQuery: null,           // { intent, prompt, families, objects, source }
-  cycleStart: 0,               // ms timestamp of the running cycle, or 0 if frozen
+  autoQueries: [],
+  autoIndex: 0,
+  activeQuery: null,
+  cycleStart: 0,
+  idleStart: 0,
+  lastIntent: "",
   phase: "idle",
   progress: 0,
 };
 const QUEUE_CAP = 8;
+const IDLE_GAP_MS = 1500;
 
 const els = {
   workspace: document.getElementById("workspaceInput"),
@@ -253,10 +261,7 @@ const STAGE_BY_PHASE = (phase, p) => {
 
 function runQueryAnimation(query) {
   // Explicit Search / Explain — bypass the queue and start immediately.
-  state.activeQuery = query;
-  state.cycleStart = performance.now();
-  state.phase = "forward";
-  state.progress = 0;
+  startQuery(query);
 }
 
 function enqueueQuery(query) {
@@ -265,12 +270,30 @@ function enqueueQuery(query) {
   if (state.queue.length > QUEUE_CAP) state.queue.shift();
 }
 
-function startNextFromQueue() {
-  if (!state.queue.length) return false;
-  state.activeQuery = state.queue.shift();
+function startQuery(query) {
+  state.activeQuery = query;
   state.cycleStart = performance.now();
+  state.idleStart = 0;
   state.phase = "forward";
   state.progress = 0;
+  state.lastIntent = query?.intent || state.lastIntent;
+}
+
+function startNextFromQueue() {
+  if (!state.queue.length) return false;
+  startQuery(state.queue.shift());
+  return true;
+}
+
+function startNextAuto() {
+  // Rotate through queries derived from real /memory/ui/state.recent rows.
+  // SSE events still take priority; auto-cycling only kicks in when the
+  // event queue is empty and we've waited out the idle gap.
+  if (!state.autoQueries.length) return false;
+  const q = state.autoQueries[state.autoIndex % state.autoQueries.length];
+  state.autoIndex++;
+  // Clone so we never mutate the cached query when running.
+  startQuery({ ...q, source: "auto" });
   return true;
 }
 
@@ -279,30 +302,46 @@ function tick() {
   if (state.paused) return;
   if (!shellMounted) return;
 
-  // No cycle running — pull next from queue, or freeze whatever's left.
+  const sp = Math.max(0.3, state.tweaks.speed);
+  const F = PHASE_MS.forward / sp, H = PHASE_MS.hold / sp, R = PHASE_MS.reverse / sp;
+  const G = IDLE_GAP_MS / sp;
+
+  // No cycle running.
   if (!state.cycleStart) {
-    if (startNextFromQueue()) {
+    // Real SSE events override everything — start immediately.
+    if (state.queue.length) {
+      startNextFromQueue();
       paintFrame();
       return;
     }
+    // Otherwise wait out the idle gap then auto-cycle.
+    if (!state.idleStart) state.idleStart = performance.now();
+    const idleElapsed = performance.now() - state.idleStart;
+    if (idleElapsed >= G) {
+      state.idleStart = 0;
+      if (startNextAuto()) {
+        paintFrame();
+        return;
+      }
+    }
+    // No data at all — empty graph.
+    state.activeQuery = null;
     state.phase = "idle";
     state.progress = 0;
     paintFrame();
     return;
   }
 
-  const sp = Math.max(0.3, state.tweaks.speed);
-  const F = PHASE_MS.forward / sp, H = PHASE_MS.hold / sp, R = PHASE_MS.reverse / sp;
   const elapsed = performance.now() - state.cycleStart;
   if (elapsed >= F + H + R) {
-    // Cycle done. If more events are queued, chain straight in;
-    // otherwise leave activeQuery in place so its objects + edges stay
-    // visible (paintFrame freezes them at progress=1 when cycleStart=0).
-    if (!startNextFromQueue()) {
-      state.cycleStart = 0;
-      state.phase = "idle";
-      state.progress = 0;
-    }
+    // Cycle finished. REVERSE has retracted the strokes / objects already.
+    // Clear the query so the graph reads as fully idle until the next one.
+    state.lastIntent = state.activeQuery?.intent || state.lastIntent;
+    state.activeQuery = null;
+    state.cycleStart = 0;
+    state.idleStart = performance.now();
+    state.phase = "idle";
+    state.progress = 0;
     paintFrame();
     return;
   }
@@ -418,11 +457,12 @@ function paintFrame() {
   const phase = state.phase;
   const counts = state.memory?.counts || {};
   const cycleRunning = !!q && state.cycleStart > 0;
-  // After the cycle ends, freeze the last frame at progress=1 so the
-  // result of a Search / Explain stays visible while the user inspects.
-  const drawFamilies = q?.families || [];
-  const visualProgress = cycleRunning ? progress : (q ? 1 : 0);
-  const visualPhase = cycleRunning ? phase : (q ? "hold" : "idle");
+  // When no cycle is running, the graph is fully idle — no edges, no
+  // objects. The reverse phase already retracts everything visually,
+  // so post-cycle the graph reads as a clean orbit of dim families.
+  const drawFamilies = cycleRunning ? (q?.families || []) : [];
+  const visualProgress = cycleRunning ? progress : 0;
+  const visualPhase = cycleRunning ? phase : "idle";
 
   // Family base style + counter
   for (const f of FAMILIES) {
@@ -512,11 +552,16 @@ function paintFrame() {
   } else {
     els.metricObjects.textContent = "0";
     els.metricFamilies.textContent = "0";
-    els.liveIntentKind.textContent = "idle";
-    els.liveIntentPrompt.textContent = "Search, Explain, or click a family node to drive the graph.";
+    const last = state.lastIntent || "idle";
+    els.liveIntentKind.textContent = last;
+    els.liveIntentPrompt.textContent = state.lastIntent
+      ? "Cycle complete — next memory event or auto-cycle will redraw the graph."
+      : "Run Search, Explain, or click a family node to drive the graph.";
     els.overlayPhase.textContent = "idle";
-    els.overlayIntent.textContent = "awaiting request";
-    els.overlayPrompt.textContent = "Run Search or Explain — the graph reacts to real backend traffic.";
+    els.overlayIntent.textContent = state.lastIntent || "awaiting request";
+    els.overlayPrompt.textContent = state.lastIntent
+      ? `Last cycle · ${last}`
+      : "Run Search or Explain — the graph reacts to real backend traffic.";
     clear(els.familiesTouched);
     clear(els.objectsInContext);
   }
@@ -964,6 +1009,8 @@ async function fetchState({ manual = false } = {}) {
     });
   }
   state.detailCache.clear();
+  state.autoQueries = deriveAutoQueries(memory);
+  state.autoIndex = 0;
   populateWorkspaceDropdown(memory.workspaces || [state.workspace]);
   if (!shellMounted) mountShell();
   renderHeader(memory);
@@ -1046,6 +1093,53 @@ function onMemoryEvent(ev) {
     const built = buildQueryFromEvent(ev);
     if (built) enqueueQuery(built);
   }
+}
+
+function deriveAutoQueries(memory) {
+  // Build a rotation of synthetic-but-real queries from /memory/ui/state.recent
+  // so the observatory keeps cycling like in the design video, even when no
+  // SSE event is firing. Each query touches 2-4 families and 2-5 real
+  // objects from those families.
+  const recent = memory?.recent || [];
+  const byFam = {};
+  for (const row of recent) {
+    const fid = FAMILY_BY_TABLE[row.table];
+    if (!fid) continue;
+    (byFam[fid] = byFam[fid] || []).push({
+      id: row.id,
+      table: row.table,
+      famId: fid,
+      label: row.short_label || row.label || row.id,
+      raw: row,
+    });
+  }
+  const fams = Object.keys(byFam);
+  if (!fams.length) return [];
+  const queries = [];
+  const intents = ["recall", "research", "incident", "capability", "compare", "live"];
+  const N = Math.min(7, Math.max(3, fams.length));
+  for (let i = 0; i < N; i++) {
+    const k = 2 + (i % 3);
+    const subset = [];
+    for (let j = 0; j < k; j++) subset.push(fams[(i + j) % fams.length]);
+    const uniqueSubset = Array.from(new Set(subset));
+    const objs = [];
+    for (const fid of uniqueSubset) {
+      const pool = byFam[fid] || [];
+      const take = Math.min(2, pool.length);
+      for (let j = 0; j < take; j++) objs.push(pool[(i + j) % pool.length]);
+    }
+    const trimmed = objs.slice(0, 5);
+    const headline = trimmed[0]?.label || `Active ${uniqueSubset[0]}`;
+    queries.push({
+      intent: intents[i % intents.length],
+      prompt: headline,
+      families: uniqueSubset,
+      objects: trimmed,
+      source: "auto",
+    });
+  }
+  return queries;
 }
 
 function buildQueryFromEvent(ev) {
