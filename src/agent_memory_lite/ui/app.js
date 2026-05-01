@@ -434,9 +434,16 @@ function mountShell() {
     "stroke-width": "0.8",
   }, centre);
   svg("circle", {
+    class: "centre-core",
     r: CENTRE_R, fill: "oklch(0.18 0.03 250)",
     stroke: `oklch(0.95 0.18 ${state.tweaks.hue})`, "stroke-width": "2.2",
     filter: "url(#stroke-glow)",
+  }, centre);
+  svg("circle", {
+    class: "centre-ring-breath",
+    r: CENTRE_R + 4, fill: "none",
+    stroke: `oklch(0.85 0.17 ${state.tweaks.hue} / 0.4)`,
+    "stroke-width": "1",
   }, centre);
   svg("circle", {
     class: "centre-orbit-fast", r: CENTRE_R, fill: "none",
@@ -636,6 +643,7 @@ function drawObject(layer, pos, parent, fam, obj, vis, isHighlighted = false) {
     filter: "url(#big-glow)",
   }, g);
   svg("circle", {
+    class: "obj-core",
     r, fill: `oklch(0.24 0.05 ${fam.hue})`,
     stroke: `oklch(0.92 0.18 ${fam.hue} / ${vis})`,
     "stroke-width": isHighlighted ? 2 : 1.4,
@@ -858,6 +866,9 @@ function makeToolbar(card) {
 function renderInspector() {
   const card = els.inspectorCard;
   card.hidden = !state.selected;
+  // The "Live · intent" panel and the inspector occupy the same slot
+  // in the rail — show whichever one matches the current state.
+  if (els.liveIntent) els.liveIntent.hidden = !!state.selected;
   if (!state.selected) {
     state.inspectorHistory = [];
     return;
@@ -883,10 +894,26 @@ function renderInspector() {
       const e = document.createElement("div"); e.className = "inspector-blurb"; e.textContent = "No objects yet in this family.";
       list.appendChild(e);
     } else {
+      const usedIds = new Set(
+        (state.activeQuery?.objects || []).map((o) => o.id).filter(Boolean),
+      );
       for (const r of rows) {
-        const btn = document.createElement("button"); btn.className = "inspector-row"; btn.type = "button";
-        const tt = document.createElement("span"); tt.className = "row-title"; tt.textContent = r.label;
-        const tp = document.createElement("span"); tp.className = "row-type"; tp.textContent = r.table.replace(/_/g, " ");
+        const isUsed = r.id && usedIds.has(r.id);
+        const btn = document.createElement("button");
+        btn.className = "inspector-row" + (isUsed ? " is-used-now" : "");
+        btn.type = "button";
+        const tt = document.createElement("span");
+        tt.className = "row-title";
+        tt.textContent = r.label;
+        if (isUsed) {
+          const used = document.createElement("span");
+          used.className = "row-used-now";
+          used.textContent = "used now";
+          tt.appendChild(used);
+        }
+        const tp = document.createElement("span");
+        tp.className = "row-type";
+        tp.textContent = r.table.replace(/_/g, " ");
         btn.append(tt, tp);
         btn.addEventListener("click", () => selectObject(r));
         list.appendChild(btn);
