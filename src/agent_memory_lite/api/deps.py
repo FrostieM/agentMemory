@@ -39,14 +39,34 @@ def get_settings_dep() -> Settings:
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 
 
-def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
-    """Reject workspaces disabled by project-mode guards.
+def ensure_workspace_readable(workspace_id: str, settings: Settings) -> None:
+    """Reject reads only if `forbid_default_workspace` would be violated.
 
-    Hub mode (`MEMORY_HUB_MODE=true`) opts out of strict workspace isolation:
-    the per-request `X-Memory-DB-Path` becomes the boundary, and a single
-    HTTP service can route many projects' workspaces through that override.
-    The forbid-default guard always stays on so an unconfigured caller can
-    never accidentally land in `workspace_id='default'`.
+    Reads across registered workspaces are allowed in any chat: the user can
+    explicitly ask the agent to look at another project's memory and the
+    agent will route the read via per-call `X-Memory-DB-Path`. Strict
+    isolation does NOT block reads — that asymmetry is intentional.
+    """
+    if settings.forbid_default_workspace and workspace_id == "default":
+        raise ValidationError(
+            "workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE; "
+            "pass the project workspace_id explicitly"
+        )
+
+
+def ensure_workspace_writable(workspace_id: str, settings: Settings) -> None:
+    """Block writes to any workspace other than the strict anchor.
+
+    Strict isolation (`MEMORY_STRICT_WORKSPACE_ISOLATION=true`) is a hard
+    boundary on writes: a project chat can never write to another project's
+    memory, even when the user asks. Reads are allowed (see
+    `ensure_workspace_readable`) but writes are not — preventing a chat in
+    one project from polluting another's audit log, decisions, or
+    behavior instructions.
+
+    Hub mode (`MEMORY_HUB_MODE=true`) opts out of strict isolation: the
+    operator has chosen a shared hub service, so cross-workspace writes via
+    `X-Memory-DB-Path` are explicit and allowed.
     """
     if settings.forbid_default_workspace and workspace_id == "default":
         raise ValidationError(
@@ -59,9 +79,21 @@ def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
         and workspace_id != settings.workspace_id
     ):
         raise ValidationError(
-            f"workspace_id={workspace_id!r} is disabled by MEMORY_STRICT_WORKSPACE_ISOLATION; "
-            f"expected {settings.workspace_id!r}"
+            f"writes to workspace_id={workspace_id!r} are blocked by "
+            f"MEMORY_STRICT_WORKSPACE_ISOLATION; expected {settings.workspace_id!r}. "
+            "Reads are still allowed; writes require either the matching "
+            "workspace anchor or hub mode."
         )
+
+
+def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
+    """Backwards-compatible alias for the write guard.
+
+    Existing callers that don't distinguish read vs write fall back to the
+    stricter of the two. New code should call `ensure_workspace_readable`
+    or `ensure_workspace_writable` directly.
+    """
+    ensure_workspace_writable(workspace_id, settings)
 
 
 def _header_or_query(request: Request, header_name: str, query_name: str) -> str | None:

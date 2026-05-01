@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.decisions import (
     DecisionItem,
     ListDecisionsRequest,
@@ -45,7 +50,7 @@ def write_decision_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> WriteDecisionResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/write_decision",
@@ -101,7 +106,7 @@ def list_decisions_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListDecisionsResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     if body.include_superseded:
         decisions = list_all_decisions(
             conn,

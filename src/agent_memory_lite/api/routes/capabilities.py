@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.capabilities import (
     AgentPlaybookResponse,
     AgentRoleResponse,
@@ -95,7 +100,7 @@ def upsert_agent_role_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> AgentRoleResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_agent_role",
@@ -138,7 +143,7 @@ def upsert_agent_skill_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> AgentSkillResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_agent_skill",
@@ -182,7 +187,7 @@ def upsert_agent_playbook_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> AgentPlaybookResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_agent_playbook",
@@ -225,7 +230,7 @@ def list_agent_capabilities_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListAgentCapabilitiesResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     capabilities = build_agent_capabilities(
         conn,
         workspace_id=body.workspace_id,

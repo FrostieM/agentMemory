@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.theories import (
     AddTheoryEvidenceRequest,
     ListTheoriesRequest,
@@ -73,7 +78,7 @@ def write_theory_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> TheoryResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/write_theory",
@@ -129,7 +134,7 @@ def add_theory_evidence_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> TheoryEvidenceResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/add_theory_evidence",
@@ -179,7 +184,7 @@ def list_theories_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListTheoriesResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     theories = list_theories(
         conn,
         workspace_id=body.workspace_id,

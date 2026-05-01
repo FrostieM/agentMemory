@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writable
 from agent_memory_lite.api.schemas.usage import (
     RecordUsageFeedbackRequest,
     RecordUsageFeedbackResponse,
@@ -20,7 +20,7 @@ def record_usage_feedback_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> RecordUsageFeedbackResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     feedback = record_usage_feedback(
         conn,
         workspace_id=body.workspace_id,

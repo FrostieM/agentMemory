@@ -280,16 +280,20 @@ def test_ui_events_stream_and_search_telemetry(
     assert state_body["active_requests"] == []
 
 
-def test_ui_state_uses_configured_workspace_under_strict_guard(app_factory) -> None:
+def test_ui_state_allows_cross_workspace_reads_under_strict_guard(app_factory) -> None:
+    """Strict isolation blocks writes, not reads. UI inspection is a read."""
     app = app_factory(
         MEMORY_WORKSPACE_ID="project-a",
         MEMORY_STRICT_WORKSPACE_ISOLATION="true",
     )
     with TestClient(app) as client:
-        ok = client.get("/memory/ui/state")
-        blocked = client.get("/memory/ui/state?workspace_id=project-b")
+        own = client.get("/memory/ui/state")
+        cross = client.get("/memory/ui/state?workspace_id=project-b")
 
-    assert ok.status_code == 200
-    assert ok.json()["workspace_id"] == "project-a"
-    assert blocked.status_code == 400
-    assert "MEMORY_STRICT_WORKSPACE_ISOLATION" in str(blocked.json())
+    assert own.status_code == 200
+    assert own.json()["workspace_id"] == "project-a"
+    # Cross-workspace reads are allowed: the user can explicitly inspect
+    # another project's memory from any chat. Writes are still blocked
+    # (covered by separate write-route tests).
+    assert cross.status_code == 200
+    assert cross.json()["workspace_id"] == "project-b"

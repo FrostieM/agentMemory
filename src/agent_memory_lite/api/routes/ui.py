@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_readable
 from agent_memory_lite.api.ui_telemetry import event_stream, ui_telemetry
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
@@ -615,7 +615,7 @@ def memory_ui_state(
     recent_limit: int = Query(default=80, ge=1, le=100),
 ) -> dict[str, Any]:
     selected_workspace = workspace_id or settings.workspace_id
-    ensure_workspace_allowed(selected_workspace, settings)
+    ensure_workspace_readable(selected_workspace, settings)
     nodes, edges, counts, recent = _build_graph(
         conn,
         workspace_id=selected_workspace,
@@ -659,7 +659,7 @@ def memory_ui_events(
     once: bool = Query(default=False),
 ) -> StreamingResponse:
     selected_workspace = workspace_id or settings.workspace_id
-    ensure_workspace_allowed(selected_workspace, settings)
+    ensure_workspace_readable(selected_workspace, settings)
     return StreamingResponse(
         event_stream(workspace_id=selected_workspace, since=since, once=once),
         media_type="text/event-stream",

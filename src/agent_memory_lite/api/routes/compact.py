@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writable
 from agent_memory_lite.api.schemas.compact import CompactRequest, CompactResponse
 from agent_memory_lite.compaction.invalidate_stale import archive_stale_facts
 from agent_memory_lite.compaction.summarize_old import summarize_old_episodes
@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.post("/memory/compact", response_model=CompactResponse)
 def compact_route(body: CompactRequest, conn: DbDep, settings: SettingsDep) -> CompactResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     summary = summarize_old_episodes(
         conn,
         workspace_id=body.workspace_id,

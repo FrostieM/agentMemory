@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.behavior import (
     BehaviorInstructionResponse,
     ListBehaviorInstructionsRequest,
@@ -53,7 +58,7 @@ def upsert_behavior_instruction_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> BehaviorInstructionResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_behavior_instruction",
@@ -115,7 +120,7 @@ def list_behavior_instructions_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListBehaviorInstructionsResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     return ListBehaviorInstructionsResponse(
         instructions=[
             _instruction_response(item)

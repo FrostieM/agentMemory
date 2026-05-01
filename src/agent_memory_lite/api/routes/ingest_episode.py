@@ -9,7 +9,7 @@ from agent_memory_lite.api.deps import (
     EmbeddingProviderDep,
     SettingsDep,
     VectorStoreDep,
-    ensure_workspace_allowed,
+    ensure_workspace_writable,
 )
 from agent_memory_lite.api.schemas.ingest import (
     IngestEpisodeRequest,
@@ -30,7 +30,7 @@ def ingest_episode_route(
     store: VectorStoreDep,
     settings: SettingsDep,
 ) -> IngestEpisodeResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/ingest_episode",

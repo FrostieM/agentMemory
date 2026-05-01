@@ -12,7 +12,7 @@ from agent_memory_lite.api.deps import (
     EmbeddingProviderDep,
     SettingsDep,
     VectorStoreDep,
-    ensure_workspace_allowed,
+    ensure_workspace_readable,
 )
 from agent_memory_lite.api.schemas.context import (
     ContextSource,
@@ -88,7 +88,7 @@ def get_context_route(
     store: VectorStoreDep,
     settings: SettingsDep,
 ) -> GetContextResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/get_context",
@@ -170,7 +170,7 @@ def explain_context_route(
     store: VectorStoreDep,
     settings: SettingsDep,
 ) -> ExplainContextResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/explain_context",

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.research import (
     AddExperimentResultRequest,
     ConceptResponse,
@@ -161,7 +166,7 @@ def register_snapshot_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> MemorySnapshotResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/register_snapshot",
@@ -213,7 +218,7 @@ def write_experiment_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ExperimentResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/write_experiment",
@@ -262,7 +267,7 @@ def add_experiment_result_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ExperimentResultResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/add_experiment_result",
@@ -308,7 +313,7 @@ def upsert_concept_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ConceptResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_concept",
@@ -350,7 +355,7 @@ def distill_insight_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> InsightResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/distill_insight",
@@ -393,7 +398,7 @@ def update_insight_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> InsightResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/update_insight",
@@ -434,7 +439,7 @@ def list_research_agenda_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ResearchAgendaResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     agenda = build_research_agenda(
         conn,
         workspace_id=body.workspace_id,
@@ -455,7 +460,7 @@ def list_concepts_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListConceptsResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     concepts = list_concepts(
         conn,
         workspace_id=body.workspace_id,
@@ -472,7 +477,7 @@ def list_insights_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListInsightsResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     insights = list_insights(
         conn,
         workspace_id=body.workspace_id,

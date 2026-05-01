@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+)
 from agent_memory_lite.api.errors import NotFoundError, ValidationError
 from agent_memory_lite.api.schemas.maintenance import (
     ListMaintenanceEventsRequest,
@@ -46,7 +50,7 @@ def list_maintenance_events_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListMaintenanceEventsResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     events = list_maintenance_events(
         conn,
         workspace_id=body.workspace_id,

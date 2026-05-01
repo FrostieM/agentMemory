@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+)
 from agent_memory_lite.api.schemas.candidates import (
     CandidateActionRequest,
     CandidateResponse,
@@ -52,7 +56,7 @@ def list_candidates_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListCandidatesResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     items = list_candidates(
         conn,
         workspace_id=body.workspace_id,

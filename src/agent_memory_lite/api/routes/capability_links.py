@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.capability_links import (
     CapabilityLinkResponse,
     LinkCapabilityRequest,
@@ -43,7 +48,7 @@ def link_capability_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> CapabilityLinkResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_writable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/link_capability",
@@ -91,7 +96,7 @@ def list_capability_links_route(
     conn: DbDep,
     settings: SettingsDep,
 ) -> ListCapabilityLinksResponse:
-    ensure_workspace_allowed(body.workspace_id, settings)
+    ensure_workspace_readable(body.workspace_id, settings)
     links = list_capability_links(
         conn,
         workspace_id=body.workspace_id,

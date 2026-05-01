@@ -904,30 +904,58 @@ def _drop_none(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
-def _with_workspace(payload: dict[str, Any]) -> dict[str, Any]:
-    cleaned = _drop_none(payload)
-    cleaned.setdefault("workspace_id", _runtime.settings.workspace_id)
-    _ensure_workspace_allowed(str(cleaned["workspace_id"]))
-    return cleaned
-
-
-def _ensure_workspace_allowed(workspace_id: str) -> None:
+def _ensure_workspace_readable(workspace_id: str) -> None:
+    """Read guard: only enforces forbid_default. Reads to any registered
+    workspace are allowed (the user can explicitly ask the agent to look)."""
     if _runtime.settings.forbid_default_workspace and workspace_id == "default":
         raise ValueError("workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE")
+
+
+def _ensure_workspace_writable(workspace_id: str) -> None:
+    """Write guard: blocks writes to any non-anchor workspace under strict
+    isolation. Hub mode opts out (operator chose a shared service)."""
+    _ensure_workspace_readable(workspace_id)
     if (
         _runtime.settings.strict_workspace_isolation
         and not _runtime.settings.hub_mode
         and workspace_id != _runtime.settings.workspace_id
     ):
         raise ValueError(
-            f"workspace_id={workspace_id!r} is disabled by MEMORY_STRICT_WORKSPACE_ISOLATION; "
-            f"expected {_runtime.settings.workspace_id!r}"
+            f"writes to workspace_id={workspace_id!r} are blocked by "
+            f"MEMORY_STRICT_WORKSPACE_ISOLATION; expected "
+            f"{_runtime.settings.workspace_id!r}. Reads remain allowed."
         )
 
 
-def _workspace_from_args(args: dict[str, Any]) -> str:
+# Backwards-compatible alias for the write guard. New code should call the
+# explicit reader/writer helpers.
+def _ensure_workspace_allowed(workspace_id: str) -> None:
+    _ensure_workspace_writable(workspace_id)
+
+
+def _with_workspace(payload: dict[str, Any], *, intent: str = "write") -> dict[str, Any]:
+    """Normalize MCP tool payload + apply read or write guard.
+
+    `intent="read"` lets the caller fetch any registered workspace; the user
+    asked explicitly. `intent="write"` (default) enforces strict isolation
+    so a project chat cannot write to another workspace by accident.
+    """
+    cleaned = _drop_none(payload)
+    cleaned.setdefault("workspace_id", _runtime.settings.workspace_id)
+    workspace_id = str(cleaned["workspace_id"])
+    if intent == "read":
+        _ensure_workspace_readable(workspace_id)
+    else:
+        _ensure_workspace_writable(workspace_id)
+    return cleaned
+
+
+def _workspace_from_args(args: dict[str, Any], *, intent: str = "write") -> str:
     workspace_id = str(args.get("workspace_id", _runtime.settings.workspace_id))
-    _ensure_workspace_allowed(workspace_id)
+    if intent == "read":
+        _ensure_workspace_readable(workspace_id)
+    else:
+        _ensure_workspace_writable(workspace_id)
     return workspace_id
 
 
@@ -1064,7 +1092,7 @@ def _http_write(path: str, payload: dict[str, Any], *, log_label: str) -> dict[s
 
 
 def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
-    payload = _with_workspace(args)
+    payload = _with_workspace(args, intent="read")
     delegated = _http_get_context(payload)
     if delegated is not None:
         return delegated
@@ -1091,7 +1119,7 @@ def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
-    payload = _with_workspace(args)
+    payload = _with_workspace(args, intent="read")
     payload.setdefault("mode", "fts")
     delegated = _http_search(payload)
     if delegated is not None:
@@ -1183,7 +1211,7 @@ def _decision_payload(item: Any) -> dict[str, Any]:
 
 
 def _handle_list_decisions(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     query = args.get("query")
     include_superseded = bool(args.get("include_superseded", False))
     limit = int(args.get("limit", 10))
@@ -1324,7 +1352,7 @@ def _behavior_instruction_payload(item: Any) -> dict[str, Any]:
 def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MemoryCandidateStatus  # noqa: PLC0415
 
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     raw_statuses = args.get("statuses")
     statuses = [MemoryCandidateStatus(item) for item in raw_statuses] if raw_statuses else None
     return {
@@ -1356,7 +1384,7 @@ def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
 def _handle_list_maintenance_events(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
 
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     raw_statuses = args.get("statuses")
     statuses = [MaintenanceEventStatus(item) for item in raw_statuses] if raw_statuses else None
     return {
@@ -1402,7 +1430,7 @@ def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:
         CapabilityType,
     )
 
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     return {
         "links": [
             _capability_link_payload(link)
@@ -1445,7 +1473,7 @@ def _handle_upsert_behavior_instruction(args: dict[str, Any]) -> dict[str, Any]:
 def _handle_list_behavior_instructions(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import BehaviorInstructionKind  # noqa: PLC0415
 
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     raw_kinds = args.get("kinds")
     kinds = [BehaviorInstructionKind(item) for item in raw_kinds] if raw_kinds else None
     return {
@@ -1500,7 +1528,7 @@ def _handle_add_theory_evidence(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_theories(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     include_evidence = bool(args.get("include_evidence", False))
     evidence_limit = int(args.get("evidence_limit", 3))
     theories = list_theories(
@@ -1647,7 +1675,7 @@ def _handle_update_insight(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     agenda = build_research_agenda(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -1703,7 +1731,7 @@ def _handle_list_research_agenda(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_concepts(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     concepts = list_concepts(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -1727,7 +1755,7 @@ def _handle_list_concepts(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_insights(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     insights = list_insights(
         _runtime.db(),
         workspace_id=workspace_id,
@@ -1803,7 +1831,7 @@ def _handle_upsert_agent_playbook(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_list_agent_capabilities(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args)
+    workspace_id = _workspace_from_args(args, intent="read")
     capabilities = build_agent_capabilities(
         _runtime.db(),
         workspace_id=workspace_id,

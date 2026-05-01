@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_allowed
+from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_readable
 from agent_memory_lite.api.schemas.hygiene import (
     HygieneFindingResponse,
     HygieneReportResponse,
@@ -23,7 +23,7 @@ def hygiene_report_route(
     settings: SettingsDep,
     workspace_id: str = Query(default="default"),
 ) -> HygieneReportResponse:
-    ensure_workspace_allowed(workspace_id, settings)
+    ensure_workspace_readable(workspace_id, settings)
     report = run_hygiene_report(conn, workspace_id=workspace_id)
     return HygieneReportResponse(
         status=report.status,
@@ -50,7 +50,7 @@ def quality_gate_route(
     settings: SettingsDep,
     workspace_id: str = Query(default="default"),
 ) -> QualityGateResponse:
-    ensure_workspace_allowed(workspace_id, settings)
+    ensure_workspace_readable(workspace_id, settings)
     report = run_quality_gate(conn, workspace_id=workspace_id)
     return QualityGateResponse(
         status=report.status,
