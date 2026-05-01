@@ -40,21 +40,46 @@ SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 
 
 def ensure_workspace_allowed(workspace_id: str, settings: Settings) -> None:
-    """Reject workspaces disabled by project-mode guards."""
+    """Reject workspaces disabled by project-mode guards.
+
+    Hub mode (`MEMORY_HUB_MODE=true`) opts out of strict workspace isolation:
+    the per-request `X-Memory-DB-Path` becomes the boundary, and a single
+    HTTP service can route many projects' workspaces through that override.
+    The forbid-default guard always stays on so an unconfigured caller can
+    never accidentally land in `workspace_id='default'`.
+    """
     if settings.forbid_default_workspace and workspace_id == "default":
         raise ValidationError(
             "workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE; "
             "pass the project workspace_id explicitly"
         )
-    if settings.strict_workspace_isolation and workspace_id != settings.workspace_id:
+    if (
+        settings.strict_workspace_isolation
+        and not settings.hub_mode
+        and workspace_id != settings.workspace_id
+    ):
         raise ValidationError(
             f"workspace_id={workspace_id!r} is disabled by MEMORY_STRICT_WORKSPACE_ISOLATION; "
             f"expected {settings.workspace_id!r}"
         )
 
 
+def _header_or_query(request: Request, header_name: str, query_name: str) -> str | None:
+    """Return a per-request override for path routing.
+
+    Headers win because they are normal for HTTP clients (curl, httpx, the
+    UserPromptSubmit hook). Query params exist so an `EventSource` SSE stream
+    — which cannot attach custom headers from the browser — can still pin a
+    specific physical DB.
+    """
+    value = request.headers.get(header_name)
+    if value:
+        return value
+    return request.query_params.get(query_name)
+
+
 def _resolve_db_path(request: Request, settings: Settings) -> Path:
-    override = request.headers.get("x-memory-db-path")
+    override = _header_or_query(request, "x-memory-db-path", "db_path")
     if override:
         return Path(override)
     return settings.db_path
@@ -88,7 +113,7 @@ def _build_request_scoped_store(settings: Settings, override: str) -> VectorStor
 
 
 def get_vector_store_dep(request: Request, settings: SettingsDep) -> VectorStore:
-    override = request.headers.get("x-memory-vector-path")
+    override = _header_or_query(request, "x-memory-vector-path", "vector_path")
     if override:
         return _build_request_scoped_store(settings, override)
     global _vector_store_singleton  # noqa: PLW0603

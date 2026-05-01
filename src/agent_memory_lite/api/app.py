@@ -31,6 +31,7 @@ from agent_memory_lite.api.routes import (
     theories,
     ui,
     usage,
+    workspaces,
 )
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
@@ -85,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(research.router)
     app.include_router(capabilities.router)
     app.include_router(usage.router)
+    app.include_router(workspaces.router)
     app.include_router(ui.router)
     app.include_router(compact.router)
     app.include_router(evals.router)

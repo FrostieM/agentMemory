@@ -101,7 +101,7 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "buildRouteObjectLayout" in js.text
     assert "lineCircleDistance" in js.text
     assert "pushRoutePointAway" in js.text
-    assert "20260501-graph-pointerup-fix" in index.text
+    assert "20260501-hub-workspace-switch" in index.text
     assert "graphClickCandidate" in js.text
     assert "moved <= 10" in js.text
     assert "!state.sseReady && !state.paused" in js.text

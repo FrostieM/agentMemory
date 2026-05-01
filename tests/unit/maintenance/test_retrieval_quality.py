@@ -122,9 +122,52 @@ def test_context_budget_prefers_relevant_research_agenda_over_capability_block(
         RetrievalQuery(
             workspace_id="project-a",
             query="shadow versus real paper edge delta paired cohort experiment",
-            max_tokens=1800,
+            max_tokens=2500,
         ),
     )
 
     assert "Shadow vs real-paper edge delta on paired-cohort" in built.text
-    assert "<research_agenda>" in built.text
+    assert "<research_agenda" in built.text
+    assert built.budget_diagnostics["intent"] == ["research"]
+    research_section = {item["name"]: item for item in built.budget_diagnostics["sections"]}[
+        "research_agenda"
+    ]
+    assert research_section["render_level"] in {"stub", "summary", "full"}
+    assert research_section["objects_included"] >= 1
+
+
+def test_retrieval_quality_checks_object_titles_and_render_level(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    write_experiment(
+        applied_conn,
+        ExperimentIn(
+            workspace_id="project-a",
+            title="Shadow vs real-paper edge delta on paired-cohort",
+            hypothesis="Paired cohort delta is positive.",
+            cohort_definition="wallets with paired shadow and paper closes",
+            success_criteria={"min_wallets": 30},
+            priority=0.9,
+        ),
+    )
+
+    report = run_retrieval_quality_evals(
+        applied_conn,
+        workspace_id="project-a",
+        cases=[
+            RetrievalQualityCase(
+                name="research_budget_stub",
+                query="shadow versus real paper edge delta paired cohort experiment",
+                expected_sections=["research_agenda"],
+                expected_object_titles=[
+                    "Shadow vs real-paper edge delta on paired-cohort",
+                ],
+                min_render_level="stub",
+                expected_omissions_absent=True,
+                max_tokens=2500,
+            )
+        ],
+    )
+
+    assert report.status == "ok"
+    assert report.results[0].render_levels["research_agenda"] in {"stub", "summary", "full"}

@@ -139,6 +139,7 @@ def get_context_route(
                 )
                 for hit in built.hits
             ],
+            budget_diagnostics=built.budget_diagnostics,
         )
         trace.stage_done(
             "context",

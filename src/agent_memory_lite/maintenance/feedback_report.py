@@ -180,6 +180,8 @@ def run_usage_feedback_report(
         f"{item.source_type}:{item.source_id} average_usefulness={item.average_usefulness:.3f}"
         for item in noisy_sources
     ]
+    if total == 0:
+        warnings.append("no usage feedback recorded yet")
     return UsageFeedbackReport(
         status="warning" if warnings else "ok",
         workspace_id=workspace_id,

@@ -128,6 +128,42 @@ def list_maintenance_events(
     return [_row_to_event(row) for row in rows]
 
 
+def update_maintenance_event_row(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    severity: MaintenanceSeverity,
+    status: MaintenanceEventStatus,
+    summary: str,
+    details: dict[str, Any],
+    target_type: str | None,
+    target_id: str | None,
+) -> MaintenanceEvent | None:
+    conn.execute(
+        """
+        UPDATE maintenance_events
+        SET severity = ?,
+            status = ?,
+            summary = ?,
+            details_json = ?,
+            target_type = ?,
+            target_id = ?
+        WHERE id = ?
+        """,
+        (
+            severity.value,
+            status.value,
+            summary,
+            json.dumps(details, sort_keys=True, default=str),
+            target_type,
+            target_id,
+            event_id,
+        ),
+    )
+    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    return _row_to_event(row) if row is not None else None
+
+
 def resolve_maintenance_event(
     conn: sqlite3.Connection,
     *,

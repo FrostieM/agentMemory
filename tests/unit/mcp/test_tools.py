@@ -64,6 +64,7 @@ def test_stdio_server_strict_workspace_guard(monkeypatch: pytest.MonkeyPatch) ->
         update={
             "workspace_id": "project-a",
             "strict_workspace_isolation": True,
+            "hub_mode": False,
         }
     )
     monkeypatch.setattr(stdio_server._runtime, "settings", guarded_settings)

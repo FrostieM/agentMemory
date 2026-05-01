@@ -834,6 +834,40 @@ h2 {
   opacity: 0.82;
 }
 
+.feedback-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+}
+
+.feedback-button {
+  border: 1px solid rgba(121, 205, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(10, 28, 43, 0.82);
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  line-height: 1;
+  padding: 0.36rem 0.52rem;
+}
+
+.feedback-button:hover:not(:disabled) {
+  border-color: rgba(40, 242, 162, 0.48);
+  color: var(--green);
+}
+
+.feedback-button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.feedback-button.compact {
+  font-size: 0.72rem;
+  padding: 0.32rem 0.48rem;
+}
+
 .developer-details {
   margin-top: 1rem;
   padding: 0.4rem 1rem 1rem;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sqlite3
 import sys
@@ -86,6 +87,21 @@ def _write_artifact(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
 
 
+def _watchdog_fingerprint(*, workspace_id: str, status: str, payload: dict[str, Any]) -> str:
+    normalized = {
+        "kind": "memory_watchdog",
+        "workspace_id": workspace_id,
+        "status": status,
+        "integrity_status": payload["integrity"]["status"],
+        "retrieval_eval_status": payload["retrieval_eval"]["status"],
+        "hygiene_status": payload["hygiene"]["status"],
+        "failures": sorted(str(item) for item in payload["failures"]),
+        "warnings": sorted(str(item) for item in payload["warnings"]),
+    }
+    raw = json.dumps(normalized, ensure_ascii=True, sort_keys=True)
+    return hashlib.blake2s(raw.encode("utf-8"), digest_size=12).hexdigest()
+
+
 def _write_watchdog_event(
     conn: sqlite3.Connection,
     *,
@@ -94,6 +110,12 @@ def _write_watchdog_event(
     payload: dict[str, Any],
 ) -> str:
     severity = MaintenanceSeverity.ERROR if status == "degraded" else MaintenanceSeverity.WARNING
+    timestamp = str(payload.get("generated_at") or iso_now())
+    fingerprint = _watchdog_fingerprint(
+        workspace_id=workspace_id,
+        status=status,
+        payload=payload,
+    )
     event = write_maintenance_event(
         conn,
         MaintenanceEventIn(
@@ -109,6 +131,10 @@ def _write_watchdog_event(
                 "failures": payload["failures"],
                 "warnings": payload["warnings"],
                 "artifact_path": payload.get("artifact_path"),
+                "fingerprint": fingerprint,
+                "first_seen_at": timestamp,
+                "last_seen_at": timestamp,
+                "seen_count": 1,
             },
             source_episode_id=None,
             target_type="memory_watchdog",

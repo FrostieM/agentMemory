@@ -42,6 +42,7 @@ Configure in `~/.claude/settings.json`:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -57,6 +58,43 @@ DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_INJECT_TOKENS", "1500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_INJECT_TIMEOUT", "30.0"))
 DEFAULT_DEDUPE_TTL_SECONDS = float(os.environ.get("AGENT_MEMORY_HOOK_DEDUPE_TTL", "2.0"))
+DEFAULT_REGISTRY = (
+    Path(os.environ["MEMORY_WORKSPACES_FILE"])
+    if os.environ.get("MEMORY_WORKSPACES_FILE")
+    else Path.home() / ".agent_memory" / "workspaces.json"
+)
+
+
+def _resolve_from_registry(cwd: Path) -> dict[str, str] | None:
+    """Walk up from cwd; if a parent matches a registered project_root, return it.
+
+    Returns a dict with `workspace_id`, `db_path`, `vector_path` ready for
+    the hook payload. Lets a single global hook auto-route to the right
+    project memory without any per-project --workspace arg.
+    """
+    if not DEFAULT_REGISTRY.exists():
+        return None
+    try:
+        payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    entries = payload.get("workspaces") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return None
+    candidate = cwd.resolve()
+    for parent in [candidate, *candidate.parents]:
+        target = str(parent).rstrip("\\/")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            project_root = str(entry.get("project_root", "")).rstrip("\\/")
+            if project_root and project_root.casefold() == target.casefold():
+                return {
+                    "workspace_id": str(entry.get("id", "")),
+                    "db_path": str(entry.get("db_path", "")),
+                    "vector_path": str(entry.get("vector_path", "")),
+                }
+    return None
 
 
 def _read_event() -> dict[str, object]:
@@ -145,13 +183,81 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_known_args()[0]
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 - linear hook flow with explicit early returns per failure mode
     args = _parse_args()
     event = _read_event()
     prompt = str(event.get("prompt", "")).strip()
     if not prompt:
         return 0
-    workspace = str(event.get("workspace_id") or args.workspace)
+
+    db_path = args.db_path
+    vector_path = args.vector_path
+    workspace = str(event.get("workspace_id") or args.workspace or "")
+
+    # cwd auto-detect: when no per-project flags are present, walk the
+    # registry to find which project root we are currently in. This is what
+    # makes a single global hook route correctly across many projects.
+    # The event may not carry a `cwd` field (some hosts strip it), so we
+    # fall back to the hook process's own cwd, which is normally the chat
+    # session's working directory.
+    needs_resolve = not db_path or workspace in {"", "default"}
+    if needs_resolve:
+        cwd_candidates: list[Path] = []
+        event_cwd = event.get("cwd")
+        if event_cwd:
+            cwd_candidates.append(Path(str(event_cwd)))
+        with contextlib.suppress(OSError):
+            cwd_candidates.append(Path(os.getcwd()))
+        for candidate in cwd_candidates:
+            resolved = _resolve_from_registry(candidate)
+            if resolved:
+                if not db_path and resolved["db_path"]:
+                    db_path = resolved["db_path"]
+                if not vector_path and resolved["vector_path"]:
+                    vector_path = resolved["vector_path"]
+                if workspace in {"", "default"} and resolved["workspace_id"]:
+                    workspace = resolved["workspace_id"]
+                break
+
+    if not workspace:
+        workspace = DEFAULT_WORKSPACE
+
+    # If we still ended up on `default` and no DB path was supplied, the
+    # working directory is not in the hub registry. Emit a one-line notice
+    # and skip the HTTP request entirely — the service would reject it as
+    # MEMORY_FORBID_DEFAULT_WORKSPACE anyway, and sending it would fill the
+    # log with workspace=default failures.
+    if workspace == "default" and not db_path:
+        cwd_now = os.getcwd()
+        _emit_notice(
+            f"agent-memory-lite has no workspace registered for cwd={cwd_now!r}. "
+            "From the agent-memory-lite repo run "
+            "`python scripts/setup_agent.py --project <path>` to register this "
+            "project, or pass --workspace/--db-path in the hook command."
+        )
+        return 0
+
+    if os.environ.get("AGENT_MEMORY_HOOK_DEBUG", "").strip().lower() in {"1", "true", "yes"}:
+        debug_path = Path(tempfile.gettempdir()) / "agent_memory_lite_hook_debug.log"
+        with contextlib.suppress(OSError):
+            debug_path.write_text(
+                json.dumps(
+                    {
+                        "ts": time.time(),
+                        "cwd": os.getcwd(),
+                        "event_keys": sorted(event.keys()),
+                        "event_cwd": event.get("cwd"),
+                        "args_db": args.db_path,
+                        "args_workspace": args.workspace,
+                        "resolved_workspace": workspace,
+                        "resolved_db": db_path,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
     if not _should_emit_context(event, workspace=workspace, prompt=prompt):
         return 0
 
@@ -165,10 +271,10 @@ def main() -> int:
         payload["task_id"] = str(task_id)
 
     headers: dict[str, str] = {}
-    if args.db_path:
-        headers["X-Memory-DB-Path"] = args.db_path
-    if args.vector_path:
-        headers["X-Memory-Vector-Path"] = args.vector_path
+    if db_path:
+        headers["X-Memory-DB-Path"] = db_path
+    if vector_path:
+        headers["X-Memory-Vector-Path"] = vector_path
 
     try:
         response = httpx.post(
@@ -177,13 +283,42 @@ def main() -> int:
             headers=headers,
             timeout=DEFAULT_TIMEOUT,
         )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
+    except httpx.ConnectError:
         _emit_notice(
-            f"agent-memory-lite unreachable at {DEFAULT_BASE} ({exc!s}). "
-            "Start the service with `python -m agent_memory_lite` and the "
+            f"agent-memory-lite is not running on {DEFAULT_BASE}. Start it "
+            "with `python scripts/serve.py` from the agent-memory-lite repo "
+            "(hub mode auto-enables when a project registry exists). The "
             "next prompt will see context."
         )
+        return 0
+    except httpx.TimeoutException:
+        _emit_notice(
+            f"agent-memory-lite at {DEFAULT_BASE} did not answer within "
+            f"{DEFAULT_TIMEOUT:.0f}s. The service is probably warming embedders "
+            "or applying migrations; the next prompt should succeed."
+        )
+        return 0
+    except httpx.HTTPError as exc:
+        _emit_notice(
+            f"agent-memory-lite request to {DEFAULT_BASE} failed: {exc!s}. "
+            "Check `curl http://127.0.0.1:8765/health` and the service "
+            "console; the next prompt will retry."
+        )
+        return 0
+
+    if response.status_code == 400:
+        body_text = response.text[:300].replace("\n", " ")
+        _emit_notice(
+            f"agent-memory-lite rejected workspace_id={workspace!r} (400). "
+            "The service is in strict mode but this hook routes via "
+            "X-Memory-DB-Path. Restart the service with hub mode enabled: "
+            "from agent-memory-lite repo run `python scripts/serve.py --hub` "
+            f"or set MEMORY_HUB_MODE=true. Server detail: {body_text}"
+        )
+        return 0
+    if response.status_code >= 400:
+        body_text = response.text[:200].replace("\n", " ")
+        _emit_notice(f"agent-memory-lite returned HTTP {response.status_code}: {body_text}")
         return 0
 
     try:

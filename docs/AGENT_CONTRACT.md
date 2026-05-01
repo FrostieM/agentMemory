@@ -1,5 +1,3 @@
-<!-- agent-memory-lite-contract:begin -->
-
 # Agent contract
 
 Drop this entire document into the system prompt, `CLAUDE.md`, or `AGENTS.md`
@@ -826,4 +824,73 @@ the namespace chosen during setup and keep it consistent across HTTP, MCP,
 hooks, scripts, and SQLite rows. In project mode, do not silently switch to a
 different namespace.
 
-<!-- agent-memory-lite-contract:end -->
+## Project mode vs hub mode
+
+The service has two operating modes that determine what cross-workspace
+access is allowed. The mode is decided at HTTP service startup and at MCP
+stdio server boot, independently.
+
+**Project mode (default for project chats)**
+A chat opened in a project root (e.g. `agent-memory-lite/` or `copyBot/`)
+loads that project's `.claude/settings.json`, which sets
+`MEMORY_DB_PATH`, `MEMORY_WORKSPACE_ID`, `MEMORY_FORBID_DEFAULT_WORKSPACE=true`,
+and `MEMORY_STRICT_WORKSPACE_ISOLATION=true`. The MCP server in that chat
+refuses any `workspace_id` other than the project's own — both reads and
+writes. This is the safe default: an AI agent cannot accidentally read or
+write another project's memory.
+
+**Hub mode (parent dir / shared service)**
+A chat opened in a parent directory (or a service launched with
+`MEMORY_HUB_MODE=true`) routes per-call. The MCP server reads
+`~/.agent_memory/workspaces.json` and routes each request to the right
+SQLite+LanceDB pair via the `X-Memory-DB-Path` / `X-Memory-Vector-Path`
+headers. The strict guard is off, so any registered `workspace_id` is
+allowed. Use this when the user explicitly asks you to look at another
+project's memory.
+
+The HTTP service (`scripts/serve.py`) defaults to hub mode whenever the
+registry has at least one entry; pass `--strict` to force single-workspace
+mode. The PowerShell launcher (`scripts/memory_service_task.ps1`) takes
+`-HubMode` to install the autostart task in hub mode.
+
+## Workspace registry and discovery
+
+`~/.agent_memory/workspaces.json` (override with `MEMORY_WORKSPACES_FILE`)
+holds the list of registered workspaces — one entry per project, with
+`workspace_id`, `db_path`, `vector_path`, `project_root`. Every
+`setup_agent.py --project` call updates it. Inspect or edit offline:
+
+```bash
+python scripts/register_workspace.py list
+python scripts/register_workspace.py register --workspace <id> --project <path>
+python scripts/register_workspace.py remove --workspace <id>
+```
+
+Discover workspaces over HTTP from any agent:
+
+```text
+GET  /memory/workspaces                        # list with hub_mode + paths
+POST /memory/workspaces  {workspace_id, db_path, vector_path, label}
+DELETE /memory/workspaces/{workspace_id}
+```
+
+The UI at `/ui` reads the same registry and renders a dropdown so a human
+can switch between project memories without restarting the service.
+
+## Cross-workspace access protocol
+
+When the user explicitly asks you (the agent) to look at another project's
+memory, you have two options:
+
+1. **Open a hub chat.** Start the agent runtime in the parent directory
+   (or anywhere not pinned to a project). The MCP server boots in hub
+   mode, the strict guard is off, and `memory_get_context(workspace_id="X")`
+   for any registered `X` will route to the right DB.
+
+2. **Direct HTTP call** with `X-Memory-DB-Path` headers picked up from the
+   registry — useful for scripts.
+
+Do **not** flip strict isolation off inside a project chat just to read
+another workspace. That defeats the purpose of project-scoped memory.
+Treat strict isolation as a first-class invariant; only the user's explicit
+request justifies stepping out.

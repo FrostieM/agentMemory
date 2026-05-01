@@ -324,6 +324,11 @@ def claude_mcp_entry(
 ) -> dict[str, object]:
     # Project isolation comes primarily from the physical path (MEMORY_DB_PATH +
     # VECTOR_DB_PATH). workspace_id is the logical namespace inside that database.
+    # In project mode (project_root + workspace_id present), strict isolation is
+    # the secure default: the MCP server refuses to read/write any workspace_id
+    # other than the project's own. The user can lift this by opening a chat in
+    # the parent ("hub") directory or by exporting
+    # MEMORY_STRICT_WORKSPACE_ISOLATION=false in the project shell.
     env: dict[str, str] = {"OLLAMA_PROBE_SKIP": os.environ.get("OLLAMA_PROBE_SKIP", "false")}
     if workspace_id:
         env["MEMORY_WORKSPACE_ID"] = workspace_id
@@ -332,6 +337,8 @@ def claude_mcp_entry(
     if project_root is not None:
         env["MEMORY_DB_PATH"] = str(project_root / ".agent_memory" / "memory.db")
         env["VECTOR_DB_PATH"] = str(project_root / ".agent_memory" / "vectors.lance")
+        if workspace_id and workspace_id != "default":
+            env["MEMORY_STRICT_WORKSPACE_ISOLATION"] = "true"
     return {
         "command": str(python_exe),
         "args": ["-m", "agent_memory_lite.mcp.stdio_server"],
@@ -467,6 +474,42 @@ def configure_cursor(diag: Diagnosis) -> None:
     ok(f"contract {status} in {contract}")
 
 
+def register_workspace_in_hub(
+    *,
+    workspace_id: str,
+    db_path: Path,
+    vector_path: Path,
+    project_root: Path,
+) -> None:
+    """Append/update the workspace entry in the hub registry.
+
+    Uses the in-process registry (no HTTP), so this works even when the
+    shared service is down. The hub UI picks up new entries on its next
+    state poll.
+    """
+    try:
+        # Imported lazily so `setup_agent.py` keeps working in environments
+        # where the package was not yet pip-installed.
+        from agent_memory_lite.config.workspace_registry import WorkspaceRegistry  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover - defensive
+        warn(f"hub registry not updated ({exc.__class__.__name__}: {exc})")
+        return
+
+    registry_path = Path.home() / ".agent_memory" / "workspaces.json"
+    registry_env = os.environ.get("MEMORY_WORKSPACES_FILE")
+    if registry_env:
+        registry_path = Path(registry_env)
+    registry = WorkspaceRegistry(registry_path)
+    registry.register(
+        workspace_id=workspace_id,
+        db_path=str(db_path),
+        vector_path=str(vector_path),
+        label=project_root.name,
+        project_root=str(project_root),
+    )
+    ok(f"registered {workspace_id} in hub registry at {registry_path}")
+
+
 def configure_project(  # noqa: PLR0912, PLR0915
     diag: Diagnosis,
     project_root: Path,
@@ -568,6 +611,12 @@ def configure_project(  # noqa: PLR0912, PLR0915
             env=env,
         )
         ok(f"bootstrapped {db_path}")
+    register_workspace_in_hub(
+        workspace_id=workspace_id,
+        db_path=db_path,
+        vector_path=project_root / ".agent_memory" / "vectors.lance",
+        project_root=project_root,
+    )
     if seed_bootstrap:
         seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
 

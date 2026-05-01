@@ -47,6 +47,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from agent_memory_lite.config.settings import Settings, get_settings
+from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -157,16 +158,65 @@ def _resolve_paths_from_cwd(settings: Settings) -> Settings:
     2. `<cwd>/.agent_memory/memory.db` if present — lets any runtime
        isolate per-project memory by spawning the MCP server in the
        project's working directory.
-    3. Whatever the .env / built-in default produced.
+    3. Hub registry: if there is exactly one entry, use it as the anchor.
+    4. Whatever the .env / built-in default produced.
     """
     if os.environ.get("MEMORY_DB_PATH"):
         return settings
     cwd = Path.cwd()
     candidate_db = cwd / ".agent_memory" / "memory.db"
     candidate_vec = cwd / ".agent_memory" / "vectors.lance"
-    if not candidate_db.parent.exists():
-        return settings
-    return settings.model_copy(update={"db_path": candidate_db, "vector_db_path": candidate_vec})
+    try:
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        entries = registry.list()
+    except Exception:
+        entries = []
+    # Hub auto-enables only when the user did NOT explicitly choose strict
+    # project mode. Strict isolation always wins over the convenience
+    # auto-hub, so a project chat cannot accidentally cross into another
+    # workspace. The user opts into hub by opening a chat in the parent
+    # directory (no strict env) or by exporting MEMORY_HUB_MODE=true.
+    auto_hub = len(entries) > 1 and not settings.strict_workspace_isolation
+    if candidate_db.parent.exists():
+        update: dict[str, Any] = {"db_path": candidate_db, "vector_db_path": candidate_vec}
+        if auto_hub:
+            update["hub_mode"] = True
+        return settings.model_copy(update=update)
+    if len(entries) == 1:
+        only = entries[0]
+        return settings.model_copy(
+            update={
+                "db_path": Path(only.db_path),
+                "vector_db_path": Path(only.vector_path),
+                "workspace_id": only.id,
+            }
+        )
+    if auto_hub:
+        # Multiple registry entries but no obvious anchor: use the first
+        # registered workspace as a safe-but-empty anchor and turn hub mode
+        # on so per-call routing still works.
+        first = entries[0]
+        return settings.model_copy(
+            update={
+                "db_path": Path(first.db_path),
+                "vector_db_path": Path(first.vector_path),
+                "workspace_id": first.id,
+                "hub_mode": True,
+            }
+        )
+    return settings
+
+
+def _registry_paths_for(workspace_id: str) -> tuple[str, str] | None:
+    """Look up `(db_path, vector_path)` for `workspace_id` in the hub registry."""
+    try:
+        registry = WorkspaceRegistry(_runtime.settings.workspaces_file)
+        entry = registry.get(workspace_id)
+    except Exception:
+        return None
+    if entry is None or not entry.db_path:
+        return None
+    return entry.db_path, entry.vector_path or str(_runtime.settings.vector_db_path)
 
 
 class _Runtime:
@@ -866,6 +916,7 @@ def _ensure_workspace_allowed(workspace_id: str) -> None:
         raise ValueError("workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE")
     if (
         _runtime.settings.strict_workspace_isolation
+        and not _runtime.settings.hub_mode
         and workspace_id != _runtime.settings.workspace_id
     ):
         raise ValueError(
@@ -897,13 +948,24 @@ def _http_memory_request(
     base_url = _memory_http_base_url(_runtime.settings)
     timeout = _env_float(timeout_env, default=default_timeout)
     data = json.dumps(payload).encode("utf-8")
+
+    # Resolve which physical DB the per-call workspace_id should hit. The
+    # registry wins, so a global MCP server can route many projects without
+    # any project-specific env. Fall back to the runtime's own settings.
+    workspace_id = str(payload.get("workspace_id") or _runtime.settings.workspace_id)
+    db_path = str(_runtime.settings.db_path)
+    vector_path = str(_runtime.settings.vector_db_path)
+    resolved = _registry_paths_for(workspace_id)
+    if resolved is not None:
+        db_path, vector_path = resolved
+
     request = urllib.request.Request(
         f"{base_url}{path}",
         data=data,
         headers={
             "Content-Type": "application/json",
-            "X-Memory-DB-Path": str(_runtime.settings.db_path),
-            "X-Memory-Vector-Path": str(_runtime.settings.vector_db_path),
+            "X-Memory-DB-Path": db_path,
+            "X-Memory-Vector-Path": vector_path,
         },
         method="POST",
     )

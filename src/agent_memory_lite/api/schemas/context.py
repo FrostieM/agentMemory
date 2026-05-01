@@ -35,6 +35,7 @@ class GetContextResponse(BaseModel):
 
     context_text: str
     sources: list[ContextSource]
+    budget_diagnostics: dict[str, Any] | None = None
 
 
 class ExplainSourceCandidate(BaseModel):

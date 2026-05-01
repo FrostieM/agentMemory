@@ -6,7 +6,8 @@ param(
     [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$Python = "",
     [string]$TaskName = "",
-    [int]$Port = 8765
+    [int]$Port = 8765,
+    [switch]$HubMode
 )
 
 Set-StrictMode -Version Latest
@@ -46,6 +47,8 @@ $LogPath = Join-Path $LogDir "memory_service.log"
 
 if ($Action -eq "Install") {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    $StrictValue = if ($HubMode) { "0" } else { "1" }
+    $HubValue = if ($HubMode) { "1" } else { "0" }
     $Runner = @"
 `$ErrorActionPreference = "Stop"
 `$env:MEMORY_WORKSPACE_ID = "$WorkspaceId"
@@ -53,7 +56,8 @@ if ($Action -eq "Install") {
 `$env:VECTOR_DB_PATH = "$VectorPath"
 `$env:MEMORY_API_PORT = "$Port"
 `$env:MEMORY_FORBID_DEFAULT_WORKSPACE = "1"
-`$env:MEMORY_STRICT_WORKSPACE_ISOLATION = "1"
+`$env:MEMORY_STRICT_WORKSPACE_ISOLATION = "$StrictValue"
+`$env:MEMORY_HUB_MODE = "$HubValue"
 `$env:OLLAMA_PROBE_SKIP = "1"
 Set-Location -LiteralPath "$RepoRoot"
 & "$Python" -m agent_memory_lite *>> "$LogPath"

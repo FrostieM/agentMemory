@@ -45,3 +45,7 @@ env/
 # Logs
 *.log
 logs/
+
+# Per-developer Claude Code / agent runtime settings (contain absolute paths
+# baked by setup_agent.py --project; not portable across machines)
+.claude/

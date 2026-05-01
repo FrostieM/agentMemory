@@ -49,6 +49,8 @@ def test_get_context_returns_xml_envelope(client: TestClient) -> None:
     body = response.json()
     assert "<memory_context>" in body["context_text"]
     assert "<retrieved_chunks>" in body["context_text"]
+    assert body["budget_diagnostics"]["max_tokens"] == 1500
+    assert body["budget_diagnostics"]["estimated_tokens"] <= 1500
 
 
 def test_get_context_surfaces_recent_episode(client: TestClient) -> None:
@@ -177,6 +179,9 @@ def test_get_context_applies_budget_to_structured_sections(client: TestClient) -
     text = context.json()["context_text"]
     assert estimate_tokens(text) <= 600
     assert text.count("<decision ") <= 2
+    diagnostics = context.json()["budget_diagnostics"]
+    assert diagnostics["sections"]
+    assert diagnostics["sections"][0]["objects_omitted"] >= 1
 
 
 def test_get_context_preserves_exact_fts_hit_under_structured_pressure(

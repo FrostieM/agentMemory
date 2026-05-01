@@ -115,6 +115,6 @@ def test_usage_feedback_report_summarizes_noisy_and_helpful_sources(
 def test_usage_feedback_report_is_ok_when_empty(applied_conn: sqlite3.Connection) -> None:
     report = run_usage_feedback_report(applied_conn, workspace_id="project-a")
 
-    assert report.status == "ok"
+    assert report.status == "warning"
     assert report.counts["total"] == 0
-    assert report.warnings == []
+    assert report.warnings == ["no usage feedback recorded yet"]

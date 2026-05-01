@@ -27,9 +27,12 @@ class RetrievalQualityCase:
     query: str
     expected_ids: list[str] = field(default_factory=list)
     expected_context_ids: list[str] = field(default_factory=list)
+    expected_object_titles: list[str] = field(default_factory=list)
     expected_substrings: list[str] = field(default_factory=list)
     expected_sections: list[str] = field(default_factory=list)
     expected_sources: list[str] = field(default_factory=list)
+    min_render_level: str | None = None
+    expected_omissions_absent: bool = False
     top_k: int = 10
     max_tokens: int = 2500
 
@@ -48,9 +51,14 @@ class RetrievalQualityCase:
                     data.get("expected_object_ids", []),
                 )
             ],
+            expected_object_titles=[str(item) for item in data.get("expected_object_titles", [])],
             expected_substrings=[str(item) for item in data.get("expected_substrings", [])],
             expected_sections=[str(item) for item in data.get("expected_sections", [])],
             expected_sources=[str(item) for item in data.get("expected_sources", [])],
+            min_render_level=(
+                str(data["min_render_level"]) if data.get("min_render_level") else None
+            ),
+            expected_omissions_absent=bool(data.get("expected_omissions_absent", False)),
             top_k=max(1, int(data.get("top_k", 10))),
             max_tokens=max(200, int(data.get("max_tokens", 2500))),
         )
@@ -67,8 +75,12 @@ class RetrievalQualityResult:
     retrieved_ids: list[str]
     expected_context_ids: list[str]
     matched_context_ids: list[str]
+    expected_object_titles: list[str]
+    matched_object_titles: list[str]
     expected_sources: list[str]
     source_map: dict[str, list[str]]
+    render_levels: dict[str, str]
+    budget_diagnostics: dict[str, Any]
     metrics: dict[str, float]
     failures: list[str]
 
@@ -83,8 +95,12 @@ class RetrievalQualityResult:
             "retrieved_ids": self.retrieved_ids,
             "expected_context_ids": self.expected_context_ids,
             "matched_context_ids": self.matched_context_ids,
+            "expected_object_titles": self.expected_object_titles,
+            "matched_object_titles": self.matched_object_titles,
             "expected_sources": self.expected_sources,
             "source_map": self.source_map,
+            "render_levels": self.render_levels,
+            "budget_diagnostics": self.budget_diagnostics,
             "metrics": self.metrics,
             "failures": self.failures,
         }
@@ -125,7 +141,28 @@ def load_retrieval_quality_cases(path: Path) -> list[RetrievalQualityCase]:
     return [RetrievalQualityCase.from_mapping(dict(item)) for item in parsed]
 
 
-def _run_case(
+_RENDER_LEVEL_RANK = {"none": 0, "stub": 1, "summary": 2, "full": 3}
+
+
+def _render_rank(level: str | None) -> int:
+    return _RENDER_LEVEL_RANK.get(str(level or "none"), 0)
+
+
+def _render_levels_from_diagnostics(diagnostics: dict[str, Any]) -> dict[str, str]:
+    sections = diagnostics.get("sections", [])
+    if not isinstance(sections, list):
+        return {}
+    levels: dict[str, str] = {}
+    for item in sections:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if name:
+            levels[name] = str(item.get("render_level") or "none")
+    return levels
+
+
+def _run_case(  # noqa: PLR0912
     conn: sqlite3.Connection,
     workspace_id: str,
     case: RetrievalQualityCase,
@@ -151,6 +188,8 @@ def _run_case(
     matched_context_ids = [
         item for item in expected_context_ids if f'id="{item}"' in built.text or item in built.text
     ]
+    matched_object_titles = [item for item in case.expected_object_titles if item in built.text]
+    render_levels = _render_levels_from_diagnostics(built.budget_diagnostics)
     failures: list[str] = []
 
     missing_ids = [item for item in case.expected_ids if item not in retrieved_ids]
@@ -182,6 +221,25 @@ def _run_case(
         if f"<{section}" not in built.text:
             failures.append(f"missing context section <{section}>")
 
+    missing_titles = [
+        item for item in case.expected_object_titles if item not in matched_object_titles
+    ]
+    if missing_titles:
+        failures.append(f"missing expected object titles: {missing_titles}")
+
+    if case.min_render_level:
+        checked_sections = case.expected_sections or list(render_levels)
+        weak_sections = [
+            section
+            for section in checked_sections
+            if _render_rank(render_levels.get(section)) < _render_rank(case.min_render_level)
+        ]
+        if weak_sections:
+            failures.append(f"sections below render level {case.min_render_level}: {weak_sections}")
+
+    if case.expected_omissions_absent and built.budget_diagnostics.get("omissions"):
+        failures.append("unexpected context omissions under sentinel budget")
+
     for needle in case.expected_substrings:
         if needle not in built.text:
             failures.append(f"missing context substring {needle!r}")
@@ -196,8 +254,12 @@ def _run_case(
         retrieved_ids=retrieved_ids,
         expected_context_ids=expected_context_ids,
         matched_context_ids=matched_context_ids,
+        expected_object_titles=case.expected_object_titles,
+        matched_object_titles=matched_object_titles,
         expected_sources=case.expected_sources,
         source_map=source_map,
+        render_levels=render_levels,
+        budget_diagnostics=built.budget_diagnostics,
         metrics={
             "recall_at_k": recall_at_k(retrieved_ids, case.expected_ids, k=case.top_k),
             "reciprocal_rank": reciprocal_rank(
@@ -242,8 +304,12 @@ def run_retrieval_quality_evals(
                 retrieved_ids=[],
                 expected_context_ids=case.expected_context_ids,
                 matched_context_ids=[],
+                expected_object_titles=case.expected_object_titles,
+                matched_object_titles=[],
                 expected_sources=case.expected_sources,
                 source_map={},
+                render_levels={},
+                budget_diagnostics={},
                 metrics={
                     "recall_at_k": 0.0,
                     "reciprocal_rank": 0.0,

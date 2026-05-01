@@ -70,6 +70,14 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST",
     )
+    hub_mode: bool = Field(
+        default=False,
+        validation_alias="MEMORY_HUB_MODE",
+    )
+    workspaces_file: Path = Field(
+        default=Path.home() / ".agent_memory" / "workspaces.json",
+        validation_alias="MEMORY_WORKSPACES_FILE",
+    )
 
     # Embeddings
     embedding_backend: EmbeddingBackend = Field(

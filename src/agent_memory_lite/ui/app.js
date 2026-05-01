@@ -1,5 +1,7 @@
 const state = {
   workspace: "",
+  workspaceRegistry: new Map(),
+  hubMode: false,
   token: "",
   paused: false,
   memory: null,
@@ -188,12 +190,63 @@ const semanticHubs = [
 const hubById = new Map(semanticHubs.map((hub) => [hub.id, hub]));
 const tableToHub = new Map(semanticHubs.flatMap((hub) => hub.tables.map((table) => [table, hub.id])));
 
+function workspaceRoute(workspaceId) {
+  if (!workspaceId) {
+    return null;
+  }
+  return state.workspaceRegistry.get(workspaceId) || null;
+}
+
 function headers() {
   const output = { "Content-Type": "application/json" };
   if (state.token) {
     output.Authorization = `Bearer ${state.token}`;
   }
+  const route = workspaceRoute(selectedWorkspace());
+  if (route) {
+    if (route.db_path) {
+      output["X-Memory-DB-Path"] = route.db_path;
+    }
+    if (route.vector_path) {
+      output["X-Memory-Vector-Path"] = route.vector_path;
+    }
+  }
   return output;
+}
+
+function readHeaders() {
+  const output = {};
+  if (state.token) {
+    output.Authorization = `Bearer ${state.token}`;
+  }
+  const route = workspaceRoute(selectedWorkspace());
+  if (route) {
+    if (route.db_path) {
+      output["X-Memory-DB-Path"] = route.db_path;
+    }
+    if (route.vector_path) {
+      output["X-Memory-Vector-Path"] = route.vector_path;
+    }
+  }
+  return output;
+}
+
+function appendRouteParams(url, workspaceId) {
+  const route = workspaceRoute(workspaceId);
+  if (!route) {
+    return url;
+  }
+  const params = [];
+  if (route.db_path) {
+    params.push(`db_path=${encodeURIComponent(route.db_path)}`);
+  }
+  if (route.vector_path) {
+    params.push(`vector_path=${encodeURIComponent(route.vector_path)}`);
+  }
+  if (!params.length) {
+    return url;
+  }
+  return url + (url.includes("?") ? "&" : "?") + params.join("&");
 }
 
 function selectedWorkspace() {
@@ -372,8 +425,31 @@ function graphWorldSize() {
   return { width: Math.round(width), height: Math.round(height) };
 }
 
-function renderWorkspaceOptions(workspaces) {
+function renderWorkspaceOptions(workspaces, registered) {
+  const labels = new Map();
+  if (Array.isArray(registered)) {
+    for (const entry of registered) {
+      if (!entry || !entry.id) {
+        continue;
+      }
+      labels.set(
+        entry.id,
+        entry.label && entry.label !== entry.id ? `${entry.id} - ${entry.label}` : entry.id,
+      );
+      state.workspaceRegistry.set(entry.id, {
+        db_path: entry.db_path || "",
+        vector_path: entry.vector_path || "",
+        project_root: entry.project_root || "",
+        label: entry.label || entry.id,
+      });
+    }
+  }
   const options = Array.from(new Set((workspaces || []).filter(Boolean)));
+  for (const id of state.workspaceRegistry.keys()) {
+    if (!options.includes(id)) {
+      options.push(id);
+    }
+  }
   if (state.workspace && !options.includes(state.workspace)) {
     options.unshift(state.workspace);
   }
@@ -385,7 +461,7 @@ function renderWorkspaceOptions(workspaces) {
   for (const workspace of options) {
     const option = document.createElement("option");
     option.value = workspace;
-    option.textContent = workspace;
+    option.textContent = labels.get(workspace) || workspace;
     els.workspace.appendChild(option);
   }
   els.workspace.value = current;
@@ -419,6 +495,56 @@ async function requestJson(path, body) {
     throw new Error(`${path} ${response.status}: ${clip(text, 220)}`);
   }
   return parsed;
+}
+
+async function recordFeedback(sourceType, sourceId, query, usefulness, notes, target) {
+  if (!sourceId) {
+    return;
+  }
+  const button = target instanceof HTMLButtonElement ? target : null;
+  const previous = button ? button.textContent : "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "saved";
+  }
+  try {
+    await requestJson("/memory/record_usage_feedback", {
+      workspace_id: requireWorkspace(),
+      source_type: sourceType || "chunk",
+      source_id: sourceId,
+      query: query || els.query.value.trim(),
+      usefulness,
+      notes,
+    });
+  } catch (error) {
+    showError(error);
+    if (button) {
+      button.textContent = previous;
+      button.disabled = false;
+    }
+  }
+}
+
+function feedbackControls({ sourceType = "chunk", sourceId, query = "", compact = false }) {
+  const controls = document.createElement("div");
+  controls.className = "feedback-controls";
+  const buttons = [
+    ["Helpful", 1, "helpful source"],
+    ["Noisy", -1, "noisy source"],
+    ["Stale", -0.6, "stale source"],
+  ];
+  for (const [label, usefulness, notes] of buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = compact ? "feedback-button compact" : "feedback-button";
+    button.textContent = label;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      recordFeedback(sourceType, sourceId, query, usefulness, notes, button);
+    });
+    controls.appendChild(button);
+  }
+  return controls;
 }
 
 function mergeEvents(events) {
@@ -840,9 +966,11 @@ async function refresh({ manual = false } = {}) {
     : "/memory/ui/state?recent_limit=4";
   const [memoryResult, healthResult] = await Promise.allSettled([
     fetch(stateUrl, {
-      headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+      headers: readHeaders(),
     }),
-    fetch("/health"),
+    fetch("/health", {
+      headers: readHeaders(),
+    }),
   ]);
 
   if (memoryResult.status === "fulfilled") {
@@ -853,7 +981,8 @@ async function refresh({ manual = false } = {}) {
     const memory = await response.json();
     state.memory = memory;
     state.workspace = memory.workspace_id || workspace;
-    renderWorkspaceOptions(memory.workspaces || [state.workspace]);
+    state.hubMode = Boolean(memory.hub_mode);
+    renderWorkspaceOptions(memory.workspaces || [state.workspace], memory.registered_workspaces);
     mergeEvents(memory.latest_events || []);
     state.activeRequests = memory.active_requests || [];
     state.graphDeltas = memory.graph_deltas || [];
@@ -883,7 +1012,10 @@ function ensureEventSource() {
   if (!workspace) {
     return;
   }
-  const url = `/memory/ui/events?workspace_id=${encodeURIComponent(workspace)}`;
+  const url = appendRouteParams(
+    `/memory/ui/events?workspace_id=${encodeURIComponent(workspace)}`,
+    workspace,
+  );
   const source = new EventSource(url);
   state.eventSource = source;
   source.addEventListener("open", () => {
@@ -2573,6 +2705,7 @@ function renderContextSummaryFromExplain(body, duration) {
     row.appendChild(textEl("strong", "Used by agent"));
     row.appendChild(textEl("span", clip(item.path || item.metadata?.kind || item.id, 80)));
     row.appendChild(textEl("em", clip(item.reason || "Included in context budget", 100)));
+    row.appendChild(feedbackControls({ sourceId: item.id, query: body.query, compact: true }));
     list.appendChild(row);
   }
   for (const item of excluded.slice(0, 4)) {
@@ -2581,6 +2714,7 @@ function renderContextSummaryFromExplain(body, duration) {
     row.appendChild(textEl("strong", "Found but not used"));
     row.appendChild(textEl("span", clip(item.path || item.metadata?.kind || item.id, 80)));
     row.appendChild(textEl("em", clip(item.reason || "Excluded from context budget", 100)));
+    row.appendChild(feedbackControls({ sourceId: item.id, query: body.query, compact: true }));
     list.appendChild(row);
   }
   els.contextSummary.appendChild(list);
@@ -2712,6 +2846,9 @@ function renderSearchResults(body, duration, query) {
     card.appendChild(textEl("strong", clip(hit.summary || hit.path || "Memory chunk", 90)));
     card.appendChild(textEl("span", clip(hit.text, 180)));
     card.appendChild(textEl("em", clip(hit.path || hit.chunk_id, 90)));
+    card.appendChild(
+      feedbackControls({ sourceId: hit.chunk_id || hit.id, query, compact: true }),
+    );
     els.searchResults.appendChild(card);
   }
 }
