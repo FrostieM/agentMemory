@@ -128,6 +128,13 @@ const state = {
 const QUEUE_CAP = 8;
 const IDLE_GAP_MS = 1200;
 const REQUEST_FLUSH_AFTER_MS = 1500;
+// Events older than this (vs Date.now() at the moment they arrive) are
+// considered SSE replay/history and won't trigger an animation cycle.
+// 10 s is comfortably longer than any single live operation but short
+// enough that the snapshot replay (which dumps up to 80 events) doesn't
+// queue dozens of past cycles when the user opens the UI or switches
+// workspaces.
+const REPLAY_LIVE_WINDOW_MS = 10_000;
 
 const els = {
   workspace: document.getElementById("workspaceInput"),
@@ -1235,6 +1242,10 @@ function onMemoryEvent(ev) {
 
   // Family additive light (kept for non-queued events too — gives
   // background activity a soft pulse independent of the cycle queue).
+  // Compute "is this a live event or SSE replay" once so we can apply
+  // it to both the optimistic count update and (later) the queue.
+  const evTimeMsForLight = Date.parse(ev.created_at || "") || 0;
+  const isLiveEvent = !evTimeMsForLight || (Date.now() - evTimeMsForLight) <= REPLAY_LIVE_WINDOW_MS;
   if (evType === "graph_delta") {
     const fid = familyForEvent(ev.counts);
     if (fid) {
@@ -1243,11 +1254,20 @@ function onMemoryEvent(ev) {
       // moment a row is created / deleted, instead of waiting for the
       // next /memory/ui/state poll. fetchState resets these deltas
       // when the authoritative counts come back.
-      const action = String(ev.counts?.action || "").toLowerCase();
-      if (action === "created") {
-        state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) + 1);
-      } else if (action === "deleted") {
-        state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) - 1);
+      //
+      // Only apply this to LIVE events. SSE replay events from the
+      // server snapshot represent creations that are already accounted
+      // for in the polled counts; bumping countDeltas for them would
+      // inflate the displayed total to (polled + replay) — e.g. a
+      // workspace with 3 real episodes would render "6" until the next
+      // fetchState resolved.
+      if (isLiveEvent) {
+        const action = String(ev.counts?.action || "").toLowerCase();
+        if (action === "created") {
+          state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) + 1);
+        } else if (action === "deleted") {
+          state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) - 1);
+        }
       }
     }
   }
@@ -1272,6 +1292,15 @@ function onMemoryEvent(ev) {
     operation.includes("get_context") ||
     operation.includes("explain_context");
   if (!requestId || userInitiated) return;
+
+  // SSE replay guard: when the client subscribes to /memory/ui/events,
+  // the server replays its recent snapshot (up to 80 events). Without
+  // this guard, every past request_id would land in the queue and the
+  // observatory would spend the next minute animating yesterday's
+  // ingests. Old events still land in the trail (so the user sees
+  // recent history), but they do NOT get queued for animation. Anything
+  // within REPLAY_LIVE_WINDOW_MS counts as "live" and animates normally.
+  if (!isLiveEvent) return;
 
   if (evType === "request_started") {
     state.requestBuffer.set(requestId, {
@@ -1475,22 +1504,40 @@ async function postJson(path, body) {
   return data;
 }
 
-function buildQueryFromHits(prompt, intent, hits, defaultFamId = "research") {
+function buildQueryFromHits(prompt, intent, hits, defaultFamId = "episodes") {
+  // Map a /memory/search or /memory/get_context hit to its family.
+  // /memory/search returns FTS chunks (kind=undefined or "chunk") whose
+  // source is an episode or file — those belong to the Episodes family,
+  // NOT Research. Default to "episodes" so the chunk case lands there
+  // unless the metadata says otherwise.
   const objects = hits.slice(0, 8).map(h => {
     const meta = h.metadata || {};
     const kind = meta.kind || h.type || "chunk";
     let famId = defaultFamId;
     if (kind === "decision") famId = "decisions";
-    else if (kind === "theory" || kind === "experiment" || kind === "snapshot" || kind === "insight" || kind === "concept") famId = "research";
-    else if (kind === "episode") famId = "episodes";
-    else if (kind === "behavior_instruction") famId = "instructions";
+    else if (
+      kind === "theory" || kind === "experiment" || kind === "snapshot" ||
+      kind === "insight" || kind === "concept" || kind === "theory_evidence" ||
+      kind === "experiment_result"
+    ) famId = "research";
+    else if (kind === "episode" || kind === "chunk" || kind === "file") famId = "episodes";
+    else if (kind === "behavior_instruction" || kind === "procedural_rule") famId = "instructions";
     else if (kind === "role") famId = "roles";
-    else if (kind === "skill" || kind === "playbook") famId = "skills";
+    else if (kind === "skill" || kind === "playbook" || kind === "capability_link") famId = "skills";
+    else if (kind === "task_state" || kind === "candidate") famId = "tasks";
+    else if (kind === "feedback") famId = "feedback";
+    let table = "chunks";
+    if (meta.kind === "decision") table = "decisions";
+    else if (meta.kind === "theory") table = "theories";
+    else if (kind === "behavior_instruction") table = "behavior_instructions";
+    else if (kind === "role") table = "agent_roles";
+    else if (kind === "skill") table = "agent_skills";
+    else if (kind === "playbook") table = "agent_playbooks";
     return {
       id: h.id || h.chunk_id,
       label: meta.label || h.label || meta.path || clip(h.text || h.snippet || h.id, 22),
       famId,
-      table: meta.kind === "decision" ? "decisions" : meta.kind === "theory" ? "theories" : "chunks",
+      table,
       raw: h,
     };
   });

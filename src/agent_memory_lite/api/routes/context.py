@@ -135,6 +135,7 @@ def get_context_route(
                     score=hit.score,
                     sources=hit.sources,
                     path=hit.path,
+                    text=(hit.text or "")[:160],
                     metadata=hit.metadata,
                 )
                 for hit in built.hits

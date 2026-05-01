@@ -27,6 +27,11 @@ class ContextSource(BaseModel):
     score: float
     sources: list[str]
     path: str = ""
+    # First ~160 chars of the chunk text. Lets the observatory UI render
+    # a meaningful node label without round-tripping back to the chunk
+    # store. Truncated server-side so a context with many large chunks
+    # doesn't bloat the response.
+    text: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
