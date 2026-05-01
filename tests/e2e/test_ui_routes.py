@@ -37,114 +37,88 @@ def test_ui_telemetry_bus_is_bounded_and_redacts() -> None:
 
 
 def test_ui_index_and_assets(app_factory) -> None:
+    """The /ui endpoint serves the Memory · Live Observatory shell.
+
+    The redesigned UI ships three assets: index.html (skeleton), app.js
+    (vanilla JS observatory), and styles.css. The asserts below check the
+    public contract — wiring to the backend endpoints, key DOM hooks, and
+    the visual identity of the design — without locking down internal
+    function names so future refactors can land without ceremonious test
+    rewrites.
+    """
     app = app_factory()
     with TestClient(app) as client:
         index = client.get("/ui")
         js = client.get("/ui/app.js")
         css = client.get("/ui/styles.css")
 
+    # --- index.html: structural elements + cache-bust + design title ---
     assert index.status_code == 200
-    assert "Live memory flow" in index.text
+    assert "Memory · Live Observatory" in index.text
+    assert "20260501-observatory-rewrite" in index.text
+    # Header chips and workspace dropdown.
+    assert 'id="healthChip"' in index.text
+    assert 'id="chunksChip"' in index.text
+    assert 'id="workspaceInput"' in index.text
+    assert 'id="tokenInput"' in index.text
+    # Graph pane and SVG canvas.
+    assert 'id="graphSvg"' in index.text
+    assert 'class="graph-pane"' in index.text
+    assert 'class="graph-shell"' in index.text
+    # Right rail cards (inspector, query, life trail).
+    assert 'id="inspectorCard"' in index.text
+    assert 'id="queryInput"' in index.text
+    assert 'id="lifeFeed"' in index.text
+    assert 'id="warningsPanel"' in index.text
+    # Tweaks panel (bottom right).
+    assert 'id="tweaksPanel"' in index.text
+    assert 'id="hueRange"' in index.text
+    assert 'id="speedRange"' in index.text
+    assert 'id="densityInput"' in index.text
+    # Pause / refresh controls.
+    assert 'id="pauseBtn"' in index.text
+    assert 'id="refreshBtn"' in index.text
+
+    # --- app.js: backend wiring + design contract ---
     assert js.status_code == 200
+    # Hits the real backend endpoints.
+    assert "/memory/ui/state" in js.text
+    assert "/memory/ui/events" in js.text
+    assert "/memory/search" in js.text
+    assert "/memory/get_context" in js.text
+    # Uses SSE for live events.
     assert "EventSource" in js.text
-    assert "renderProcess" in js.text
-    assert "ResizeObserver" in js.text
-    assert "graphZoomIn" in js.text
-    assert "graphTestBtn" in index.text
-    assert "startGraphDemo" in js.text
-    assert "demoRoutesForRequest" in js.text
-    assert '["skills", 2]' in js.text
-    assert '["decisions", 3]' in js.text
-    assert "continuousRoutePath" in js.text
-    assert "route-link" in js.text
-    assert "animationQueue" in js.text
-    assert "startNextGraphJob" in js.text
-    assert "flushPendingGraphJob" in js.text
-    assert "lastGraphRoutes" in js.text
-    assert "retireLastRoutesBeforeNextJob" in js.text
-    assert "priority = false" in js.text
-    assert 'source !== "demo"' in js.text
-    assert "shouldAnimateGraphEvent" in js.text
-    assert "uiStartedAtMs" in js.text
-    assert "graphAnimationInProgress" in js.text
-    assert "renderGraphRouteLayer" in js.text
-    assert "clearGraphRouteLayer" in js.text
-    assert "graph-route-layer" in js.text
-    assert "graph-object-layer" in js.text
-    assert "ensureGraphLayer" in js.text
-    assert "state.memory?.graph && !graphAnimationInProgress()" in js.text
-    assert "routesFromActiveRequestEvents" in js.text
-    assert "latestByHub" not in js.text
-    assert "slice(0, 18)" in js.text
-    assert "stageBadge" in js.text
-    assert "steady-path" in js.text
-    assert "graphZoom: 0.82" in js.text
-    assert "setGraphZoom(0.82)" in js.text
-    assert "width * 0.1" in js.text
-    assert "objectReserve" in js.text
-    assert "maxHubRadiusX" in js.text
-    assert "retiringRoutes" in js.text
-    assert "routeFromGraphDelta" in js.text
-    assert "prioritizeGraphRoutes" in js.text
-    assert "routeVisualPriority" in js.text
-    assert "agent_roles: 0" in js.text
-    assert "agent_skills: 1" in js.text
-    assert "agent_playbooks: 2" in js.text
-    assert "behavior_instructions: 3" in js.text
-    assert "updateLiveGraphFromEvents" in js.text
-    assert "!routes.length && state.lastGraphRoutes.length" in js.text
-    assert "activeObjectPositions.forEach" in js.text
-    assert "stableHash" in js.text
-    assert "hashUnit" in js.text
-    assert "routeAgeFactor" in js.text
-    assert "ageFactor * 260" in js.text
-    assert "buildRouteObjectLayout" in js.text
-    assert "lineCircleDistance" in js.text
-    assert "pushRoutePointAway" in js.text
-    assert "20260501-hub-workspace-switch" in index.text
-    assert "graphClickCandidate" in js.text
-    assert "moved <= 10" in js.text
-    assert "!state.sseReady && !state.paused" in js.text
-    assert "setGraphZoom(0.56)" not in js.text
-    assert "semantic-root" in js.text
-    assert "semantic-object-id" in js.text
-    assert "renderLiveGraph" not in js.text
-    assert '<select id="workspaceInput"' in index.text
-    assert "warningsPanel" in index.text
-    assert "graphInspector" in index.text
-    assert "showWorkspaceInspector" in js.text
-    assert "showHubInspectorById" in js.text
-    assert "showGraphNodeInspectorFromElement" in js.text
-    assert "graphInteractiveNode(event.target)" in js.text
-    assert 'els.graph?.addEventListener("click"' in js.text
-    assert "inspector-card" in js.text
-    assert "aria-modal" in js.text
-    assert 'body.classList.add("inspector-open")' in js.text
-    assert "event.target === els.graphInspector" in js.text
-    assert 'event.key === "Escape"' in js.text
-    assert "graphSummary" not in index.text
-    assert "Query uses" not in js.text
-    assert "Context route" not in js.text
-    assert "Live path" not in index.text
-    assert "liveGraphSvg" not in index.text
-    assert "stageRail" not in index.text
+    # Honors the asymmetric isolation contract: per-call X-Memory-DB-Path
+    # routing for cross-workspace reads.
+    assert "X-Memory-DB-Path" in js.text
+    assert "X-Memory-Vector-Path" in js.text
+    # Eight families from the design.
+    assert '"episodes"' in js.text
+    assert '"decisions"' in js.text
+    assert '"research"' in js.text
+    assert '"tasks"' in js.text
+    assert '"roles"' in js.text
+    assert '"skills"' in js.text
+    assert '"instructions"' in js.text
+    assert '"feedback"' in js.text
+    # Renders the user-supplied label (migration 0015) when present.
+    assert "short_label" in js.text
+    # Polling fallback when SSE is offline.
+    assert "REFRESH_MS" in js.text or "setInterval" in js.text
+
+    # --- styles.css: design identity (oklch, dark theme, tweaks panel) ---
     assert css.status_code == 200
-    assert ".live-stage" not in css.text
-    assert "top: 1rem" in css.text
-    assert "max-height: calc(100vh - 2rem)" in css.text
-    assert "width: 1456px" not in css.text
-    assert "height: 952px" not in css.text
-    assert ".semantic-object-label" in css.text
-    assert ".semantic-object-id" in css.text
-    assert ".inspector-card" in css.text
-    assert "position: fixed" in css.text
-    assert "place-items: center" in css.text
-    assert "body.inspector-open" in css.text
-    assert "routeForward" in css.text
-    assert "objectPoofIn" in css.text
-    assert "objectPopOut" in css.text
-    assert "display: none" in css.text
-    assert ".memory-route" in css.text
+    assert "oklch" in css.text
+    assert "tweaks-panel" in css.text
+    assert ".rail-card" in css.text
+    assert ".graph-pane" in css.text
+    assert ".main-grid" in css.text
+    assert ".chip" in css.text
+    assert "--accent-hue" in css.text
+    # Legacy markers from the old observatory must not survive.
+    assert "memory-map-section" not in index.text
+    assert "live-feed-panel" not in index.text
+    assert "graphZoomIn" not in index.text
 
 
 def test_ui_state_returns_graph(

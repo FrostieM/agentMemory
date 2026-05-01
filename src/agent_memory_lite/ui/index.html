@@ -3,193 +3,163 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>agent-memory-lite observatory</title>
-    <link rel="stylesheet" href="/ui/styles.css?v=20260501-hub-workspace-switch" />
+    <title>Memory · Live Observatory</title>
+    <link rel="stylesheet" href="/ui/styles.css?v=20260501-observatory-rewrite" />
   </head>
   <body>
-    <main class="shell">
-      <aside class="rail">
+    <div class="app">
+      <header class="app-header">
         <div class="brand">
-          <svg class="mark" viewBox="0 0 44 44" role="img" aria-label="Memory graph mark">
-            <path d="M9 25 C14 12 22 11 27 21 S35 31 39 15"></path>
-            <circle cx="9" cy="25" r="3.6"></circle>
-            <circle cx="27" cy="21" r="3.6"></circle>
-            <circle cx="39" cy="15" r="3.6"></circle>
-          </svg>
-          <div>
-            <strong>Memory</strong>
-            <span>live observatory</span>
+          <div class="brand-mark">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+              <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <line x1="5" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="14" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="12" y1="5" x2="12" y2="10" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="12" y1="14" x2="12" y2="19" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">Memory</div>
+            <div class="brand-sub">Live Observatory · agent-memory-lite</div>
           </div>
         </div>
 
-        <label class="field">
-          <span>Workspace</span>
-          <select id="workspaceInput" autocomplete="off"></select>
-        </label>
-        <label class="field">
-          <span>API token</span>
-          <input id="tokenInput" autocomplete="off" type="password" placeholder="optional" />
-        </label>
-        <div class="actions">
-          <button id="refreshBtn" type="button">Refresh</button>
-          <button id="pauseBtn" type="button">Pause</button>
+        <div class="header-pills">
+          <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+          <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+          <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+          <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
         </div>
 
-        <div class="read-guide" aria-label="How to read the graph">
-          <strong>How to read</strong>
-          <span>Run Search or Explain.</span>
-          <span>Green paths show memory used by the current request.</span>
-          <span>Click a large node for its objects, or a small node for details.</span>
+        <div class="header-meta">
+          <label class="ws-pick">
+            <span class="ws-label">workspace</span>
+            <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+          </label>
+          <label class="ws-pick">
+            <span class="ws-label">api token</span>
+            <input id="tokenInput" type="password" autocomplete="off" class="ws-val token-input" placeholder="optional" />
+          </label>
         </div>
-      </aside>
+      </header>
 
-      <section class="main">
-        <header class="topbar">
-          <div>
-            <div class="eyebrow">local process telemetry</div>
-            <h1>Live memory flow</h1>
-            <p>Watch requests pass through retrieval, indexing, context building, and graph changes.</p>
-          </div>
-          <div class="status-strip">
-            <span id="healthChip" class="chip">health unknown</span>
-            <span id="sseChip" class="chip">SSE starting</span>
-            <span id="updatedChip" class="chip">waiting</span>
-          </div>
-        </header>
-
-        <section id="warningsPanel" class="warnings-panel" aria-label="Memory warnings">
-          <div class="panel-head compact">
-            <div>
-              <div class="eyebrow">warnings</div>
-              <h2>Memory needs attention</h2>
-              <p>Open maintenance events that can make retrieval or context less trustworthy.</p>
+      <main class="main-grid">
+        <section class="graph-pane" aria-label="Live memory graph">
+          <div class="graph-shell" id="graphShell">
+            <div class="graph-overlay-tl">
+              <div class="overlay-kicker">live memory observatory</div>
+              <div class="overlay-title" id="overlayWorkspace">workspace</div>
+              <div class="overlay-meta">
+                <span class="dot-ok" id="overlayDot"></span>
+                <span id="overlayHealth">health unknown</span>
+                <span class="meta-sep">·</span>
+                <span id="overlayCounts">0 chunks · 0 events</span>
+              </div>
             </div>
-            <span id="warningsCountChip" class="chip">0 open</span>
+
+            <div class="graph-overlay-tr">
+              <button class="pill" id="pauseBtn" type="button">❚❚ pause</button>
+              <button class="pill" id="refreshBtn" type="button">↻ refresh</button>
+            </div>
+
+            <div class="graph-overlay-bl">
+              <div class="trail-kicker"><span id="overlayPhase">idle</span> · <span id="overlayIntent">awaiting request</span></div>
+              <div class="trail-prompt" id="overlayPrompt">Run a search or explain to light up the graph.</div>
+            </div>
+
+            <svg id="graphSvg" class="graph-svg" viewBox="-750 -600 1500 1200" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Memory object map"></svg>
+
+            <div class="graph-overlay-br">
+              <div class="legend">
+                <div class="legend-row"><span class="legend-swatch active"></span><span>used by current request</span></div>
+                <div class="legend-row"><span class="legend-swatch dim"></span><span>known but not used</span></div>
+                <div class="legend-row"><span class="legend-impulse"></span><span>memory traversal</span></div>
+              </div>
+            </div>
           </div>
-          <div id="warningsList" class="warnings-list"></div>
         </section>
 
-        <section class="memory-map-section" aria-label="Live memory relationship graph">
-          <article class="memory-map-panel">
-            <div class="panel-head compact">
-              <div>
-                <div class="eyebrow">live memory graph</div>
-                <h2>Memory relationships</h2>
-                <p>Project starts in the center. Large nodes are memory families. Small nodes appear only when a request uses them.</p>
-              </div>
-              <div class="memory-map-toolbar" aria-label="Memory graph controls">
-                <div class="graph-controls">
-                  <button id="graphZoomOut" type="button" class="icon-button" aria-label="Zoom graph out">-</button>
-                  <span id="graphZoomLabel" class="graph-scale">100%</span>
-                  <button id="graphZoomIn" type="button" class="icon-button" aria-label="Zoom graph in">+</button>
-                  <button id="graphZoomReset" type="button" class="ghost small">Reset</button>
-                  <button id="graphTestBtn" type="button" class="ghost small">Test</button>
-                </div>
-              </div>
+        <aside class="rail">
+          <div class="rail-card" id="inspectorCard">
+            <div class="inspector-empty">
+              <div class="empty-circle"></div>
+              <div class="empty-title">Live overview</div>
+              <div class="empty-sub">Click any family or object to inspect. The center node is the current workspace.</div>
             </div>
-            <div id="graphViewport" class="memory-map-viewport" aria-label="Scrollable zoomable memory map">
-              <svg id="graphSvg" role="img" aria-label="Memory object map"></svg>
-            </div>
-            <div id="graphInspector" class="graph-inspector" hidden></div>
-          </article>
-        </section>
+          </div>
 
-        <section class="hero-grid" aria-label="Live memory activity">
-          <aside class="life-feed-panel">
-            <div class="panel-head compact">
-              <div>
-                <div class="eyebrow">life feed</div>
-                <h2>What changed</h2>
-              </div>
-              <span id="eventCountChip" class="chip">0 events</span>
-            </div>
-            <div id="lifeFeed" class="life-feed"></div>
-          </aside>
-        </section>
-
-        <section class="task-zone">
-          <article class="query-panel">
-            <div class="panel-head compact">
-              <div>
-                <div class="eyebrow">task context</div>
-                <h2>Ask memory</h2>
-                <p>Search finds exact facts. Explain shows what would enter the agent context.</p>
-              </div>
-            </div>
+          <div class="rail-card query-card">
+            <div class="panel-kicker">ask memory</div>
             <div class="query-row">
-              <input id="queryInput" placeholder="heap watchdog, source flip, file path..." />
-              <button id="searchBtn" type="button">Search</button>
-              <button id="contextBtn" type="button">Explain</button>
+              <input id="queryInput" placeholder="heap watchdog, source flip, file path…" autocomplete="off" />
+              <button id="searchBtn" type="button" class="pill solid">Search</button>
+              <button id="contextBtn" type="button" class="pill">Explain</button>
             </div>
             <div id="searchSummary" class="summary-strip"></div>
-          </article>
+            <details class="dev-details">
+              <summary>raw context</summary>
+              <pre id="contextBox" class="raw-xml"></pre>
+            </details>
+          </div>
 
-          <article class="task-graph-panel">
-            <div class="panel-head compact">
-              <div>
-                <div class="eyebrow">agent context graph</div>
-                <h2>Context selection</h2>
-                <p id="taskGraphMeta">No query selected yet.</p>
-              </div>
-              <button id="rawContextBtn" type="button" class="ghost">Raw XML</button>
-            </div>
-            <svg id="taskGraphSvg" role="img" aria-label="Task context graph"></svg>
-            <div id="contextSummary" class="context-summary"></div>
-          </article>
-        </section>
+          <div class="rail-card">
+            <div class="panel-kicker">live trail</div>
+            <div id="lifeFeed" class="trail-list"></div>
+          </div>
 
-        <details class="developer-details">
-          <summary>Developer details</summary>
-          <section class="details-grid">
-            <article class="detail-panel">
-              <div class="panel-head compact">
-                <div>
-                  <h2>Counts and health</h2>
-                  <p>Raw table counts and endpoint status.</p>
-                </div>
-                <span id="signatureChip" class="chip">signature</span>
-              </div>
-              <div id="metrics" class="metrics"></div>
-            </article>
+          <div class="rail-card warnings-card" id="warningsPanel" hidden>
+            <div class="panel-kicker">warnings</div>
+            <div id="warningsList" class="warnings-list"></div>
+          </div>
+        </aside>
+      </main>
 
-            <article class="detail-panel">
-              <div class="panel-head compact">
-                <div>
-                  <h2>Pipeline model</h2>
-                  <p>Static stage map plus newest durable rows.</p>
-                </div>
-              </div>
-              <svg id="processSvg" role="img" aria-label="Memory processing pipeline"></svg>
-              <div id="stageList" class="stage-list"></div>
-            </article>
+      <footer class="app-footer">
+        <span class="foot-mute">memory backend</span>
+        <span>SQLite · FTS · LanceDB</span>
+        <span class="meta-sep">·</span>
+        <span id="footMeta">workspace registry · asymmetric isolation · object labels</span>
+        <span class="meta-sep">·</span>
+        <span id="updatedChip" class="foot-mute">waiting…</span>
+        <span class="meta-sep">·</span>
+        <span id="sseChip" class="foot-mute">SSE starting</span>
+      </footer>
+    </div>
 
-            <article class="detail-panel">
-              <div class="panel-head compact">
-                <div>
-                  <h2>Results and raw context</h2>
-                  <p>Raw XML and exact search output stay here.</p>
-                </div>
-              </div>
-              <div id="searchResults" class="result-list"></div>
-              <details class="raw-context">
-                <summary>Raw context XML</summary>
-                <pre id="contextBox"></pre>
-              </details>
-            </article>
+    <aside class="tweaks-panel" id="tweaksPanel" aria-label="Display tweaks">
+      <div class="tweaks-head">
+        <strong>Tweaks</strong>
+        <button id="tweaksToggle" type="button" aria-label="Collapse tweaks">−</button>
+      </div>
+      <div class="tweaks-body" id="tweaksBody">
+        <label class="tweak-row">
+          <span>accent hue <span id="hueLabel">160°</span></span>
+          <input id="hueRange" type="range" min="0" max="360" step="2" value="160" />
+        </label>
+        <label class="tweak-row">
+          <span>animation speed <span id="speedLabel">0.7×</span></span>
+          <input id="speedRange" type="range" min="0.3" max="1.5" step="0.05" value="0.7" />
+        </label>
+        <label class="tweak-row">
+          <span>density</span>
+          <select id="densityInput">
+            <option value="sparse">sparse</option>
+            <option value="medium" selected>medium</option>
+            <option value="dense">dense</option>
+          </select>
+        </label>
+        <label class="tweak-row tweak-row-h">
+          <span>pulse on edges</span>
+          <input id="pulseInput" type="checkbox" checked />
+        </label>
+      </div>
+    </aside>
 
-            <article class="detail-panel wide">
-              <div class="panel-head compact">
-                <div>
-                  <h2>Recent durable changes</h2>
-                  <p>Newest SQLite-backed memory objects.</p>
-                </div>
-              </div>
-              <div id="timeline" class="timeline"></div>
-            </article>
-          </section>
-        </details>
-      </section>
-    </main>
-    <script src="/ui/app.js?v=20260501-hub-workspace-switch"></script>
+    <script src="/ui/app.js?v=20260501-observatory-rewrite"></script>
   </body>
 </html>
