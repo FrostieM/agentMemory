@@ -297,8 +297,14 @@ function startNextAuto() {
   return true;
 }
 
+// Driver: setTimeout instead of requestAnimationFrame so the cycle keeps
+// ticking when the tab is in the background, the window is minimized, or
+// the page is rendered headless (the Preview MCP / Puppeteer-style
+// inspectors hold a Chromium that throttles rAF to 0 Hz). 30 ms ≈ 33 fps,
+// plenty smooth for these multi-second easings, and the cycle keeps real
+// data flowing into the rail even when the user is on another screen.
 function tick() {
-  requestAnimationFrame(tick);
+  setTimeout(tick, 30);
   if (state.paused) return;
   if (!shellMounted) return;
 
@@ -1360,5 +1366,5 @@ els.tweaksToggle.addEventListener("click", () => {
 mountShell();
 applyTweaks();
 fetchState({ manual: true });
-requestAnimationFrame(tick);
+setTimeout(tick, 30);
 setInterval(() => { if (!state.sseReady && !state.paused) fetchState(); }, POLL_MS);
