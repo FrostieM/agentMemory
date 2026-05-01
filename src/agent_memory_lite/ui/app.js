@@ -1062,6 +1062,11 @@ function setSseChip(text, cls = "") { els.sseChip.textContent = text; els.sseChi
 
 function onMemoryEvent(ev) {
   if (ev.id && state.eventIds.has(ev.id)) return;
+  // Defence in depth: backend already filters /memory/ui/events by
+  // workspace, but if a stale SSE connection from a previous workspace
+  // somehow delivers a frame after the user switched, skip it client-side.
+  const evWs = ev.workspace_id || ev.workspace || "";
+  if (evWs && state.workspace && evWs !== state.workspace) return;
   if (ev.id) state.eventIds.add(ev.id);
 
   // Trail row (always)
@@ -1306,8 +1311,32 @@ function applyTweaks() {
 
 // ---- wiring ----------------------------------------------------------------
 
-els.workspace.addEventListener("change", () => { resetSse(); fetchState({ manual: true }); });
-els.token.addEventListener("change", () => { state.token = els.token.value.trim(); resetSse(); fetchState({ manual: true }); });
+function resetWorkspaceState() {
+  // Switching workspaces means EVERY in-memory trail/queue/cycle from
+  // the previous one is now stale. Drop them so the new workspace's
+  // SSE stream starts cleanly without mixing in old events.
+  resetSse();
+  state.events = [];
+  state.eventIds = new Set();
+  state.queue = [];
+  state.activeQuery = null;
+  state.cycleStart = 0;
+  state.idleStart = 0;
+  state.lastIntent = "";
+  state.phase = "idle";
+  state.progress = 0;
+  state.liveLight = new Map();
+  state.detailCache = new Map();
+  state.selected = null;
+  state.inspectorHistory = [];
+  state.autoQueries = [];
+  state.autoIndex = 0;
+  renderFeed();
+  renderInspector();
+}
+
+els.workspace.addEventListener("change", () => { resetWorkspaceState(); fetchState({ manual: true }); });
+els.token.addEventListener("change", () => { state.token = els.token.value.trim(); resetWorkspaceState(); fetchState({ manual: true }); });
 els.refresh.addEventListener("click", () => fetchState({ manual: true }));
 els.pause.addEventListener("click", () => {
   state.paused = !state.paused;
