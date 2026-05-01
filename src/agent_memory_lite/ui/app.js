@@ -46,6 +46,40 @@ const FAMILY_BY_TABLE = (() => {
   for (const f of FAMILIES) for (const t of f.tables) m[t] = f.id;
   return m;
 })();
+// graph_delta events carry counts.object_type (the logical kind: "decision",
+// "theory", "episode", "skill", …). Map those to families directly so the
+// SSE pipeline doesn't depend on table-name conventions.
+const FAMILY_BY_OBJECT_TYPE = {
+  episode: "episodes",
+  chunk: "episodes",
+  file: "episodes",
+  decision: "decisions",
+  theory: "research",
+  theory_evidence: "research",
+  experiment: "research",
+  experiment_result: "research",
+  snapshot: "research",
+  insight: "research",
+  concept: "research",
+  task_state: "tasks",
+  candidate: "tasks",
+  memory_candidate: "tasks",
+  role: "roles",
+  skill: "skills",
+  playbook: "skills",
+  capability_link: "skills",
+  behavior_instruction: "instructions",
+  procedural_rule: "instructions",
+  feedback: "feedback",
+  memory_usage_feedback: "feedback",
+};
+function familyForEvent(counts) {
+  if (!counts) return null;
+  const ot = counts.object_type || counts.kind || "";
+  if (ot && FAMILY_BY_OBJECT_TYPE[ot]) return FAMILY_BY_OBJECT_TYPE[ot];
+  if (counts.table && FAMILY_BY_TABLE[counts.table]) return FAMILY_BY_TABLE[counts.table];
+  return null;
+}
 
 // ---- state ------------------------------------------------------------------
 
@@ -67,16 +101,20 @@ const state = {
   detailCache: new Map(), // famId → fetched detail rows
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
   // animation pipeline:
-  //   • SSE graph_delta events → buildQueryFromEvent → state.queue
+  //   • Every memory operation has one request_id and emits a sequence
+  //     of SSE events: request_started → graph_delta(s) → request_done.
+  //   • state.requestBuffer collects all events for a request_id; on
+  //     request_done (or 1.5 s of silence after the last event), the
+  //     buffered events are coalesced into ONE query (all touched
+  //     families + all touched objects of that operation) and pushed
+  //     to state.queue.
   //   • tick() plays one cycle (forward → hold → reverse), then a
-  //     short IDLE gap with an empty graph, then the next query.
-  //   • Queue priority: real SSE events first, otherwise rotate through
-  //     state.autoQueries (built from /memory/ui/state.recent).
-  //   • Centre sub-label keeps state.lastIntent visible during the gap
-  //     so the user can still see "what just played".
+  //     short IDLE gap with an empty graph, then pulls the next query.
+  //   • There is NO synthetic auto-cycle. If the service is silent the
+  //     graph stays idle. The cycle is a faithful replay of real
+  //     memory traffic — what you see is what just happened.
   queue: [],
-  autoQueries: [],
-  autoIndex: 0,
+  requestBuffer: new Map(),     // request_id → { families, objects, … }
   activeQuery: null,
   cycleStart: 0,
   idleStart: 0,
@@ -85,7 +123,8 @@ const state = {
   progress: 0,
 };
 const QUEUE_CAP = 8;
-const IDLE_GAP_MS = 1500;
+const IDLE_GAP_MS = 1200;
+const REQUEST_FLUSH_AFTER_MS = 1500;
 
 const els = {
   workspace: document.getElementById("workspaceInput"),
@@ -285,17 +324,6 @@ function startNextFromQueue() {
   return true;
 }
 
-function startNextAuto() {
-  // Rotate through queries derived from real /memory/ui/state.recent rows.
-  // SSE events still take priority; auto-cycling only kicks in when the
-  // event queue is empty and we've waited out the idle gap.
-  if (!state.autoQueries.length) return false;
-  const q = state.autoQueries[state.autoIndex % state.autoQueries.length];
-  state.autoIndex++;
-  // Clone so we never mutate the cached query when running.
-  startQuery({ ...q, source: "auto" });
-  return true;
-}
 
 // Driver: setTimeout instead of requestAnimationFrame so the cycle keeps
 // ticking when the tab is in the background, the window is minimized, or
@@ -314,23 +342,18 @@ function tick() {
 
   // No cycle running.
   if (!state.cycleStart) {
-    // Real SSE events override everything — start immediately.
-    if (state.queue.length) {
+    // Real SSE events drive everything. After a short idle gap, pull the
+    // next coalesced operation off the queue. If the queue is empty we
+    // simply stay idle — there is no synthetic auto-cycle.
+    if (!state.idleStart) state.idleStart = performance.now();
+    const idleElapsed = performance.now() - state.idleStart;
+    if (idleElapsed >= G && state.queue.length) {
+      state.idleStart = 0;
       startNextFromQueue();
       paintFrame();
       return;
     }
-    // Otherwise wait out the idle gap then auto-cycle.
-    if (!state.idleStart) state.idleStart = performance.now();
-    const idleElapsed = performance.now() - state.idleStart;
-    if (idleElapsed >= G) {
-      state.idleStart = 0;
-      if (startNextAuto()) {
-        paintFrame();
-        return;
-      }
-    }
-    // No data at all — empty graph.
+    // Idle: empty graph, waiting for the next real operation.
     state.activeQuery = null;
     state.phase = "idle";
     state.progress = 0;
@@ -1042,8 +1065,6 @@ async function fetchState({ manual = false } = {}) {
     });
   }
   state.detailCache.clear();
-  state.autoQueries = deriveAutoQueries(memory);
-  state.autoIndex = 0;
   populateWorkspaceDropdown(memory.workspaces || [state.workspace]);
   if (!shellMounted) mountShell();
   renderHeader(memory);
@@ -1094,138 +1115,164 @@ function resetSse() { if (state.eventSource) state.eventSource.close(); state.ev
 function setSseChip(text, cls = "") { els.sseChip.textContent = text; els.sseChip.className = `foot-mute ${cls}`; }
 
 function onMemoryEvent(ev) {
-  if (ev.id && state.eventIds.has(ev.id)) return;
+  // Backend uses `type` (request_started / stage_started / stage_done /
+  // graph_delta / request_done / request_failed). Older code in this file
+  // still falls back to `kind` for safety, but the SSE stream is the
+  // canonical wire format.
+  const evType = ev.type || ev.kind || "";
+  const evId = ev.event_id || ev.id || "";
+  if (evId && state.eventIds.has(evId)) return;
   // Defence in depth: backend already filters /memory/ui/events by
   // workspace, but if a stale SSE connection from a previous workspace
   // somehow delivers a frame after the user switched, skip it client-side.
   const evWs = ev.workspace_id || ev.workspace || "";
   if (evWs && state.workspace && evWs !== state.workspace) return;
-  if (ev.id) state.eventIds.add(ev.id);
+  if (evId) state.eventIds.add(evId);
 
   // Trail row (always)
   state.events.unshift({
     kind: trailKindOf(ev),
-    t: fmtTime(ev.timestamp || new Date()),
-    text: ev.label || ev.endpoint || ev.operation || ev.kind || "memory event",
+    t: fmtTime(ev.created_at || ev.timestamp || new Date()),
+    text: ev.label || ev.endpoint || ev.operation || evType || "memory event",
   });
   state.events = state.events.slice(0, 60);
   renderFeed();
 
   // Family additive light (kept for non-queued events too — gives
   // background activity a soft pulse independent of the cycle queue).
-  if (ev.kind === "graph_delta" && ev.counts?.table) {
-    const fid = FAMILY_BY_TABLE[ev.counts.table];
+  if (evType === "graph_delta") {
+    const fid = familyForEvent(ev.counts);
     if (fid) state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
   }
 
-  // Queue an animation. We skip events from Search / Explain because
-  // those run an explicit full-result animation via runQueryAnimation
-  // already; the SSE stream for those calls would just play them again
-  // in fragmentary form.
+  // ---- request_id buffering -------------------------------------------------
+  //
+  // Every memory operation produces a sequence of events sharing one
+  // request_id: request_started → stage_* → graph_delta(s) → request_done
+  // (or request_failed). The observatory plays ONE animation per
+  // operation, not one per event — otherwise an ingest that touches
+  // five tables would flicker five tiny graphs in a row instead of
+  // showing the actual operation.
+  //
+  // We skip user-initiated reads (search / get_context / explain_context):
+  // those have explicit Search / Explain buttons that run the full
+  // animation via runQueryAnimation, and the SSE re-play would just
+  // overlap that animation with fragmentary frames.
+  const requestId = ev.request_id || "";
   const operation = String(ev.operation || ev.endpoint || "").toLowerCase();
   const userInitiated =
     operation.includes("search") ||
     operation.includes("get_context") ||
     operation.includes("explain_context");
-  if (!userInitiated) {
-    const built = buildQueryFromEvent(ev);
-    if (built) enqueueQuery(built);
-  }
-}
+  if (!requestId || userInitiated) return;
 
-function deriveAutoQueries(memory) {
-  // Build a rotation of synthetic-but-real queries from /memory/ui/state.recent
-  // so the observatory keeps cycling like in the design video, even when no
-  // SSE event is firing. Each query touches 2-4 families and 2-5 real
-  // objects from those families.
-  const recent = memory?.recent || [];
-  const byFam = {};
-  for (const row of recent) {
-    const fid = FAMILY_BY_TABLE[row.table];
-    if (!fid) continue;
-    (byFam[fid] = byFam[fid] || []).push({
-      id: row.id,
-      table: row.table,
-      famId: fid,
-      label: row.short_label || row.label || row.id,
-      raw: row,
+  if (evType === "request_started") {
+    state.requestBuffer.set(requestId, {
+      requestId,
+      endpoint: ev.endpoint || "",
+      operation: ev.operation || "",
+      label: ev.label || "",
+      snippet: ev.snippet || "",
+      families: new Set(),
+      objects: new Map(), // key = `${famId}:${objectId}`
+      lastEventAt: performance.now(),
+      flushed: false,
     });
+    return;
   }
-  const fams = Object.keys(byFam);
-  if (!fams.length) return [];
-  const queries = [];
-  const intents = ["recall", "research", "incident", "capability", "compare", "live"];
-  const N = Math.min(7, Math.max(3, fams.length));
-  for (let i = 0; i < N; i++) {
-    const k = 2 + (i % 3);
-    const subset = [];
-    for (let j = 0; j < k; j++) subset.push(fams[(i + j) % fams.length]);
-    const uniqueSubset = Array.from(new Set(subset));
-    const objs = [];
-    for (const fid of uniqueSubset) {
-      const pool = byFam[fid] || [];
-      const take = Math.min(2, pool.length);
-      for (let j = 0; j < take; j++) objs.push(pool[(i + j) % pool.length]);
-    }
-    const trimmed = objs.slice(0, 5);
-    const headline = trimmed[0]?.label || `Active ${uniqueSubset[0]}`;
-    queries.push({
-      intent: intents[i % intents.length],
-      prompt: headline,
-      families: uniqueSubset,
-      objects: trimmed,
-      source: "auto",
-    });
-  }
-  return queries;
-}
 
-function buildQueryFromEvent(ev) {
-  // Object-level event: graph_delta with table + object_id → 1 family,
-  // 1 object. This is the most useful kind for the observatory because
-  // each ingest / write_decision / write_theory etc. emits one graph_delta
-  // per row produced.
-  if (ev.kind === "graph_delta" && ev.counts?.table) {
-    const c = ev.counts;
-    const fid = FAMILY_BY_TABLE[c.table];
-    if (!fid) return null;
-    const objId = c.object_id || c.target_id || ev.id || `${c.table}:auto`;
-    const objLabel = c.label || c.object_id || `${c.action || ev.kind} ${c.table}`;
-    return {
-      intent: ev.operation || c.action || "memory",
-      prompt: ev.label || ev.snippet || `${c.action || "active"} ${c.table}`,
-      families: [fid],
-      objects: [{
-        id: objId,
-        label: objLabel,
+  // For graph_delta / stage_done events, ensure a buffer exists even if
+  // we missed request_started (SSE backfill races, late subscribe, etc.).
+  let entry = state.requestBuffer.get(requestId);
+  if (!entry && (evType === "graph_delta" || evType === "stage_done")) {
+    entry = {
+      requestId,
+      endpoint: ev.endpoint || "",
+      operation: ev.operation || "",
+      label: ev.label || "",
+      snippet: ev.snippet || "",
+      families: new Set(),
+      objects: new Map(),
+      lastEventAt: performance.now(),
+      flushed: false,
+    };
+    state.requestBuffer.set(requestId, entry);
+  }
+  if (!entry) return;
+
+  entry.lastEventAt = performance.now();
+
+  if (evType === "graph_delta") {
+    const counts = ev.counts || {};
+    const fid = familyForEvent(counts);
+    if (fid) {
+      entry.families.add(fid);
+      const objectId = counts.object_id || counts.target_id || evId || "";
+      const key = `${fid}:${objectId || counts.object_type || ""}:${entry.objects.size}`;
+      const label =
+        counts.label || counts.object_id || ev.label || `${counts.action || "active"} ${fid}`;
+      entry.objects.set(key, {
+        id: objectId || key,
+        label: clip(String(label), 26),
         famId: fid,
-        table: c.table,
+        table: counts.table || counts.object_type || fid,
         raw: ev,
-      }],
-      source: "sse-graph-delta",
-    };
+      });
+    }
+    return;
   }
-  // Stage-level event: stage_done with a list of tables → multi-family
-  // light without specific objects. Useful for high-level operations
-  // (compaction, audit) that don't write to a single row.
-  if (ev.kind === "stage" && Array.isArray(ev.tables)) {
-    const fams = Array.from(new Set(
-      ev.tables.map((t) => FAMILY_BY_TABLE[t]).filter(Boolean)
-    ));
-    if (!fams.length) return null;
-    return {
-      intent: ev.operation || ev.stage || "stage",
-      prompt: ev.label || `${ev.stage || ""} ${ev.endpoint || ""}`.trim() || "memory stage",
-      families: fams,
-      objects: [],
-      source: "sse-stage",
-    };
+
+  if (evType === "request_done" || evType === "request_failed") {
+    flushRequest(requestId);
+    return;
   }
-  return null;
 }
+
+function flushRequest(requestId) {
+  const entry = state.requestBuffer.get(requestId);
+  if (!entry || entry.flushed) return;
+  entry.flushed = true;
+  state.requestBuffer.delete(requestId);
+
+  // Without any touched family the cycle has nothing to draw — skip.
+  if (!entry.families.size) return;
+
+  const families = Array.from(entry.families);
+  const objects = Array.from(entry.objects.values()).slice(0, 8);
+  const intent = entry.operation || "memory";
+  const prompt =
+    (entry.label && entry.label.replace(/\s+(accepted|completed|failed)$/i, "")) ||
+    entry.endpoint ||
+    intent;
+
+  enqueueQuery({
+    intent,
+    prompt,
+    families,
+    objects,
+    source: "sse-request",
+  });
+}
+
+// Periodically flush request buffers that went silent. A real operation
+// always emits request_done, but a backend crash, dropped SSE frame, or a
+// long-tail ingestion sub-task can leave entries in the buffer; without
+// this sweep they'd never reach the queue.
+setInterval(() => {
+  if (state.requestBuffer.size === 0) return;
+  const now = performance.now();
+  for (const [rid, entry] of state.requestBuffer) {
+    if (now - entry.lastEventAt > REQUEST_FLUSH_AFTER_MS) flushRequest(rid);
+  }
+}, 500);
+
 function trailKindOf(ev) {
-  if (ev.kind === "graph_delta") return "pick";
-  if (ev.kind === "stage") return "route";
+  const t = ev.type || ev.kind || "";
+  if (t === "graph_delta") return "pick";
+  if (t === "stage_done" || t === "stage_started" || t === "stage") return "route";
+  if (t === "request_started") return "in";
+  if (t === "request_done") return "out";
+  if (t === "request_failed") return "warn";
   if (ev.endpoint && ev.endpoint.includes("ingest")) return "in";
   if (ev.endpoint && ev.endpoint.includes("get_context")) return "out";
   if (ev.severity === "warn" || ev.severity === "warning") return "warn";
@@ -1362,8 +1409,7 @@ function resetWorkspaceState() {
   state.detailCache = new Map();
   state.selected = null;
   state.inspectorHistory = [];
-  state.autoQueries = [];
-  state.autoIndex = 0;
+  state.requestBuffer = new Map();
   renderFeed();
   renderInspector();
 }

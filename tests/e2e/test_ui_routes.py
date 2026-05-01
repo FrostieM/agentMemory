@@ -105,16 +105,23 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "short_label" in js.text
     # Polling fallback when SSE is offline.
     assert "REFRESH_MS" in js.text or "setInterval" in js.text
-    # SSE-driven animation queue: events become queries, queue plays
-    # them sequentially. After a cycle, REVERSE retracts visuals and
-    # the graph empties; an idle gap then triggers the next query
-    # (SSE first, otherwise auto-rotate from real recent rows).
+    # SSE-driven animation queue: events arrive as a sequence sharing one
+    # request_id (request_started → graph_delta(s) → request_done). The
+    # observatory groups them into ONE query per real operation — no
+    # synthetic auto-rotation through recent rows. After a cycle, REVERSE
+    # retracts visuals, the graph empties, and the next coalesced
+    # operation is dequeued. If the service is silent, the graph stays
+    # idle.
     assert "state.queue" in js.text
     assert "enqueueQuery" in js.text
-    assert "buildQueryFromEvent" in js.text
     assert "startNextFromQueue" in js.text
-    assert "deriveAutoQueries" in js.text
-    assert "startNextAuto" in js.text
+    assert "requestBuffer" in js.text
+    assert "flushRequest" in js.text
+    assert "REQUEST_FLUSH_AFTER_MS" in js.text
+    assert "request_started" in js.text
+    assert "request_done" in js.text
+    assert "graph_delta" in js.text
+    assert "FAMILY_BY_OBJECT_TYPE" in js.text
     assert "IDLE_GAP_MS" in js.text
     assert "lastIntent" in js.text
     # Object body fields surface in the inspector.
