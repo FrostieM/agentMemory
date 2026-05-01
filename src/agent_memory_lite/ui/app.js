@@ -567,23 +567,27 @@ function paintFrame() {
   // Family base style + counter.
   //   • Idle / no cycle               → counter = total in DB (with
   //                                     optimistic SSE deltas applied).
-  //   • Cycle touches this family     → counter = X/Y where X = small
-  //                                     nodes currently lit (vis>0.5)
-  //                                     and Y = total objects of this
-  //                                     family in the active query.
+  //   • Cycle touches this family     → counter = X/TOTAL where X = how
+  //                                     many small nodes from this
+  //                                     family are currently lit
+  //                                     (vis>0.5) and TOTAL is the same
+  //                                     DB total shown in idle. So
+  //                                     "2/3" reads as "2 of the 3
+  //                                     items in this family are
+  //                                     currently active".
   for (const f of FAMILIES) {
     const baseTotal = f.tables.reduce((acc, t) => acc + (counts[t] || 0), 0);
-    const total = baseTotal + (state.countDeltas?.get(f.id) || 0);
+    const total = Math.max(0, baseTotal + (state.countDeltas?.get(f.id) || 0));
     const g = famGroupsById.get(f.id);
     if (!g) continue;
     const counter = g.querySelector('[data-role="fam-count"]');
     const objsThisFamily = cycleRunning ? (q.objects || []).filter(o => o.famId === f.id) : [];
     if (counter) {
-      if (cycleRunning && objsThisFamily.length) {
+      if (cycleRunning && objsThisFamily.length && total > 0) {
         const active = activeObjectsForFamily(f.id, objsThisFamily, visualProgress);
-        counter.textContent = `${active}/${objsThisFamily.length}`;
+        counter.textContent = `${active}/${total}`;
       } else {
-        counter.textContent = String(Math.max(0, total));
+        counter.textContent = String(total);
       }
     }
 
