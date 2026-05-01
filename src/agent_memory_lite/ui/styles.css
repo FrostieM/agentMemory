@@ -392,6 +392,13 @@ code, pre, .mono {
 .trail-row.trail-route { border-left-color: oklch(0.78 0.14 70); }
 .trail-row.trail-pick  { border-left-color: oklch(0.78 0.14 320); }
 .trail-row.trail-warn  { border-left-color: var(--warn); }
+.trail-row.trail-fresh {
+  animation: trailRowFlash 800ms ease-out;
+}
+@keyframes trailRowFlash {
+  0%   { background: oklch(0.85 0.17 var(--accent-hue) / 0.22); transform: translateX(-3px); }
+  100% { background: transparent; transform: translateX(0); }
+}
 .trail-time { color: var(--text-3); flex-shrink: 0; }
 .trail-text { color: var(--text-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

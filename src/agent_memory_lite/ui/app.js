@@ -99,6 +99,7 @@ const state = {
   selected: null,
   inspectorHistory: [],   // back-button stack of previous selections
   detailCache: new Map(), // famId → fetched detail rows
+  recentLabels: new Map(),// id → short_label cache from /memory/ui/state.recent
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
   // animation pipeline:
   //   • Every memory operation has one request_id and emits a sequence
@@ -117,6 +118,7 @@ const state = {
   requestBuffer: new Map(),     // request_id → { families, objects, … }
   activeQuery: null,
   cycleStart: 0,
+  reverseStart: 0,              // when the reverse easing started for this cycle
   idleStart: 0,
   lastIntent: "",
   phase: "idle",
@@ -312,6 +314,7 @@ function enqueueQuery(query) {
 function startQuery(query) {
   state.activeQuery = query;
   state.cycleStart = performance.now();
+  state.reverseStart = 0;
   state.idleStart = 0;
   state.phase = "forward";
   state.progress = 0;
@@ -362,24 +365,53 @@ function tick() {
   }
 
   const elapsed = performance.now() - state.cycleStart;
-  if (elapsed >= F + H + R) {
-    // Cycle finished. REVERSE has retracted the strokes / objects already.
-    // Clear the query so the graph reads as fully idle until the next one.
+
+  // Forward phase: strokes draw outward.
+  if (elapsed < F) {
+    state.phase = "forward";
+    state.progress = easeOutCubic(elapsed / F);
+    paintFrame();
+    return;
+  }
+
+  // Hold phase: strokes fully drawn.
+  if (elapsed < F + H) {
+    state.phase = "hold";
+    state.progress = 1;
+    paintFrame();
+    return;
+  }
+
+  // Past hold. The LAST cycle freezes at hold instead of retracting:
+  // if there's nothing else queued, we stay drawn so the user can read
+  // the result. Reverse only kicks in once a new operation arrives,
+  // and it covers the transition between cycles.
+  if (!state.queue.length) {
+    state.phase = "hold";
+    state.progress = 1;
+    state.reverseStart = 0;
+    paintFrame();
+    return;
+  }
+
+  // Reverse phase: a new query is waiting, so retract the current one.
+  // We anchor reverse to the moment we start it, not to cycleStart, so
+  // freezing at hold for any duration doesn't break the easing.
+  if (!state.reverseStart) state.reverseStart = performance.now();
+  const reverseElapsed = performance.now() - state.reverseStart;
+  if (reverseElapsed >= R) {
     state.lastIntent = state.activeQuery?.intent || state.lastIntent;
     state.activeQuery = null;
     state.cycleStart = 0;
+    state.reverseStart = 0;
     state.idleStart = performance.now();
     state.phase = "idle";
     state.progress = 0;
     paintFrame();
     return;
   }
-  let phase = "forward", progress = 0;
-  if (elapsed < F) { phase = "forward"; progress = easeOutCubic(elapsed / F); }
-  else if (elapsed < F + H) { phase = "hold"; progress = 1; }
-  else { phase = "reverse"; progress = 1 - easeInCubic((elapsed - F - H) / R); }
-  state.phase = phase;
-  state.progress = progress;
+  state.phase = "reverse";
+  state.progress = 1 - easeInCubic(reverseElapsed / R);
   paintFrame();
 }
 
@@ -1065,6 +1097,14 @@ async function fetchState({ manual = false } = {}) {
     });
   }
   state.detailCache.clear();
+  // Build a quick id → label lookup from /memory/ui/state.recent so
+  // graph_delta events can render a meaningful node label even when
+  // the trace itself only carries the raw object_id.
+  state.recentLabels = new Map();
+  for (const row of memory.recent || []) {
+    const lbl = row.short_label || row.label || "";
+    if (row.id && lbl) state.recentLabels.set(row.id, lbl);
+  }
   populateWorkspaceDropdown(memory.workspaces || [state.workspace]);
   if (!shellMounted) mountShell();
   renderHeader(memory);
@@ -1129,11 +1169,28 @@ function onMemoryEvent(ev) {
   if (evWs && state.workspace && evWs !== state.workspace) return;
   if (evId) state.eventIds.add(evId);
 
-  // Trail row (always)
+  // Trail row (always). The label alone is generic ("Ingest episode",
+  // "Episode persisted") and looks identical across operations, so the
+  // feed visually appears frozen even when SSE is live. Append a
+  // distinguishing tail — the request snippet (actual content) for
+  // request_started/request_done, or the object_id / label for
+  // graph_delta — so each row is recognisably different.
+  let trailText = ev.label || ev.endpoint || ev.operation || evType || "memory event";
+  if ((evType === "request_started" || evType === "request_done") && ev.snippet) {
+    trailText = `${trailText} · ${clip(ev.snippet, 60)}`;
+  } else if (evType === "graph_delta" && ev.counts) {
+    const tail = ev.counts.label || ev.counts.object_id || ev.counts.object_type;
+    if (tail) trailText = `${trailText} · ${clip(String(tail), 50)}`;
+  } else if (evType === "stage_done" && ev.counts && Object.keys(ev.counts).length) {
+    // Stage events that carry counts (e.g. {sources:8}, {chunks:1})
+    // still get a tiny tail so the user sees them as distinct rows.
+    const k = Object.keys(ev.counts)[0];
+    trailText = `${trailText} · ${k}=${ev.counts[k]}`;
+  }
   state.events.unshift({
     kind: trailKindOf(ev),
     t: fmtTime(ev.created_at || ev.timestamp || new Date()),
-    text: ev.label || ev.endpoint || ev.operation || evType || "memory event",
+    text: trailText,
   });
   state.events = state.events.slice(0, 60);
   renderFeed();
@@ -1209,11 +1266,25 @@ function onMemoryEvent(ev) {
       entry.families.add(fid);
       const objectId = counts.object_id || counts.target_id || evId || "";
       const key = `${fid}:${objectId || counts.object_type || ""}:${entry.objects.size}`;
-      const label =
-        counts.label || counts.object_id || ev.label || `${counts.action || "active"} ${fid}`;
+      // Prefer a human-readable label over the raw id. Order:
+      //   1. counts.label / counts.short_label (when the route attaches one)
+      //   2. The request snippet captured at request_started (the actual
+      //      content the user wrote — the most informative thing we have).
+      //   3. The most recent matching row's short_label from /memory/ui/state.
+      //   4. The trace label of the graph_delta event ("Decision written" etc).
+      //   5. Fall back to the object_id only as a last resort.
+      const recentLabel = state.recentLabels?.get(objectId);
+      const rawLabel =
+        counts.label
+        || counts.short_label
+        || (entry.snippet && entry.snippet.length > 4 ? entry.snippet : "")
+        || recentLabel
+        || ev.label
+        || objectId
+        || `${counts.action || "active"} ${fid}`;
       entry.objects.set(key, {
         id: objectId || key,
-        label: clip(String(label), 26),
+        label: clip(String(rawLabel), 24),
         famId: fid,
         table: counts.table || counts.object_type || fid,
         raw: ev,
@@ -1300,9 +1371,14 @@ function renderHeader(memory) {
 }
 function renderFeed() {
   clear(els.lifeFeed);
-  for (const ev of state.events.slice(0, 30)) {
+  const slice = state.events.slice(0, 30);
+  for (let i = 0; i < slice.length; i++) {
+    const ev = slice[i];
     const row = document.createElement("div");
-    row.className = `trail-row trail-${ev.kind}`;
+    // The freshest row gets a one-shot flash so the eye can catch the
+    // update even when consecutive rows look textually similar. Older
+    // rows render plain.
+    row.className = `trail-row trail-${ev.kind}${i === 0 ? " trail-fresh" : ""}`;
     const t = document.createElement("span"); t.className = "trail-time"; t.textContent = ev.t;
     const x = document.createElement("span"); x.className = "trail-text"; x.textContent = ev.text;
     row.append(t, x);
@@ -1410,6 +1486,8 @@ function resetWorkspaceState() {
   state.selected = null;
   state.inspectorHistory = [];
   state.requestBuffer = new Map();
+  state.recentLabels = new Map();
+  state.reverseStart = 0;
   renderFeed();
   renderInspector();
 }
