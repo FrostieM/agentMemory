@@ -100,6 +100,7 @@ const state = {
   inspectorHistory: [],   // back-button stack of previous selections
   detailCache: new Map(), // famId → fetched detail rows
   recentLabels: new Map(),// id → short_label cache from /memory/ui/state.recent
+  countDeltas: new Map(), // famId → optimistic count delta since last fetchState
   tweaks: { hue: 160, speed: 0.7, density: "medium", pulse: true, panelOpen: true },
   // animation pipeline:
   //   • Every memory operation has one request_id and emits a sequence
@@ -269,6 +270,25 @@ function objectPositions(parent, n) {
     }
   }
   return out;
+}
+
+// Count how many small nodes of a given family are visually "active" at
+// the current visualProgress. Mirrors the easing math used in the
+// object-drawing loop (vis = (visualProgress - arrival±0.04) eased)
+// so the displayed X/Y matches what the user sees on screen.
+function activeObjectsForFamily(famId, objsThisFamily, visualProgress) {
+  const fp = POS_BY_ID[famId];
+  if (!fp || !objsThisFamily.length) return 0;
+  const positions = objectPositions(fp, objsThisFamily.length);
+  let count = 0;
+  for (let i = 0; i < objsThisFamily.length; i++) {
+    const op = positions[i] || { ring: 0 };
+    const arrival = Math.min(0.96, FAMILY_ARRIVAL + 0.15 + op.ring * PER_RING_DELTA);
+    const start = arrival - 0.04, end = arrival + 0.04;
+    const vis = Math.max(0, Math.min(1, (visualProgress - start) / (end - start)));
+    if (vis > 0.5) count++;
+  }
+  return count;
 }
 
 function trunkPath(p) {
@@ -532,13 +552,28 @@ function paintFrame() {
   const visualProgress = cycleRunning ? progress : 0;
   const visualPhase = cycleRunning ? phase : "idle";
 
-  // Family base style + counter
+  // Family base style + counter.
+  //   • Idle / no cycle               → counter = total in DB (with
+  //                                     optimistic SSE deltas applied).
+  //   • Cycle touches this family     → counter = X/Y where X = small
+  //                                     nodes currently lit (vis>0.5)
+  //                                     and Y = total objects of this
+  //                                     family in the active query.
   for (const f of FAMILIES) {
-    const total = f.tables.reduce((acc, t) => acc + (counts[t] || 0), 0);
+    const baseTotal = f.tables.reduce((acc, t) => acc + (counts[t] || 0), 0);
+    const total = baseTotal + (state.countDeltas?.get(f.id) || 0);
     const g = famGroupsById.get(f.id);
     if (!g) continue;
     const counter = g.querySelector('[data-role="fam-count"]');
-    if (counter) counter.textContent = String(total);
+    const objsThisFamily = cycleRunning ? (q.objects || []).filter(o => o.famId === f.id) : [];
+    if (counter) {
+      if (cycleRunning && objsThisFamily.length) {
+        const active = activeObjectsForFamily(f.id, objsThisFamily, visualProgress);
+        counter.textContent = `${active}/${objsThisFamily.length}`;
+      } else {
+        counter.textContent = String(Math.max(0, total));
+      }
+    }
 
     let lit = 0;
     if (drawFamilies.includes(f.id)) {
@@ -1105,6 +1140,9 @@ async function fetchState({ manual = false } = {}) {
     const lbl = row.short_label || row.label || "";
     if (row.id && lbl) state.recentLabels.set(row.id, lbl);
   }
+  // The polled counts are now authoritative — drop optimistic deltas
+  // that were applied on top of the previous snapshot.
+  state.countDeltas = new Map();
   populateWorkspaceDropdown(memory.workspaces || [state.workspace]);
   if (!shellMounted) mountShell();
   renderHeader(memory);
@@ -1199,7 +1237,19 @@ function onMemoryEvent(ev) {
   // background activity a soft pulse independent of the cycle queue).
   if (evType === "graph_delta") {
     const fid = familyForEvent(ev.counts);
-    if (fid) state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
+    if (fid) {
+      state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
+      // Optimistic count update so the family centre counter ticks the
+      // moment a row is created / deleted, instead of waiting for the
+      // next /memory/ui/state poll. fetchState resets these deltas
+      // when the authoritative counts come back.
+      const action = String(ev.counts?.action || "").toLowerCase();
+      if (action === "created") {
+        state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) + 1);
+      } else if (action === "deleted") {
+        state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) - 1);
+      }
+    }
   }
 
   // ---- request_id buffering -------------------------------------------------
@@ -1295,8 +1345,24 @@ function onMemoryEvent(ev) {
 
   if (evType === "request_done" || evType === "request_failed") {
     flushRequest(requestId);
+    // The operation finished — schedule a state refresh so the
+    // authoritative counts replace any optimistic deltas. Debounced
+    // so a burst of writes (e.g. workspace ingest) doesn't hammer the
+    // /memory/ui/state endpoint.
+    scheduleStateRefresh();
     return;
   }
+}
+
+let _refreshTimer = null;
+function scheduleStateRefresh(delayMs = 600) {
+  if (_refreshTimer) return;
+  _refreshTimer = setTimeout(() => {
+    _refreshTimer = null;
+    // No `manual: true` here — if the user paused the observatory we
+    // honour that and skip the refresh.
+    fetchState().catch(() => {});
+  }, delayMs);
 }
 
 function flushRequest(requestId) {
@@ -1487,6 +1553,7 @@ function resetWorkspaceState() {
   state.inspectorHistory = [];
   state.requestBuffer = new Map();
   state.recentLabels = new Map();
+  state.countDeltas = new Map();
   state.reverseStart = 0;
   renderFeed();
   renderInspector();
