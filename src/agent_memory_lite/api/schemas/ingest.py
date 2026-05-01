@@ -18,6 +18,13 @@ class IngestEpisodeRequest(BaseModel):
     source_type: EpisodeSource = EpisodeSource.AGENT_ACTION
     raw_text: str = Field(min_length=1)
     summary: str | None = None
+    label: str | None = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Optional short visual hint for the live observatory UI. Carries no retrieval weight."
+        ),
+    )
     trust_level: TrustLevel = TrustLevel.UNKNOWN
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)

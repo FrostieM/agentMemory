@@ -46,6 +46,7 @@ def ingest_episode_route(
             source_type=body.source_type,
             raw_text=body.raw_text,
             summary=body.summary,
+            label=body.label,
             trust_level=body.trust_level,
             importance=body.importance,
             confidence=body.confidence,

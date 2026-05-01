@@ -468,7 +468,14 @@ def _build_graph(
             row_id = _row_id(row)
             item_node = _item_node_id(table, row_id)
             row_keys = set(row.keys())
-            label = _clip(row[spec["text"]] if spec["text"] in row_keys else row_id)
+            # Prefer the user-supplied `label` column when set (chunks /
+            # episodes from migration 0015) — that's the visual short hint
+            # the user attached at write time. Fall back to auto-derived
+            # text snippet for older rows or tables without a label column.
+            short_label: str | None = None
+            if "label" in row_keys and row["label"]:
+                short_label = _clip(row["label"], 80)
+            label = short_label or _clip(row[spec["text"]] if spec["text"] in row_keys else row_id)
             updated_at = _row_time(row)
             status = _status(row)
             _add_node(
@@ -488,6 +495,7 @@ def _build_graph(
                     "id": row_id,
                     "table": table,
                     "label": label,
+                    "short_label": short_label,
                     "status": status,
                     "updated_at": updated_at,
                 }
@@ -499,6 +507,10 @@ def _build_graph(
 
 def _event_label(table: str, row: sqlite3.Row, fallback: str) -> str:
     keys = set(row.keys())
+    # Prefer the user-supplied short `label` (migration 0015) when set so
+    # observatory event rows match the live graph node text.
+    if "label" in keys and row["label"]:
+        return _clip(row["label"], 110)
     for key in ("title", "name", "summary", "goal", "path", "raw_text", "text", "evidence"):
         if key in keys and row[key]:
             return _clip(row[key], 110)

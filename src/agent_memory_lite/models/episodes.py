@@ -22,6 +22,14 @@ class EpisodeIn(BaseModel):
     source_type: EpisodeSource
     raw_text: str
     summary: str | None = None
+    label: str | None = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Optional short visual hint shown in the UI. Carries no retrieval "
+            "weight: FTS/vector/scoring still use `raw_text` only."
+        ),
+    )
     trust_level: TrustLevel = TrustLevel.UNKNOWN
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -38,6 +46,7 @@ class Episode(BaseModel):
     source_type: EpisodeSource
     raw_text: str
     summary: str | None
+    label: str | None = None
     trust_level: TrustLevel
     importance: float
     confidence: float

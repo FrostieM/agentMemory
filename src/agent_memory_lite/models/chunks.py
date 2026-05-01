@@ -24,6 +24,14 @@ class ChunkIn(BaseModel):
     kind: ChunkKind
     text: str
     summary: str | None = None
+    label: str | None = Field(
+        default=None,
+        max_length=120,
+        description=(
+            "Optional short visual hint shown in the UI. Carries no retrieval "
+            "weight: FTS/vector/scoring still use `text` only."
+        ),
+    )
     line_start: int | None = None
     line_end: int | None = None
     symbols: list[str] = Field(default_factory=list)
@@ -42,6 +50,7 @@ class Chunk(BaseModel):
     kind: ChunkKind
     text: str
     summary: str | None
+    label: str | None = None
     line_start: int | None
     line_end: int | None
     symbols: list[str] = Field(default_factory=list)

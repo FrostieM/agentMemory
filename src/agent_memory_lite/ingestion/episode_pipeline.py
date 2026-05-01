@@ -66,6 +66,9 @@ def _persist(
                 kind=ChunkKind.EPISODE,
                 text=redacted_text,
                 summary=episode.summary,
+                # Mirror the episode's visual label onto its primary chunk
+                # so the live observatory UI can render either consistently.
+                label=episode.label,
                 importance=episode.importance,
                 confidence=episode.confidence,
                 metadata={"source_type": episode.source_type.value},

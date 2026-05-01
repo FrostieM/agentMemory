@@ -11,6 +11,15 @@ from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
 
+def _row_label(row: sqlite3.Row) -> str | None:
+    """Read `label` column if migration 0015 has applied; tolerate older DBs."""
+    try:
+        value = row["label"]
+    except (IndexError, KeyError):
+        return None
+    return value if value else None
+
+
 def _row_to_episode(row: sqlite3.Row) -> Episode:
     return Episode(
         id=row["id"],
@@ -20,6 +29,7 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         source_type=EpisodeSource(row["source_type"]),
         raw_text=row["raw_text"],
         summary=row["summary"],
+        label=_row_label(row),
         trust_level=TrustLevel(row["trust_level"]),
         importance=float(row["importance"]),
         confidence=float(row["confidence"]),
@@ -41,8 +51,8 @@ def insert_episode(
         """
         INSERT INTO episodes (
             id, workspace_id, session_id, task_id, source_type, raw_text, summary,
-            trust_level, importance, confidence, created_at, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            label, trust_level, importance, confidence, created_at, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             episode_id,
@@ -52,6 +62,7 @@ def insert_episode(
             episode_in.source_type.value,
             raw_text,
             episode_in.summary,
+            episode_in.label,
             episode_in.trust_level.value,
             episode_in.importance,
             episode_in.confidence,
@@ -67,6 +78,7 @@ def insert_episode(
         source_type=episode_in.source_type,
         raw_text=raw_text,
         summary=episode_in.summary,
+        label=episode_in.label,
         trust_level=episode_in.trust_level,
         importance=episode_in.importance,
         confidence=episode_in.confidence,

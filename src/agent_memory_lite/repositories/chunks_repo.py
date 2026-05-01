@@ -11,6 +11,15 @@ from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
 
+def _row_label(row: sqlite3.Row) -> str | None:
+    """Read `label` column if migration 0015 has applied; tolerate older DBs."""
+    try:
+        value = row["label"]
+    except (IndexError, KeyError):
+        return None
+    return value if value else None
+
+
 def _row_to_chunk(row: sqlite3.Row) -> Chunk:
     return Chunk(
         id=row["id"],
@@ -20,6 +29,7 @@ def _row_to_chunk(row: sqlite3.Row) -> Chunk:
         kind=ChunkKind(row["kind"]),
         text=row["text"],
         summary=row["summary"],
+        label=_row_label(row),
         line_start=row["line_start"],
         line_end=row["line_end"],
         symbols=json.loads(row["symbols_json"] or "[]"),
@@ -42,10 +52,10 @@ def insert_chunk(
     conn.execute(
         """
         INSERT INTO chunks (
-            id, workspace_id, file_id, episode_id, kind, text, summary,
+            id, workspace_id, file_id, episode_id, kind, text, summary, label,
             line_start, line_end, symbols_json, embedding_id, importance,
             confidence, created_at, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chunk_id,
@@ -55,6 +65,7 @@ def insert_chunk(
             chunk_in.kind.value,
             chunk_in.text,
             chunk_in.summary,
+            chunk_in.label,
             chunk_in.line_start,
             chunk_in.line_end,
             json.dumps(chunk_in.symbols, sort_keys=True),
@@ -73,6 +84,7 @@ def insert_chunk(
         kind=chunk_in.kind,
         text=chunk_in.text,
         summary=chunk_in.summary,
+        label=chunk_in.label,
         line_start=chunk_in.line_start,
         line_end=chunk_in.line_end,
         symbols=chunk_in.symbols,
