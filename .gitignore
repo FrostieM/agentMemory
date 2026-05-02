@@ -55,3 +55,14 @@ logs/
 # memory_*_report.py / hygiene / dashboard scripts; not portable
 # across machines and frequently include per-machine paths).
 reports/
+
+# Per-developer screenshots / capture artifacts (regenerated locally
+# by scripts/_attic/capture_ui_screenshots.py; they are 1+ MB each
+# and would inflate the repo without serving public users).
+docs/screenshots/
+
+# Attic for retired scripts (one-off seeds, replaced crash tests,
+# data-fix runners) that we keep on disk for reference but don't
+# ship in the repo. New attic files require an explicit
+# `git add -f` to land on git.
+scripts/_attic/

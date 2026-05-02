@@ -14,15 +14,24 @@ Ollama drives local LLM extraction.
 │                                                                          │
 │   ① before a task                  ② during the task                     │
 │      memory_get_context  ─────▶       memory_search / memory_get_object  │
-│      memory_what_references           memory_list_decisions / theories   │
+│      memory_what_references           memory_list_{decisions,theories,   │
+│      memory_review_queue              candidates,behavior_instructions,  │
+│      memory_explain_context           agent_capabilities,research_agenda,│
+│                                       capability_links,maintenance,audit}│
 │                                                                          │
 │   ③ after the task                                                       │
 │      memory_ingest_episode ◀──   redaction → embed → FTS → extract       │
-│      memory_write_decision        ──▶ candidates queue → review          │
-│      memory_write_theory          ──▶ snapshot the workspace state       │
+│      memory_ingest_file           ──▶ candidates queue → review/promote  │
+│      memory_write_decision        ──▶ snapshot_save / archive / pin      │
+│      memory_write_theory          memory_link_capability                 │
+│      memory_write_experiment      memory_upsert_{concept, behavior,      │
+│      memory_register_snapshot     agent_role, agent_skill, playbook}     │
+│      memory_distill_insight       memory_compact_trigger / compact       │
 │                                                                          │
 │  ▼                                                                       │
-│  HTTP 127.0.0.1:8765   ◀── auto-injected via UserPromptSubmit hook       │
+│  HTTP 127.0.0.1:8765   ◀── auto-injected via UserPromptSubmit hook;      │
+│                            unregistered cwd auto-falls-back to a shared  │
+│                            ~/.agent_memory/global/ workspace             │
 │  MCP stdio             ◀── registered per-project by setup_agent.py     │
 │                                                                          │
 │  ▼                                                                       │
@@ -30,12 +39,19 @@ Ollama drives local LLM extraction.
 │  │   <memory_context>  (XML envelope returned to the agent)            │ │
 │  │     <core_memory> local-only; never call cloud LLMs ...             │ │
 │  │     <behavior_instructions> evidence-first reports ...              │ │
+│  │     <task_state task_id=... status=in_progress>                     │ │
+│  │       <next_action> ... </next_action> (only when task_id is sent)  │ │
+│  │     </task_state>                                                   │ │
 │  │     <active_decisions> Architecture: local-only embedding ...       │ │
 │  │     <active_theories> Source-flip favorites carry edge ...          │ │
 │  │     <research_agenda> snapshots / experiments / insights ...        │ │
 │  │     <agent_capabilities> Replay-and-backtest skill ...              │ │
+│  │     <procedural_rules> always run pytest before commit ...          │ │
 │  │     <retrieved_facts> graph-walked entity relations                 │ │
-│  │     <retrieved_chunks> RRF hybrid (FTS + vector cosine)             │ │
+│  │     <retrieved_chunks> RRF hybrid (FTS + vector cosine);            │ │
+│  │       each <chunk sources="ep_xxx,ep_yyy"> traces back to its       │ │
+│  │       source episode(s) — episodes themselves are not a separate    │ │
+│  │       envelope section, they surface here when relevant             │ │
 │  │   </memory_context>                                                 │ │
 │  └────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -46,16 +62,49 @@ Ollama drives local LLM extraction.
 │  (WAL +    │  │  vector    │   │  (local    │    │ formers (e5-     │
 │  FTS5)     │  │  store     │   │  qwen2.5)  │    │ small, CPU)      │
 │            │  │            │   │            │    │                  │
-│  ~30 tables│  │  per-WS    │   │  candidate │    │  384-dim vectors │
+│  36 tables │  │  per-WS    │   │  candidate │    │  384-dim vectors │
 │  per WS    │  │  namespace │   │  extraction│    │  for chunks      │
 └────────────┘  └────────────┘   └────────────┘    └──────────────────┘
 ```
 
-A live browser observatory at `http://127.0.0.1:8765/ui` shows the request
-flow as it happens — workspaces, families touched, objects pulled into
-context, and a rolling event trail.
+**Episodes / tasks access pattern.** Episodes are the agent's audit log;
+they are chunked + indexed and surface inside `<retrieved_chunks>` when
+their content is relevant to the query (the `sources` attribute traces
+each chunk back to its episode_id). For direct lookup use
+`memory_search(query=…, mode="fts")`,
+`memory_get_object(kind="episode", id="ep_…")`,
+`memory_what_references(target_id="ep_…")`, or
+`memory_list_audit(target_type="episode", target_id="ep_…")`.
+`<task_state>` renders only when the request carries a `task_id`; query
+the task state explicitly with `memory_update_task_state` (which also
+returns the current state) or via the audit log for one task.
 
-## Status — 1.0.0
+### Live observatory at `/ui`
+
+A local browser observatory at `http://127.0.0.1:8765/ui` shows the
+request flow as it happens. Layout:
+
+- **Centre:** workspace anchor (current `workspace_id`) with the active
+  cycle phase (RECALL → FUSE → ANSWER → RELEASE).
+- **Around the anchor:** eight family orbs — Decisions, Research,
+  Episodes, Skills, Roles, Instructions, Tasks, Feedback. Each one
+  shows its total row count.
+- **Spokes:** one per object pulled into the active query. Spoke +
+  node colour encodes the action (see the in-UI legend bottom-right):
+  green = create / upsert / restore, yellow-green = pinned, amber =
+  unpinned, red-orange = archived, red = deleted / rejected,
+  family-hue = read.
+- **Right rail:** ASK MEMORY (search / explain), live trail of the
+  last ~80 SSE events grouped by request_id, and an inspector panel
+  that opens when you click a family bubble.
+- **Inspector:** lists the family's top items. Auto-refreshes on
+  every write (no F5 needed). Click a row to open the object body
+  with Pin / Archive buttons.
+- **Workspace dropdown:** top-right. Pick any registered workspace
+  to switch context without restarting the service. In hub mode the
+  same service serves every project.
+
+## Status — 1.0.1
 
 Stable release. The subsystem covers the full memory model an agent needs to
 operate across sessions:
@@ -69,19 +118,29 @@ operate across sessions:
   workspace_manifest, workspace_meta.
 - **Retrieval pipeline** — RRF fusion of FTS BM25 + vector cosine, graph
   walk for entity facts, token-budget cap, discover-then-fetch for the long
-  tail, query-ranked active sections.
+  tail (each section emits an `<index>` block of compact `<ref/>` entries
+  for the unrendered remainder), query-ranked active sections, pinned-
+  first ordering for decisions / behavior_instructions / core_memory.
 - **Operator surface** — pin / archive / what_references / list_audit /
   snapshot_save+list+diff / review_queue / compact_trigger; integrity
   audit, hygiene report, quality gate, candidate triage.
 - **Hub mode + asymmetric isolation** — one service serves many projects via
   `~/.agent_memory/workspaces.json`; reads stay loose, writes stay strict
-  per-project.
+  per-project. The UserPromptSubmit hook auto-bootstraps a shared
+  `~/.agent_memory/global/` workspace when the cwd has no registered
+  workspace, so a chat opened anywhere still gets context.
 - **Memory-quality features (env-flagged)** — episode dedup, confidence
   decay, auto conflict detection, token-aware compaction watchdog.
+- **Live observatory at /ui (1.0.1)** — burst-coalesced animation cycles,
+  inspector list auto-refresh on writes (no F5 needed), action-colored
+  spokes (green = create / upserted / restored, yellow-green = pinned,
+  amber = unpinned, red-orange = archived, red = deleted / rejected,
+  family-hue = read), legend matches actual paint colors.
 
 Quality bar: 485 tests (unit / property / integration / e2e), strict ruff
-+ mypy + 150-SLOC ceiling per source file, forward-only migrations, local-
-only guard against cloud SDK imports.
++ mypy + 150-SLOC ceiling per source file, forward-only migrations
+(consolidated into a single `0001_init.sql` for cold-start), local-only
+guard against cloud SDK imports.
 
 ## Requirements
 
@@ -184,12 +243,6 @@ ollama pull qwen2.5:7b-instruct
 The default `LLM_BASE_URL` is `http://127.0.0.1:11434`. Without Ollama, set
 `OLLAMA_PROBE_SKIP=true` in `.env` and the heuristic extractor still runs;
 LLM-driven candidate extraction is simply disabled until Ollama is reachable.
-
-## Quick verification (≈ 2 minutes, no Ollama needed)
-
-This is the end-to-end check the project ships with. It boots the service,
-seeds the workspace with a representative session, exercises every public
-endpoint, and runs the eval harness.
 
 ## Theory memory
 
@@ -411,6 +464,12 @@ Use `status="rejected"` for disproven theories. A rejected theory is an
 anti-theory: it records that a tempting explanation or edge did **not** survive
 measurement. Keep it queryable with refuting evidence and metrics rather than
 burying it in an episode.
+
+## Quick verification (≈ 2 minutes, no Ollama needed)
+
+End-to-end check the project ships with: boot the service, seed a
+representative session, exercise every public endpoint, run the eval
+harness.
 
 ```bash
 # 1. configure (one-off)

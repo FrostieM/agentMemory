@@ -837,13 +837,14 @@ function paintFrame() {
             0,
             Math.min(1, (visualProgress - spurStart) / (arrival - spurStart)),
           );
-          drawEdge(dynamicLayer, spurPath(fp, op), spurProg, fam.hue, 1.4);
+          const obj = objs[i];
+          const objHue = actionHueFor(fam.hue, obj?.action);
+          drawEdge(dynamicLayer, spurPath(fp, op), spurProg, objHue, 1.4);
           const start = arrival - 0.04, end = arrival + 0.04;
           const vis = Math.max(0, Math.min(1, (visualProgress - start) / (end - start)));
           if (vis > 0.02) {
-            const obj = objs[i];
             const isSelectedObj = state.selected?.kind === "object" && state.selected.obj?.id === obj.id;
-            drawObject(dynamicLayer, op, fp, fam, obj, vis, isSelectedObj);
+            drawObject(dynamicLayer, op, fp, { ...fam, hue: objHue }, obj, vis, isSelectedObj);
           }
         }
       } else {
@@ -880,14 +881,15 @@ function paintFrame() {
               0,
               Math.min(1, (visualProgress - spurStart) / (arrival - spurStart)),
             );
-            drawEdge(dynamicLayer, spurPath(subPos, op, SUB_FAMILY_R), spurProg, fam.hue, 1.2);
+            const obj = subObjs[i];
+            const objHue = actionHueFor(fam.hue, obj?.action);
+            drawEdge(dynamicLayer, spurPath(subPos, op, SUB_FAMILY_R), spurProg, objHue, 1.2);
             const start = arrival - 0.04, end = arrival + 0.04;
             const vis = Math.max(0, Math.min(1, (visualProgress - start) / (end - start)));
             if (vis > 0.02) {
-              const obj = subObjs[i];
               const isSelectedObj =
                 state.selected?.kind === "object" && state.selected.obj?.id === obj.id;
-              drawObject(dynamicLayer, op, subPos, fam, obj, vis, isSelectedObj);
+              drawObject(dynamicLayer, op, subPos, { ...fam, hue: objHue }, obj, vis, isSelectedObj);
             }
           }
         }
@@ -928,6 +930,27 @@ function paintFrame() {
     clear(els.familiesTouched);
     clear(els.objectsInContext);
   }
+}
+
+// Action-colored hue overrides. The family hue identifies WHICH part
+// of memory is touched; the action tint tells the operator WHAT
+// happened to it so a write burst, an archive flip, and a read pull
+// look visually distinct. Reads keep the family hue so the graph
+// doesn't strobe every time a context is fetched.
+const _ACTION_HUE = {
+  created: 150,    // bright green — new row landed
+  upserted: 150,   // same as created — write that may overwrite
+  pinned: 90,      // yellow-green — flag flip toward "more visible"
+  archived: 25,    // red-orange — soft delete
+  deleted: 15,     // red — hard delete
+  rejected: 15,    // red — candidate killed
+  unpinned: 50,    // amber — flag flip toward "less visible"
+  restored: 130,   // green — un-archive
+};
+
+function actionHueFor(famHue, action) {
+  const override = _ACTION_HUE[(action || "").toLowerCase()];
+  return override === undefined ? famHue : override;
 }
 
 function drawEdge(layer, d, prog, hue, width) {
@@ -1171,6 +1194,27 @@ async function selectFamily(fid) {
     state.selected.detail = detail;
     renderInspector();
     paintFrame();
+  }
+}
+
+// Called from the graph_delta handler when a family receives a new
+// row. If the inspector is currently open on that family, re-fetch
+// the detail list and re-render so the new row appears without a
+// page reload. The cache delete in the caller ensures the next
+// passive ``selectFamily`` call also fetches fresh.
+async function refreshOpenFamilyInspector(fid) {
+  if (state.selected?.kind !== "family" || state.selected.famId !== fid) {
+    return;
+  }
+  try {
+    const detail = await fetchFamilyDetail(fid);
+    state.detailCache.set(fid, detail);
+    if (state.selected?.kind === "family" && state.selected.famId === fid) {
+      state.selected.detail = detail;
+      renderInspector();
+    }
+  } catch (_err) {
+    /* leave the stale list rather than blanking the inspector */
   }
 }
 
@@ -1804,6 +1848,14 @@ function onMemoryEvent(ev) {
       } else if (action === "deleted") {
         state.countDeltas.set(fid, (state.countDeltas.get(fid) || 0) - 1);
       }
+      // Invalidate the family-detail cache for this family so the
+      // next inspector render fetches fresh rows. Without this, an
+      // open Decisions/Theories/etc. inspector keeps showing the
+      // pre-write list even though the graph and counts already
+      // reflect the new row. When the inspector is currently open
+      // on this family, re-fetch immediately and re-render.
+      state.detailCache.delete(fid);
+      refreshOpenFamilyInspector(fid);
     }
   }
 
@@ -1933,6 +1985,7 @@ function onMemoryEvent(ev) {
         label: clip(String(rawLabel), 24),
         famId: fid,
         table: counts.table || counts.object_type || fid,
+        action: counts.action || "",
         raw: ev,
       });
     }

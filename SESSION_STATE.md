@@ -2,13 +2,35 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.0.0 stable
+## Current state — 1.0.1 stable
 
-agent-memory-lite has shipped its first stable release. The full memory model
-(18+ kinds), retrieval pipeline (RRF FTS + vector + graph), operator surface
-(pin / archive / what_references / list_audit / state snapshots / review queue
-/ compact watchdog), hub mode + asymmetric isolation, and the live browser
-observatory are all in main and covered by the test matrix.
+agent-memory-lite has shipped its second stable release on top of the 1.0.0
+foundation. The full memory model (18+ kinds), retrieval pipeline (RRF FTS +
+vector + graph), operator surface (pin / archive / what_references /
+list_audit / state snapshots / review queue / compact watchdog), hub mode +
+asymmetric isolation, and the live browser observatory are all in main and
+covered by the test matrix.
+
+### What 1.0.1 added on top of 1.0.0
+
+- **UI live-write refresh fix** — open Decisions / Theories / etc. inspector
+  no longer goes stale when a new row is written. The graph_delta handler
+  invalidates the per-family detail cache and re-fetches if the inspector
+  is currently open on that family, so new rows appear within ~3 s without
+  a page reload.
+- **Action-colored spokes** — the spoke + object node tint now encodes the
+  action: created / upserted / restored = green (150°), pinned = 90°,
+  unpinned = 50° amber, archived / superseded = 25° red-orange,
+  deleted / rejected = 15° red, reads keep the family hue (neutral). The
+  legend at `/ui` was extended to 8 rows showing the same oklch hues the
+  painter uses so the swatch and the graph match.
+- **README + SESSION_STATE patch** — diagram step ② / ③ now lists every
+  read / write endpoint (was a 4-tool teaser before), the Episodes / tasks
+  access pattern is documented (episodes surface inside `<retrieved_chunks>`
+  via the `sources="ep_xxx"` attribute, `<task_state>` only renders when
+  `task_id` is in the request), `<index>` discover-then-fetch pattern is
+  called out, and the UserPromptSubmit hook auto-fallback to the shared
+  `~/.agent_memory/global/` workspace is mentioned in the diagram.
 
 ## Quality gates
 
