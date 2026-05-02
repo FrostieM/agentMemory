@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+build/
+dist/
+futureDesign/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local data — never commit a real memory database
+.agent_memory/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# LanceDB
+*.lance/
+
+# Env files (only the example is tracked)
+.env
+.env.local
+.env.*.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Per-developer Claude Code / agent runtime settings (contain absolute paths
+# baked by setup_agent.py --project; not portable across machines)
+.claude/
+
+# Per-developer analytic / triage reports (raw outputs from
+# memory_*_report.py / hygiene / dashboard scripts; not portable
+# across machines and frequently include per-machine paths).
+reports/

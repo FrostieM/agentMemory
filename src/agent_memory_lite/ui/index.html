@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memory · Live Observatory</title>
+    <link rel="stylesheet" href="/ui/styles.css?v=20260501-observatory-rewrite" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="app-header">
+        <div class="brand">
+          <div class="brand-mark">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+              <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+              <line x1="5" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="14" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="12" y1="5" x2="12" y2="10" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+              <line x1="12" y1="14" x2="12" y2="19" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            </svg>
+          </div>
+          <div class="brand-text">
+            <div class="brand-name">Memory</div>
+            <div class="brand-sub">Live Observatory · agent-memory-lite</div>
+          </div>
+        </div>
+
+        <div class="header-pills">
+          <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+          <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+          <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+          <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+        </div>
+
+        <div class="header-meta">
+          <label class="ws-pick">
+            <span class="ws-label">workspace</span>
+            <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+          </label>
+          <label class="ws-pick">
+            <span class="ws-label">api token</span>
+            <input id="tokenInput" type="password" autocomplete="off" class="ws-val token-input" placeholder="optional" />
+          </label>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="graph-pane" aria-label="Live memory graph">
+          <div class="graph-shell" id="graphShell">
+            <div class="graph-overlay-tl">
+              <div class="overlay-kicker">live memory observatory</div>
+              <div class="overlay-title" id="overlayWorkspace">workspace</div>
+              <div class="overlay-meta">
+                <span class="dot-ok" id="overlayDot"></span>
+                <span id="overlayHealth">health unknown</span>
+                <span class="meta-sep">·</span>
+                <span id="overlayCounts">0 chunks · 0 events</span>
+              </div>
+            </div>
+
+            <div class="graph-overlay-tr">
+              <button class="pill" id="pauseBtn" type="button">❚❚ pause</button>
+              <button class="pill" id="refreshBtn" type="button">↻ refresh</button>
+            </div>
+
+            <div class="graph-overlay-bl">
+              <div class="trail-kicker"><span id="overlayPhase">idle</span> · <span id="overlayIntent">awaiting request</span></div>
+              <div class="trail-prompt" id="overlayPrompt">Run a search or explain to light up the graph.</div>
+            </div>
+
+            <svg id="graphSvg" class="graph-svg" viewBox="-750 -600 1500 1200" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Memory object map"></svg>
+
+            <div class="graph-overlay-br">
+              <div class="legend">
+                <div class="legend-row"><span class="legend-swatch active"></span><span>used by current request</span></div>
+                <div class="legend-row"><span class="legend-swatch dim"></span><span>known but not used</span></div>
+                <div class="legend-row"><span class="legend-impulse"></span><span>memory traversal</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="rail">
+          <div class="rail-card live-intent-card" id="liveIntent">
+            <div class="inspector-kicker">live · <span id="liveIntentKind">idle</span></div>
+            <div class="inspector-title" id="liveIntentPrompt">Awaiting next request…</div>
+            <div class="metric-row" id="liveMetrics">
+              <div class="metric"><div class="metric-val" id="metricObjects">0</div><div class="metric-label">objects</div></div>
+              <div class="metric"><div class="metric-val" id="metricFamilies">0</div><div class="metric-label">families</div></div>
+              <div class="metric"><div class="metric-val" id="metricStage">IDLE</div><div class="metric-label">stage</div></div>
+              <div class="metric"><div class="metric-val" id="metricPhase">—</div><div class="metric-label">phase</div></div>
+            </div>
+            <div class="inspector-section">
+              <div class="section-h">families touched</div>
+              <div class="link-row" id="familiesTouched"></div>
+            </div>
+            <div class="inspector-section">
+              <div class="section-h">objects in context</div>
+              <div class="inspector-list" id="objectsInContext"></div>
+            </div>
+          </div>
+
+          <div class="rail-card" id="inspectorCard" hidden>
+            <div class="inspector-empty">
+              <div class="empty-circle"></div>
+              <div class="empty-title">Inspector</div>
+              <div class="empty-sub">Click any family or object node to dive in.</div>
+            </div>
+          </div>
+
+          <div class="rail-card query-card">
+            <div class="panel-kicker">ask memory</div>
+            <div class="query-row">
+              <input id="queryInput" placeholder="heap watchdog, source flip, file path…" autocomplete="off" />
+              <button id="searchBtn" type="button" class="pill solid">Search</button>
+              <button id="contextBtn" type="button" class="pill">Explain</button>
+            </div>
+            <div id="searchSummary" class="summary-strip"></div>
+            <details class="dev-details">
+              <summary>raw context</summary>
+              <pre id="contextBox" class="raw-xml"></pre>
+            </details>
+          </div>
+
+          <div class="rail-card">
+            <div class="panel-kicker">live trail</div>
+            <div id="lifeFeed" class="trail-list"></div>
+          </div>
+
+          <div class="rail-card warnings-card" id="warningsPanel" hidden>
+            <div class="panel-kicker">warnings</div>
+            <div id="warningsList" class="warnings-list"></div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="app-footer">
+        <span class="foot-mute">memory backend</span>
+        <span>SQLite · FTS · LanceDB</span>
+        <span class="meta-sep">·</span>
+        <span id="footMeta">workspace registry · asymmetric isolation · object labels</span>
+        <span class="meta-sep">·</span>
+        <span id="updatedChip" class="foot-mute">waiting…</span>
+        <span class="meta-sep">·</span>
+        <span id="sseChip" class="foot-mute">SSE starting</span>
+      </footer>
+    </div>
+
+    <aside class="tweaks-panel" id="tweaksPanel" aria-label="Display tweaks">
+      <div class="tweaks-head">
+        <strong>Tweaks</strong>
+        <button id="tweaksToggle" type="button" aria-label="Collapse tweaks">−</button>
+      </div>
+      <div class="tweaks-body" id="tweaksBody">
+        <label class="tweak-row">
+          <span>accent hue <span id="hueLabel">160°</span></span>
+          <input id="hueRange" type="range" min="0" max="360" step="2" value="160" />
+        </label>
+        <label class="tweak-row">
+          <span>animation speed <span id="speedLabel">0.7×</span></span>
+          <input id="speedRange" type="range" min="0.3" max="1.5" step="0.05" value="0.7" />
+        </label>
+        <label class="tweak-row">
+          <span>density</span>
+          <select id="densityInput">
+            <option value="sparse">sparse</option>
+            <option value="medium" selected>medium</option>
+            <option value="dense">dense</option>
+          </select>
+        </label>
+        <label class="tweak-row tweak-row-h">
+          <span>pulse on edges</span>
+          <input id="pulseInput" type="checkbox" checked />
+        </label>
+      </div>
+    </aside>
+
+    <script src="/ui/app.js?v=20260501-observatory-rewrite"></script>
+  </body>
+</html>

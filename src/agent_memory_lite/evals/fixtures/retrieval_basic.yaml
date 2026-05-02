@@ -1,0 +1,16 @@
+- name: fts_finds_recent_episode
+  type: retrieval
+  setup:
+    - episode: "Wired RRF fusion across FTS and vector candidates."
+      label: target
+    - episode: "Unrelated note about the office coffee machine."
+  query: "RRF fusion vector candidates"
+  expect_labels: [target]
+
+- name: workspace_scoped_retrieval
+  type: retrieval
+  setup:
+    - episode: "Local-only memory subsystem ships with SQLite + LanceDB."
+      label: target
+  query: "SQLite LanceDB"
+  expect_labels: [target]

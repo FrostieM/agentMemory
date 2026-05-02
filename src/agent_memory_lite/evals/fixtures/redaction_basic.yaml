@@ -1,0 +1,14 @@
+- name: openai_key_redacted
+  type: redaction
+  text: "Reset OpenAI key value: api_key={secret}"
+  secret: "sk-abcdefghijklmnopqrstuvwxyz0123456789"
+
+- name: github_pat_redacted
+  type: redaction
+  text: "Updated CI token=${secret}"
+  secret: "ghp_abcdefghijklmnopqrstuvwxyz01234567"
+
+- name: db_url_password_redacted
+  type: redaction
+  text: "DATABASE_URL=postgres://app:{secret}@db.local:5432/main"
+  secret: "supersecretpw42"
