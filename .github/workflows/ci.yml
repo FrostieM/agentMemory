@@ -29,3 +29,12 @@ jobs:
         run: pytest
       - name: Retrieval evals
         run: python scripts/run_evals.py --workspace default --no-vector
+      - name: Agent contract sync (CLAUDE.md + AGENTS.md vs docs/AGENT_CONTRACT.md)
+        # Re-runs the same upsert that `python scripts/setup_agent.py
+        # --sync-repo` would. Fails if the working tree is dirty after,
+        # which means someone edited CLAUDE.md or AGENTS.md by hand
+        # without updating docs/AGENT_CONTRACT.md. Run the script
+        # locally and commit the result to fix.
+        run: |
+          python scripts/setup_agent.py --sync-repo
+          git diff --exit-code -- CLAUDE.md AGENTS.md

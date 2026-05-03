@@ -32,6 +32,13 @@ has not established a specific value.
 - **Secrets never stored**. `redaction/` runs before any text reaches SQLite or LanceDB.
 - **Untrusted documents** stay untrusted. `extraction/trust_gate.py` blocks promotion of
   document-sourced candidates to core memory or procedural rules.
+- **Single agent-contract source.** The canonical agent operating contract lives in
+  `docs/AGENT_CONTRACT.md`. `CLAUDE.md` and `AGENTS.md` carry the same body verbatim
+  via `<!-- agent-memory-lite-contract:begin/end -->` markers. After editing
+  `docs/AGENT_CONTRACT.md`, run `python scripts/setup_agent.py --sync-repo` to
+  re-inject the block into both anchor files. CI runs the same sync and fails on
+  any drift, so direct edits to the marker block in CLAUDE.md / AGENTS.md are
+  caught immediately.
 
 ## Layered architecture
 

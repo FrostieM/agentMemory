@@ -132,25 +132,6 @@ Apply these rules every session. They are not optional.
     `<active_decisions>` or `<behavior_instructions>` with high trust.
 28. **Never store secrets**. The redaction layer catches common shapes; do not
     deliberately defeat it.
-29. **When a memory item is no longer relevant but should stay
-    discoverable**, call `memory_archive(workspace_id, kind, id)`
-    instead of deleting. Archived items disappear from
-    `memory_get_context` but `memory_search` still returns them with
-    `is_archived: true`. Use `archive=false` to restore. Works for
-    chunks, episodes, files, decisions, theories, insights, roles,
-    skills, playbooks, behavior_instructions, and candidates.
-30. **When an architectural invariant must always be in context**,
-    call `memory_pin(workspace_id, kind="decision", id)`. Pinned
-    decisions survive every variant the context fitter searches and
-    always lead `<active_decisions>` regardless of query relevance.
-    Pass `pinned=false` to un-pin.
-31. **Before changing or removing a memory item, inspect its history
-    + reverse references**. Call `memory_list_audit(target_type,
-    target_id)` to see who/when wrote it and what changed; call
-    `memory_what_references(target_id)` to see which other rows
-    mention it. Treat decisions / theories with downstream
-    references as protected — supersede with link instead of
-    deleting.
 
 ## API surface
 
@@ -193,6 +174,37 @@ ranked decisions that remain in context are rendered with full decision text so
 critical endings are not silently clipped. `<retrieved_chunks>` suppresses
 stale low-score noise in normal mode while preserving exact top FTS hits; use
 `historical=true` when you intentionally need older chunks.
+
+**Discover-then-fetch pattern.** Each structured section (decisions,
+theories, behavior_instructions, agent_capabilities) renders its top-N
+items in full; the rest of the relevant matches appear inside an
+`<index>` block as compact `<ref id="..." title="..."/>` entries with
+status / kind / updated_at. The agent should:
+
+1. Read the full items in each section as the primary signal.
+2. Scan the `<index>` block; if a `ref` looks important (by title,
+   status, or domain), call `memory_get_object(kind, id)` to expand
+   it. Do NOT fall back to a fuzzy `memory_list_*(query=...)` when
+   you already have an id — the direct fetch is precise and cheap.
+3. The `<index>` block also reports `total / full / listed / hidden`
+   counts, so the agent can tell when the long tail is truncated and
+   ask for `historical=true` or a sharper query.
+
+### POST /memory/get_object (read - discover-then-fetch lookup)
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "kind": "decision|theory|snapshot|experiment|insight|concept|role|skill|playbook|behavior_instruction",
+  "id": "dec_...",
+  "include_evidence": false
+}
+```
+
+Returns the full body of a single memory object. Use this when
+`memory_get_context` showed you a `<ref/>` you want to expand. Pass
+`include_evidence=true` for theories to fetch supporting/refuting
+evidence in the same call.
 
 ### POST /memory/explain_context (read - retrieval explainability)
 
@@ -617,14 +629,13 @@ Idempotent: if `content_hash` matches the prior version, returns
 Archives (or restores when `archive=false`) any memory object across
 kinds. The route flips the right soft-delete axis per kind: chunks /
 episodes / files set `is_archived=1`; decisions become
-`status='superseded'` with `valid_to=now`; theories and insights set
-`status='archived'`; roles / skills / playbooks /
+`status='superseded'` with `valid_to=now`; theories and insights
+become `status='archived'`; roles / skills / playbooks /
 behavior_instructions set `active=0`; candidates run through the
 existing reject pipeline. Archived items disappear from
 `memory_get_context` (default `historical=false`) but
-`memory_search` still returns them and tags each hit with
-`is_archived: true` so the agent sees "found, but archived". Pass
-`archive=false` to restore.
+`memory_search` keeps returning them and tags each hit with
+`is_archived: true` so the agent sees "found, but archived".
 
 ### POST /memory/pin (write - importance pinning)
 
@@ -635,11 +646,13 @@ existing reject pipeline. Archived items disappear from
 Supported `kind` values: `decision`, `behavior_instruction`,
 `core_memory`. Pinned items are always included in the active
 context envelope regardless of query relevance or token budget. Use
-this for operator-anchored architectural invariants ("local-only"),
-durable behavior instructions ("evidence-first reports"), and
-critical core memory entries. Roles / skills / playbooks
-intentionally stay un-pinned — they already ride the capability
-ranker. Pass `pinned=false` to un-pin.
+this to anchor operator-critical architectural invariants
+("local-only", "never call cloud LLMs"), durable behavior
+instructions, and core memory entries so every chat sees them.
+Roles / skills / playbooks intentionally stay un-pinned — they
+already ride the capability ranker. Pass `pinned=false` to un-pin.
+`list_active_decisions` and the core/behavior listings return pinned
+items first.
 
 ### POST /memory/what_references (read - reverse lookup)
 
@@ -649,7 +662,9 @@ ranker. Pass `pinned=false` to un-pin.
 
 Returns every memory row that mentions ``target_id`` across
 decisions, theories, insights, experiments, snapshots, chunks,
-episodes, behavior_instructions, and capability_links.
+episodes, behavior_instructions, and capability_links. One call,
+nine tables — replaces fanning out across the per-kind list
+endpoints and filtering manually.
 
 ### POST /memory/list_audit (read - per-item history)
 
@@ -665,30 +680,52 @@ episodes, behavior_instructions, and capability_links.
 }
 ```
 
-Reads the audit log for one target or the whole workspace. Every
-write_* / ingest_* / archive / pin / promote / reject call already
-populates `audit_log`; this is the read side.
+Reads the audit log for one target or for the whole workspace.
+Every write_* / ingest_* / archive / pin / promote / reject call
+already populates `audit_log`; this endpoint exposes the read side.
+Useful for "who/when wrote this decision?" and "every change to
+this theory in the last 7 days".
 
 ### Date-range filters on listings
 
 `/memory/list_decisions`, `/memory/list_theories`,
-`/memory/list_candidates`, `/memory/list_behavior_instructions`, and
-`/memory/list_research_agenda` accept optional ISO-8601 `since` /
-`until` endpoints (both inclusive, either side optional) for "what
-changed in the last N days" queries.
+`/memory/list_candidates`, `/memory/list_behavior_instructions`,
+and `/memory/list_research_agenda` accept optional ISO-8601
+`since` / `until` endpoints (both inclusive, either side optional)
+so you can ask "what changed in the last 30 days" without
+scrolling the whole list.
 
-### POST /memory/snapshot_save | snapshot_list | snapshot_diff
+### POST /memory/snapshot_save (write - point-in-time digest)
 
 ```json
-{"workspace_id": "<workspace_id>", "name": "before-deploy"}
+{"workspace_id": "<workspace_id>", "name": "before-deploy", "metadata": {}}
 ```
 
-Capture / list / diff point-in-time digests of the workspace
-memory. Each snapshot stores per-kind counts and a content hash
-per row id. `snapshot_diff` returns counts deltas, added / removed
-ids, and content-changed ids. Distinct from
-`/memory/register_snapshot`, which catalogs external research
-datasets.
+Captures a point-in-time digest of the workspace memory: per-kind
+counts (decisions, theories, episodes, behavior_instructions, …)
+plus a small content hash per row id so future diffs can detect both
+id-set changes and content edits. These are NOT external research
+dataset snapshots — that is `/memory/register_snapshot`.
+
+### POST /memory/snapshot_list (read - history)
+
+```json
+{"workspace_id": "<workspace_id>", "limit": 20}
+```
+
+Lists captured state snapshots, newest first.
+
+### POST /memory/snapshot_diff (read - what changed)
+
+```json
+{"workspace_id": "<workspace_id>", "before_id": "memst_a", "after_id": "memst_b"}
+```
+
+Returns counts deltas plus three id sets: `added` ids that exist
+only in `after`, `removed` ids that exist only in `before`, and
+`changed` ids that exist in both but have different content
+hashes. Use this to answer "what happened in memory between two
+points in time" without scrolling the audit log.
 
 ### POST /memory/review_queue (read - operator action queue)
 
@@ -696,9 +733,14 @@ datasets.
 {"workspace_id": "<workspace_id>", "limit_per_kind": 10}
 ```
 
-Click-to-act queue: candidates awaiting promote/reject + open
-maintenance events. Each item carries the suggested `action`
-endpoint. Distinct from `/memory/hygiene_report` (broader scan).
+Returns the short list of memory rows that need an explicit
+operator decision right now: new candidates awaiting promote /
+reject, open maintenance events. Each item carries the suggested
+`action` (`promote_candidate`, `resolve_maintenance_event`) so the
+agent / UI knows which endpoint to call. Distinct from
+`/memory/hygiene_report` (broader content-quality scan) and
+`/memory/quality_gate` (research-trust gate) — review queue is
+specifically "click to act" tasks.
 
 ### POST /memory/compact_trigger (read - compaction watchdog)
 
@@ -706,10 +748,13 @@ endpoint. Distinct from `/memory/hygiene_report` (broader scan).
 {"workspace_id": "<workspace_id>"}
 ```
 
-Probes the chunk count + stale ratio against
-`MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS`. When overdue, emits a
-`compaction_due` maintenance event. Never runs compaction
-itself — surfacing the signal is enough; the operator decides.
+Probes whether the workspace's chunk count + stale ratio is past
+the configured `MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS`. When
+overdue, emits a `compaction_due` maintenance event and returns
+`triggered: true, event_written: true`. The probe never runs
+compaction itself — surfacing the signal is enough; the operator
+decides when to call `/memory/compact`. Off by default
+(`threshold=0`).
 
 ### POST /memory/list_maintenance_events (read - memory substrate events)
 
@@ -945,8 +990,8 @@ the HTTP service, tell the user:
 directory that has no registered workspace, `inject_memory_context.py`
 auto-bootstraps a shared "global" workspace under
 `~/.agent_memory/global/` and routes the hook there so context still
-appears. Set `AGENT_MEMORY_HOOK_FALLBACK=disabled` to opt out and
-get the legacy "no workspace registered" notice instead. Override the
+appears. Set `AGENT_MEMORY_HOOK_FALLBACK=disabled` to opt out and get
+the legacy "no workspace registered" notice instead. Override the
 fallback workspace_id with `AGENT_MEMORY_FALLBACK_WORKSPACE` and the
 location with `AGENT_MEMORY_FALLBACK_DIR`.
 

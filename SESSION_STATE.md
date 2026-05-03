@@ -2,14 +2,33 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.0.1 stable
+## Current state — 1.0.2 stable
 
-agent-memory-lite has shipped its second stable release on top of the 1.0.0
+agent-memory-lite has shipped its third stable release on top of the 1.0.0
 foundation. The full memory model (18+ kinds), retrieval pipeline (RRF FTS +
 vector + graph), operator surface (pin / archive / what_references /
 list_audit / state snapshots / review queue / compact watchdog), hub mode +
 asymmetric isolation, and the live browser observatory are all in main and
 covered by the test matrix.
+
+### What 1.0.2 added on top of 1.0.1
+
+- **Single-source agent contract.** `docs/AGENT_CONTRACT.md` is now the
+  canonical body for the agent operating contract. `CLAUDE.md` and
+  `AGENTS.md` carry the same body verbatim between
+  `<!-- agent-memory-lite-contract:begin/end -->` markers. After
+  editing the canonical file, run
+  `python scripts/setup_agent.py --sync-repo` to re-inject into both
+  anchor files. Idempotent — second run reports `unchanged`.
+- **CI guard against contract drift.** `.github/workflows/ci.yml`
+  runs the same sync and `git diff --exit-code -- CLAUDE.md AGENTS.md`,
+  so any direct edit to the marker block in the anchor files (without
+  syncing the canonical) fails CI. Eliminates silent drift between
+  the three files.
+- **AGENTS.md brought to v1.0.1 parity.** The previous tagged 1.0.1
+  AGENTS.md was missing endpoints that already shipped in CLAUDE.md
+  (snapshot_save / list / diff, review_queue, compact_trigger,
+  get_object, explain_context). Sync recovered the gap.
 
 ### What 1.0.1 added on top of 1.0.0
 

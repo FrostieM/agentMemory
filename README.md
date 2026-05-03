@@ -104,7 +104,7 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 1.0.1
+## Status — 1.0.2
 
 Stable release. The subsystem covers the full memory model an agent needs to
 operate across sessions:

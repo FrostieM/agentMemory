@@ -290,6 +290,15 @@ def render_contract_block() -> str:
     return f"\n{MARKER_BEGIN}\n\n{body}\n\n{MARKER_END}\n"
 
 
+def sync_repo_contracts() -> int:
+    """Sync this repo's own CLAUDE.md and AGENTS.md with docs/AGENT_CONTRACT.md."""
+    section("Sync repo contracts (CLAUDE.md + AGENTS.md from docs/AGENT_CONTRACT.md)")
+    for path in (REPO_ROOT / "CLAUDE.md", REPO_ROOT / "AGENTS.md"):
+        status = upsert_contract(path)
+        ok(f"{path.relative_to(REPO_ROOT)} -> {status}")
+    return 0
+
+
 def upsert_contract(path: Path) -> str:
     """Insert or replace the contract block in `path`. Returns 'created' / 'updated' / 'unchanged'."""
     block = render_contract_block()
@@ -679,7 +688,7 @@ def smoke_test_mcp(diag: Diagnosis) -> bool:
 # ---------- main ----------
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0912, PLR0915 - linear CLI argparser; readable as one block
     parser = argparse.ArgumentParser(description="Configure AI agents on this machine.")
     parser.add_argument("--check-only", action="store_true", help="Diagnose, do not write.")
     parser.add_argument("--no-hook", action="store_true", help="Skip Claude Code hook install.")
@@ -709,7 +718,20 @@ def main() -> int:
             "does not write behavior instructions, style, language, or project roles."
         ),
     )
+    parser.add_argument(
+        "--sync-repo",
+        action="store_true",
+        help=(
+            "Sync the repo's own CLAUDE.md and AGENTS.md to match the canonical "
+            "docs/AGENT_CONTRACT.md (between the agent-memory-lite-contract markers). "
+            "Use this after editing AGENT_CONTRACT.md so both anchor files stay "
+            "consistent. CI runs the same sync and fails if `git diff` is dirty."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.sync_repo:
+        return sync_repo_contracts()
 
     diag = diagnose()
     print_diagnosis(diag)
