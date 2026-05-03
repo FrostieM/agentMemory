@@ -18,22 +18,29 @@ from agent_memory_lite.api.routes import (
     candidates,
     capabilities,
     capability_links,
+    cold_candidates,
     compact,
     context,
+    decision_candidates,
+    decision_lineage,
     decisions,
     evals,
+    feedback_summary,
     get_object,
     health,
     hygiene,
     ingest_episode,
     ingest_file,
+    insight_candidates,
     maintenance,
     memory_state_snapshots,
     pin,
+    recurring_findings,
     references,
     research,
     review_queue,
     search,
+    sentinel_trends,
     task_state,
     theories,
     ui,
@@ -106,6 +113,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(research.router)
     app.include_router(capabilities.router)
     app.include_router(usage.router)
+    app.include_router(feedback_summary.router)
+    app.include_router(cold_candidates.router)
+    app.include_router(decision_lineage.router)
+    app.include_router(decision_candidates.router)
+    app.include_router(insight_candidates.router)
+    app.include_router(sentinel_trends.router)
+    app.include_router(recurring_findings.router)
     app.include_router(workspaces.router)
     app.include_router(ui.router)
     app.include_router(compact.router)

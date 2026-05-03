@@ -19,8 +19,19 @@ from agent_memory_lite.ingestion.candidate_writer import (
     promote_memory_candidate,
     reject_memory_candidate,
 )
+from agent_memory_lite.maintenance.implicit_feedback import record_implicit_promote
 from agent_memory_lite.models.candidates import StoredMemoryCandidate
 from agent_memory_lite.repositories.candidates_repo import list_candidates
+
+# memory_candidates.promoted_target_type → memory_usage_feedback.source_type
+_PROMOTE_TARGET_TO_FEEDBACK = {
+    "decision": "decision",
+    "theory": "theory",
+    "research_insight": "insight",
+    "core_memory": None,  # not in feedback enum
+    "procedural_rule": None,
+    "behavior_instruction": None,
+}
 
 router = APIRouter()
 
@@ -70,8 +81,22 @@ def list_candidates_route(
 
 
 @router.post("/memory/promote_candidate", response_model=CandidateResponse)
-def promote_candidate_route(body: CandidateActionRequest, conn: DbDep) -> CandidateResponse:
-    return _candidate_response(promote_memory_candidate(conn, candidate_id=body.candidate_id))
+def promote_candidate_route(
+    body: CandidateActionRequest, conn: DbDep, settings: SettingsDep
+) -> CandidateResponse:
+    candidate = promote_memory_candidate(conn, candidate_id=body.candidate_id)
+    # v1.4 implicit feedback: promote is an explicit "useful" signal.
+    if candidate.promoted_target_id and candidate.promoted_target_type:
+        feedback_kind = _PROMOTE_TARGET_TO_FEEDBACK.get(candidate.promoted_target_type)
+        if feedback_kind is not None:
+            record_implicit_promote(
+                conn,
+                settings=settings,
+                workspace_id=candidate.workspace_id,
+                source_type=feedback_kind,
+                source_id=candidate.promoted_target_id,
+            )
+    return _candidate_response(candidate)
 
 
 @router.post("/memory/reject_candidate", response_model=CandidateResponse)

@@ -53,6 +53,18 @@ def _parser() -> argparse.ArgumentParser:
     complete.add_argument("--allow-episode-only", action="store_true")
     complete.add_argument("--dry-run", action="store_true")
     complete.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    # v1.5: capability outcome reporting. The default 'success' is gentle —
+    # `complete` is usually invoked when the task succeeded. Pass --outcome
+    # failure when it didn't (use the --raw-text to explain why). To attach
+    # the outcome to specific capabilities, pass --capability-outcome
+    # KIND:ID (e.g. skill:sk_alpha) once per capability.
+    complete.add_argument("--outcome", choices=("success", "failure"), default="success")
+    complete.add_argument(
+        "--capability-outcome",
+        action="append",
+        default=[],
+        help="KIND:ID (skill|role|playbook). Repeat for multiple capabilities.",
+    )
     return parser
 
 
@@ -227,10 +239,40 @@ def _run_preflight(args: argparse.Namespace, headers: dict[str, str]) -> dict[st
     }
 
 
+def _capability_outcome_payloads(
+    args: argparse.Namespace, *, episode_id: str | None
+) -> list[dict[str, Any]]:
+    """Translate ``KIND:ID`` strings into /memory/capability/record_outcome payloads."""
+    payloads: list[dict[str, Any]] = []
+    success = args.outcome == "success"
+    for raw in args.capability_outcome:
+        if ":" not in raw:
+            raise ValueError(f"--capability-outcome must be 'KIND:ID', got: {raw!r}")
+        kind, _, capability_id = raw.partition(":")
+        if not capability_id:
+            raise ValueError(f"--capability-outcome missing id: {raw!r}")
+        payloads.append(
+            {
+                "workspace_id": args.workspace,
+                "kind": kind.strip(),
+                "capability_id": capability_id.strip(),
+                "success": success,
+                "episode_id": episode_id,
+            }
+        )
+    return payloads
+
+
 def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str, Any]:
     payloads = _completion_payloads(args)
     if args.dry_run:
-        return {"status": "ok", "command": "complete", "dry_run": True, "requests": payloads}
+        return {
+            "status": "ok",
+            "command": "complete",
+            "dry_run": True,
+            "requests": payloads,
+            "capability_outcomes": _capability_outcome_payloads(args, episode_id=None),
+        }
     with httpx.Client(base_url=args.base_url, timeout=30.0) as client:
         episode = _post_json(
             client,
@@ -244,10 +286,23 @@ def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str
             payloads["update_task_state"],
             headers=headers,
         )
+        outcomes: list[dict[str, Any]] = []
+        for outcome_payload in _capability_outcome_payloads(
+            args, episode_id=episode.get("episode_id")
+        ):
+            outcomes.append(
+                _post_json(
+                    client,
+                    "/memory/capability/record_outcome",
+                    outcome_payload,
+                    headers=headers,
+                )
+            )
     return {
         "status": "ok",
         "command": "complete",
         "strict": args.strict,
+        "outcome": args.outcome,
         "role_activation_trace": _role_trace(args),
         "verification": list(args.verification),
         "linked_memory": _linked_memory(args),
@@ -255,6 +310,7 @@ def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str
         "chunk_id": episode.get("chunk_id"),
         "candidates_written": episode.get("candidates_written"),
         "state_id": state.get("state_id"),
+        "capability_outcomes": outcomes,
     }
 
 

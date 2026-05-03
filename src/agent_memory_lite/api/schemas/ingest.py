@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 
 
@@ -16,8 +17,8 @@ class IngestEpisodeRequest(BaseModel):
     session_id: str | None = None
     task_id: str | None = None
     source_type: EpisodeSource = EpisodeSource.AGENT_ACTION
-    raw_text: str = Field(min_length=1)
-    summary: str | None = None
+    raw_text: SafeText = Field(min_length=1)
+    summary: SafeTextOptional = None
     label: str | None = Field(
         default=None,
         max_length=120,

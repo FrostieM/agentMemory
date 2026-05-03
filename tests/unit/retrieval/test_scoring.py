@@ -74,3 +74,77 @@ def test_scored_hits_carry_sources() -> None:
     fused = [(_candidate("x", "vector", 0.5), 0.5, ["vector"])]
     scored = score_candidates(fused)
     assert scored[0].sources == ["vector"]
+
+
+def test_higher_importance_outranks_lower_when_other_signals_tied() -> None:
+    fused = [
+        (
+            _candidate(
+                "high",
+                "fts",
+                -2.0,
+                metadata={"fts_rank": 0, "importance": 0.95},
+            ),
+            0.5,
+            ["fts"],
+        ),
+        (
+            _candidate(
+                "low",
+                "fts",
+                -2.0,
+                metadata={"fts_rank": 0, "importance": 0.10},
+            ),
+            0.5,
+            ["fts"],
+        ),
+    ]
+    scored = score_candidates(fused)
+    assert scored[0].id == "high"
+
+
+def test_positive_feedback_ewma_lifts_candidate() -> None:
+    fused = [
+        (
+            _candidate(
+                "boosted",
+                "fts",
+                -2.0,
+                metadata={"fts_rank": 0, "feedback_ewma": 0.9},
+            ),
+            0.5,
+            ["fts"],
+        ),
+        (_candidate("plain", "fts", -2.0, metadata={"fts_rank": 0}), 0.5, ["fts"]),
+    ]
+    scored = score_candidates(fused)
+    assert scored[0].id == "boosted"
+
+
+def test_negative_feedback_ewma_demotes_candidate() -> None:
+    fused = [
+        (
+            _candidate(
+                "noisy",
+                "fts",
+                -2.0,
+                metadata={"fts_rank": 0, "feedback_ewma": -0.9},
+            ),
+            0.5,
+            ["fts"],
+        ),
+        (_candidate("plain", "fts", -2.0, metadata={"fts_rank": 0}), 0.5, ["fts"]),
+    ]
+    scored = score_candidates(fused)
+    assert scored[0].id == "plain"
+
+
+def test_missing_metadata_terms_preserve_legacy_score() -> None:
+    """Parity: candidates without importance/recency/feedback metadata produce
+    the same ranking as before v1.4 — the new terms default to 0.0."""
+    fused = [
+        (_candidate("a", "vector", 0.95), 0.5, ["vector"]),
+        (_candidate("b", "vector", 0.10), 0.5, ["vector"]),
+    ]
+    scored = score_candidates(fused)
+    assert [hit.id for hit in scored] == ["a", "b"]

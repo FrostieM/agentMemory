@@ -14,6 +14,18 @@ from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writ
 from agent_memory_lite.api.schemas.archive import ArchiveRequest, ArchiveResponse
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.archive_service import archive_memory_object
+from agent_memory_lite.maintenance.implicit_feedback import record_implicit_archive
+
+# Map archive `kind` values to memory_usage_feedback `source_type` values.
+_ARCHIVE_KIND_TO_FEEDBACK = {
+    "chunk": "chunk",
+    "decision": "decision",
+    "theory": "theory",
+    "insight": "insight",
+    "role": "capability",
+    "skill": "capability",
+    "playbook": "capability",
+}
 
 router = APIRouter()
 
@@ -62,6 +74,18 @@ def archive_route(
                 stage="archive",
                 counts={"is_archived": int(bool(body.archive))},
             )
+            # v1.4 implicit feedback — archive is a strong "noisy" signal.
+            # Only on archive, not on restore.
+            if body.archive:
+                feedback_kind = _ARCHIVE_KIND_TO_FEEDBACK.get(body.kind)
+                if feedback_kind is not None:
+                    record_implicit_archive(
+                        conn,
+                        settings=settings,
+                        workspace_id=body.workspace_id,
+                        source_type=feedback_kind,
+                        source_id=str(result["id"]),
+                    )
         return ArchiveResponse(
             kind=str(result["kind"]),
             id=str(result["id"]),

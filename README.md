@@ -104,43 +104,67 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 1.0.3
+## Status — 1.1.3
 
-Stable release. The subsystem covers the full memory model an agent needs to
-operate across sessions:
+1.1.0 ship. Six feedback loops (v1.4 feedback-aware scoring through
+v1.9 hygiene recurrence) and three v2 envelope/trigger improvements are
+calibrated against real workspace data and **default ON**. Every
+v1.4-v1.9 + v2 flag flips off via a single explicit `false` in `.env`;
+`tests/invariants/test_v2_parity.py` locks the flag-off path as
+byte-equivalent to v1.0.x, so rollback is atomic.
 
-- **18+ persistence kinds** — episodes, chunks, files, decisions, theories,
-  experiments, experiment_results, snapshots, research_insights,
-  domain_concepts, agent_roles / skills / playbooks, capability_links,
-  behavior_instructions, core_memory, task_state, procedural_rules, entities,
-  facts, audit_log, memory_candidates, maintenance_events,
-  memory_state_snapshots, vector_index_metadata, memory_usage_feedback,
-  workspace_manifest, workspace_meta.
-- **Retrieval pipeline** — RRF fusion of FTS BM25 + vector cosine, graph
-  walk for entity facts, token-budget cap, discover-then-fetch for the long
-  tail (each section emits an `<index>` block of compact `<ref/>` entries
-  for the unrendered remainder), query-ranked active sections, pinned-
-  first ordering for decisions / behavior_instructions / core_memory.
-- **Operator surface** — pin / archive / what_references / list_audit /
-  snapshot_save+list+diff / review_queue / compact_trigger; integrity
-  audit, hygiene report, quality gate, candidate triage.
-- **Hub mode + asymmetric isolation** — one service serves many projects via
-  `~/.agent_memory/workspaces.json`; reads stay loose, writes stay strict
-  per-project. The UserPromptSubmit hook auto-bootstraps a shared
-  `~/.agent_memory/global/` workspace when the cwd has no registered
-  workspace, so a chat opened anywhere still gets context.
-- **Memory-quality features (env-flagged)** — episode dedup, confidence
-  decay, auto conflict detection, token-aware compaction watchdog.
-- **Live observatory at /ui (1.0.1)** — burst-coalesced animation cycles,
-  inspector list auto-refresh on writes (no F5 needed), action-colored
-  spokes (green = create / upserted / restored, yellow-green = pinned,
-  amber = unpinned, red-orange = archived, red = deleted / rejected,
-  family-hue = read), legend matches actual paint colors.
+What 1.1.0 adds on top of 1.0.3:
 
-Quality bar: 485 tests (unit / property / integration / e2e), strict ruff
-+ mypy + 150-SLOC ceiling per source file, forward-only migrations
-(consolidated into a single `0001_init.sql` for cold-start), local-only
-guard against cloud SDK imports.
+- **v1.4 feedback-aware scoring + v2.1 implicit feedback** — completes the
+  scoring formula with an EWMA term over `memory_usage_feedback`, and
+  derives the rows automatically from operator actions
+  (archive→-1.0, promote→+0.7, link_capability→strength). Calibrated on
+  real copyBot data: 1370 audit entries → 158 implicit feedback rows;
+  95% rank churn; low-EWMA cohort dropped 26 places, biggest faller -51.
+- **v1.5 capability maturity + behavior tracking** — usage / success
+  counters on roles / skills / playbooks; `application_count` advances
+  on every envelope render that surfaces an instruction.
+- **v1.6 cold-memory lifecycle** — retrieval stamps `last_retrieved_at`
+  on the top-K (batched audit, batch_size=100); cold scanner emits
+  `cold_candidate` events for rows untouched > `MEMORY_COLD_STALE_DAYS=60`.
+  Human-driven archival (review queue surfaces them).
+- **v1.7 theory → decision_candidates bridge** — validated theories with
+  ≥3 evidence rows surface as pending decision candidates. Trust gate
+  intact: never auto-promotes.
+- **v1.8 reflective compaction** — `/memory/compact` runs an Ollama pass
+  over recent episodes and proposes lessons into `insight_candidates`.
+  Gracefully degrades when Ollama unreachable.
+- **v1.9 hygiene recurrence + sentinel persistence** — hygiene findings and
+  watchdog runs persisted with recurrence counts.
+- **v2.2 pending-review envelope** — every `/memory/get_context` injects a
+  `<pending_review>` XML block carrying every field an agent needs to
+  promote / reject without an extra `/memory/list_candidates` round-trip.
+- **v2.3 trigger-on-traffic sentinel scheduler** — each `get_context` triggers
+  a background sentinel pass when overdue (default 6h). Per-workspace
+  `threading.Lock` prevents duplicate concurrent daemons. Hub-mode aware:
+  `db_path` resolved from the request-scoped connection via
+  `PRAGMA database_list`.
+- **MCP-HTTP parity** — `apply_post_build_hooks()` in
+  `api/routes/context_post_build.py` is the single chokepoint for the
+  four hooks. Both the HTTP route and the MCP stdio local fallback call
+  it, so MCP-only deployments fire v1.5 / v1.6 / v2.2 / v2.3 the same
+  way HTTP does.
+
+Carried over from 1.0.3: 18+ persistence kinds (episodes, chunks, files,
+decisions, theories, experiments, snapshots, insights, concepts,
+roles / skills / playbooks, behavior_instructions, core_memory,
+procedural_rules, etc.); RRF retrieval (FTS BM25 + vector cosine + graph)
+with discover-then-fetch index blocks; operator surface
+(pin / archive / what_references / list_audit / state snapshots /
+review_queue / compact_trigger); hub mode + asymmetric isolation;
+live observatory at `/ui`.
+
+Quality bar: **633 tests** (unit / property / integration / e2e — was 491
+in 1.0.3 baseline), strict ruff + mypy + 150-SLOC ceiling per source
+file, forward-only migrations (0001 + 0020-0025 chained on top), local-
+only guard against cloud SDK imports. Calibration evidence in
+`docs/V1_1_0_CALIBRATION.md`; operator guide in
+`docs/V1_1_0.md`.
 
 ## Requirements
 

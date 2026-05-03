@@ -47,6 +47,30 @@ def test_get_context_falls_back_to_fts_only_without_loading_provider(
     def fail_store() -> None:
         raise AssertionError("vector store should not load for local fallback")
 
+    class _StubConn:
+        """Minimal conn shim with the operations apply_post_build_hooks may
+        run. The local fallback path now calls the same post-build hook
+        chain the HTTP route uses, so the conn must support PRAGMA + the
+        pending_review SELECT COUNT queries."""
+
+        def execute(self, sql: str, *_: object) -> object:
+            class _Cursor:
+                def fetchone(self) -> tuple[int, ...]:
+                    return (0,)
+
+                def fetchall(self) -> list[object]:
+                    return []
+
+                def __iter__(self):  # type: ignore[no-untyped-def]
+                    return iter(())
+
+            return _Cursor()
+
+        def commit(self) -> None:
+            return None
+
+    stub_conn = _StubConn()
+
     def fake_build_context(
         conn: object,
         query: object,
@@ -54,18 +78,21 @@ def test_get_context_falls_back_to_fts_only_without_loading_provider(
         embedding_provider: object | None,
         vector_store: object | None,
     ) -> SimpleNamespace:
-        assert conn == "db"
+        assert conn is stub_conn
         assert embedding_provider is None
         assert vector_store is None
         assert query.workspace_id == "copyBot"
         return SimpleNamespace(
             text="<memory_context><retrieved_chunks/></memory_context>",
             hits=[SimpleNamespace(id="chk_1", score=1.0, sources=["fts"], path="")],
+            decisions=[],
+            theories=[],
+            behavior_instructions=None,
         )
 
     monkeypatch.setattr(stdio_handlers_episodes, "_http_get_context", lambda _payload: None)
-    monkeypatch.setattr(stdio_server._runtime, "db", lambda: "db")
-    monkeypatch.setattr(stdio_server._runtime, "db_for", lambda _ws: "db")
+    monkeypatch.setattr(stdio_server._runtime, "db", lambda: stub_conn)
+    monkeypatch.setattr(stdio_server._runtime, "db_for", lambda _ws: stub_conn)
     monkeypatch.setattr(stdio_server._runtime, "provider", fail_provider)
     monkeypatch.setattr(stdio_server._runtime, "store", fail_store)
     monkeypatch.setattr(stdio_handlers_episodes, "build_context", fake_build_context)
@@ -78,6 +105,55 @@ def test_get_context_falls_back_to_fts_only_without_loading_provider(
         "context_text": "<memory_context><retrieved_chunks/></memory_context>",
         "sources": [{"id": "chk_1", "score": 1.0, "sources": ["fts"], "path": ""}],
     }
+
+
+def test_mcp_local_fallback_runs_post_build_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When HTTP is down and MCP runs the local fallback, it must still
+    invoke ``apply_post_build_hooks`` so v1.5/v1.6/v2.2/v2.3 fire on
+    MCP-only deployments. Pre-fix the local fallback called
+    ``build_context`` directly and silently skipped the hook chain.
+    """
+    captured: list[dict] = []
+
+    def fake_apply_hooks(conn, **kwargs):  # type: ignore[no-untyped-def]
+        captured.append(
+            {
+                "request_workspace_id": kwargs["request_workspace_id"],
+                "envelope_text": kwargs["envelope_text"],
+                "embedding_provider": kwargs.get("embedding_provider"),
+                "vector_store": kwargs.get("vector_store"),
+            }
+        )
+        return kwargs["envelope_text"] + "\n<pending_review/>"
+
+    def fake_build_context(conn, query, *, embedding_provider, vector_store):  # type: ignore[no-untyped-def]
+        return SimpleNamespace(
+            text="<memory_context><retrieved_chunks/></memory_context>",
+            hits=[SimpleNamespace(id="chk_1", score=1.0, sources=["fts"], path="")],
+            decisions=[],
+            theories=[],
+            behavior_instructions=None,
+        )
+
+    monkeypatch.setattr(stdio_handlers_episodes, "_http_get_context", lambda _payload: None)
+    monkeypatch.setattr(stdio_server._runtime, "db_for", lambda _ws: object())
+    monkeypatch.setattr(stdio_handlers_episodes, "build_context", fake_build_context)
+    monkeypatch.setattr(stdio_handlers_episodes, "apply_post_build_hooks", fake_apply_hooks)
+
+    result = stdio_server._handle_get_context(
+        {"workspace_id": "copyBot", "query": "Verify hook chain"}
+    )
+
+    assert len(captured) == 1, "MCP local fallback bypassed apply_post_build_hooks"
+    assert captured[0]["request_workspace_id"] == "copyBot"
+    # MCP fallback intentionally does NOT load embedding model / vector store
+    # for the hook chain — sentinels run FTS-only when needed.
+    assert captured[0]["embedding_provider"] is None
+    assert captured[0]["vector_store"] is None
+    # Final envelope must include the hook's contribution.
+    assert "<pending_review/>" in result["context_text"]
 
 
 def test_search_uses_http_delegation_for_live_ui_telemetry(

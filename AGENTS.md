@@ -166,6 +166,13 @@ The envelope contains, in priority order:
 - `<procedural_rules>`: operating rules for the agent.
 - `<retrieved_facts>`: temporal graph hits.
 - `<retrieved_chunks>`: FTS + vector hits via reciprocal rank fusion.
+- `<pending_review>` (when populated): pending `decision_candidates` /
+  `insight_candidates` rows the operator has not yet promoted or rejected.
+  Each `<ref>` carries `id`, `kind`, `title`, and (for decision candidates)
+  the source `theory_id`. When the count attribute exceeds the per-kind
+  cap of 5, call `/memory/list_candidates` for the long tail. Acting on
+  the queue is the agent's job — promote with the explicit endpoints,
+  never bypass the trust gate.
 
 `<active_decisions>` is query-ranked and capped so durable decisions remain
 useful without burying current theories and research agenda items. The highest

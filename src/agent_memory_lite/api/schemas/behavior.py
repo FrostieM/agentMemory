@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_memory_lite.api.schemas._text_guard import SafeText
 from agent_memory_lite.models.enums import (
     BehaviorConflictPolicy,
     BehaviorInstructionKind,
@@ -16,12 +17,12 @@ class UpsertBehaviorInstructionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str = "default"
-    name: str = Field(min_length=1)
-    rule: str = Field(min_length=1)
+    name: SafeText = Field(min_length=1)
+    rule: SafeText = Field(min_length=1)
     kind: BehaviorInstructionKind = BehaviorInstructionKind.OPERATING_RULE
     scope: BehaviorInstructionScope = BehaviorInstructionScope.WORKSPACE
     priority: BehaviorInstructionPriority = BehaviorInstructionPriority.USER_PREFERENCE
-    rationale: str = ""
+    rationale: SafeText = ""
     applies_to: list[str] = Field(default_factory=list)
     conflict_policy: BehaviorConflictPolicy = BehaviorConflictPolicy.CURRENT_USER_WINS
     source_episode_id: str | None = None

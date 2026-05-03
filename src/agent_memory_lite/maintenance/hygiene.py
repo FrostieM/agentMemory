@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.maintenance.cold_scanner import find_cold_candidates
 from agent_memory_lite.maintenance.hygiene_capability_links import (
     find_unlinked_capability_targets,
+)
+from agent_memory_lite.maintenance.hygiene_capability_maturity import (
+    find_stale_capabilities,
 )
 from agent_memory_lite.maintenance.hygiene_models import HygieneFinding, HygieneReport
 from agent_memory_lite.maintenance.hygiene_simple_checks import (
@@ -50,6 +54,8 @@ def run_hygiene_report(
     candidate_stale_days: int = 14,
     experiment_stale_days: int = 30,
     importance_threshold: float = 0.8,
+    capability_stale_days: int | None = None,
+    cold_stale_days: int | None = None,
 ) -> HygieneReport:
     findings: list[HygieneFinding] = []
     findings.extend(
@@ -72,6 +78,29 @@ def run_hygiene_report(
             importance_threshold=importance_threshold,
         )
     )
+    if capability_stale_days is not None and capability_stale_days > 0:
+        findings.extend(
+            find_stale_capabilities(
+                conn, workspace_id=workspace_id, stale_days=capability_stale_days
+            )
+        )
+    if cold_stale_days is not None and cold_stale_days > 0:
+        for candidate in find_cold_candidates(
+            conn, workspace_id=workspace_id, older_than_days=cold_stale_days
+        ):
+            findings.append(
+                HygieneFinding(
+                    kind="cold_candidate",
+                    severity="info",
+                    target_type=candidate.kind,
+                    target_id=candidate.id,
+                    summary=(
+                        f"{candidate.kind} not retrieved in over {cold_stale_days} "
+                        "days; consider archiving or pinning."
+                    ),
+                    details={"last_retrieved_at": candidate.last_retrieved_at},
+                )
+            )
     counts = _count_by_kind(findings)
     counts["total_findings"] = len(findings)
     status = "warning" if findings else "ok"

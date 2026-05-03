@@ -8,13 +8,17 @@ The spec weighting:
           + 0.10 * recency
           + 0.10 * importance
           + 0.10 * confidence
+          + 0.05 * feedback_ewma   (v1.4, signed in [-1, 1])
           - stale_penalty
           - conflict_penalty
           - untrusted_penalty
 
-Phase 2 wires `semantic` (cosine similarity, clamped to [0, 1]) and `keyword`
-(rank-normalised FTS presence). The remaining components default to neutral
-(0.0) and will be set when graph + temporal data lands in Phase 4.
+`semantic` and `keyword` were wired in Phase 2. v1.4 wires the remaining
+metadata-driven terms: each is read from candidate.metadata and defaults to
+0.0 when absent, so flag-off / fixture-light parity is preserved. The
+`feedback_ewma` term is the only signed component; values are precomputed by
+``retrieval/feedback_aggregator.py`` and stored on the row, so scoring stays
+allocation-light per candidate.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ WEIGHT_GRAPH = 0.15
 WEIGHT_RECENCY = 0.10
 WEIGHT_IMPORTANCE = 0.10
 WEIGHT_CONFIDENCE = 0.10
+WEIGHT_FEEDBACK = 0.05
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -54,6 +59,22 @@ def _keyword_term(candidate: RetrievalCandidate, sources: list[str]) -> float:
     return 1.0
 
 
+def _metadata_unit_term(candidate: RetrievalCandidate, key: str) -> float:
+    """Read a metadata field that should already live in [0, 1]; clamp on read."""
+    raw = candidate.metadata.get(key)
+    if not isinstance(raw, int | float):
+        return 0.0
+    return _clamp(float(raw))
+
+
+def _metadata_signed_term(candidate: RetrievalCandidate, key: str) -> float:
+    """Read a metadata field whose natural range is [-1, 1]."""
+    raw = candidate.metadata.get(key)
+    if not isinstance(raw, int | float):
+        return 0.0
+    return _clamp(float(raw), lo=-1.0, hi=1.0)
+
+
 def score_candidates(
     triples: list[tuple[RetrievalCandidate, float, list[str]]],
 ) -> list[ScoredHit]:
@@ -68,11 +89,27 @@ def score_candidates(
     for candidate, fused, sources in triples:
         semantic = _semantic_term(candidate, sources)
         keyword = _keyword_term(candidate, sources)
+        graph = _metadata_unit_term(candidate, "graph_score")
+        recency = _metadata_unit_term(candidate, "recency_score")
+        importance = _metadata_unit_term(candidate, "importance")
+        confidence = _metadata_unit_term(candidate, "confidence")
+        feedback = _metadata_signed_term(candidate, "feedback_ewma")
         rrf_norm = (fused - rrf_min) / rrf_range
         # Use rrf_norm as a multi-source presence boost: a chunk found in both
         # lists out-scores one found in a single list, even if either raw signal
-        # is mediocre.
-        score = WEIGHT_SEMANTIC * semantic + WEIGHT_KEYWORD * keyword + 0.05 * rrf_norm
+        # is mediocre. Metadata terms default to 0.0 when absent, so candidates
+        # without precomputed importance/recency/confidence/feedback are scored
+        # exactly as before.
+        score = (
+            WEIGHT_SEMANTIC * semantic
+            + WEIGHT_KEYWORD * keyword
+            + WEIGHT_GRAPH * graph
+            + WEIGHT_RECENCY * recency
+            + WEIGHT_IMPORTANCE * importance
+            + WEIGHT_CONFIDENCE * confidence
+            + WEIGHT_FEEDBACK * feedback
+            + 0.05 * rrf_norm
+        )
         hits.append(
             ScoredHit(
                 id=candidate.id,

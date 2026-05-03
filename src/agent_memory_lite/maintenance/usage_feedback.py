@@ -70,6 +70,7 @@ def record_usage_feedback(
     usefulness: float,
     task_id: str | None = None,
     notes: str = "",
+    source: str = "agent_observed",
 ) -> UsageFeedback:
     if source_type not in {"chunk", "decision", "theory", "insight", "capability"}:
         raise ValueError(f"unsupported usage feedback source_type: {source_type!r}")
@@ -88,8 +89,8 @@ def record_usage_feedback(
         """
         INSERT INTO memory_usage_feedback (
             id, workspace_id, source_type, source_id, query, usefulness,
-            task_id, notes, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            task_id, notes, created_at, source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             feedback_id,
@@ -101,6 +102,7 @@ def record_usage_feedback(
             task_id,
             notes,
             created_at,
+            source,
         ),
     )
     return UsageFeedback(

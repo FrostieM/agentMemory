@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_memory_lite.api.routes.context_post_build import apply_post_build_hooks
 from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.file_pipeline import ingest_file
@@ -32,15 +33,21 @@ def _handle_get_context(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
+    workspace_id = payload.get("workspace_id")
     query = RetrievalQuery(**payload)
-    built = build_context(
-        _runtime.db_for(payload.get("workspace_id")),
-        query,
-        embedding_provider=None,
-        vector_store=None,
+    conn = _runtime.db_for(workspace_id)
+    built = build_context(conn, query, embedding_provider=None, vector_store=None)
+    # Same post-build hooks the HTTP route runs, so MCP-only deployments
+    # without an HTTP service still fire v1.5 / v1.6 / v2.2 / v2.3.
+    envelope_text = apply_post_build_hooks(
+        conn,
+        settings=_runtime.settings,
+        request_workspace_id=str(workspace_id) if workspace_id else "",
+        built=built,
+        envelope_text=built.text,
     )
     return {
-        "context_text": built.text,
+        "context_text": envelope_text,
         "sources": [
             {"id": hit.id, "score": hit.score, "sources": hit.sources, "path": hit.path}
             for hit in built.hits

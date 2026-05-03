@@ -418,11 +418,37 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 - linear hook flow with ex
             timeout=DEFAULT_TIMEOUT,
         )
     except httpx.ConnectError:
+        # HTTP service down — fall back to direct SQLite + FTS so the
+        # agent still sees core_memory / behavior_instructions / active
+        # decisions / FTS-matched chunks. Vector ranking and graph walk
+        # are skipped (would require loading the embedding model, ~3s
+        # cold start unacceptable per-prompt). Import locally so the
+        # hook works both as a script (scripts/ on sys.path) and as a
+        # package import (`from scripts.inject_memory_context ...`).
+        if db_path:
+            try:
+                # under both `python scripts/inject_memory_context.py` and
+                # `from scripts.inject_memory_context import ...` execution.
+                from inject_memory_fts_fallback import build_fts_only_context  # noqa: PLC0415
+            except ImportError:
+                try:
+                    from scripts.inject_memory_fts_fallback import (  # noqa: PLC0415
+                        build_fts_only_context,
+                    )
+                except ImportError:
+                    build_fts_only_context = None  # type: ignore[assignment]
+            if build_fts_only_context is not None:
+                fallback_text = build_fts_only_context(
+                    db_path=db_path, workspace_id=workspace, query=prompt[:1000]
+                )
+                if fallback_text:
+                    _emit_context(fallback_text)
+                    return 0
         _emit_notice(
-            f"agent-memory-lite is not running on {DEFAULT_BASE}. Start it "
-            "with `python scripts/serve.py` from the agent-memory-lite repo "
-            "(hub mode auto-enables when a project registry exists). The "
-            "next prompt will see context."
+            f"agent-memory-lite is not running on {DEFAULT_BASE} and the "
+            "FTS fallback found nothing. Start the service with "
+            "`python scripts/serve.py` from the agent-memory-lite repo "
+            "(hub mode auto-enables when a project registry exists)."
         )
         return 0
     except httpx.TimeoutException:

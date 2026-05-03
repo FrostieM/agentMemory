@@ -2,7 +2,9 @@
 
 Telemetry helpers live in ``context_trace.py``; the
 ``/memory/explain_context`` route lives in ``context_explain.py`` and
-is mounted on the same router below.
+is mounted on the same router below. Opportunistic post-build hooks
+(behavior tracking, last_retrieved, sentinel scheduler, pending_review
+injection) live in ``context_post_build.py``.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
 )
 from agent_memory_lite.api.routes.context_explain import router as explain_router
+from agent_memory_lite.api.routes.context_post_build import apply_post_build_hooks
 from agent_memory_lite.api.routes.context_trace import trace_used_context_objects
 from agent_memory_lite.api.schemas.context import (
     ContextSource,
@@ -72,9 +75,22 @@ def get_context_route(
         trace.stage_done(
             "retrieve", "Memory candidates ranked", counts={"sources": len(built.hits)}
         )
+        # Single chokepoint for behavior_apply / last_retrieved_at / sentinel
+        # scheduler / pending_review injection. The MCP stdio local fallback
+        # uses the same helper so flag behaviour matches across both surfaces.
+        envelope_text = apply_post_build_hooks(
+            conn,
+            settings=settings,
+            request_workspace_id=body.workspace_id,
+            built=built,
+            envelope_text=built.text,
+            embedding_provider=provider,
+            vector_store=store,
+        )
+
         trace.stage_started("context", "Build XML envelope")
         response = GetContextResponse(
-            context_text=built.text,
+            context_text=envelope_text,
             sources=[
                 ContextSource(
                     type="chunk",

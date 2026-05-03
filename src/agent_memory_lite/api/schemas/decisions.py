@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
+
 
 class WriteDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str = "default"
-    title: str = Field(min_length=1)
-    decision_text: str = Field(min_length=1)
-    rationale: str | None = None
+    title: SafeText = Field(min_length=1)
+    decision_text: SafeText = Field(min_length=1)
+    rationale: SafeTextOptional = None
     supersedes_decision_id: str | None = None
     source_episode_id: str | None = None
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)

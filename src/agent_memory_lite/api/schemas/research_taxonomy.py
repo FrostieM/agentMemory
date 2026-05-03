@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
 from agent_memory_lite.models.enums import ConceptKind, InsightStatus, InsightType
 
 
@@ -16,9 +17,9 @@ class UpsertConceptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str = "default"
-    name: str = Field(min_length=1)
+    name: SafeText = Field(min_length=1)
     kind: ConceptKind = ConceptKind.TERM
-    definition: str = Field(min_length=1)
+    definition: SafeText = Field(min_length=1)
     aliases: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     source_episode_id: str | None = None
@@ -37,8 +38,8 @@ class DistillInsightRequest(BaseModel):
 
     workspace_id: str = "default"
     insight_type: InsightType
-    summary: str = Field(min_length=1)
-    proposed_action: str | None = None
+    summary: SafeText = Field(min_length=1)
+    proposed_action: SafeTextOptional = None
     target_type: str | None = None
     target_id: str | None = None
     source_episode_ids: list[str] = Field(default_factory=list)

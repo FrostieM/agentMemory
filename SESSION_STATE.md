@@ -2,14 +2,73 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.0.3 stable
+## Current state — 1.1.3 (legacy-schema defensive checks for hub-mode dispatch)
 
-agent-memory-lite has shipped a small follow-up release on top of 1.0.2 that
-hardens the single-source agent contract sync. The full memory model (18+
-kinds), retrieval pipeline (RRF FTS + vector + graph), operator surface (pin /
-archive / what_references / list_audit / state snapshots / review queue /
-compact watchdog), hub mode + asymmetric isolation, and the live browser
-observatory are all in main and covered by the test matrix.
+Six evolution loops (v1.4 feedback-aware scoring through v1.9 hygiene
+recurrence) are merged on `main`. As of the A+ calibration the flags
+**default ON** so a fresh checkout opts in out of the box; explicit
+`false` in `.env` reverts to v1.0.x baseline (locked by
+`tests/invariants/test_v2_parity.py`).
+Three v2 improvements (97d30fa) close known gaps: implicit feedback
+derives feedback rows from operator actions, `<pending_review>` surfaces
+candidates inside the context envelope, and the sentinel scheduler
+auto-runs on traffic. Hub-mode routing for v2.3 fixed in this release —
+the scheduler now uses the request-scoped DB path resolved from the
+connection rather than the singleton `settings.db_path`.
+
+The v2 implementation is **calibrated against real copyBot data** in
+`reports/v1_1_0_calibration/`. Replaying 1370 audit rows produced
+158 implicit feedback rows; the resulting EWMA term shifted ranking in
+the right direction (95% rank churn, low-EWMA cohort dropped 26 places,
+high-EWMA cohort rose 0.84 places, biggest faller -51 positions for a
+high-importance decision with zero operator interaction).
+
+Everything below describes the stable 1.0.3 base; the v1.4-v1.9 + v2
+loops are env-flag-gated additions, not replacements.
+
+### v1.4-v1.9 loops + v2 improvements (env-flag map; defaults ON)
+
+* **v1.4** `MEMORY_FEEDBACK_EWMA_ENABLED=true` — completes the scoring
+  formula with a feedback-EWMA term (decisions/theories/chunks).
+* **v1.5** `MEMORY_CAPABILITY_MATURITY_ENABLED=true`,
+  `MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED=true` — usage/success counters
+  on roles/skills/playbooks; behavior application count.
+* **v1.6** `MEMORY_COLD_TRACKING_ENABLED=true`,
+  `MEMORY_COLD_AUTO_QUEUE_ENABLED=true` — `last_retrieved_at` stamping +
+  cold-candidate emission.
+* **v1.7** `MEMORY_THEORY_BRIDGE_ENABLED=true`,
+  `MEMORY_THEORY_BRIDGE_MIN_EVIDENCE=3` — validated-theory →
+  decision_candidate bridge (never auto-promotes; review-only).
+* **v1.8** `MEMORY_REFLECTIVE_COMPACT_ENABLED=true`,
+  `MEMORY_LESSON_MIN_SUPPORT_EPISODES=4`, `MEMORY_LESSON_MAX_PER_RUN=10` —
+  Ollama-driven lesson extraction → insight_candidates (review-only;
+  gracefully degrades when Ollama unreachable).
+* **v1.9** `MEMORY_HYGIENE_PERSIST_ENABLED=true`,
+  `MEMORY_SENTINEL_PERSIST_ENABLED=true`, `MEMORY_RECURRENCE_THRESHOLD=3` —
+  hygiene findings/sentinel runs persisted with recurrence counters.
+* **v2.1** `MEMORY_IMPLICIT_FEEDBACK_ENABLED=true` — derives feedback
+  rows from archive/promote/link actions (archive=-1.0, promote=+0.7,
+  link=strength).
+* **v2.2** Pending review envelope — auto-injected when
+  `decision_candidates` or `insight_candidates` rows exist (no flag;
+  data-driven).
+* **v2.3** `MEMORY_SENTINEL_AUTORUN_HOURS=6.0` — daemon-thread scheduler
+  triggers sentinel runs on get_context traffic when overdue. Per-workspace
+  in-flight lock (`sentinel_lock`) prevents duplicate concurrent daemons.
+  Hub-mode aware: routes via PRAGMA-resolved DB path.
+
+Calibration evidence and A/B numbers in `reports/v1_1_0_calibration/report.md`.
+Flag-off byte-equivalence locked by `tests/invariants/test_v2_parity.py`.
+End-to-end coverage by crash phase `p25_v2_improvements.py`.
+
+### Quality gates after 1.1.0 ship + defaults flip (current)
+
+* `pytest -q` — **632 tests passing** (was 491 in 1.0.3 baseline; +6 v2 unit,
+  +4 property, +3 invariant, +4 hub-mode, +4 v2.2 actionable, +rest from v1.4-v1.9).
+* `ruff check / format --check` — clean across 657 files.
+* `mypy src` — strict, clean across 430 source files.
+* `python scripts/check_sloc.py --enforce` — every `src/**/*.py` ≤ 150 SLOC.
+* Crash test (modular, 26 phases / 120 assertions): **PASS** (1 phase skip when Ollama unreachable).
 
 ### What 1.0.3 added on top of 1.0.2
 

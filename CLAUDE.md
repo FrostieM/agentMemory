@@ -95,45 +95,144 @@ ruff format --check src tests scripts
 mypy src
 ```
 
+## Pre-push crash-test gate (local-only)
+
+Before pushing to `main`, run the modular crash test against an isolated
+``qa-crash-test`` workspace. The test spins up a fresh HTTP service on
+port 8766, exercises every memory feature (24 phases / ~115 assertions),
+captures a Playwright screenshot of `/ui`, and tears the workspace down.
+
+Install the pre-push hook once:
+
+```bash
+bash scripts/install_hooks.sh
+```
+
+After install, every `git push` whose refspec includes `refs/heads/main`
+runs `python -m scripts.crash_test --skip-llm` automatically and blocks
+the push if any assertion fails. Bypass with either of:
+
+```bash
+MEMORY_SKIP_CRASH_TEST=1 git push       # env-flag bypass
+git push --no-verify                    # standard git bypass
+```
+
+For a manual full-fat run (includes UI Playwright phase + Ollama
+autodetect for v1.8 reflective compaction):
+
+```bash
+bash scripts/predeploy.sh
+```
+
+The JSON report (`tests/qa/qa-crash-test-artifacts/report.json`) lists
+every failed assertion with phase + observed-vs-expected so problems are
+actionable. CI runs `pytest` only — the crash test stays local because
+it needs a running embedding model + Playwright + optionally Ollama.
+
 ## Phase boundaries
 
 Phase 0 → 6 are defined in the plan. At every phase boundary, update `SESSION_STATE.md`
 with: current phase, last decision, the exact next file to create, and any open question.
 
-## Optional memory-quality features (env-flagged, off by default)
+## Memory-quality features (default ON post-1.1.0 calibration)
 
-Three opt-in features improve retrieval quality without changing
-existing behaviour:
+As of the 1.1.0 calibration on real copyBot data (see
+`docs/V1_1_0_CALIBRATION.md`), every quality flag listed below
+defaults to ON in `Settings`. A fresh checkout opts into the
+calibrated loops automatically. To restore the v1.0.x baseline,
+set the corresponding env var to `false` / `0.0` in `.env` —
+`tests/invariants/test_v2_parity.py` locks the flag-off path as
+byte-equivalent to v1.0.x. Operator guide:
+`docs/V1_1_0.md`. Full env-flag map:
+`SESSION_STATE.md`.
 
-* **Episode dedup** — `MEMORY_EPISODE_DEDUP_ENABLED=1` makes
-  `memory_ingest_episode` embed the new redacted text and check the
-  vector store for near-duplicates in the same workspace. When the
-  top hit's cosine similarity is at or above
-  `MEMORY_EPISODE_DEDUP_THRESHOLD` (default 0.92), the existing
-  episode is returned with `was_duplicate=true,
-  duplicate_similarity=<float>` and no new row is written. Window
-  size is `MEMORY_EPISODE_DEDUP_WINDOW` (default 50).
+**v1.0.x optional features** — non-destructive scoring tweaks now ON
+by default:
 
-* **Confidence decay** — `MEMORY_CONFIDENCE_DECAY_ENABLED=1`
-  multiplies each chunk hit's score by an exponential age decay so
-  six-month-old episodes no longer out-rank yesterday's work just
-  because they share keywords.
-  `MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS` (default 14) controls the
-  half-life. Decay is applied before usage-feedback boost, after
-  RRF + base scoring; results are re-sorted.
+* **Episode dedup** (`MEMORY_EPISODE_DEDUP_ENABLED=true`,
+  `MEMORY_EPISODE_DEDUP_THRESHOLD=0.92`,
+  `MEMORY_EPISODE_DEDUP_WINDOW=50`) — `memory_ingest_episode` embeds
+  the redacted text and skips writing when cosine ≥ threshold against
+  the recent window in the same workspace.
+* **Confidence decay** (`MEMORY_CONFIDENCE_DECAY_ENABLED=true`,
+  `MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS=14`) — multiplies chunk hit
+  scores by exponential age decay so old episodes no longer out-rank
+  recent ones on shared keywords.
+* **Auto-conflict detection**
+  (`MEMORY_CONFLICT_DETECT_ENABLED=true`,
+  `MEMORY_CONFLICT_DETECT_THRESHOLD=0.6`) — emits
+  `potential_conflict` events for decisions/theories with Jaccard
+  overlap ≥ threshold. Never blocks a write.
 
-* **Auto-conflict detection** — `MEMORY_CONFLICT_DETECT_ENABLED=1`
-  scans existing decisions / theories after each `write_decision` /
-  `write_theory` for Jaccard token overlap on
-  `(title + decision_text)` / `(title + claim)`. When overlap >=
-  `MEMORY_CONFLICT_DETECT_THRESHOLD` (default 0.6), a
-  `potential_conflict` maintenance event is written with both ids so
-  the agent / hygiene script surfaces them for review. The
-  heuristic never blocks a write.
+**v1.4 feedback-aware scoring + v2.1 implicit feedback** — closes the
+"feedback never gets recorded so EWMA is dead" loop:
 
-All three are off-by-default so existing tests + workflows are
-unaffected. Turn them on per-project via `.agent_memory/.env` or
-project-level `.claude/settings.json`.
+* `MEMORY_FEEDBACK_EWMA_ENABLED=true` — completes the scoring formula
+  with the EWMA term (decisions/theories/chunks).
+  `MEMORY_FEEDBACK_HALFLIFE_DAYS=14`.
+  `MEMORY_FEEDBACK_EXCLUDE_SELF_LOOP=true`.
+  `MEMORY_FEEDBACK_MAX_PER_DAY_PER_SOURCE=10`.
+* `MEMORY_IMPLICIT_FEEDBACK_ENABLED=true` — derives feedback rows
+  from operator actions: archive→-1.0, promote→+0.7,
+  link_capability→strength.
+
+**v1.5 capability maturity + behavior tracking**:
+
+* `MEMORY_CAPABILITY_MATURITY_ENABLED=true` —
+  usage/success counters on roles/skills/playbooks.
+  `MEMORY_CAPABILITY_DECAY_DAYS=30`,
+  `MEMORY_CAPABILITY_STALE_DAYS=60`.
+* `MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED=true` — bumps
+  `behavior_instructions.application_count` per envelope render.
+
+**v1.6 cold-memory lifecycle**:
+
+* `MEMORY_COLD_TRACKING_ENABLED=true` — stamps `last_retrieved_at` on
+  the top-K returned ids (batched audit).
+* `MEMORY_COLD_AUTO_QUEUE_ENABLED=true` — emits `cold_candidate`
+  events for rows untouched > `MEMORY_COLD_STALE_DAYS=60`.
+
+**v1.7 theory → decision-candidate bridge**:
+
+* `MEMORY_THEORY_BRIDGE_ENABLED=true`,
+  `MEMORY_THEORY_BRIDGE_MIN_EVIDENCE=3` — validated theories with
+  ≥ N evidence rows surface as `decision_candidates`. Review-only;
+  promotion stays operator-driven.
+
+**v1.8 reflective compaction**:
+
+* `MEMORY_REFLECTIVE_COMPACT_ENABLED=true`,
+  `MEMORY_LESSON_MIN_SUPPORT_EPISODES=4`,
+  `MEMORY_LESSON_MAX_PER_RUN=10` — `/memory/compact` runs an Ollama
+  pass over recent episodes and proposes lessons into
+  `insight_candidates`. Gracefully degrades when Ollama unreachable.
+
+**v1.9 hygiene recurrence + v2.3 trigger-on-traffic scheduler**:
+
+* `MEMORY_HYGIENE_PERSIST_ENABLED=true`,
+  `MEMORY_SENTINEL_PERSIST_ENABLED=true`,
+  `MEMORY_RECURRENCE_THRESHOLD=3` — hygiene findings and watchdog
+  results persisted with recurrence counts.
+* `MEMORY_SENTINEL_AUTORUN_HOURS=6.0` — every `get_context` triggers
+  a background sentinel pass when overdue. Per-workspace
+  `threading.Lock` (`maintenance/sentinel_lock.py`) prevents
+  duplicate concurrent daemons. Hub-mode aware: `db_path` is read
+  from `PRAGMA database_list` on the request-scoped connection.
+
+**v2.2 pending-review envelope** — data-driven (no flag): every
+`memory_get_context` injects a `<pending_review>` block into the
+envelope when `decision_candidates` or `insight_candidates` rows are
+pending. Single chokepoint `apply_post_build_hooks` in
+`api/routes/context_post_build.py` is called from both the HTTP
+route (`api/routes/context.py`) and the MCP stdio local fallback
+(`mcp/stdio_handlers_episodes.py`) so MCP-only deployments fire
+v1.5/v1.6/v2.2/v2.3 the same way.
+
+**Calibration evidence** (commit `47184b9`): replayed 1370 audit
+entries on copyBot into 158 implicit feedback rows; 95% rank churn;
+low-EWMA cohort dropped 26 places; biggest faller -51 positions.
+Regression-injection: delta +1, no spurious failures. Scripts under
+`scripts/calibration/` reproduce on any post-1.4 workspace.
 
 ## When in doubt
 
@@ -311,6 +410,13 @@ The envelope contains, in priority order:
 - `<procedural_rules>`: operating rules for the agent.
 - `<retrieved_facts>`: temporal graph hits.
 - `<retrieved_chunks>`: FTS + vector hits via reciprocal rank fusion.
+- `<pending_review>` (when populated): pending `decision_candidates` /
+  `insight_candidates` rows the operator has not yet promoted or rejected.
+  Each `<ref>` carries `id`, `kind`, `title`, and (for decision candidates)
+  the source `theory_id`. When the count attribute exceeds the per-kind
+  cap of 5, call `/memory/list_candidates` for the long tail. Acting on
+  the queue is the agent's job — promote with the explicit endpoints,
+  never bypass the trust gate.
 
 `<active_decisions>` is query-ranked and capped so durable decisions remain
 useful without burying current theories and research agenda items. The highest

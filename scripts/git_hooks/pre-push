@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pre-push gate: run the local crash test before every push to main.
+#
+# Installation:
+#     bash scripts/install_hooks.sh
+#
+# Skip mechanisms (in order of explicitness):
+#     git push --no-verify             # standard git escape hatch
+#     MEMORY_SKIP_CRASH_TEST=1 git push  # env-flag bypass
+#
+# Behaviour:
+#   * Reads the refs being pushed from stdin (git's pre-push protocol).
+#   * Only fires when at least one ref is refs/heads/main.
+#   * Runs `python -m scripts.crash_test --skip-llm` (~30s; LLM phase
+#     would need a live Ollama and CI machines never have one — the
+#     guard's job is regression detection, not LLM smoke).
+#   * On failure: prints the problem list and aborts the push with
+#     exit 1, leaving the JSON report at
+#     tests/qa/qa-crash-test-artifacts/report.json for inspection.
+
+set -e
+
+if [[ "${MEMORY_SKIP_CRASH_TEST:-0}" == "1" ]]; then
+    echo "[pre-push] MEMORY_SKIP_CRASH_TEST=1 — skipping crash test."
+    exit 0
+fi
+
+# git's pre-push protocol writes one line per ref to stdin:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+PUSHING_MAIN=0
+while read -r local_ref local_sha remote_ref _; do
+    if [[ "$remote_ref" == "refs/heads/main" ]]; then
+        # Skip if deleting the branch.
+        if [[ "$local_sha" != "0000000000000000000000000000000000000000" ]]; then
+            PUSHING_MAIN=1
+        fi
+    fi
+done
+
+if [[ "$PUSHING_MAIN" -eq 0 ]]; then
+    # Pushing only feature branches / tags / non-main refs — no gate.
+    exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Pick the venv python — we don't want to fall back to the global one.
+VENV_PY="$REPO_ROOT/.venv/Scripts/python.exe"
+if [[ ! -x "$VENV_PY" ]]; then
+    VENV_PY="$REPO_ROOT/.venv/bin/python"
+fi
+if [[ ! -x "$VENV_PY" ]]; then
+    echo "[pre-push] no .venv python found at $REPO_ROOT/.venv/{Scripts,bin}/python — install the project first."
+    exit 1
+fi
+
+echo "[pre-push] running crash test before pushing to main..."
+echo "[pre-push] (~30s; bypass with MEMORY_SKIP_CRASH_TEST=1 or git push --no-verify)"
+if "$VENV_PY" -m scripts.crash_test --skip-llm; then
+    echo "[pre-push] crash test PASS — push allowed."
+    exit 0
+fi
+
+echo ""
+echo "[pre-push] crash test FAILED — push blocked."
+echo "[pre-push] full report: tests/qa/qa-crash-test-artifacts/report.json"
+echo "[pre-push] override with: MEMORY_SKIP_CRASH_TEST=1 git push"
+exit 1

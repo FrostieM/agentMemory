@@ -31,51 +31,30 @@ class Settings(BaseSettings):
     local_only: bool = Field(default=True, validation_alias="LOCAL_ONLY")
     allow_remote_providers: bool = Field(default=False, validation_alias="ALLOW_REMOTE_PROVIDERS")
 
-    # API
-    api_port: int = Field(default=8765, ge=1, le=65535, validation_alias="MEMORY_API_PORT")
-    require_api_token: bool = Field(
-        default=False,
-        validation_alias="MEMORY_REQUIRE_API_TOKEN",
-    )
-    audit_api_auth_failures: bool = Field(
-        default=False,
-        validation_alias="MEMORY_AUDIT_API_AUTH_FAILURES",
-    )
+    # API + storage + workspace (single-workspace v1)
+    api_port: int = Field(8765, ge=1, le=65535, validation_alias="MEMORY_API_PORT")
+    require_api_token: bool = Field(False, validation_alias="MEMORY_REQUIRE_API_TOKEN")
+    audit_api_auth_failures: bool = Field(False, validation_alias="MEMORY_AUDIT_API_AUTH_FAILURES")
     api_token_file: Path = Field(
-        default=Path(".agent_memory/token"),
-        validation_alias="MEMORY_API_TOKEN_FILE",
+        Path(".agent_memory/token"), validation_alias="MEMORY_API_TOKEN_FILE"
     )
-
-    # Storage
-    db_path: Path = Field(
-        default=Path(".agent_memory/memory.db"),
-        validation_alias="MEMORY_DB_PATH",
-    )
+    db_path: Path = Field(Path(".agent_memory/memory.db"), validation_alias="MEMORY_DB_PATH")
     vector_db_path: Path = Field(
-        default=Path(".agent_memory/vectors.lance"),
-        validation_alias="VECTOR_DB_PATH",
+        Path(".agent_memory/vectors.lance"), validation_alias="VECTOR_DB_PATH"
     )
-
-    # Workspace (single-workspace v1)
-    workspace_id: str = Field(default="default", validation_alias="MEMORY_WORKSPACE_ID")
+    workspace_id: str = Field("default", validation_alias="MEMORY_WORKSPACE_ID")
     forbid_default_workspace: bool = Field(
-        default=False,
-        validation_alias="MEMORY_FORBID_DEFAULT_WORKSPACE",
+        False, validation_alias="MEMORY_FORBID_DEFAULT_WORKSPACE"
     )
     strict_workspace_isolation: bool = Field(
-        default=False,
-        validation_alias="MEMORY_STRICT_WORKSPACE_ISOLATION",
+        False, validation_alias="MEMORY_STRICT_WORKSPACE_ISOLATION"
     )
     enforce_workspace_manifest: bool = Field(
-        default=True,
-        validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST",
+        True, validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST"
     )
-    hub_mode: bool = Field(
-        default=False,
-        validation_alias="MEMORY_HUB_MODE",
-    )
+    hub_mode: bool = Field(False, validation_alias="MEMORY_HUB_MODE")
     workspaces_file: Path = Field(
-        default=Path.home() / ".agent_memory" / "workspaces.json",
+        Path.home() / ".agent_memory" / "workspaces.json",
         validation_alias="MEMORY_WORKSPACES_FILE",
     )
 
@@ -99,61 +78,107 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="LLM_MODEL")
     ollama_probe_skip: bool = Field(default=False, validation_alias="OLLAMA_PROBE_SKIP")
 
-    # Episode dedup — when enabled, ingest_episode embeds the new
-    # raw_text and compares against the last N episodes' chunk
-    # embeddings. Cosine similarity > threshold returns the existing
-    # episode_id with was_duplicate=True instead of inserting a near-
-    # identical row. Off by default so existing tests + workflows are
-    # unaffected.
-    episode_dedup_enabled: bool = Field(
-        default=False, validation_alias="MEMORY_EPISODE_DEDUP_ENABLED"
-    )
+    # Memory-quality features. As of the 1.1.0 calibration, these
+    # default ON: the v1.4-v1.9 + v2 loops are calibrated against real
+    # copyBot data (see docs/V1_1_0_CALIBRATION.md) and the older
+    # opt-ins are non-destructive. To restore the v1.0.x baseline behaviour,
+    # explicitly set the flag to ``false`` in the environment / .env file —
+    # tests/invariants/test_v2_parity.py locks that path in.
+    episode_dedup_enabled: bool = Field(True, validation_alias="MEMORY_EPISODE_DEDUP_ENABLED")
     episode_dedup_threshold: float = Field(
-        default=0.92,
-        ge=0.0,
-        le=1.0,
-        validation_alias="MEMORY_EPISODE_DEDUP_THRESHOLD",
+        0.92, ge=0.0, le=1.0, validation_alias="MEMORY_EPISODE_DEDUP_THRESHOLD"
     )
     episode_dedup_window: int = Field(
-        default=50, ge=1, le=500, validation_alias="MEMORY_EPISODE_DEDUP_WINDOW"
+        50, ge=1, le=500, validation_alias="MEMORY_EPISODE_DEDUP_WINDOW"
     )
-
-    # Confidence decay — multiply chunk hit scores by an exponential
-    # age decay so 6-month-old episodes don't out-rank yesterday's
-    # work just because they share keywords. Half-life is in days; an
-    # item ``half_life_days`` old gets multiplied by 0.5. Disabled by
-    # default so the score pipeline is unchanged.
-    confidence_decay_enabled: bool = Field(
-        default=False, validation_alias="MEMORY_CONFIDENCE_DECAY_ENABLED"
-    )
+    confidence_decay_enabled: bool = Field(True, validation_alias="MEMORY_CONFIDENCE_DECAY_ENABLED")
     confidence_decay_half_life_days: float = Field(
-        default=14.0, gt=0.0, validation_alias="MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS"
+        14.0, gt=0.0, validation_alias="MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS"
     )
-
-    # Conflict detection — when a new decision or theory is written,
-    # scan the workspace for existing items whose title/claim shares
-    # ``conflict_detect_threshold`` Jaccard word overlap. If found, a
-    # ``potential_conflict`` maintenance event is written with both
-    # ids so the agent / hygiene script surfaces them for review.
-    conflict_detect_enabled: bool = Field(
-        default=False, validation_alias="MEMORY_CONFLICT_DETECT_ENABLED"
-    )
+    conflict_detect_enabled: bool = Field(True, validation_alias="MEMORY_CONFLICT_DETECT_ENABLED")
     conflict_detect_threshold: float = Field(
-        default=0.6,
-        ge=0.0,
-        le=1.0,
-        validation_alias="MEMORY_CONFLICT_DETECT_THRESHOLD",
+        0.6, ge=0.0, le=1.0, validation_alias="MEMORY_CONFLICT_DETECT_THRESHOLD"
+    )
+    compact_trigger_threshold_chunks: int = Field(
+        0, ge=0, validation_alias="MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS"
     )
 
-    # Token-aware compaction watchdog. When the chunk count exceeds
-    # ``compact_trigger_threshold_chunks`` and there are stale chunks
-    # older than 90 days, a ``compaction_due`` maintenance event is
-    # emitted. The probe never runs compaction itself; the operator
-    # decides when to call /memory/compact. 0 = disabled (default).
-    compact_trigger_threshold_chunks: int = Field(
-        default=0,
-        ge=0,
-        validation_alias="MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS",
+    # v1.4 feedback-aware scoring + v1.5 capability maturity. EWMA aggregator
+    # runs on demand via /memory/feedback_summary; capability counters move
+    # via list_agent_capabilities (mark_used) and complete-task hooks. Self-
+    # loop filter and per-day cap defend against an agent inflating its
+    # own feedback. Capability stale_days powers the hygiene_report finding.
+    feedback_ewma_enabled: bool = Field(True, validation_alias="MEMORY_FEEDBACK_EWMA_ENABLED")
+    feedback_halflife_days: float = Field(
+        14.0, gt=0.0, validation_alias="MEMORY_FEEDBACK_HALFLIFE_DAYS"
+    )
+    feedback_exclude_self_loop: bool = Field(
+        True, validation_alias="MEMORY_FEEDBACK_EXCLUDE_SELF_LOOP"
+    )
+    feedback_max_per_day_per_source: int = Field(
+        10, ge=1, validation_alias="MEMORY_FEEDBACK_MAX_PER_DAY_PER_SOURCE"
+    )
+    # v2.1 implicit feedback: derive feedback rows from existing operator
+    # actions (archive/promote/link). Calibrated on copyBot (158 rows from
+    # 1370 audit entries; 95% rank churn, no spurious inversions).
+    implicit_feedback_enabled: bool = Field(
+        True, validation_alias="MEMORY_IMPLICIT_FEEDBACK_ENABLED"
+    )
+    capability_maturity_enabled: bool = Field(
+        True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
+    )
+    capability_decay_days: int = Field(30, ge=1, validation_alias="MEMORY_CAPABILITY_DECAY_DAYS")
+    capability_stale_days: int = Field(60, ge=1, validation_alias="MEMORY_CAPABILITY_STALE_DAYS")
+    behavior_apply_tracking_enabled: bool = Field(
+        True, validation_alias="MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED"
+    )
+
+    # v1.6 cold-memory lifecycle. Tracking writes last_retrieved_at on the
+    # top-K (cheap, batched audit). Auto-queue emits cold_candidate
+    # maintenance events for rows untouched > cold_stale_days; review queue
+    # surfaces them, archival stays human-driven via the operator route.
+    cold_tracking_enabled: bool = Field(True, validation_alias="MEMORY_COLD_TRACKING_ENABLED")
+    cold_auto_queue_enabled: bool = Field(True, validation_alias="MEMORY_COLD_AUTO_QUEUE_ENABLED")
+    cold_stale_days: int = Field(60, ge=1, validation_alias="MEMORY_COLD_STALE_DAYS")
+    cold_tracking_audit_batch_size: int = Field(
+        100, ge=1, validation_alias="MEMORY_COLD_AUDIT_BATCH_SIZE"
+    )
+
+    # v1.7 theory -> decision-candidate bridge. Validated theories with
+    # >= min_evidence supporting evidence rows surface as pending
+    # decision_candidates. The bridge NEVER writes to decisions directly —
+    # promote requires explicit operator action via
+    # /memory/decision_candidates/{id}/promote.
+    theory_bridge_enabled: bool = Field(True, validation_alias="MEMORY_THEORY_BRIDGE_ENABLED")
+    theory_bridge_min_evidence: int = Field(
+        3, ge=1, validation_alias="MEMORY_THEORY_BRIDGE_MIN_EVIDENCE"
+    )
+
+    # v1.8 reflective compaction. /memory/compact additionally runs an
+    # Ollama pass over recent episodes and proposes lessons into
+    # insight_candidates (NEVER into research_insights). When Ollama is
+    # unreachable, the path skips silently — the regular compaction digest
+    # still runs.
+    reflective_compact_enabled: bool = Field(
+        True, validation_alias="MEMORY_REFLECTIVE_COMPACT_ENABLED"
+    )
+    lesson_min_support_episodes: int = Field(
+        4, ge=2, validation_alias="MEMORY_LESSON_MIN_SUPPORT_EPISODES"
+    )
+    lesson_max_per_run: int = Field(10, ge=1, le=50, validation_alias="MEMORY_LESSON_MAX_PER_RUN")
+
+    # v1.9 hygiene recurrence + sentinel persistence. hygiene_persist saves
+    # findings as maintenance_events; sentinel_persist writes per-case
+    # watchdog results to retrieval_sentinel_results.
+    hygiene_persist_enabled: bool = Field(True, validation_alias="MEMORY_HYGIENE_PERSIST_ENABLED")
+    sentinel_persist_enabled: bool = Field(True, validation_alias="MEMORY_SENTINEL_PERSIST_ENABLED")
+    recurrence_threshold: int = Field(3, ge=1, validation_alias="MEMORY_RECURRENCE_THRESHOLD")
+    # v2.3 trigger-on-traffic sentinel scheduler. When > 0, the first
+    # /memory/get_context after this many hours since the last sentinel run
+    # kicks off a background pass. Default 6h matches the recommended
+    # rollout in docs/V1_1_0.md. Set to 0 to disable autorun.
+    sentinel_autorun_hours: float = Field(
+        6.0, ge=0.0, validation_alias="MEMORY_SENTINEL_AUTORUN_HOURS"
     )
 
     # Logging

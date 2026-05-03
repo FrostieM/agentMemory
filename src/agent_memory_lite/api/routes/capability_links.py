@@ -18,6 +18,7 @@ from agent_memory_lite.api.schemas.capability_links import (
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion.capability_link_writer import link_capability
+from agent_memory_lite.maintenance.implicit_feedback import record_implicit_link
 from agent_memory_lite.models.capability_links import CapabilityLink, CapabilityLinkIn
 from agent_memory_lite.repositories.capability_links_repo import list_capability_links
 
@@ -84,6 +85,16 @@ def link_capability_route(
             action="created",
             label="Capability linked",
             counts={"target_id": link.target_id},
+        )
+        # v1.4 implicit feedback: link strength is the operator's
+        # explicit weight on the target's importance.
+        record_implicit_link(
+            conn,
+            settings=settings,
+            workspace_id=body.workspace_id,
+            target_type=body.target_type,
+            target_id=body.target_id,
+            strength=link.strength,
         )
         response = _link_response(link)
         trace.stage_done("response", "Capability link response ready", counts={"link_id": link.id})

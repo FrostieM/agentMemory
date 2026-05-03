@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
 from agent_memory_lite.models.enums import TheoryEvidenceKind, TheoryStatus
 
 
@@ -13,13 +14,13 @@ class WriteTheoryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str = "default"
-    title: str = Field(min_length=1)
-    claim: str = Field(min_length=1)
+    title: SafeText = Field(min_length=1)
+    claim: SafeText = Field(min_length=1)
     domain: str = Field(default="general", min_length=1)
-    mechanism: str | None = None
+    mechanism: SafeTextOptional = None
     predictions: list[str] = Field(default_factory=list)
     validation_criteria: list[str] = Field(default_factory=list)
-    experiment_plan: str | None = None
+    experiment_plan: SafeTextOptional = None
     dependent_decision_ids: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     status: TheoryStatus = TheoryStatus.PROPOSED

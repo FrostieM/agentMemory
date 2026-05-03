@@ -18,6 +18,10 @@ futureDesign/
 venv/
 env/
 
+# Crash-test transient workspace + artifacts
+tests/qa/qa-crash-test/
+tests/qa/qa-crash-test-artifacts/
+
 # Local data — never commit a real memory database
 .agent_memory/
 *.db

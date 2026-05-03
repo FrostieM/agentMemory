@@ -8,8 +8,10 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, VectorStoreDep
+from agent_memory_lite.maintenance.feedback_signal import feedback_signal_summary
 from agent_memory_lite.maintenance.integrity import run_integrity_audit
 from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
+from agent_memory_lite.retrieval.pending_review import load_pending_review
 from agent_memory_lite.version import __version__
 
 router = APIRouter()
@@ -23,6 +25,24 @@ class RetrievalIntegritySummary(BaseModel):
     failures: list[str]
     warnings: list[str]
     repair_hints: list[str]
+
+
+class FeedbackSignalSummaryModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    total_rows: int
+    unique_sources: int
+    self_loop_ratio: float
+    last_feedback_at: str | None
+
+
+class PendingReviewModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_candidates: int
+    insight_candidates: int
+    total: int
 
 
 class HealthResponse(BaseModel):
@@ -39,6 +59,8 @@ class HealthResponse(BaseModel):
     llm_model: str
     applied_migrations: list[str]
     retrieval_integrity: RetrievalIntegritySummary
+    feedback_signal: FeedbackSignalSummaryModel
+    pending_review: PendingReviewModel
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -56,6 +78,10 @@ def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthR
         ),
         expected_vector_backend=settings.vector_backend,
     )
+    feedback = feedback_signal_summary(
+        conn, workspace_id=settings.workspace_id, enabled=settings.feedback_ewma_enabled
+    )
+    review = load_pending_review(conn, workspace_id=settings.workspace_id)
     return HealthResponse(
         status="degraded" if report.status == "degraded" else "ok",
         version=__version__,
@@ -73,5 +99,11 @@ def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthR
             failures=report.failures,
             warnings=report.warnings,
             repair_hints=report.repair_hints,
+        ),
+        feedback_signal=FeedbackSignalSummaryModel(**feedback.to_dict()),
+        pending_review=PendingReviewModel(
+            decision_candidates=review.decision_candidates_count,
+            insight_candidates=review.insight_candidates_count,
+            total=review.total,
         ),
     )
