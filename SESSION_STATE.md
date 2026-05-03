@@ -2,14 +2,30 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.0.2 stable
+## Current state — 1.0.3 stable
 
-agent-memory-lite has shipped its third stable release on top of the 1.0.0
-foundation. The full memory model (18+ kinds), retrieval pipeline (RRF FTS +
-vector + graph), operator surface (pin / archive / what_references /
-list_audit / state snapshots / review queue / compact watchdog), hub mode +
-asymmetric isolation, and the live browser observatory are all in main and
-covered by the test matrix.
+agent-memory-lite has shipped a small follow-up release on top of 1.0.2 that
+hardens the single-source agent contract sync. The full memory model (18+
+kinds), retrieval pipeline (RRF FTS + vector + graph), operator surface (pin /
+archive / what_references / list_audit / state snapshots / review queue /
+compact watchdog), hub mode + asymmetric isolation, and the live browser
+observatory are all in main and covered by the test matrix.
+
+### What 1.0.3 added on top of 1.0.2
+
+- **Idempotent agent-contract sync.** `scripts/setup_agent.py:upsert_contract`
+  is now byte-stable across reruns: `render_contract_block()` produces the
+  same canonical block whether the file is being created or updated, and the
+  end-marker search uses `rfind` so the replaced span runs from the FIRST
+  `:begin` to the LAST `:end`. A hand-broken anchor file with stray
+  duplicate `:end` markers is healed in a single sync pass instead of
+  silently accumulating drift. Confirmed by paired property-style tests in
+  `tests/unit/scripts/test_setup_agent_upsert_contract.py` (created /
+  idempotent / preserves user content / heals duplicate end / dangling
+  begin / no-marker append).
+- **Stable anchor-file format.** `CLAUDE.md` and `AGENTS.md` were resynced
+  once with the new format (single trailing newline before / after the block,
+  no leading newline drift). Subsequent CI runs report `unchanged`.
 
 ### What 1.0.2 added on top of 1.0.1
 
@@ -55,7 +71,7 @@ covered by the test matrix.
 
 All green on Python 3.13 / 3.14 (Windows / macOS / Linux):
 
-- `pytest -q` — **485 tests** (unit / property / integration / e2e).
+- `pytest -q` — **491 tests** (unit / property / integration / e2e).
 - `ruff check src tests scripts` — clean.
 - `ruff format --check src tests scripts` — clean.
 - `mypy src` — strict, clean across 394 source files.

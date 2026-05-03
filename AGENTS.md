@@ -1,4 +1,3 @@
-
 <!-- agent-memory-lite-contract:begin -->
 
 # Agent contract
@@ -1101,6 +1100,5 @@ Never flip `MEMORY_STRICT_WORKSPACE_ISOLATION` off inside a project chat
 to enable a write. That defeats the purpose of project-scoped memory.
 Strict isolation is a first-class invariant; the user's explicit request
 justifies a cross-workspace **read**, not a cross-workspace write.
-
 
 <!-- agent-memory-lite-contract:end -->

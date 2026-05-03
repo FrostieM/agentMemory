@@ -142,6 +142,7 @@ project-level `.claude/settings.json`.
 - A URL going somewhere new? Update `local_only_guard.CLOUD_DENYLIST` and add a guard test.
 - An LLM call failing? Surface a clear error pointing to Ollama install — never silently
   fall back to a no-op for the mandatory extractor.
+
 <!-- agent-memory-lite-contract:begin -->
 
 # Agent contract
@@ -1244,6 +1245,5 @@ Never flip `MEMORY_STRICT_WORKSPACE_ISOLATION` off inside a project chat
 to enable a write. That defeats the purpose of project-scoped memory.
 Strict isolation is a first-class invariant; the user's explicit request
 justifies a cross-workspace **read**, not a cross-workspace write.
-
 
 <!-- agent-memory-lite-contract:end -->

@@ -286,8 +286,13 @@ def write_env(diag: Diagnosis) -> None:
 
 
 def render_contract_block() -> str:
-    body = CONTRACT_PATH.read_text(encoding="utf-8")
-    return f"\n{MARKER_BEGIN}\n\n{body}\n\n{MARKER_END}\n"
+    """Render the canonical contract block. Self-contained: starts with the
+    begin marker, ends with the end marker + trailing newline, no leading
+    newline. The exact same string is what `upsert_contract` writes both on
+    create and on update so the function is byte-stable across reruns.
+    """
+    body = CONTRACT_PATH.read_text(encoding="utf-8").rstrip()
+    return f"{MARKER_BEGIN}\n\n{body}\n\n{MARKER_END}\n"
 
 
 def sync_repo_contracts() -> int:
@@ -300,22 +305,40 @@ def sync_repo_contracts() -> int:
 
 
 def upsert_contract(path: Path) -> str:
-    """Insert or replace the contract block in `path`. Returns 'created' / 'updated' / 'unchanged'."""
+    """Insert or replace the contract block in `path`. Returns 'created' / 'updated' / 'unchanged'.
+
+    Invariants:
+
+    * Idempotent: a synced file produces `unchanged` on every subsequent run.
+    * Self-healing: the replaced span runs from the FIRST `MARKER_BEGIN` to
+      the LAST `MARKER_END`, so a hand-broken file with stray duplicate
+      markers is normalized in a single pass.
+    * Preserves user content above the first `:begin` and below the last
+      `:end`, separated from the block by exactly one blank line.
+    """
     block = render_contract_block()
     path.parent.mkdir(parents=True, exist_ok=True)
+
     if not path.exists():
-        path.write_text(block.lstrip("\n"), encoding="utf-8")
+        path.write_text(block, encoding="utf-8")
         return "created"
+
     existing = path.read_text(encoding="utf-8")
     begin = existing.find(MARKER_BEGIN)
     if begin == -1:
-        path.write_text(existing.rstrip() + "\n" + block, encoding="utf-8")
-        return "updated"
-    end = existing.find(MARKER_END, begin)
-    if end == -1:
-        new = existing[:begin].rstrip() + block
+        prefix = existing.rstrip()
+        sep = "\n\n" if prefix else ""
+        new = prefix + sep + block
     else:
-        new = existing[:begin].rstrip() + block + existing[end + len(MARKER_END) :].lstrip("\n")
+        end = existing.rfind(MARKER_END)
+        prefix = existing[:begin].rstrip()
+        suffix = (
+            existing[end + len(MARKER_END) :].lstrip("\n") if end != -1 and end >= begin else ""
+        )
+        prefix_sep = "\n\n" if prefix else ""
+        suffix_sep = "\n" if suffix else ""
+        new = prefix + prefix_sep + block + suffix_sep + suffix
+
     if new == existing:
         return "unchanged"
     path.write_text(new, encoding="utf-8")
