@@ -4,6 +4,7 @@ candidate builder, and audit row writers. Splitting these out keeps
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from datetime import UTC, datetime
 
@@ -97,21 +98,14 @@ def record_throttle_rejection(
     episode_id: str,
     max_per_day: int,
 ) -> None:
-    """Persist a throttle rejection to audit_log, swallowing legacy-schema errors.
+    """Persist a throttle rejection to audit_log; swallow legacy-schema errors.
 
-    Imports ``insert_audit`` lazily to keep the distill helpers
-    free of repository deps for the unit tests that patch the
-    correction_distill module in isolation.
-
-    1.2.1: connections are autocommit (``isolation_level=None``); the
-    explicit ``conn.commit()`` was removed because it would have
-    prematurely committed an outer in-flight transaction had this
-    helper ever been called from inside a ``with_tx`` block. In
-    autocommit mode each ``insert_audit`` statement is its own implicit
-    transaction so the throttle row still persists.
+    Lazy import of ``insert_audit`` keeps distill helpers repository-dep-free
+    for tests that patch this module in isolation. 1.2.1: removed an explicit
+    ``conn.commit()`` that would have prematurely flushed an outer in-flight
+    transaction — autocommit mode (``isolation_level=None``) makes each
+    ``insert_audit`` statement its own implicit transaction.
     """
-    import contextlib  # noqa: PLC0415
-
     from agent_memory_lite.repositories.audit_repo import insert_audit  # noqa: PLC0415
 
     with contextlib.suppress(sqlite3.OperationalError):
