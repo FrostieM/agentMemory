@@ -4,6 +4,104 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.2.1 — 2026-05-04
+
+Hardening patch on top of 1.2.0. A four-AI-agent post-release audit
+found one critical and three high-severity issues in the just-shipped
+correction-promotion surface. All four are fixed; each carries a paired
+regression test so the gap can't come back.
+
+### Fixed
+
+- **CRITICAL — Atomic promotion** (`ingestion/correction_promotion.py`).
+  Pre-1.2.1, `promote_correction_to_behavior` made three independent
+  commits: behavior_instruction upsert, optional pin, candidate flip +
+  audit. A failure mid-flow could leave a behavior_instruction live
+  but the candidate stuck at `status='new'`, producing a confusing
+  `409 name_taken` on retry. The three steps now run inside one
+  outer `with_tx`. Inner helpers' own `with_tx` calls become
+  SAVEPOINTs (see the `db/transactions.py` change below). On any
+  failure the entire promotion rolls back and the operator can retry
+  cleanly.
+- **HIGH — `coerce_applies_to` accepted tuple silently dropping it
+  to empty** (`ingestion/correction_promotion_guards.py`). The old
+  `isinstance(value, list)` check rejected an already-coerced tuple
+  and returned `()`. Now accepts both list and tuple, returns `()`
+  for `None`, and raises `TypeError` on unknown types (dict, int,
+  …) so bad input surfaces as a 422 at the boundary rather than a
+  silent empty list.
+- **HIGH — `record_throttle_rejection` called `conn.commit()` on the
+  shared connection** (`extraction/correction_distill.py`). In the
+  current call graph the commit was a no-op, but if any future
+  refactor invokes the throttle helper from inside a `with_tx`
+  block, the explicit commit would have prematurely finalized the
+  outer transaction. Removed; in autocommit mode each `insert_audit`
+  statement is its own implicit transaction so the throttle row
+  still persists.
+- **MEDIUM — Hook `transcript_path` had no allowlist**
+  (`scripts/transcript_pair_extractor.py`). A compromised or
+  misconfigured hook caller could pass an arbitrary readable path
+  (`/etc/passwd`, another user's transcript) and have its tail
+  bytes ingested as the agent claim. Now restricted to
+  `~/.claude/` plus directories listed in
+  `AGENT_MEMORY_TRANSCRIPT_ROOTS` (os.pathsep-separated). Path
+  resolution rejects traversal attacks via `Path.resolve()` +
+  `relative_to()`.
+
+### Changed
+
+- `db/transactions.py` — `with_tx` is now nest-safe. When entered
+  while an outer transaction is already open, it issues a SAVEPOINT
+  instead of a nested `BEGIN` (which SQLite forbids). Top-level
+  callers see no behaviour change. This is what makes the atomic
+  promote possible without rewriting `upsert_behavior_instruction`
+  and `pin_memory_object`. RELEASE is now in a `finally` with
+  `contextlib.suppress(sqlite3.Error)` so the savepoint is always
+  cleaned up even if the rollback path itself errors. Token width
+  upgraded from 4 to 8 bytes for collision safety in deeply nested
+  batch jobs.
+- `ingestion/pin_service.py` — `_set_table_pinned` now wraps the
+  UPDATE in `with_tx` instead of an explicit `conn.commit()`. Top
+  level still BEGIN/COMMITs; nested inside the atomic promote
+  becomes a SAVEPOINT.
+- `repositories/decisions_repo.py` — `set_decision_pinned` migrated
+  to `with_tx` for symmetry with `pin_service._set_table_pinned`.
+  Pre-1.2.1 the helper called `conn.commit()` directly; while no
+  current code path pins a decision from inside an outer
+  transaction, the asymmetry was a future foot-gun. Top-level
+  callers see no behaviour change.
+
+### Added
+
+- `tests/unit/ingestion/test_correction_promotion.py` — 11 regression
+  tests covering: atomic rollback on Step-1 / Step-2 / Step-3
+  failure, happy-path end-to-end, `coerce_applies_to`
+  tuple / dict / None / mixed list, throttle helper not committing
+  outer tx, `with_tx` savepoint nesting, savepoint rollback on inner
+  failure, `wrong_kind` guard still fires pre-write.
+- `tests/unit/scripts/test_transcript_pair_extractor.py` — 3 new
+  tests for the M3 allowlist (rejects path outside `~/.claude/`,
+  rejects relative paths in env override, respects absolute env
+  override) plus an autouse fixture so the existing 9 tests
+  continue to pass against `tmp_path`.
+
+### New env var
+
+- `AGENT_MEMORY_TRANSCRIPT_ROOTS` (optional, default empty) —
+  os.pathsep-separated **absolute** paths. Add to extend the
+  transcript-read allowlist beyond the built-in `~/.claude/`.
+  Relative entries are silently dropped (cwd is non-deterministic
+  across hook fork points).
+
+### Notes
+
+- M3 is technically a behaviour change for hook callers that
+  previously passed transcript paths outside `~/.claude/` (e.g.
+  integration test harnesses pointing at `/tmp/`). The
+  `AGENT_MEMORY_TRANSCRIPT_ROOTS` override re-allows specific
+  external roots so existing test setups can adapt without code
+  changes.
+
 ## 1.2.0 — 2026-05-04
 
 **Headline:** v1.10 correction-aware learning loop. When the operator

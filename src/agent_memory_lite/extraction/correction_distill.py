@@ -102,10 +102,19 @@ def record_throttle_rejection(
     Imports ``insert_audit`` lazily to keep the distill helpers
     free of repository deps for the unit tests that patch the
     correction_distill module in isolation.
+
+    1.2.1: connections are autocommit (``isolation_level=None``); the
+    explicit ``conn.commit()`` was removed because it would have
+    prematurely committed an outer in-flight transaction had this
+    helper ever been called from inside a ``with_tx`` block. In
+    autocommit mode each ``insert_audit`` statement is its own implicit
+    transaction so the throttle row still persists.
     """
+    import contextlib  # noqa: PLC0415
+
     from agent_memory_lite.repositories.audit_repo import insert_audit  # noqa: PLC0415
 
-    try:
+    with contextlib.suppress(sqlite3.OperationalError):
         insert_audit(
             conn,
             workspace_id=workspace_id,
@@ -115,9 +124,6 @@ def record_throttle_rejection(
             source_episode_id=episode_id,
             after={"max_per_day": max_per_day},
         )
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
 
 
 def clip(text: str, n: int) -> str:

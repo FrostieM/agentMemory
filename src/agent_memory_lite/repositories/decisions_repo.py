@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.models.decisions import Decision
 from agent_memory_lite.models.enums import DecisionStatus
 from agent_memory_lite.repositories.decisions_search import (
@@ -46,13 +47,22 @@ def set_decision_pinned(
     updated_at: str,
 ) -> bool:
     """Flip the pinned flag for a decision in the given workspace.
-    Returns True when a row matched (and was updated)."""
-    cur = conn.execute(
-        "UPDATE decisions SET pinned = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
-        (1 if pinned else 0, updated_at, decision_id, workspace_id),
-    )
-    conn.commit()
-    return cur.rowcount > 0
+
+    Uses ``with_tx`` so the write composes inside an outer transaction
+    (becomes a SAVEPOINT when nested). Symmetric with
+    ``ingestion.pin_service._set_table_pinned`` which was migrated in
+    1.2.1; pre-1.2.1 this helper called ``conn.commit()`` directly,
+    which would have prematurely flushed an outer in-flight transaction
+    if a future caller pinned a decision from inside ``with_tx``.
+    Returns True when a row matched (and was updated).
+    """
+    with with_tx(conn):
+        cur = conn.execute(
+            "UPDATE decisions SET pinned = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+            (1 if pinned else 0, updated_at, decision_id, workspace_id),
+        )
+        rowcount = cur.rowcount
+    return rowcount > 0
 
 
 def insert_decision_row(

@@ -23,11 +23,67 @@ import; it has no side effects when imported.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _DEFAULT_TAIL_LINES = 400
+
+
+def _allowed_transcript_roots() -> tuple[Path, ...]:
+    """Resolved directories the hook may read transcripts from.
+
+    Default: ``~/.claude/`` (Claude Code's data dir). Override via env
+    ``AGENT_MEMORY_TRANSCRIPT_ROOTS`` (os.pathsep-separated absolute
+    paths) for clients that store transcripts elsewhere.
+    """
+    roots: list[Path] = [Path.home() / ".claude"]
+    override = os.environ.get("AGENT_MEMORY_TRANSCRIPT_ROOTS", "").strip()
+    if override:
+        for raw in override.split(os.pathsep):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                candidate = Path(raw).expanduser()
+            except (OSError, ValueError):
+                continue
+            # Reject relative paths — they resolve against the hook
+            # caller's cwd which is non-deterministic across forks.
+            # Operators must pass absolute paths in the env var.
+            if not candidate.is_absolute():
+                continue
+            roots.append(candidate)
+    resolved: list[Path] = []
+    for r in roots:
+        try:
+            resolved.append(r.resolve(strict=False))
+        except (OSError, ValueError):
+            continue
+    return tuple(resolved)
+
+
+def _is_under_allowed_root(path: Path) -> bool:
+    """True when ``path`` resolves inside any allowed transcript root.
+
+    Defends against malicious ``transcript_path`` values (path
+    traversal, absolute paths to ``/etc/passwd``, other users'
+    home-dirs). The hook trusts the local Claude Code runtime, but
+    a compromised hook caller could pass an arbitrary path; this
+    check makes the trust boundary explicit.
+    """
+    try:
+        target = path.resolve(strict=False)
+    except (OSError, ValueError):
+        return False
+    for root in _allowed_transcript_roots():
+        try:
+            target.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +117,12 @@ def find_last_assistant_text(
         # resolve. Without this, Path("~/...").exists() is False on
         # every OS and the hook silently skips correction capture.
         path = Path(str(transcript_path)).expanduser()
+        # SECURITY (1.2.1): reject transcript_paths outside the
+        # allowed roots. A compromised hook caller could otherwise
+        # point at any readable file ("/etc/passwd", another user's
+        # home) and have its tail bytes ingested as the agent claim.
+        if not _is_under_allowed_root(path):
+            return None
         if not path.exists() or not path.is_file():
             return None
         lines = _read_tail(path, tail_lines)

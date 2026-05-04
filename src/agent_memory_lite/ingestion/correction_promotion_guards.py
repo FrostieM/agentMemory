@@ -59,15 +59,25 @@ def load_pending_correction(
     return row
 
 
-def coerce_applies_to(value: list[str] | str | None) -> tuple[str, ...]:
-    """Single string → 1-tuple; list → tuple of str; None/other → empty.
+def coerce_applies_to(
+    value: list[str] | tuple[str, ...] | str | None,
+) -> tuple[str, ...]:
+    """Single string → 1-tuple; list/tuple → tuple of str; None → empty.
+
     Defends against ``tuple("a,b")`` splitting character-by-character —
-    used by both the HTTP route and the MCP tool wrappers."""
+    used by both the HTTP route and the MCP tool wrappers. Raises
+    ``TypeError`` on unsupported types (e.g. dict, int) so callers
+    surface bad input as a 422 rather than silently dropping the
+    value into an empty tuple. Tuples are accepted in addition to
+    lists so an already-coerced value passes through unchanged.
+    """
+    if value is None:
+        return ()
     if isinstance(value, str):
         return (value,)
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(str(x) for x in value)
-    return ()
+    raise TypeError(f"applies_to must be str | list | tuple | None, got {type(value).__name__}")
 
 
 def guard_name_taken(

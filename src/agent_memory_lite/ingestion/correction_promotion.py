@@ -17,6 +17,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
 from agent_memory_lite.ingestion.correction_promotion_guards import (
     CorrectionPromotionError,
@@ -66,10 +67,13 @@ def promote_correction_to_behavior(
 ) -> BehaviorInstruction:
     """Promote a CORRECTION-kind candidate into a behavior_instruction.
 
-    Atomicity: writes durable artifact (behavior_instruction) first,
-    optional pin second, candidate flip + audit last. Each step
-    commits independently; on partial failure the most-recent step
-    is the operator-recoverable one. Raises
+    Atomicity (1.2.1): all three writes — behavior_instruction upsert,
+    optional pin, candidate flip + audit — execute inside one outer
+    ``with_tx``. Inner helpers' own ``with_tx`` calls become SAVEPOINTs
+    (see ``db/transactions.py``). If the candidate flip raises (rare:
+    SQL error, integrity violation), the entire promotion is rolled
+    back as a unit so the caller never observes a "rule live but
+    candidate still status='new'" inconsistency. Raises
     ``CorrectionPromotionError`` (codes ``not_found`` / ``wrong_kind``
     / ``already_decided`` / ``name_taken``) when promotion is blocked.
     See ``docs/V1_2_0.md``.
@@ -87,69 +91,71 @@ def promote_correction_to_behavior(
     rule_text = payload.rule_text_override or str(row["subject"])
     confidence = float(row["confidence"] or 0.5)
 
-    # Step 1: write the behavior_instruction (commits internally).
-    instruction = upsert_behavior_instruction(
-        conn,
-        BehaviorInstructionIn(
-            workspace_id=payload.workspace_id,
-            name=payload.name,
-            rule=rule_text,
-            kind=payload.kind,
-            scope=payload.scope,
-            priority=payload.priority,
-            rationale=payload.rationale,
-            applies_to=list(payload.applies_to),
-            conflict_policy=payload.conflict_policy,
-            source_episode_id=str(row["source_episode_id"]) if row["source_episode_id"] else None,
-            source_type="memory_candidate",
-            source_id=payload.candidate_id,
-            reviewed_by=payload.decided_by,
-            reviewed_at=iso_now(),
-            confidence=confidence,
-            active=True,
-        ),
-    )
-    # Step 2: optional pin (commits internally if applied).
-    if payload.pinned:
-        pin_memory_object(
+    with with_tx(conn):
+        # Step 1: write the behavior_instruction (uses inner SAVEPOINT).
+        instruction = upsert_behavior_instruction(
+            conn,
+            BehaviorInstructionIn(
+                workspace_id=payload.workspace_id,
+                name=payload.name,
+                rule=rule_text,
+                kind=payload.kind,
+                scope=payload.scope,
+                priority=payload.priority,
+                rationale=payload.rationale,
+                applies_to=list(payload.applies_to),
+                conflict_policy=payload.conflict_policy,
+                source_episode_id=(
+                    str(row["source_episode_id"]) if row["source_episode_id"] else None
+                ),
+                source_type="memory_candidate",
+                source_id=payload.candidate_id,
+                reviewed_by=payload.decided_by,
+                reviewed_at=iso_now(),
+                confidence=confidence,
+                active=True,
+            ),
+        )
+        # Step 2: optional pin.
+        if payload.pinned:
+            pin_memory_object(
+                conn,
+                workspace_id=payload.workspace_id,
+                kind="behavior_instruction",
+                object_id=instruction.id,
+                pinned=True,
+            )
+
+        # Step 3: candidate flip + audit row.
+        now_iso = iso_now()
+        conn.execute(
+            """
+            UPDATE memory_candidates
+            SET status = 'promoted',
+                promoted_target_type = 'behavior_instruction',
+                promoted_target_id = ?,
+                decided_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (instruction.id, now_iso, now_iso, payload.candidate_id),
+        )
+        insert_audit(
             conn,
             workspace_id=payload.workspace_id,
-            kind="behavior_instruction",
-            object_id=instruction.id,
-            pinned=True,
+            action="memory_candidate.promoted_to_behavior",
+            target_type="memory_candidate",
+            target_id=payload.candidate_id,
+            after={
+                "behavior_instruction_id": instruction.id,
+                "decided_by": payload.decided_by,
+                "kind": payload.kind.value,
+                "pinned": payload.pinned,
+                # ``overwrite=true`` indicates the operator replaced an
+                # existing behavior_instruction with the same name; record
+                # this for audit history so a reviewer can distinguish
+                # "appended" vs "replaced" promotions.
+                "overwrite": payload.overwrite,
+            },
         )
-
-    # Step 3: candidate flip + audit row + commit.
-    now_iso = iso_now()
-    conn.execute(
-        """
-        UPDATE memory_candidates
-        SET status = 'promoted',
-            promoted_target_type = 'behavior_instruction',
-            promoted_target_id = ?,
-            decided_at = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (instruction.id, now_iso, now_iso, payload.candidate_id),
-    )
-    insert_audit(
-        conn,
-        workspace_id=payload.workspace_id,
-        action="memory_candidate.promoted_to_behavior",
-        target_type="memory_candidate",
-        target_id=payload.candidate_id,
-        after={
-            "behavior_instruction_id": instruction.id,
-            "decided_by": payload.decided_by,
-            "kind": payload.kind.value,
-            "pinned": payload.pinned,
-            # ``overwrite=true`` indicates the operator replaced an
-            # existing behavior_instruction with the same name; record
-            # this for audit history so a reviewer can distinguish
-            # "appended" vs "replaced" promotions.
-            "overwrite": payload.overwrite,
-        },
-    )
-    conn.commit()
     return instruction

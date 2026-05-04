@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.repositories.decisions_repo import set_decision_pinned
 from agent_memory_lite.utils.time import iso_now
 
@@ -34,13 +35,19 @@ def _set_table_pinned(
     workspace_id: str,
     pinned: bool,
 ) -> bool:
-    """Flip ``pinned`` for a row in ``table`` scoped to the workspace."""
-    cur = conn.execute(
-        f"UPDATE {table} SET pinned = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
-        (1 if pinned else 0, iso_now(), object_id, workspace_id),
-    )
-    conn.commit()
-    return cur.rowcount > 0
+    """Flip ``pinned`` for a row in ``table`` scoped to the workspace.
+
+    Uses ``with_tx`` so the write composes inside an outer transaction
+    (``with_tx`` becomes a SAVEPOINT when nested). At top level it
+    BEGIN/COMMITs as before.
+    """
+    with with_tx(conn):
+        cur = conn.execute(
+            f"UPDATE {table} SET pinned = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+            (1 if pinned else 0, iso_now(), object_id, workspace_id),
+        )
+        rowcount = cur.rowcount
+    return rowcount > 0
 
 
 def pin_memory_object(
