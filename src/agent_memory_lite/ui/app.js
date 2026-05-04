@@ -1030,17 +1030,28 @@ function drawSubFamily(layer, pos, fam, table, vis) {
   );
   if (vis > 0.55) {
     const label = _subFamilyLabel(table);
-    svg(
-      "text",
-      {
-        class: "subfam-label",
-        "text-anchor": "middle",
-        y: 3,
-        "font-size": "9.5",
-        fill: `oklch(0.92 0.08 ${fam.hue})`,
-      },
-      g,
-    ).textContent = clip(label, 14);
+    // Suppress the sub-family label when it would duplicate the parent
+    // family label. Without this guard the agent_skills bubble inside
+    // the Skills family renders as "Skills" inside "Skills", and
+    // similarly for episodes/decisions/theories whose own table label
+    // matches the family group name. The bubble itself stays so the
+    // structural grouping of multiple sub-tables (e.g. Skills →
+    // {agent_skills, capability_links, agent_playbooks}) remains
+    // visible; only the redundant text is dropped.
+    const famLabel = (fam.label || "").toLowerCase();
+    if (label.toLowerCase() !== famLabel) {
+      svg(
+        "text",
+        {
+          class: "subfam-label",
+          "text-anchor": "middle",
+          y: 3,
+          "font-size": "9.5",
+          fill: `oklch(0.92 0.08 ${fam.hue})`,
+        },
+        g,
+      ).textContent = clip(label, 14);
+    }
   }
 }
 
@@ -1835,7 +1846,22 @@ function onMemoryEvent(ev) {
       // something." Replayed activity is rendered through the trail
       // (renderFeed) and the synthesized last-request animation; no
       // need to also flash the family centre.
-      state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
+      //
+      // We ALSO skip the pulse when the event has a request_id —
+      // those events always produce their own animation cycle (write
+      // events flow through state.requestBuffer → enqueueQuery; local
+      // reads invoke runQueryAnimation directly from the search /
+      // explain handlers; external reads also flow through the
+      // buffer). Without this guard, queued events would light up
+      // their family bubble immediately while the cycle that actually
+      // draws spokes for that family was still waiting in the queue
+      // behind the active cycle — the user saw "orb lit but spokes
+      // never drew" during bursts. Keep the pulse only for bare
+      // graph_delta events with no request_id, where the pulse is the
+      // user's only visual feedback.
+      if (!ev.request_id) {
+        state.liveLight.set(fid, performance.now() + 5000 / Math.max(0.3, state.tweaks.speed));
+      }
       // Optimistic count update so the family centre counter ticks the
       // moment a row is created / deleted, instead of waiting for the
       // next /memory/ui/state poll. fetchState resets these deltas

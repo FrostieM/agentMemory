@@ -2,7 +2,31 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.1.3 (legacy-schema defensive checks for hub-mode dispatch)
+## Current state — 1.1.1 (UI bug fixes + demo carousel)
+
+Two UI observatory bugs caught during the README video recording:
+
+1. `state.liveLight.set(...)` was firing for every `graph_delta`
+   regardless of whether a cycle would later draw spokes for that
+   family — burst writes produced "orbs lit but no spokes" while
+   the cycle queued behind earlier ones.
+   Fix: skip liveLight when the event has a `request_id` (cycle
+   handles the lighting at the correct moment).
+2. Sub-family bubble for `agent_skills` rendered with label
+   "Skills" inside the parent Skills family bubble (also
+   `episodes`, `decisions`, `theories` had the same latent
+   conflict).
+   Fix: `drawSubFamily` suppresses the label text when it equals
+   the parent family label.
+
+Plus `scripts/demo_carousel.sh` — 50-second 15-step churn for
+README video; deterministic via injected pending candidates for
+steps 12/13. `docs/demo.gif` embedded at top of README.
+
+No retrieval / scoring / ingestion / storage changes. All
+v1.4-v1.9 + v2.1-v2.3 behaviour identical to 1.1.0.
+
+## Previous state — 1.1.0 (defaults ON, calibrated, hardened for hub-mode + MCP-markup-safe)
 
 Six evolution loops (v1.4 feedback-aware scoring through v1.9 hygiene
 recurrence) are merged on `main`. As of the A+ calibration the flags

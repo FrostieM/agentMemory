@@ -1,5 +1,14 @@
 # agent-memory-lite
 
+![Live observatory](docs/demo.gif)
+
+> Live observatory — every memory operation drawn as a one-shot
+> animation cycle: family bubbles light up, spokes radiate to the
+> objects touched, the trail rolls one row per request. Above is a
+> 50-second carousel hitting all 15 endpoint categories (search,
+> ingest, write_decision, pin, upsert concept/skill, link_capability,
+> archive, accept/reject candidate, update_task_state, explain).
+
 **Local memory subsystem for an AI agent.** Runs from a virtualenv on Windows /
 macOS / Linux. No Docker, no Postgres, no cloud LLM / embedding / vector
 providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
@@ -104,7 +113,7 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 1.1.3
+## Status — 1.1.0
 
 1.1.0 ship. Six feedback loops (v1.4 feedback-aware scoring through
 v1.9 hygiene recurrence) and three v2 envelope/trigger improvements are

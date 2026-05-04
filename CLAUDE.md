@@ -234,6 +234,25 @@ low-EWMA cohort dropped 26 places; biggest faller -51 positions.
 Regression-injection: delta +1, no spurious failures. Scripts under
 `scripts/calibration/` reproduce on any post-1.4 workspace.
 
+## Operations
+
+For day-to-day operator workflow — upgrade procedure, service
+auto-start (Task Scheduler vs Startup folder), hook fallback chain,
+hub-mode + legacy-DB behaviour, troubleshooting common failure modes
+— read [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Pair with
+[`docs/V1_1_0.md`](docs/V1_1_0.md) for the env-flag map and
+[`docs/V1_1_0_CALIBRATION.md`](docs/V1_1_0_CALIBRATION.md) for
+calibration evidence.
+
+After a `git pull` or new tag, the typical sequence is:
+
+1. Restart Claude Desktop / Cursor / VS Code so MCP stdio servers
+   pick up the new code (long-lived processes don't auto-reload).
+2. Restart the HTTP service (Task Scheduler picks it up at next
+   logon; Startup folder needs manual restart).
+3. Verify via `curl http://127.0.0.1:8765/health` that
+   `applied_migrations` ends with the expected migration.
+
 ## When in doubt
 
 - New feature without a paired test? Stop and add the test.

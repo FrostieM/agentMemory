@@ -4,140 +4,54 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
-## 1.1.3 — 2026-05-04
-
-**Patch.** Hub-mode dispatch on legacy-schema DBs no longer 500s.
-
-When the HTTP service is in hub mode and a hook routes a request to a DB
-that pre-dates the v1.1.0 migrations (e.g. an auto-bootstrapped
-`~/.agent_memory/global/` DB created by an earlier setup, or any v1.0.x
-workspace registered in the workspaces.json registry), three post-build
-hooks would query columns/tables that didn't exist on that DB and
-return HTTP 500.
-
-Affected paths (all defaults ON since 1.1.0, all running on every
-get_context call):
-
-* `retrieval/pending_review.py:load_pending_review` queried
-  `decision_candidates` (migration 0023) and `insight_candidates`
-  (migration 0024) — `no such table` on legacy DBs.
-* `retrieval/last_retrieved_tracker.py:_update_kind` updated
-  `last_retrieved_at` (migration 0022) — `no such column` on legacy DBs.
-* `capability/behavior_apply.py:mark_behavior_instructions_applied`
-  updated `application_count` + `last_applied_at` (migration 0021) —
-  `no such column` on legacy DBs.
-
-Fix: each path now catches `sqlite3.OperationalError` and degrades to a
-no-op (returns 0 rows / empty summary). Hub mode keeps serving — the
-v1.4-v1.9 + v2 features that depend on the new schema simply skip on
-legacy DBs, which is the correct semantics: those features were never
-flag-active for those DBs anyway.
-
-Tests: 1 new case in `tests/unit/retrieval/test_pending_review.py` —
-`test_load_pending_review_handles_legacy_schema` — opens an empty DB,
-confirms `load_pending_review` returns an empty summary instead of
-raising. Total pytest count: 654 → 655.
-
-No schema changes, no migrations, no flag flips. Pure resilience patch
-covering the hub-mode legacy-DB edge case.
-
-## 1.1.2 — 2026-05-04
-
-**Patch.** UserPromptSubmit hook FTS-only fallback when HTTP service down.
-
-Pre-1.1.2 the auto-injection hook was HTTP-only: if the service at
-`127.0.0.1:8765` was down, every prompt got an empty `<agent-memory>`
-notice and the agent ran blind on memory. MCP stdio tools have always
-had a local fallback (open SQLite directly, run build_context); the
-hook didn't. Now they're symmetric.
-
-Fixes:
-
-* New `scripts/inject_memory_fts_fallback.py` — opens SQLite directly,
-  runs FTS on chunks_fts plus structured-section reads from
-  `core_memory` / `behavior_instructions` / `decisions`, renders a
-  minimal envelope. No embedding model load (would be 2-3s cold start,
-  unacceptable per-prompt). No graph walk, no EWMA re-rank — degraded
-  but useful.
-* `scripts/inject_memory_context.py` catches `httpx.ConnectError` and
-  falls back to the FTS module before emitting the notice. Hook stays
-  fast (<100ms) and never leaves the agent without context when the
-  registered DB is reachable.
-* Output XML matches a subset of the full envelope so the agent treats
-  fallback identically to the HTTP path: `<core_memory>` /
-  `<behavior_instructions>` / `<active_decisions>` / `<retrieved_chunks>`.
-* Trade-off documented: vector ranking + RRF + graph walk skipped.
-  Quality lower than HTTP path but correct sections rendered.
-
-Tests: 8 new cases in `tests/unit/scripts/test_inject_memory_fts_fallback.py`
-covering FTS query sanitisation (special chars, short tokens, capping),
-graceful failure on missing DB, full envelope rendering against a
-seeded workspace, XML escaping of `<`/`&`/`>` in stored content. Total
-pytest count: 646 → 654.
-
-Asymmetry resolved:
-
-| Surface | Pre-1.1.2 | Post-1.1.2 |
-|---------|:---------:|:----------:|
-| MCP stdio tools | HTTP delegate → local fallback | unchanged |
-| Auto-injection hook | HTTP only — fails silent | HTTP → FTS fallback → notice |
-
-No schema changes, no migrations, no flag flips. Pure resilience patch.
-
 ## 1.1.1 — 2026-05-04
 
-**Patch.** MCP function-call markup guard.
+**Headline:** UI observatory bug fixes + demo carousel hardening. Pure
+patch — no behaviour change in retrieval, ingestion, scoring, or
+storage. Every flag, every endpoint, every wire format identical
+to 1.1.0.
 
-When an agent invoked any `memory_*` MCP tool while accidentally embedding
-its own function-call boundary tags (`</decision_text>`,
-`<parameter name="...">`, `</invoke>`, etc.) inside the textual content of
-a parameter, that markup was persisted verbatim into SQLite. The UI
-rendered the garbage tail honestly, but the affected fields contained
-trailing structural noise that polluted retrieval and review.
+### Fixed
 
-Fixes:
+- **UI: orb lit but spokes never drew** during burst writes
+  (`src/agent_memory_lite/ui/app.js:1836-1864`). Every `graph_delta`
+  event was firing `state.liveLight.set(fid, ...)` immediately,
+  lighting the family bubble for 5s. Meanwhile the matching cycle
+  was queued behind earlier ones; while the active cycle drew spokes
+  for *its* families, the next-queued families' bubbles were
+  pre-lit by liveLight without spokes — the user saw a "ghost" orb.
+  Fix: skip liveLight when the event has a `request_id` (those
+  always produce a cycle that lights the bubble at the correct
+  moment via `drawFamilies`). Bare events without a request_id keep
+  the pulse as their only feedback signal.
+- **UI: "Skills" rendered as a separate node inside Skills family**
+  (`src/agent_memory_lite/ui/app.js:1031-1055`). When a `get_context`
+  cycle hit multiple capability sub-tables (e.g. `agent_skills` +
+  `capability_links`), the `agent_skills` sub-family bubble was
+  labeled "Skills" — duplicating the parent family label. Same
+  latent issue for `episodes` inside Episodes, `decisions` inside
+  Decisions, etc. Fix: `drawSubFamily` now suppresses the sub-family
+  label text when it equals the parent family label. The bubble
+  itself remains so the structural grouping stays visible; only
+  the redundant text is dropped.
 
-* `src/agent_memory_lite/redaction/mcp_markup.py` (new) — `strip_mcp_markup`
-  truncates at the first occurrence of any strict MCP marker; idempotent on
-  clean input. `extract_rationale` recovers the leaked
-  `<parameter name="rationale">...</parameter>` block when a write put both
-  decision_text and rationale into a single value.
-* `src/agent_memory_lite/api/schemas/_text_guard.py` (new) —
-  `SafeText` / `SafeTextOptional` pydantic annotations apply the strip via
-  `AfterValidator` to every text field on every write surface.
-* Annotated text fields:
-  * `WriteDecisionRequest`: title, decision_text, rationale.
-  * `IngestEpisodeRequest`: raw_text, summary.
-  * `WriteTheoryRequest`: title, claim, mechanism, experiment_plan.
-  * `UpsertBehaviorInstructionRequest`: name, rule, rationale.
-  * `UpsertConceptRequest`: name, definition.
-  * `DistillInsightRequest`: summary, proposed_action.
-  * `UpsertAgentRoleRequest` / `SkillRequest` / `PlaybookRequest`: name,
-    purpose / summary / goal.
-* `scripts/repair_text_artifacts.py` (new) — one-shot cleanup tool that
-  walks every text column and applies the same strip + rationale recovery.
-  Idempotent.
-* Strict markers only — generic angle brackets (`<repo>`, `<=`, `<name>`,
-  `<agent_capabilities>` and similar legitimate operator content) pass
-  through untouched.
+### Added
 
-Existing data repaired:
-* `agentLight` workspace: 4 rows (2 decisions + 1 episode + 1 chunk),
-  rationale recovered for 2 decisions where the leak hid the
-  rationale block inside decision_text.
-* `copyBot` workspace: 74 rows (6 decisions + 12 episodes + 12 chunks +
-  9 insights + 13 concepts + 14 behavior_instructions), rationale
-  recovered for 6 decisions.
+- `scripts/demo_carousel.sh` — 15-step memory churn carousel for
+  README video / GIF recording. Hits every action category: search,
+  ingest, write_decision, pin, upsert (concept / skill),
+  link_capability, archive (decision / episode), accept insight
+  candidate, reject decision candidate, update_task_state, explain.
+  Runs ~50s, deterministic — steps 12/13 inject fresh pending
+  candidates so the demo always exercises the accept/reject paths.
+- `docs/demo.gif` — live observatory demo embedded at the top of
+  README.md.
+- `docs/OPERATIONS.md` — operator runbook covering upgrade workflow,
+  service auto-start (Task Scheduler vs Startup folder vs manual),
+  hook fallback chain, hub-mode + legacy-DB behaviour, common
+  failure modes.
 
-Tests: 13 new unit + property tests (`tests/unit/redaction/test_mcp_markup.py`)
-covering idempotency, earliest-marker-wins, generic-bracket pass-through,
-rationale extraction with terminated and unterminated blocks. Total
-pytest count 633 → 646.
-
-No schema changes, no migrations, no flag flips. Pure preventive guard
-plus existing-data sweep.
-
-## 1.1.0 — 2026-05-03
+## 1.1.0 — 2026-05-04
 
 **Headline:** six feedback loops (v1.4 through v1.9) plus three follow-on
 improvements (v2.1 / v2.2 / v2.3) ship default ON. Every flag flips off
@@ -254,13 +168,66 @@ halflife_sweep,regression_injection}.py` (each takes
 `--db <path> --workspace <id>`). Full report:
 `docs/V1_1_0_CALIBRATION.md`.
 
+### Hardening (post-ship operational fixes folded into 1.1.0)
+
+The 1.1.0 ship surfaced three operational gaps observed during real
+deployment. All three landed in this release:
+
+* **MCP function-call markup guard.** When an agent invoked a
+  `memory_*` MCP tool with its own function-call boundary tags
+  (`</decision_text>`, `<parameter name="...">`, `</invoke>`)
+  embedded in the textual content of a parameter, that markup got
+  persisted verbatim. New `redaction/mcp_markup.py:strip_mcp_markup`
+  truncates at the first marker; idempotent on clean input.
+  Pydantic `SafeText` / `SafeTextOptional` annotations apply the
+  strip via `AfterValidator` to every text field on every write
+  surface (`decisions`, `episodes`, `theories`,
+  `behavior_instructions`, `concepts`, `insights`, `roles` /
+  `skills` / `playbooks`). Strict markers only — generic angle
+  brackets pass through untouched. One-shot cleanup tool
+  `scripts/repair_text_artifacts.py` walks every text column and
+  applies the same strip + recovers the leaked rationale block.
+
+* **UserPromptSubmit hook FTS fallback.** Pre-hardening the
+  auto-injection hook was HTTP-only: if the service at
+  `127.0.0.1:8765` was down, every prompt got an empty notice and
+  the agent ran blind. New `scripts/inject_memory_fts_fallback.py`
+  opens SQLite directly, runs FTS on `chunks_fts` plus
+  structured-section reads from `core_memory` /
+  `behavior_instructions` / `decisions`, renders a minimal envelope
+  in ~30ms (no embedding load — would be 2-3s cold start, unaccept-
+  able per-prompt). Hook now degrades HTTP → FTS → notice instead
+  of HTTP → notice. MCP stdio already had a similar fallback; the
+  two surfaces are now symmetric.
+
+* **Hub-mode dispatch on legacy-schema DBs.** The HTTP service in
+  hub mode routes per-call via `X-Memory-DB-Path` header. If the
+  hook's cwd doesn't match any registered project root, it
+  auto-bootstraps a global workspace at `~/.agent_memory/global/` —
+  which may have only v1.0.x migrations applied. Three v1.5 / v1.6 /
+  v2.2 post-build hooks now catch `sqlite3.OperationalError` and
+  degrade to a no-op when the column / table is missing
+  (`pending_review.load_pending_review`,
+  `last_retrieved_tracker._update_kind`,
+  `behavior_apply.mark_behavior_instructions_applied`). Hub mode
+  serves correctly on legacy DBs — features that depend on new
+  schema simply skip, which is the correct semantics.
+
 ### Quality gates
 
-* `pytest -q` — 633 passed (was 491 in 1.0.3 baseline).
-* `ruff check` + `ruff format --check` — clean across 661 files.
-* `mypy src` — strict, 0 issues across 430 source files.
+* `pytest -q` — 655 passed (was 491 in 1.0.3 baseline; +164).
+* `ruff check` + `ruff format --check` — clean across 664 files.
+* `mypy src` — strict, 0 issues across 432 source files.
 * `python scripts/check_sloc.py --enforce` — every `src/**/*.py` ≤ 150 SLOC.
-* Crash test (`scripts/crash_test`, 26 phases / 120 assertions) — PASS.
+* Crash test (`scripts/crash_test`, 26 phases / 122 assertions) — PASS.
+
+### Operations
+
+`docs/OPERATIONS.md` (new) — operator runbook covering upgrade
+workflow (restart MCP server / HTTP service / verify migrations),
+service auto-start options (Task Scheduler vs Startup folder vs
+manual), hook fallback chain, hub-mode + legacy-DB behaviour,
+troubleshooting common failure modes, workspace lifecycle.
 
 ### Upgrade path
 
