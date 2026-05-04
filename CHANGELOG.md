@@ -99,6 +99,13 @@ the full validation matrix.
   corrections from the v1.10 design session.
 - `tests/invariants/test_v110_parity.py` — locks flag-off behavior
   byte-equivalent to v1.1.1.
+- `tests/unit/mcp/test_correction_via_mcp_local.py::test_mcp_promote_to_behavior_schema_exposes_full_field_set`
+  — regression test that asserts the full 13-field set
+  (`workspace_id`, `candidate_id`, `name`, `rule_text_override`,
+  `rationale`, `kind`, `scope`, `priority`, `conflict_policy`,
+  `applies_to`, `decided_by`, `pinned`, `overwrite`) is present in
+  the stdio `inputSchema` for `memory_promote_candidate_to_behavior`.
+  Caught by a post-release four-AI-agent audit pass.
 
 ### Changed
 
@@ -181,6 +188,32 @@ Six rounds of adversarial AI-agent audits found and fixed:
 - **LIVE VERIFICATION**: full HTTP loop validated against the running
   service (claim → correction → candidate → promote → behavior_instruction
   → envelope) on both `agentLight` and `copyBot` workspaces.
+- **POST-RELEASE AUDIT**: a separate four-AI-agent audit pass on the
+  shipped surface caught two real gaps. (1) `stdio_tools_review.py`
+  declared `rationale` and `applies_to` in the
+  `memory_promote_candidate_to_behavior` `inputSchema` but was missing
+  the `overwrite` boolean — the Python-side handler at
+  `tools_review.memory_promote_candidate_to_behavior` already read
+  it, so MCP stdio clients silently lost the
+  name-collision-replace path. Fixed in this same release surface
+  with regression test added (see `Added` section).
+  (2) `docs/AGENT_CONTRACT.md` JSON example listed only 10 of the 13
+  request-body fields (`rationale`, `applies_to`, and `overwrite`
+  were undocumented). Updated and re-synced via
+  `setup_agent.py --sync-repo` and `--project copyBot` so the
+  canonical block is byte-identical across all five contract
+  surfaces (`agent-memory-lite/CLAUDE.md`, `AGENTS.md`,
+  `copyBot/CLAUDE.md`, `AGENTS.md`, and the operator's global
+  `~/.claude/CLAUDE.md`).
+
+### Documentation cross-references
+
+- `README.md` — added a "Latest release: v1.2.0" callout near the
+  top pointing at `CHANGELOG.md` and `docs/V1_2_0.md`.
+- `CLAUDE.md` (project section, outside the contract block) — added
+  a pointer to `docs/V1_2_0.md` from the v1.10 subsection so the
+  operator runbook is one click away from the "Memory-quality
+  features" map, paralleling the existing `V1_1_0.md` pointer.
 
 ## 1.1.1 — 2026-05-04
 
