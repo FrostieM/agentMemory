@@ -2,7 +2,79 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.1.1 (UI bug fixes + demo carousel)
+## Current state — 1.2.0 (v1.10 correction-aware learning loop)
+
+Closes the **structurally missing loop** observed in 1.1.1: the
+agent saw user corrections, fixed the immediate thing, then forgot
+the lesson. v1.10 makes the loop automatic.
+
+**Three-stage pipeline** (all behind `MEMORY_CORRECTION_DETECT_ENABLED`,
+default true):
+
+1. **Capture** — `inject_memory_context.py` reads the Claude Code
+   transcript JSONL (`event.transcript_path`), finds the most recent
+   assistant text turn within 30 minutes. If the current user prompt
+   matches the correction heuristic, ingests both turns as paired
+   episodes via `/memory/ingest_episode` with cross-reference
+   `metadata.correction_target_episode_id`.
+2. **Extract** — new `CorrectionExtractor` (registered alongside
+   `HeuristicExtractor` and the Ollama extractor) emits a
+   `MemoryCandidate(kind=CORRECTION)` with 0.5 / 0.7 / 0.85
+   confidence based on opener / body / both-match. Surfaces in
+   `<pending_review>` envelope.
+3. **Promote** — operator-driven `POST
+   /memory/promote_candidate_to_behavior` writes a
+   `behavior_instruction` with `source_type="memory_candidate"`,
+   `source_id=<candidate.id>` for lineage. Trust gate stays intact;
+   no auto-promote.
+
+**Validation:** `tests/integration/test_correction_detector_on_corpus.py`
+locks the three documented corrections from the v1.10 design session
+as the retrospective verification corpus. All three match in the
+0.5–0.85 confidence range.
+
+**Tests added:** 25 pattern unit tests (incl. 4 hypothesis
+properties), 12 extractor tests (incl. throttle, workspace
+isolation, cross-workspace), 11 transcript-extractor tests, 7
+promote-route e2e tests (incl. pinned), 2 full-loop integration
+tests, 3 retrospective verification tests, 3 parity invariant
+tests, 4 MCP wire-up tests, 1 live-transcript test = **68 new
+tests**. Crash-test grows to 27 phases with
+`p26_v110_correction`.
+
+**Files added (7 source + 7 test):**
+- `src/agent_memory_lite/extraction/correction_patterns.py`
+- `src/agent_memory_lite/extraction/correction_extractor.py`
+- `src/agent_memory_lite/extraction/correction_distill.py`
+- `src/agent_memory_lite/ingestion/correction_promotion.py`
+- `src/agent_memory_lite/api/routes/promote_to_behavior.py`
+- `src/agent_memory_lite/api/schemas/promote_to_behavior.py`
+- `scripts/transcript_pair_extractor.py`
+- `scripts/crash_test/phases/p26_v110_correction.py`
+- `tests/unit/extraction/test_correction_patterns.py`
+- `tests/unit/extraction/test_correction_extractor.py`
+- `tests/unit/scripts/test_transcript_pair_extractor.py`
+- `tests/e2e/test_promote_to_behavior.py`
+- `tests/integration/test_correction_loop_e2e.py`
+- `tests/integration/test_correction_detector_on_corpus.py`
+- `tests/invariants/test_v110_parity.py`
+
+**Files modified:**
+- `src/agent_memory_lite/config/settings.py` — 7 env flags
+- `src/agent_memory_lite/extraction/thresholds.py` — CORRECTION
+  threshold lowered to (0.5, 0.5)
+- `src/agent_memory_lite/ingestion/auto_promote.py` — register
+  CorrectionExtractor when flag on + conn passed
+- `src/agent_memory_lite/retrieval/pending_review.py` — surface
+  correction_candidate queue
+- `src/agent_memory_lite/api/app.py` — wire new router
+- `scripts/inject_memory_context.py` — `_maybe_capture_correction`
+- `scripts/crash_test/runner.py` — register `P26V110Correction`
+- `.env.example` — document new flags
+- `CHANGELOG.md`, `SESSION_STATE.md`, `pyproject.toml`,
+  `version.py` — 1.2.0 release entries
+
+## Previous state — 1.1.1 (UI bug fixes + demo carousel)
 
 Two UI observatory bugs caught during the README video recording:
 

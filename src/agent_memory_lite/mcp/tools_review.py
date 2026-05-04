@@ -57,6 +57,67 @@ def memory_promote_candidate(
     return candidate_payload(promote_memory_candidate(conn, candidate_id=candidate_id))
 
 
+def memory_promote_candidate_to_behavior(
+    *,
+    conn: sqlite3.Connection,
+    candidate_id: str,
+    name: str,
+    workspace_id: str = "default",
+    rule_text_override: str | None = None,
+    rationale: str = "",
+    kind: str = "operating_rule",
+    scope: str = "workspace",
+    priority: str = "user_preference",
+    conflict_policy: str = "current_user_wins",
+    applies_to: list[str] | str | None = None,
+    decided_by: str | None = None,
+    pinned: bool = False,
+    overwrite: bool = False,
+    **_kwargs: Any,
+) -> dict[str, Any]:
+    """v1.10: promote a CORRECTION-kind candidate into a behavior_instruction."""
+    from agent_memory_lite.ingestion.correction_promotion import (  # noqa: PLC0415
+        CorrectionPromoteInput,
+        CorrectionPromotionError,
+        promote_correction_to_behavior,
+    )
+    from agent_memory_lite.ingestion.correction_promotion_guards import (  # noqa: PLC0415
+        coerce_applies_to,
+    )
+    from agent_memory_lite.models.enums import (  # noqa: PLC0415
+        BehaviorConflictPolicy,
+        BehaviorInstructionKind,
+        BehaviorInstructionPriority,
+        BehaviorInstructionScope,
+    )
+
+    payload = CorrectionPromoteInput(
+        workspace_id=workspace_id,
+        candidate_id=candidate_id,
+        name=name,
+        rule_text_override=rule_text_override,
+        rationale=rationale,
+        kind=BehaviorInstructionKind(kind),
+        scope=BehaviorInstructionScope(scope),
+        priority=BehaviorInstructionPriority(priority),
+        conflict_policy=BehaviorConflictPolicy(conflict_policy),
+        applies_to=coerce_applies_to(applies_to),
+        decided_by=decided_by,
+        pinned=pinned,
+        overwrite=overwrite,
+    )
+    try:
+        instruction = promote_correction_to_behavior(conn, payload)
+    except CorrectionPromotionError as exc:
+        raise ValueError(exc.detail) from exc
+    return {
+        "candidate_id": candidate_id,
+        "behavior_instruction_id": instruction.id,
+        "status": "promoted",
+        "pinned": pinned,
+    }
+
+
 def memory_reject_candidate(
     *, conn: sqlite3.Connection, candidate_id: str, **_kwargs: Any
 ) -> dict[str, Any]:

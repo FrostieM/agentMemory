@@ -131,6 +131,12 @@ Apply these rules every session. They are not optional.
     `<active_decisions>` or `<behavior_instructions>` with high trust.
 28. **Never store secrets**. The redaction layer catches common shapes; do not
     deliberately defeat it.
+29. **Review correction candidates promptly.** When the operator corrects an
+    agent claim, the v1.10 correction-aware loop captures the pair and emits a
+    `memory_candidate(kind=correction)` for review. Surface in `<pending_review>`
+    with a hint pointing at `/memory/promote_candidate_to_behavior`. Promote
+    with one click to land a durable `behavior_instruction`; reject preserves
+    the candidate as audit evidence. The trust gate prevents auto-promote.
 
 ## API surface
 
@@ -287,6 +293,46 @@ decisions or rules until reviewed.
 Promotion only supports candidates that map to explicit durable targets
 (`decision`, `procedural_rule`, `core_memory`). Rejection preserves weak or
 wrong candidates as audit evidence.
+
+### POST /memory/promote_candidate_to_behavior (write - v1.10 correction → behavior)
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "candidate_id": "cand_...",
+  "name": "verify-timestamps-before-claiming",
+  "rule_text_override": "Filter audit_log by created_at > release_date before claiming a feature is dormant.",
+  "kind": "operating_rule",
+  "scope": "workspace",
+  "priority": "user_preference",
+  "conflict_policy": "current_user_wins",
+  "decided_by": "operator",
+  "pinned": false
+}
+```
+
+The same operation is exposed as the MCP tool
+``memory_promote_candidate_to_behavior`` for MCP-only deployments.
+
+When ``pinned=true``, the freshly-created behavior_instruction is
+also pinned so it rides every active context envelope regardless of
+query relevance — useful for critical operating rules where missing
+the rule on a noisy query would be the worst-case outcome.
+
+Promotes a `memory_candidate(kind=correction)` to a durable
+`behavior_instruction`. Only candidates with `kind=correction` are
+eligible; the endpoint returns 409 for any other kind. The created
+behavior_instruction carries `source_type="memory_candidate"` and
+`source_id=<candidate.id>` so the lineage from operator pushback →
+durable rule is auditable.
+
+Correction candidates appear in the `<pending_review>` envelope
+block alongside decision and insight candidates, with a hint pointing
+at this endpoint. They are produced automatically by the v1.10
+correction-aware learning loop: when a user prompt corrects the
+agent's previous claim, the UserPromptSubmit hook captures the pair
+and the `CorrectionExtractor` proposes a one-line behavior fix for
+operator review.
 
 ### POST /memory/write_decision (write - every architectural choice)
 

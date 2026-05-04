@@ -35,6 +35,7 @@ from agent_memory_lite.api.routes import (
     maintenance,
     memory_state_snapshots,
     pin,
+    promote_to_behavior,
     recurring_findings,
     references,
     research,
@@ -130,4 +131,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(audit_list.router)
     app.include_router(memory_state_snapshots.router)
     app.include_router(review_queue.router)
+    app.include_router(promote_to_behavior.router)
     return app

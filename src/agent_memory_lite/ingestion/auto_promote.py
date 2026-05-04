@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.extraction.base import Extractor
+from agent_memory_lite.extraction.correction_extractor import CorrectionExtractor
 from agent_memory_lite.extraction.heuristic_extractor import HeuristicExtractor
 from agent_memory_lite.extraction.llm_extractor import OllamaExtractor
 from agent_memory_lite.extraction.thresholds import meets_thresholds
@@ -39,8 +40,24 @@ class AutoPromoteStats:
     skipped_kinds: list[str]
 
 
-def _build_extractors(settings: Settings) -> list[Extractor]:
+def _build_extractors(
+    settings: Settings, conn: sqlite3.Connection | None = None
+) -> list[Extractor]:
     extractors: list[Extractor] = [HeuristicExtractor()]
+    # v1.10 correction-aware extractor needs DB access to resolve the
+    # paired claim text. Only registered when the loop is enabled AND
+    # the caller passed a connection (auto_promote always does; tests
+    # that build extractors standalone may opt out).
+    if settings.correction_detect_enabled and conn is not None:
+        extractors.append(
+            CorrectionExtractor(
+                conn,
+                min_user_len=settings.correction_min_user_len,
+                min_agent_len=settings.correction_min_agent_len,
+                min_confidence=settings.correction_min_confidence,
+                max_per_day=settings.correction_max_per_day,
+            )
+        )
     if settings.llm_backend == "ollama" and not settings.ollama_probe_skip:
         extractors.append(OllamaExtractor(settings.llm_base_url, settings.llm_model))
     return extractors
@@ -64,7 +81,7 @@ def auto_promote(
     settings: Settings,
 ) -> AutoPromoteStats:
     candidates: list[MemoryCandidate] = []
-    for extractor in _build_extractors(settings):
+    for extractor in _build_extractors(settings, conn):
         try:
             candidates.extend(extractor.extract(episode))
         except Exception as exc:

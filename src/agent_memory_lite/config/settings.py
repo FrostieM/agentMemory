@@ -154,11 +154,9 @@ class Settings(BaseSettings):
         3, ge=1, validation_alias="MEMORY_THEORY_BRIDGE_MIN_EVIDENCE"
     )
 
-    # v1.8 reflective compaction. /memory/compact additionally runs an
-    # Ollama pass over recent episodes and proposes lessons into
-    # insight_candidates (NEVER into research_insights). When Ollama is
-    # unreachable, the path skips silently — the regular compaction digest
-    # still runs.
+    # v1.8 reflective compaction; v1.9 hygiene recurrence + sentinel
+    # persistence; v2.3 trigger-on-traffic sentinel scheduler. See
+    # docs/V1_1_0.md for the env-flag map.
     reflective_compact_enabled: bool = Field(
         True, validation_alias="MEMORY_REFLECTIVE_COMPACT_ENABLED"
     )
@@ -166,20 +164,25 @@ class Settings(BaseSettings):
         4, ge=2, validation_alias="MEMORY_LESSON_MIN_SUPPORT_EPISODES"
     )
     lesson_max_per_run: int = Field(10, ge=1, le=50, validation_alias="MEMORY_LESSON_MAX_PER_RUN")
-
-    # v1.9 hygiene recurrence + sentinel persistence. hygiene_persist saves
-    # findings as maintenance_events; sentinel_persist writes per-case
-    # watchdog results to retrieval_sentinel_results.
     hygiene_persist_enabled: bool = Field(True, validation_alias="MEMORY_HYGIENE_PERSIST_ENABLED")
     sentinel_persist_enabled: bool = Field(True, validation_alias="MEMORY_SENTINEL_PERSIST_ENABLED")
     recurrence_threshold: int = Field(3, ge=1, validation_alias="MEMORY_RECURRENCE_THRESHOLD")
-    # v2.3 trigger-on-traffic sentinel scheduler. When > 0, the first
-    # /memory/get_context after this many hours since the last sentinel run
-    # kicks off a background pass. Default 6h matches the recommended
-    # rollout in docs/V1_1_0.md. Set to 0 to disable autorun.
     sentinel_autorun_hours: float = Field(
         6.0, ge=0.0, validation_alias="MEMORY_SENTINEL_AUTORUN_HOURS"
     )
+
+    # v1.10 correction-aware learning loop — Hook reads transcript_path
+    # JSONL, ingests (claim, correction) pairs, CorrectionExtractor
+    # proposes memory_candidate(kind=CORRECTION) for review.
+    # fmt: off
+    correction_detect_enabled: bool = Field(True, validation_alias="MEMORY_CORRECTION_DETECT_ENABLED")
+    correction_transcript_read_enabled: bool = Field(True, validation_alias="MEMORY_CORRECTION_TRANSCRIPT_READ_ENABLED")
+    correction_min_user_len: int = Field(30, ge=1, validation_alias="MEMORY_CORRECTION_MIN_USER_LEN")
+    correction_min_agent_len: int = Field(50, ge=1, validation_alias="MEMORY_CORRECTION_MIN_AGENT_LEN")
+    correction_min_confidence: float = Field(0.5, ge=0.0, le=1.0, validation_alias="MEMORY_CORRECTION_MIN_CONFIDENCE")
+    correction_max_per_day: int = Field(20, ge=1, validation_alias="MEMORY_CORRECTION_MAX_PER_DAY")
+    correction_pair_window_min: int = Field(30, ge=1, validation_alias="MEMORY_CORRECTION_PAIR_WINDOW_MIN")
+    # fmt: on
 
     # Logging
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")

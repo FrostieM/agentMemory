@@ -4,6 +4,171 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.2.0 — 2026-05-04
+
+**Headline:** v1.10 correction-aware learning loop. When the operator
+corrects the agent's claim in chat, the system now captures the pair
+automatically, proposes a one-line behavior fix, and queues it for
+operator review. Promoted candidates land in
+`<behavior_instructions>` and surface in every future envelope — so
+the next session reads the rule before answering and tunes its caution.
+
+This closes the **structurally missing loop** observed in 1.1.1: the
+agent saw user corrections, fixed the immediate thing, then forgot
+the lesson. v1.10 makes the loop automatic for the highest-frequency
+operator action — correcting the agent — turning *"memory shapes
+behavior via operator-trace"* from a README claim into an actual
+mechanism.
+
+### Architecture (three stages, all behind one master flag)
+
+1. **Capture** (`scripts/inject_memory_context.py` UserPromptSubmit hook)
+   – Reads the Claude Code transcript JSONL referenced by `transcript_path`,
+     locates the most recent assistant text turn within
+     `MEMORY_CORRECTION_PAIR_WINDOW_MIN` minutes (default 30).
+   – If the current user prompt matches the correction heuristic
+     (regex over Russian + English contradiction patterns), ingests
+     two episodes back-to-back: the agent claim
+     (`metadata.kind=correction_target`) and the user correction
+     (`metadata.kind=user_correction` with
+     `correction_target_episode_id` cross-reference).
+2. **Extract** (`src/agent_memory_lite/extraction/correction_extractor.py`)
+   – New `Extractor` registered alongside `HeuristicExtractor` and
+     the Ollama LLM extractor; runs on every ingest.
+   – On a `user_correction` episode, looks up the paired claim,
+     distills a one-line behavior rule via template (`Verify before
+     claiming: …`), emits a `MemoryCandidate(kind=CORRECTION)` with
+     0.5 / 0.7 / 0.85 confidence based on regex specificity.
+3. **Promote** (`POST /memory/promote_candidate_to_behavior`)
+   – Operator-driven, never auto-fires. Calls
+     `upsert_behavior_instruction` with `source_type="memory_candidate"`,
+     `source_id=<candidate.id>` so lineage is preserved. Updates
+     candidate to `status='promoted'` with `promoted_target_*` filled.
+
+### Added
+
+- `src/agent_memory_lite/extraction/correction_patterns.py` — regex
+  pattern set with bilingual openers (`нет, ` / `no, ` / `wait,` /
+  `actually,` / `неправильно` / `я буквально` / `i literally`) and
+  body markers (`не мог`, `это не так`, `that doesn't`,
+  `you're wrong`, `cant/can't`). Plus a negative filter for
+  agreement-with-negation phrases (`нет проблем`, `no problem`).
+- `src/agent_memory_lite/extraction/correction_extractor.py` —
+  `CorrectionExtractor(conn)` Extractor protocol implementation.
+  Includes a per-workspace per-day throttle, workspace_id-scoped
+  claim resolution (security), and audit-traced throttle rejections.
+- `src/agent_memory_lite/extraction/correction_distill.py` —
+  pure-function helpers (`distill_rule`, `clip`,
+  `count_corrections_today`, `record_throttle_rejection`,
+  `build_correction_candidate`) split out so the extractor stays
+  under the 150-SLOC ceiling.
+- `src/agent_memory_lite/ingestion/correction_promotion.py` —
+  shared service used by both the HTTP route and the MCP stdio
+  handler so promotion semantics are identical across surfaces.
+- `src/agent_memory_lite/api/routes/promote_to_behavior.py` +
+  `api/schemas/promote_to_behavior.py` — new endpoint
+  `POST /memory/promote_candidate_to_behavior`.
+- `scripts/transcript_pair_extractor.py` — read-only Claude Code
+  JSONL parser; tail-bounded (~400 lines) and best-effort (returns
+  `None` on any parse error).
+- `scripts/crash_test/phases/p26_v110_correction.py` — full
+  end-to-end crash-test phase (claim → correction → candidate →
+  promote → envelope check).
+- `tests/unit/extraction/test_correction_patterns.py` (25 tests
+  including hypothesis property tests).
+- `tests/unit/extraction/test_correction_extractor.py` (8 tests).
+- `tests/unit/scripts/test_transcript_pair_extractor.py` (11 tests).
+- `tests/e2e/test_promote_to_behavior.py` (6 route round-trip tests).
+- `tests/integration/test_correction_loop_e2e.py` (full pipeline +
+  flag-off check).
+- `tests/integration/test_correction_detector_on_corpus.py` —
+  retrospective verification: detector catches the three documented
+  corrections from the v1.10 design session.
+- `tests/invariants/test_v110_parity.py` — locks flag-off behavior
+  byte-equivalent to v1.1.1.
+
+### Changed
+
+- `src/agent_memory_lite/extraction/thresholds.py` — `CORRECTION`
+  threshold lowered from `(0.85, 0.70)` to `(0.5, 0.5)` so heuristic
+  matches in the 0.5–0.85 range surface for review. Trust gate
+  remains enforced at the promote step.
+- `src/agent_memory_lite/ingestion/auto_promote.py` —
+  `_build_extractors` now accepts an optional connection so the
+  `CorrectionExtractor` can resolve paired claim text.
+- `src/agent_memory_lite/retrieval/pending_review.py` — surfaces
+  `correction_candidate` queue alongside `decision_candidate` and
+  `insight_candidate`, with a hint pointing at the new promote
+  endpoint.
+- `scripts/inject_memory_context.py` — adds
+  `_maybe_capture_correction()` helper; runs best-effort before the
+  normal context-injection path.
+
+### Env flags (every default ON; flag-off path locked by parity test)
+
+```
+MEMORY_CORRECTION_DETECT_ENABLED=true
+MEMORY_CORRECTION_TRANSCRIPT_READ_ENABLED=true
+MEMORY_CORRECTION_MIN_USER_LEN=30
+MEMORY_CORRECTION_MIN_AGENT_LEN=50
+MEMORY_CORRECTION_MIN_CONFIDENCE=0.5
+MEMORY_CORRECTION_MAX_PER_DAY=20
+MEMORY_CORRECTION_PAIR_WINDOW_MIN=30
+```
+
+### Audit-log additions
+
+- `extraction.correction_detected` (when the CorrectionExtractor
+  emits a candidate; written by the existing
+  `write_memory_candidate` audit path).
+- `memory_candidate.promoted_to_behavior` (operator promoted via
+  the new endpoint).
+
+### Breaking changes
+
+None. All v1.10 behaviour is gated behind
+`MEMORY_CORRECTION_DETECT_ENABLED`. Set to `false` in `.env` to
+restore byte-equivalent v1.1.1 behavior; the parity invariant
+test enforces this in CI.
+
+### Hardening (post-design audits)
+
+Six rounds of adversarial AI-agent audits found and fixed:
+- **SECURITY**: workspace_id check + provenance check
+  (`metadata.correction_role="claim"` required) in
+  `_resolve_claim` so a forged `correction_target_episode_id` cannot
+  leak text from a foreign or unrelated same-workspace episode.
+- **DATA-LOSS**: episode dedup now bypasses correction pairs in
+  `ingest_episode` — without this, a repeated correction would be
+  silently collapsed into the previous episode and the recurring
+  mistake would never surface as a second candidate. Locked by
+  `tests/integration/test_correction_loop_e2e.py::
+  test_correction_pair_bypasses_episode_dedup`.
+- **AUDIT**: throttle rejection (`extraction.correction_rejected_throttled`)
+  and `overwrite=true` now both land in `audit_log` so operator
+  history is complete.
+- **ATOMICITY**: promotion writes the durable `behavior_instruction`
+  first, then optional pin, then candidate-flip + audit; on partial
+  failure the operator-recoverable state is preserved.
+- **NAMESPACE**: episode metadata switched to `correction_role` to
+  avoid future collisions with other `metadata.kind` users; legacy
+  `metadata.kind` still accepted for backward compat.
+- **MCP PARITY**: shared `coerce_applies_to` helper used by both HTTP
+  and MCP paths so a stringy `applies_to` doesn't split into a
+  per-character tuple. New endpoint `memory_promote_candidate_to_behavior`
+  registered in MCP stdio + dispatch + tool-registry.
+- **NAME COLLISION**: promote refuses to silently replace an active
+  rule with the same name unless `overwrite=true` is explicit.
+- **SCHEMA**: `rule_text_override` and `rationale` capped at 2000 chars
+  so a 100KB injection can't bloat the envelope.
+- **PATTERN COVERAGE**: added em-dash + en-dash to Russian opener,
+  added first-person fact-evidence opener (`я буквально`,
+  `я только что`, `i literally`), tilde expansion for transcript
+  paths.
+- **LIVE VERIFICATION**: full HTTP loop validated against the running
+  service (claim → correction → candidate → promote → behavior_instruction
+  → envelope) on both `agentLight` and `copyBot` workspaces.
+
 ## 1.1.1 — 2026-05-04
 
 **Headline:** UI observatory bug fixes + demo carousel hardening. Pure

@@ -53,6 +53,7 @@ from agent_memory_lite.mcp.stdio_handlers_review import (
     _handle_list_candidates,
     _handle_list_maintenance_events,
     _handle_promote_candidate,
+    _handle_promote_candidate_to_behavior,
     _handle_reject_candidate,
     _handle_resolve_maintenance_event,
 )
@@ -84,6 +85,7 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_ingest_file": _handle_ingest_file,
     "memory_list_candidates": _handle_list_candidates,
     "memory_promote_candidate": _handle_promote_candidate,
+    "memory_promote_candidate_to_behavior": _handle_promote_candidate_to_behavior,
     "memory_reject_candidate": _handle_reject_candidate,
     "memory_list_maintenance_events": _handle_list_maintenance_events,
     "memory_resolve_maintenance_event": _handle_resolve_maintenance_event,

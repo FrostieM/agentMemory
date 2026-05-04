@@ -56,6 +56,58 @@ def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _handle_promote_candidate_to_behavior(args: dict[str, Any]) -> dict[str, Any]:
+    """v1.10 MCP tool: promote a CORRECTION candidate to a behavior_instruction.
+
+    Mirrors the HTTP route ``/memory/promote_candidate_to_behavior`` but
+    runs locally against the runtime connection so MCP-only deployments
+    can complete the correction loop without standing up the HTTP service.
+    """
+    from agent_memory_lite.ingestion.correction_promotion import (  # noqa: PLC0415
+        CorrectionPromoteInput,
+        CorrectionPromotionError,
+        promote_correction_to_behavior,
+    )
+    from agent_memory_lite.ingestion.correction_promotion_guards import (  # noqa: PLC0415
+        coerce_applies_to,
+    )
+    from agent_memory_lite.models.enums import (  # noqa: PLC0415
+        BehaviorConflictPolicy,
+        BehaviorInstructionKind,
+        BehaviorInstructionPriority,
+        BehaviorInstructionScope,
+    )
+
+    workspace_id = _workspace_from_args(args, intent="write")
+    # Use explicit None checks so a falsy-but-present "kind"=False stays
+    # an error rather than silently falling back to the default.
+    payload = CorrectionPromoteInput(
+        workspace_id=workspace_id,
+        candidate_id=str(args["candidate_id"]),
+        name=str(args["name"]),
+        rule_text_override=args.get("rule_text_override") or None,
+        rationale=str(args.get("rationale") or ""),
+        kind=BehaviorInstructionKind(args.get("kind", "operating_rule")),
+        scope=BehaviorInstructionScope(args.get("scope", "workspace")),
+        priority=BehaviorInstructionPriority(args.get("priority", "user_preference")),
+        conflict_policy=BehaviorConflictPolicy(args.get("conflict_policy", "current_user_wins")),
+        applies_to=coerce_applies_to(args.get("applies_to")),
+        decided_by=args.get("decided_by"),
+        pinned=bool(args.get("pinned", False)),
+        overwrite=bool(args.get("overwrite", False)),
+    )
+    try:
+        instruction = promote_correction_to_behavior(_runtime.db_for(workspace_id), payload)
+    except CorrectionPromotionError as exc:
+        raise ValueError(exc.detail) from exc
+    return {
+        "candidate_id": payload.candidate_id,
+        "behavior_instruction_id": instruction.id,
+        "status": "promoted",
+        "pinned": payload.pinned,
+    }
+
+
 def _handle_list_maintenance_events(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
 

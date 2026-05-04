@@ -58,6 +58,30 @@ DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_INJECT_TOKENS", "1500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_INJECT_TIMEOUT", "30.0"))
 DEFAULT_DEDUPE_TTL_SECONDS = float(os.environ.get("AGENT_MEMORY_HOOK_DEDUPE_TTL", "2.0"))
+
+# v1.10 correction capture — env defaults mirror Settings defaults.
+# Reading via os.environ keeps the hook independent of pydantic Settings
+# import latency. The Python flag is true unless explicitly set to a
+# falsy value, matching agent_memory_lite/config/settings.py defaults.
+_CORRECTION_TRUTHY = {"1", "true", "yes", "on"}
+_CORRECTION_FALSY = {"0", "false", "no", "off", "disabled"}
+
+
+def _flag_on(env_name: str, default: bool) -> bool:
+    raw = os.environ.get(env_name, "").strip().lower()
+    if raw in _CORRECTION_TRUTHY:
+        return True
+    if raw in _CORRECTION_FALSY:
+        return False
+    return default
+
+
+CORRECTION_DETECT_ENABLED = _flag_on("MEMORY_CORRECTION_DETECT_ENABLED", True)
+CORRECTION_TRANSCRIPT_READ_ENABLED = _flag_on("MEMORY_CORRECTION_TRANSCRIPT_READ_ENABLED", True)
+CORRECTION_MIN_USER_LEN = int(os.environ.get("MEMORY_CORRECTION_MIN_USER_LEN", "30"))
+CORRECTION_MIN_AGENT_LEN = int(os.environ.get("MEMORY_CORRECTION_MIN_AGENT_LEN", "50"))
+CORRECTION_MIN_CONFIDENCE = float(os.environ.get("MEMORY_CORRECTION_MIN_CONFIDENCE", "0.5"))
+CORRECTION_PAIR_WINDOW_MIN = int(os.environ.get("MEMORY_CORRECTION_PAIR_WINDOW_MIN", "30"))
 DEFAULT_REGISTRY = (
     Path(os.environ["MEMORY_WORKSPACES_FILE"])
     if os.environ.get("MEMORY_WORKSPACES_FILE")
@@ -213,6 +237,137 @@ def _ensure_registry_entry(*, workspace_id: str, db_path: Path, vector_path: Pat
         return
 
 
+def _maybe_capture_correction(
+    *,
+    event: dict[str, object],
+    workspace: str,
+    db_path: str | None,
+    vector_path: str | None,
+    user_prompt: str,
+) -> None:
+    """Best-effort: detect agent-claim-corrected-by-user pattern and ingest pair.
+
+    Read the Claude Code transcript JSONL referenced by ``event``,
+    locate the most recent assistant text turn within
+    ``MEMORY_CORRECTION_PAIR_WINDOW_MIN`` minutes, run the correction
+    heuristic against (claim, current_prompt). On match, POST two
+    `/memory/ingest_episode` calls — first the agent claim, then the
+    user correction with `metadata.correction_target_episode_id` set
+    so the server-side CorrectionExtractor can pair them.
+
+    Failures (missing transcript_path, parse error, network, server
+    rejection) are silently swallowed; the hook continues to its
+    normal context-injection path.
+    """
+    transcript_path = event.get("transcript_path")
+    if not transcript_path:
+        return
+    if len(user_prompt) < CORRECTION_MIN_USER_LEN:
+        return
+
+    # Lazy import — module is in scripts/, sibling to this hook.
+    try:
+        from transcript_pair_extractor import find_last_assistant_text  # noqa: PLC0415
+    except ImportError:
+        try:
+            from scripts.transcript_pair_extractor import (  # noqa: PLC0415
+                find_last_assistant_text,
+            )
+        except ImportError:
+            return
+
+    turn = find_last_assistant_text(str(transcript_path), window_minutes=CORRECTION_PAIR_WINDOW_MIN)
+    if turn is None or len(turn.text) < CORRECTION_MIN_AGENT_LEN:
+        return
+
+    # Lazy import correction patterns from the package — costs ~30ms
+    # cold but only when there's actually a recent assistant turn to
+    # check, which is rare for non-conversational prompts.
+    try:
+        from agent_memory_lite.extraction.correction_patterns import (  # noqa: PLC0415
+            match_correction,
+        )
+    except ImportError:
+        return
+
+    match = match_correction(
+        user_prompt,
+        min_user_len=CORRECTION_MIN_USER_LEN,
+        min_confidence=CORRECTION_MIN_CONFIDENCE,
+    )
+    if not match.matched:
+        return
+
+    headers: dict[str, str] = {}
+    if db_path:
+        headers["X-Memory-DB-Path"] = db_path
+    if vector_path:
+        headers["X-Memory-Vector-Path"] = vector_path
+    session_id = str(event.get("session_id") or "")
+
+    # Step 1: ingest the agent claim.
+    # We set both the legacy ``metadata.kind`` (for any pre-1.10 reader)
+    # AND the namespaced ``metadata.correction_role`` so v1.10's
+    # CorrectionExtractor can disambiguate "this episode is a v1.10
+    # correction-pair claim" from any other future use of metadata.kind.
+    claim_payload = {
+        "workspace_id": workspace,
+        "session_id": session_id or None,
+        "source_type": "agent_action",
+        "raw_text": turn.text,
+        "trust_level": "agent_observed",
+        "importance": 0.5,
+        "metadata": {
+            "kind": "correction_target",
+            "correction_role": "claim",
+            "claude_code_uuid": turn.uuid,
+            "claude_code_timestamp": turn.timestamp,
+        },
+    }
+    try:
+        resp = httpx.post(
+            f"{DEFAULT_BASE}/memory/ingest_episode",
+            json=claim_payload,
+            headers=headers,
+            timeout=5.0,
+        )
+    except (httpx.ConnectError, httpx.HTTPError):
+        return
+    if resp.status_code >= 400:
+        return
+    try:
+        claim_episode_id = str(resp.json().get("episode_id") or "")
+    except (json.JSONDecodeError, ValueError):
+        return
+    if not claim_episode_id:
+        return
+
+    # Step 2: ingest the user correction with cross-reference.
+    correction_payload = {
+        "workspace_id": workspace,
+        "session_id": session_id or None,
+        "source_type": "user_message",
+        "raw_text": user_prompt,
+        "trust_level": "user_asserted",
+        "importance": match.confidence,
+        "metadata": {
+            "kind": "user_correction",
+            "correction_role": "user_correction",
+            "correction_target_episode_id": claim_episode_id,
+            "matched_opener": match.opener_match,
+            "matched_body": match.body_match,
+            "match_confidence": match.confidence,
+        },
+    }
+    with contextlib.suppress(httpx.ConnectError, httpx.HTTPError):
+        httpx.post(
+            f"{DEFAULT_BASE}/memory/ingest_episode",
+            json=correction_payload,
+            headers=headers,
+            timeout=5.0,
+        )
+
+
 def _read_event() -> dict[str, object]:
     raw = sys.stdin.read()
     if not raw.strip():
@@ -299,7 +454,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_known_args()[0]
 
 
-def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 - linear hook flow with explicit early returns per failure mode
+def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early returns per failure mode
     args = _parse_args()
     event = _read_event()
     prompt = str(event.get("prompt", "")).strip()
@@ -394,6 +549,28 @@ def main() -> int:  # noqa: PLR0911, PLR0912, PLR0915 - linear hook flow with ex
 
     if not _should_emit_context(event, workspace=workspace, prompt=prompt):
         return 0
+
+    # v1.10 correction capture (best-effort, never raises). Runs AFTER
+    # the dedupe gate so a replayed identical prompt within the dedupe
+    # TTL doesn't double-ingest the same (claim, correction) pair —
+    # without this ordering, the same correction could be captured
+    # twice and produce two near-duplicate memory_candidates. The
+    # capture writes two episodes (claim + correction); the
+    # CorrectionExtractor on the server side runs during
+    # ingest_episode and proposes a memory_candidate(kind=CORRECTION)
+    # for review.
+    if CORRECTION_DETECT_ENABLED and CORRECTION_TRANSCRIPT_READ_ENABLED:
+        try:
+            _maybe_capture_correction(
+                event=event,
+                workspace=workspace,
+                db_path=db_path,
+                vector_path=vector_path,
+                user_prompt=prompt,
+            )
+        except Exception:
+            # capture is opportunistic; never break the hook on failure
+            pass
 
     payload: dict[str, object] = {
         "workspace_id": workspace,

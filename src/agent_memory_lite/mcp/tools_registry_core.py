@@ -18,6 +18,7 @@ from agent_memory_lite.mcp.tools_review import (
     memory_list_candidates,
     memory_list_maintenance_events,
     memory_promote_candidate,
+    memory_promote_candidate_to_behavior,
     memory_reject_candidate,
     memory_resolve_maintenance_event,
 )
@@ -57,6 +58,13 @@ CORE_TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_promote_candidate",
         description="Promote a reviewed memory candidate into its explicit target table.",
         handler=memory_promote_candidate,
+    ),
+    ToolDefinition(
+        name="memory_promote_candidate_to_behavior",
+        description=(
+            "v1.10: promote a CORRECTION-kind candidate into a durable behavior_instruction."
+        ),
+        handler=memory_promote_candidate_to_behavior,
     ),
     ToolDefinition(
         name="memory_reject_candidate",

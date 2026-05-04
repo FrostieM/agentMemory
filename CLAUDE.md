@@ -234,6 +234,34 @@ low-EWMA cohort dropped 26 places; biggest faller -51 positions.
 Regression-injection: delta +1, no spurious failures. Scripts under
 `scripts/calibration/` reproduce on any post-1.4 workspace.
 
+**v1.10 correction-aware learning loop** — closes the
+"operator corrects agent → lesson dies in chat" gap:
+
+* `MEMORY_CORRECTION_DETECT_ENABLED=true` — gates the whole pipeline.
+* `MEMORY_CORRECTION_TRANSCRIPT_READ_ENABLED=true` — controls whether
+  the hook reads Claude Code's session JSONL to find the previous
+  agent claim.
+* `MEMORY_CORRECTION_MIN_USER_LEN=30` /
+  `MEMORY_CORRECTION_MIN_AGENT_LEN=50` — length floors that filter
+  trivial yes/no answers and empty claims.
+* `MEMORY_CORRECTION_MIN_CONFIDENCE=0.5` /
+  `MEMORY_CORRECTION_MAX_PER_DAY=20` /
+  `MEMORY_CORRECTION_PAIR_WINDOW_MIN=30` — heuristic threshold,
+  daily flood cap, and pair-staleness window.
+
+The hook ingests a (claim, correction) pair as two cross-referenced
+episodes; the new `CorrectionExtractor` (registered alongside
+`HeuristicExtractor` in `auto_promote._build_extractors`) emits a
+`memory_candidate(kind=CORRECTION)` for review. Operator promotes via
+`POST /memory/promote_candidate_to_behavior` — the resulting
+`behavior_instruction` (with `source_type="memory_candidate"`,
+`source_id=<candidate.id>`) lands in `<behavior_instructions>` of
+every future envelope. Trust gate intact; auto-promote stays
+forbidden. Retrospective verification corpus
+(`tests/integration/test_correction_detector_on_corpus.py`) locks
+the heuristic against the three documented corrections from the
+v1.10 design session.
+
 ## Operations
 
 For day-to-day operator workflow — upgrade procedure, service
@@ -394,6 +422,12 @@ Apply these rules every session. They are not optional.
     `<active_decisions>` or `<behavior_instructions>` with high trust.
 28. **Never store secrets**. The redaction layer catches common shapes; do not
     deliberately defeat it.
+29. **Review correction candidates promptly.** When the operator corrects an
+    agent claim, the v1.10 correction-aware loop captures the pair and emits a
+    `memory_candidate(kind=correction)` for review. Surface in `<pending_review>`
+    with a hint pointing at `/memory/promote_candidate_to_behavior`. Promote
+    with one click to land a durable `behavior_instruction`; reject preserves
+    the candidate as audit evidence. The trust gate prevents auto-promote.
 
 ## API surface
 
@@ -550,6 +584,46 @@ decisions or rules until reviewed.
 Promotion only supports candidates that map to explicit durable targets
 (`decision`, `procedural_rule`, `core_memory`). Rejection preserves weak or
 wrong candidates as audit evidence.
+
+### POST /memory/promote_candidate_to_behavior (write - v1.10 correction → behavior)
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "candidate_id": "cand_...",
+  "name": "verify-timestamps-before-claiming",
+  "rule_text_override": "Filter audit_log by created_at > release_date before claiming a feature is dormant.",
+  "kind": "operating_rule",
+  "scope": "workspace",
+  "priority": "user_preference",
+  "conflict_policy": "current_user_wins",
+  "decided_by": "operator",
+  "pinned": false
+}
+```
+
+The same operation is exposed as the MCP tool
+``memory_promote_candidate_to_behavior`` for MCP-only deployments.
+
+When ``pinned=true``, the freshly-created behavior_instruction is
+also pinned so it rides every active context envelope regardless of
+query relevance — useful for critical operating rules where missing
+the rule on a noisy query would be the worst-case outcome.
+
+Promotes a `memory_candidate(kind=correction)` to a durable
+`behavior_instruction`. Only candidates with `kind=correction` are
+eligible; the endpoint returns 409 for any other kind. The created
+behavior_instruction carries `source_type="memory_candidate"` and
+`source_id=<candidate.id>` so the lineage from operator pushback →
+durable rule is auditable.
+
+Correction candidates appear in the `<pending_review>` envelope
+block alongside decision and insight candidates, with a hint pointing
+at this endpoint. They are produced automatically by the v1.10
+correction-aware learning loop: when a user prompt corrects the
+agent's previous claim, the UserPromptSubmit hook captures the pair
+and the `CorrectionExtractor` proposes a one-line behavior fix for
+operator review.
 
 ### POST /memory/write_decision (write - every architectural choice)
 

@@ -41,6 +41,34 @@ REVIEW_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
+        name="memory_promote_candidate_to_behavior",
+        description=(
+            "Promote a CORRECTION-kind memory_candidate into a durable "
+            "behavior_instruction. v1.10 correction-aware learning loop: "
+            "when the operator corrected the agent in chat, the hook + "
+            "extractor produced a candidate; this tool turns it into a "
+            "behavior rule that surfaces in every future envelope."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "candidate_id": {"type": "string", "minLength": 1},
+                "name": {"type": "string", "minLength": 1},
+                "rule_text_override": {"type": "string"},
+                "rationale": {"type": "string"},
+                "kind": {"type": "string"},
+                "scope": {"type": "string"},
+                "priority": {"type": "string"},
+                "conflict_policy": {"type": "string"},
+                "applies_to": {"type": "array", "items": {"type": "string"}},
+                "decided_by": {"type": "string"},
+                "pinned": {"type": "boolean", "default": False},
+            },
+            "required": ["candidate_id", "name"],
+        },
+    ),
+    types.Tool(
         name="memory_list_maintenance_events",
         description="List maintenance events that affect memory substrate trust.",
         inputSchema={

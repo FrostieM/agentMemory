@@ -74,18 +74,38 @@ def ingest_episode(
     if embedding_provider is not None:
         pin_or_check(conn, episode_in.workspace_id, embedding_provider)
 
+    # v1.10: bypass embedding dedup for episodes that are part of a
+    # correction pair. The pair is meaningful as an EVENT (the user
+    # corrected the agent again) even when the text is near-identical
+    # to a previous correction; deduping here would silently drop the
+    # second candidate and the operator never sees the recurring
+    # mistake. Both the claim ("correction_role"="claim") and the
+    # follow-up ("correction_role"="user_correction") get the bypass.
+    metadata = episode_in.metadata or {}
+    correction_role = str(metadata.get("correction_role") or "")
+    legacy_kind = str(metadata.get("kind") or "")
+    is_correction_pair = correction_role in {"claim", "user_correction"} or legacy_kind in {
+        "correction_target",
+        "user_correction",
+    }
+
     # Embedding-based dedup: opt-in via MEMORY_EPISODE_DEDUP_ENABLED.
     # When the new redacted text near-matches an existing chunk in
     # the same workspace, return that chunk's episode rather than
     # writing a low-information duplicate. Skipped when the
-    # provider/store/settings aren't both available.
-    duplicate = maybe_dedup(
-        conn,
-        workspace_id=episode_in.workspace_id,
-        redacted_text=redacted.text,
-        embedding_provider=embedding_provider,
-        vector_store=vector_store,
-        settings=auto_promote_settings,
+    # provider/store/settings aren't both available, or when the
+    # episode is part of a v1.10 correction pair (see above).
+    duplicate = (
+        None
+        if is_correction_pair
+        else maybe_dedup(
+            conn,
+            workspace_id=episode_in.workspace_id,
+            redacted_text=redacted.text,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+            settings=auto_promote_settings,
+        )
     )
     if duplicate is not None and duplicate.episode_id:
         existing_episode = get_episode(conn, duplicate.episode_id)

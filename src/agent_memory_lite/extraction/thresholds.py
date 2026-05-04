@@ -12,7 +12,11 @@ KIND_THRESHOLDS: dict[MemoryCandidateKind, tuple[float, float]] = {
     MemoryCandidateKind.PROJECT_FACT: (0.70, 0.50),
     MemoryCandidateKind.TASK_STATE: (0.70, 0.50),
     MemoryCandidateKind.RELATIONSHIP: (0.70, 0.50),
-    MemoryCandidateKind.CORRECTION: (0.85, 0.70),
+    # CORRECTION lowered in v1.10: heuristic correction-detector emits in
+    # 0.5..0.85 range based on regex specificity (opener vs body vs both).
+    # Trust gate prevents auto-promote regardless of threshold; the
+    # candidates only need to be reviewable in <pending_review>.
+    MemoryCandidateKind.CORRECTION: (0.5, 0.5),
     MemoryCandidateKind.BUG: (0.70, 0.50),
     MemoryCandidateKind.FIX: (0.70, 0.50),
 }
