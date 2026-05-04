@@ -35,18 +35,19 @@ as the retrospective verification corpus. All three match in the
 
 **Tests added:** 25 pattern unit tests (incl. 4 hypothesis
 properties), 12 extractor tests (incl. throttle, workspace
-isolation, cross-workspace), 11 transcript-extractor tests, 7
-promote-route e2e tests (incl. pinned), 2 full-loop integration
-tests, 3 retrospective verification tests, 3 parity invariant
-tests, 4 MCP wire-up tests, 1 live-transcript test = **68 new
-tests**. Crash-test grows to 27 phases with
-`p26_v110_correction`.
+isolation, cross-workspace), 11 transcript-extractor tests, 9
+promote-route e2e tests (incl. pinned + overwrite + name-collision +
+wrong-kind 409 + length cap), 2 full-loop integration tests, 3
+retrospective verification tests, 3 parity invariant tests, 4 MCP
+wire-up tests, 1 live-transcript test = **70 new tests**.
+Crash-test grows to 27 phases with `p26_v110_correction`.
 
-**Files added (7 source + 7 test):**
+**Files added (8 source + 7 test):**
 - `src/agent_memory_lite/extraction/correction_patterns.py`
 - `src/agent_memory_lite/extraction/correction_extractor.py`
 - `src/agent_memory_lite/extraction/correction_distill.py`
 - `src/agent_memory_lite/ingestion/correction_promotion.py`
+- `src/agent_memory_lite/ingestion/correction_promotion_guards.py`
 - `src/agent_memory_lite/api/routes/promote_to_behavior.py`
 - `src/agent_memory_lite/api/schemas/promote_to_behavior.py`
 - `scripts/transcript_pair_extractor.py`

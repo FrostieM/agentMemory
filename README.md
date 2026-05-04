@@ -15,6 +15,15 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
+> **Latest release: v1.2.0 — correction-aware learning loop.** When the
+> operator corrects an agent claim, the UserPromptSubmit hook captures
+> the (claim, correction) pair, the `CorrectionExtractor` queues a
+> `memory_candidate(kind=correction)`, and one `POST
+> /memory/promote_candidate_to_behavior` click lands a durable
+> `behavior_instruction` that rides every future envelope. See
+> [`CHANGELOG.md`](CHANGELOG.md) and [`docs/V1_2_0.md`](docs/V1_2_0.md)
+> for the operator runbook.
+
 ## What it does — in one picture
 
 ```

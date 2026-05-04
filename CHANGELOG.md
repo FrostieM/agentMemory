@@ -20,6 +20,10 @@ operator action — correcting the agent — turning *"memory shapes
 behavior via operator-trace"* from a README claim into an actual
 mechanism.
 
+See [`docs/V1_2_0.md`](docs/V1_2_0.md) for the operator runbook,
+heuristic patterns, env-flag map, episode-dedup bypass rationale, and
+the full validation matrix.
+
 ### Architecture (three stages, all behind one master flag)
 
 1. **Capture** (`scripts/inject_memory_context.py` UserPromptSubmit hook)
@@ -65,6 +69,12 @@ mechanism.
 - `src/agent_memory_lite/ingestion/correction_promotion.py` —
   shared service used by both the HTTP route and the MCP stdio
   handler so promotion semantics are identical across surfaces.
+- `src/agent_memory_lite/ingestion/correction_promotion_guards.py` —
+  guard helpers (`guard_name_taken`, `coerce_applies_to`,
+  `CorrectionPromotionError`) split out so the service module stays
+  under the 150-SLOC ceiling. The name-collision guard is what makes
+  `overwrite=False` (the default) refuse to silently clobber an
+  existing same-name behavior_instruction.
 - `src/agent_memory_lite/api/routes/promote_to_behavior.py` +
   `api/schemas/promote_to_behavior.py` — new endpoint
   `POST /memory/promote_candidate_to_behavior`.
@@ -78,7 +88,10 @@ mechanism.
   including hypothesis property tests).
 - `tests/unit/extraction/test_correction_extractor.py` (8 tests).
 - `tests/unit/scripts/test_transcript_pair_extractor.py` (11 tests).
-- `tests/e2e/test_promote_to_behavior.py` (6 route round-trip tests).
+- `tests/e2e/test_promote_to_behavior.py` (9 route round-trip tests
+  covering happy path, `pinned=true`, `overwrite=true` replacement,
+  name-collision 409, wrong-kind 409, and the
+  `rule_text_override` length cap).
 - `tests/integration/test_correction_loop_e2e.py` (full pipeline +
   flag-off check).
 - `tests/integration/test_correction_detector_on_corpus.py` —

@@ -64,6 +64,7 @@ REVIEW_TOOLS: list[types.Tool] = [
                 "applies_to": {"type": "array", "items": {"type": "string"}},
                 "decided_by": {"type": "string"},
                 "pinned": {"type": "boolean", "default": False},
+                "overwrite": {"type": "boolean", "default": False},
             },
             "required": ["candidate_id", "name"],
         },

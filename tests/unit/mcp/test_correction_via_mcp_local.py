@@ -123,3 +123,34 @@ def test_mcp_promote_to_behavior_tool_registered() -> None:
     assert name in {t.name for t in CORE_TOOLS}
     assert name in {t.name for t in ALL_TOOLS}
     assert name in _HANDLERS
+
+
+def test_mcp_promote_to_behavior_schema_exposes_full_field_set() -> None:
+    """Lock the stdio inputSchema for memory_promote_candidate_to_behavior
+    so every field the handler reads is also declared in the schema.
+
+    Regression: in v1.2.0 audit, ``overwrite`` was being read by the
+    handler at ``tools_review.memory_promote_candidate_to_behavior`` but
+    was missing from ``stdio_tools_review.REVIEW_TOOLS`` — stdio clients
+    couldn't pass the flag. This test prevents the gap from coming back.
+    """
+    name = "memory_promote_candidate_to_behavior"
+    tool = next(t for t in ALL_TOOLS if t.name == name)
+    properties = tool.inputSchema["properties"]
+    expected = {
+        "workspace_id",
+        "candidate_id",
+        "name",
+        "rule_text_override",
+        "rationale",
+        "kind",
+        "scope",
+        "priority",
+        "conflict_policy",
+        "applies_to",
+        "decided_by",
+        "pinned",
+        "overwrite",
+    }
+    missing = expected - properties.keys()
+    assert not missing, f"stdio schema is missing fields: {sorted(missing)}"

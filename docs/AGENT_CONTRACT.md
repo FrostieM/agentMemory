@@ -300,22 +300,39 @@ wrong candidates as audit evidence.
   "candidate_id": "cand_...",
   "name": "verify-timestamps-before-claiming",
   "rule_text_override": "Filter audit_log by created_at > release_date before claiming a feature is dormant.",
+  "rationale": "Three confident-but-wrong claims in one session; lock the lesson.",
   "kind": "operating_rule",
   "scope": "workspace",
   "priority": "user_preference",
   "conflict_policy": "current_user_wins",
+  "applies_to": ["audit_log", "release-date checks"],
   "decided_by": "operator",
-  "pinned": false
+  "pinned": false,
+  "overwrite": false
 }
 ```
 
 The same operation is exposed as the MCP tool
 ``memory_promote_candidate_to_behavior`` for MCP-only deployments.
 
+`rule_text_override` is bounded at `max_length=2000` so a runaway
+override can't bloat every future envelope. `rationale` carries the
+operator's reason for the rule and is stored on the
+behavior_instruction for audit. `applies_to` is an optional list of
+free-form tags (file paths, subsystems, action types) that the agent
+can match against when ranking which behavior_instructions belong in
+the current envelope.
+
 When ``pinned=true``, the freshly-created behavior_instruction is
 also pinned so it rides every active context envelope regardless of
 query relevance — useful for critical operating rules where missing
 the rule on a noisy query would be the worst-case outcome.
+
+When ``overwrite=false`` (the default), promotion refuses to replace
+an existing active behavior_instruction with the same name in the
+workspace and returns 409. Pass ``overwrite=true`` to deliberately
+replace; the previous instruction is archived (not deleted) so the
+audit lineage stays intact.
 
 Promotes a `memory_candidate(kind=correction)` to a durable
 `behavior_instruction`. Only candidates with `kind=correction` are
