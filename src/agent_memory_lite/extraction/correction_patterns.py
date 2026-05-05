@@ -73,6 +73,19 @@ LIKELY_AGREEMENT = re.compile(
     r"\.?\s*$"
 )
 
+# Claude Code wraps tool-output and runtime notifications inside XML-style
+# tags before they reach the prompt: ``<task-notification>...``,
+# ``<command-name>...``, ``<ide-selection>...``, ``<system-reminder>...``,
+# ``<command-message>...``. These are NOT user corrections — when the tag
+# is the FIRST non-whitespace token, treat the whole message as a system
+# block and skip correction detection. Live regression observed in
+# copyBot 2026-05-05: 6 false-positive ``Verify before claiming:
+# <task-notification>`` candidates from a single afternoon. Single-line
+# user prompts that legitimately mention a tag inline (e.g. "use the
+# <task-notification> markup") are not affected because the regex requires
+# the tag to be at message start.
+SYSTEM_BLOCK_OPENER = re.compile(r"^\s*<[a-z][a-z0-9-]*>", re.IGNORECASE)
+
 
 @dataclass(frozen=True, slots=True)
 class CorrectionMatch:
@@ -108,6 +121,13 @@ def match_correction(
     """
     text = user_message or ""
     if len(text.strip()) < min_user_len:
+        return CorrectionMatch(False, 0.0, None, None, False)
+
+    # Reject Claude Code system-block wrappers (1.2.2 fix): a
+    # ``<task-notification>...`` style message is runtime-injected, never
+    # a user correction. Without this filter the body of the wrapped
+    # text leaks into the heuristic and produces noise candidates.
+    if SYSTEM_BLOCK_OPENER.match(text):
         return CorrectionMatch(False, 0.0, None, None, False)
 
     if LIKELY_AGREEMENT.search(text):

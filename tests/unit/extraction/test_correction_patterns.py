@@ -123,6 +123,63 @@ def test_agreement_followed_by_directive_does_not_filter() -> None:
     assert m.opener_match is not None
 
 
+# ---------- system-block filter (1.2.2 fix) ---------------------------------
+
+
+SYSTEM_BLOCK_FALSE_POSITIVES = [
+    pytest.param(
+        "<task-notification>The user just toggled the run status to OFF</task-notification>",
+        id="task-notification",
+    ),
+    pytest.param(
+        "<command-name>npm test</command-name>\n<command-message>npm test</command-message>",
+        id="command-name",
+    ),
+    pytest.param(
+        "<ide-selection>The user selected lines 145-160 in src/foo.py</ide-selection>",
+        id="ide-selection",
+    ),
+    pytest.param(
+        "<system-reminder>This is a recurring system check</system-reminder>",
+        id="system-reminder",
+    ),
+    pytest.param(
+        # Even when the body matches a real correction phrase, a leading
+        # system-block tag must veto: the body belongs to the runtime
+        # injection, not to the user.
+        "<task-notification>нет, это не так — тут что-то не работает в продакшене</task-notification>",
+        id="system-block-with-correction-body-inside",
+    ),
+]
+
+
+@pytest.mark.parametrize("text", SYSTEM_BLOCK_FALSE_POSITIVES)
+def test_system_blocks_dont_produce_corrections(text: str) -> None:
+    """1.2.2 lock: ``<task-notification>...`` style runtime injections
+    must NOT register as corrections, even when their body contains
+    contradiction phrases. Live regression observed in copyBot
+    2026-05-05: 6 noise candidates ``Verify before claiming:
+    <task-notification>`` from a single afternoon. Without this filter
+    the body bleeds through the heuristic and pollutes the operator
+    review queue."""
+    m = match_correction(text)
+    assert not m.matched
+    assert m.confidence == 0.0
+    assert m.opener_match is None
+    assert m.body_match is None
+
+
+def test_system_block_filter_does_not_break_inline_tag_mention() -> None:
+    """A user message that mentions a tag inline (not at message start)
+    should not be filtered. Operators sometimes write things like
+    ``нет, MCP формат <task-notification> сломан`` — that's a real
+    correction with a tag mid-text, must still match."""
+    text = "нет, MCP формат <task-notification> работает не так как ты думаешь"
+    m = match_correction(text)
+    assert m.matched, "inline tag mention should not trigger system-block filter"
+    assert m.opener_match is not None
+
+
 # ---------- length thresholds ------------------------------------------------
 
 

@@ -4,6 +4,49 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.2.2 — 2026-05-05
+
+Patch release — closes a heuristic false-positive in the v1.10
+correction loop that surfaced after a day of real-world use.
+
+### Fixed
+
+- **Correction heuristic produced noise on Claude Code system blocks**
+  (`extraction/correction_patterns.py`). Live regression observed
+  in copyBot 2026-05-05: a single afternoon produced 6 candidates
+  with subject `Verify before claiming: <task-notification>` —
+  Claude Code wraps runtime tool/notification output in
+  `<task-notification>...`, `<command-name>...`, `<ide-selection>...`,
+  `<system-reminder>...`, `<command-message>...` tags before they
+  reach the prompt. The heuristic was matching on text inside these
+  wrappers as if it were a user correction. Added
+  `SYSTEM_BLOCK_OPENER` regex; `match_correction()` short-circuits
+  to `matched=False` when the message starts with `<tag>`. Inline
+  tag mentions (e.g. "use the `<task-notification>` markup") are
+  unaffected because the regex requires the tag at message start.
+
+### Added
+
+- `tests/unit/extraction/test_correction_patterns.py` — 6 new tests:
+  5 system-block false-positive cases (`task-notification`,
+  `command-name`, `ide-selection`, `system-reminder`, system-block
+  with correction body inside) all asserting no match, plus 1
+  positive test that an inline tag mention in a real correction
+  still matches.
+
+### Notes
+
+- This is a heuristic-only change. The same noise also appeared in
+  copyBot's queue from a SEPARATE path: the LLM (Ollama) extractor
+  produced 3 CORRECTION-kind candidates from an `agent_action`
+  episode (Phase 7.A.1 implementation report) by reading audit-
+  findings phrasing as "fixed issues". That separate path is NOT
+  covered by this patch — see roadmap for future v1.x work to
+  constrain LLM-extractor's CORRECTION semantics.
+- Operator playbook for cleaning the existing copyBot queue: reject
+  all 9 pending CORRECTION candidates (none are real corrections of
+  agent claims), restart HTTP service + MCP stdio to pick up 1.2.2.
+
 ## 1.2.1 — 2026-05-04
 
 Hardening patch on top of 1.2.0. A four-AI-agent post-release audit
