@@ -12,9 +12,13 @@ re-exported here so existing imports keep working.
 from __future__ import annotations
 
 from agent_memory_lite.bootstrap.project_memory_concepts import vocabulary_concepts
+from agent_memory_lite.bootstrap.project_memory_seed_behavior import (
+    link_capability_discipline_instruction,
+)
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentSkillIn
 
 __all__ = [
+    "link_capability_discipline_instruction",
     "memory_bootstrap_playbook",
     "memory_population_skill",
     "vocabulary_concepts",
@@ -105,8 +109,7 @@ def memory_bootstrap_playbook(workspace_id: str, source_episode_id: str | None) 
             "Run audit, hygiene, and MCP smoke checks after setup, migration, or restart",
         ],
         success_criteria=[
-            "No behavior instruction, language preference, communication style, or personality rule was seeded",
-            "No project-specific role or preference was seeded",
+            "Seed wrote only generic discipline rules (e.g. capability linkage); no language preference, communication style, personality, or project-specific role was seeded",
             "No default workspace rows are created in project mode",
             "Important work maps to first-class memory objects instead of raw episodes only",
             "Audit, hygiene, and MCP smoke checks can prove the memory surface is usable",

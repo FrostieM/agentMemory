@@ -11,14 +11,16 @@ that writes them and assembles the result.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent_memory_lite.bootstrap.project_memory_seed_templates import (
+    link_capability_discipline_instruction,
     memory_bootstrap_playbook,
     memory_population_skill,
     vocabulary_concepts,
 )
+from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
 from agent_memory_lite.ingestion.capability_writer import (
     upsert_agent_playbook,
     upsert_agent_skill,
@@ -43,8 +45,15 @@ class ProjectMemorySeedResult:
     skills: list[SeedObjectRef]
     playbooks: list[SeedObjectRef]
     concepts: list[SeedObjectRef]
+    # 1.2.3: seed now writes one generic-discipline behavior_instruction
+    # (capability-link rule). Default empty list keeps backward-compatible
+    # construction for any caller that doesn't set it.
+    behavior_instructions: list[SeedObjectRef] = field(default_factory=list)
     roles_written: int = 0
-    behavior_instructions_written: int = 0
+
+    @property
+    def behavior_instructions_written(self) -> int:
+        return len(self.behavior_instructions)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +62,7 @@ class ProjectMemorySeedResult:
             "skills": [item.to_dict() for item in self.skills],
             "playbooks": [item.to_dict() for item in self.playbooks],
             "concepts": [item.to_dict() for item in self.concepts],
+            "behavior_instructions": [item.to_dict() for item in self.behavior_instructions],
             "roles_written": self.roles_written,
             "behavior_instructions_written": self.behavior_instructions_written,
         }
@@ -70,9 +80,11 @@ def seed_neutral_project_memory(
     """Seed neutral memory-population helpers into a project DB.
 
     The seed is idempotent because all written objects use upsert semantics on
-    `(workspace_id, name)`. It deliberately avoids behavior instructions and
-    roles so it cannot impose language, style, personality, or a project role on
-    future agents.
+    `(workspace_id, name)`. It writes ONLY generic discipline objects:
+    one skill, one playbook, vocabulary concepts, and (added 1.2.3) one
+    project-AGNOSTIC behavior_instruction enforcing capability linkage on
+    every decision/theory write. It deliberately avoids project-specific
+    roles, language preferences, communication style, or personality rules.
     """
 
     skill = upsert_agent_skill(conn, memory_population_skill(workspace_id, source_episode_id))
@@ -83,6 +95,9 @@ def seed_neutral_project_memory(
         upsert_domain_concept(conn, payload)
         for payload in vocabulary_concepts(workspace_id, source_episode_id)
     ]
+    discipline_bi = upsert_behavior_instruction(
+        conn, link_capability_discipline_instruction(workspace_id, source_episode_id)
+    )
 
     return ProjectMemorySeedResult(
         workspace_id=workspace_id,
@@ -94,5 +109,10 @@ def seed_neutral_project_memory(
         concepts=[
             SeedObjectRef(kind="domain_concept", id=concept.id, name=concept.name)
             for concept in concepts
+        ],
+        behavior_instructions=[
+            SeedObjectRef(
+                kind="behavior_instruction", id=discipline_bi.id, name=discipline_bi.name
+            ),
         ],
     )

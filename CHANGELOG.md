@@ -4,6 +4,80 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.2.3 — 2026-05-05
+
+Closes the structural cause of the "decisions and theories without
+capability link" debt observed across long-running workspaces (copyBot
+hit 53 missing-link findings on ~150 research objects in a week despite
+having 12 roles + 35 skills + 15 playbooks defined). The root cause was
+discipline drift: agents wrote decisions/theories but skipped the
+follow-up `memory_link_capability` call. The fix is structural — the
+neutral project-memory seed now writes one project-AGNOSTIC discipline
+`behavior_instruction` that lands in every workspace's
+`<behavior_instructions>` envelope, so the next agent reads the rule
+before the first write of the session.
+
+### Added
+
+- `src/agent_memory_lite/bootstrap/project_memory_seed_behavior.py` —
+  new module hosting `link_capability_discipline_instruction()`. Split
+  out of `project_memory_seed_templates.py` to keep both files under
+  the 150-SLOC ceiling and to make the "where to add new generic
+  discipline rules" location explicit. Each rule must be project-
+  AGNOSTIC (no language, personality, or project-specific behavior);
+  project-specific behavior_instructions remain operator-driven via
+  `memory_upsert_behavior_instruction`.
+- `link_capability_discipline_instruction(workspace_id, source_episode_id)`
+  factory returns a `BehaviorInstructionIn` with:
+  - name: "Link capability after every decision and theory write"
+  - kind: `operating_rule`
+  - scope: `workspace`
+  - priority: `user_preference`
+  - conflict_policy: `current_user_wins` (operator can always override)
+  - applies_to: `[memory_write_decision, memory_write_theory,
+    memory_add_theory_evidence, memory_write_experiment]`
+  - source_type: `seed_bootstrap`
+- 2 new tests in `tests/test_project_memory_seed.py` plus updates to
+  the 2 existing tests so the seed write of one BI is locked in.
+
+### Changed
+
+- `src/agent_memory_lite/bootstrap/project_memory_seed.py` —
+  `seed_neutral_project_memory()` now calls
+  `upsert_behavior_instruction()` after seeding skills/playbook/concepts.
+  `ProjectMemorySeedResult.behavior_instructions` is a new list field;
+  `behavior_instructions_written` is now a derived property
+  (kept for backward-compat with operators reading the JSON output).
+- `docs/AGENT_CONTRACT.md` — doctrine clarified: seed may write
+  generic discipline `behavior_instructions`; project-specific
+  language / style / personality rules remain operator-driven. Block
+  re-injected into all five contract surfaces (agent-mem CLAUDE.md,
+  AGENTS.md; copyBot CLAUDE.md, AGENTS.md; `~/.claude/CLAUDE.md`).
+- `bootstrap/project_memory_seed_templates.py::memory_bootstrap_playbook` —
+  one of its `success_criteria` lines was "No behavior instruction
+  was seeded"; refined to reflect the new doctrine.
+
+### Notes
+
+- **Seed is idempotent.** Re-running `setup_agent.py --project <path>`
+  on an existing workspace does NOT duplicate the BI; upsert keys on
+  `(workspace_id, name)`. Existing manually-created behavior_instructions
+  in the workspace are untouched.
+- **Existing workspaces don't auto-upgrade.** The new BI lands only
+  when the seed runs (next `setup_agent.py --project ...` without
+  `--no-seed-memory-bootstrap`, OR a fresh project init). Live in
+  copyBot 2026-05-05: ran the seed against the production memory.db
+  → BI inserted at `beh_758aa5cdd7987304`,
+  hygiene findings 105 → 43 (-59%), quality_gate findings 93 → 32
+  (-66%), all 9 noise CORRECTION candidates rejected, 60 important
+  decisions backfilled with provenance, 57 capability_links applied
+  via auto-triage.
+- **Operator override remains supreme.** A workspace that wants
+  stricter or laxer discipline rules can `memory_archive` this BI
+  or upsert a replacement; `current_user_wins` policy guarantees
+  any explicit operator instruction in the same session takes
+  precedence.
+
 ## 1.2.2 — 2026-05-05
 
 Patch release — closes a heuristic false-positive in the v1.10

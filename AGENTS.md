@@ -909,10 +909,16 @@ For a newly created local DB, setup can seed neutral memory-population helpers:
 python scripts/seed_project_memory.py --workspace <workspace_id> --db-path .agent_memory/memory.db --json
 ```
 
-This seed is only about filling memory correctly. It writes a generic skill,
-playbook, and vocabulary concepts; it must not write language preferences,
-communication style, personality, project-specific behavior, or
-`behavior_instructions`.
+This seed is about filling memory correctly. It writes a generic skill, a
+playbook, vocabulary concepts, and (added 1.2.3) one project-AGNOSTIC
+discipline `behavior_instruction` enforcing capability linkage on every
+decision/theory write — that gap was responsible for the bulk of
+`missing_capability_link` debt observed across long-running workspaces.
+The seed must NOT write language preferences, communication style,
+personality, or project-specific behavior. Only generic discipline rules
+that apply to any agent on any project belong in the seed; project-
+specific `behavior_instruction`s remain operator-driven via
+`memory_upsert_behavior_instruction`.
 
 For a detailed hygiene report and recurring watchdog:
 
