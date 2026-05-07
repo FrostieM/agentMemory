@@ -4,6 +4,157 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.2.4 — 2026-05-05
+
+Closes the Codex-vs-Claude search-rate gap observed on copyBot
+(Codex called `memory_search` 8-12× per session, Claude 0-2×) plus
+two leftover noise sources from v1.10/v1.2.3. Adds the first
+operator-facing measurement endpoint so behaviour change is verifiable
+on the next workspace day instead of hand-counted.
+
+### Added — measurement (new operator surface)
+
+- `GET /memory/telemetry?workspace_id=...&days=N` — partition
+  audit_log into search vs write buckets and return
+  `search_total`, `write_total`, `search_per_write_ratio`, `per_day`
+  list, `by_action_top` (top 15 actions). Bookkeeping events
+  (`sentinel.run_recorded`, `ui_event`) are excluded so the ratio
+  reflects real agent behaviour. Operator interpretation:
+  ratio < 0.5 → discipline gap; 0.5–1.5 → balanced; > 1.5 → search-heavy.
+- `MEMORY_AUDIT_READS=true` (new env flag, default ON) —
+  `memory_search` and `memory_get_context` routes now write a
+  lightweight `audit_log` row after responding so the telemetry
+  endpoint can count read calls. Pre-1.2.4 only writes were
+  audited; the partition was empty for the search bucket. Per-call
+  cost is microseconds; set to `false` if your workspace's
+  audit_log volume budget is tight.
+
+### Added — behavioral nudges for the agent
+
+- `bootstrap/project_memory_seed_behavior.py::search_before_write_discipline_instruction`
+  factory + `DISCIPLINE_FACTORIES` registry. The neutral seed now
+  writes a second project-AGNOSTIC discipline behavior_instruction
+  alongside the 1.2.3 capability-link rule:
+  - **"Search before write — auto-inject is not exhaustive"**
+    Before any non-trivial write the agent must call
+    `memory_search` (file path / error string / domain term) AND
+    `memory_list_decisions(include_superseded=true)` for
+    architectural pivots. Adds explicit guidance on FTS-mode for
+    exception strings and symbol names.
+  - Adding future generic discipline rules is now one line —
+    append to `DISCIPLINE_FACTORIES`; orchestrator iterates the
+    registry without hardcoding factories.
+- `docs/AGENT_CONTRACT.md` Operating-contract list — old rules 2
+  ("before editing a file") and 3 ("before changing architecture")
+  consolidated into the new emphatic **rule 2 "Search liberally —
+  auto-inject is not exhaustive"** with three sub-bullets covering
+  file edits, architectural decisions (with explicit
+  `include_superseded=true` reminder), and exception strings (FTS
+  mode). Rule 1 expanded with explicit "RRF-truncated to a token
+  budget — what did NOT fit is invisible from this call alone".
+  Rules 4-29 renumbered to 3-28 for clean ordering. Block
+  re-injected into all five contract surfaces.
+- `<index>` blocks across every envelope section now include a
+  `<hint>` line: "Long tail past the rendered top-N is NOT in
+  this envelope. Call memory_get_object(kind, id) on any
+  &lt;ref/&gt; that matters, OR memory_search with a sharper
+  query, OR re-call memory_get_context with historical=true." The
+  `<index>` was previously easy to read as cosmetic; the hint
+  makes it actionable.
+
+### Fixed — leftover noise from prior releases
+
+- **LLM-extractor produced spurious CORRECTION-kind candidates**
+  from `agent_action` episodes. Live regression in copyBot
+  2026-05-05: a Phase 7.A.1 implementation report ("HIGH issue
+  X — fixed") generated 3 fake CORRECTION candidates that polluted
+  the operator review queue. Fixed in
+  `extraction/llm_extractor.py::_parse` — CORRECTION-kind items
+  are now dropped when the source episode's `source_type` is not
+  `USER_MESSAGE`, restoring the v1.10 (claim, correction) pair
+  semantics. Regression test:
+  `tests/unit/extraction/test_llm_extractor_correction_filter.py`.
+- **`behavior_instruction_without_source` quality_gate warning
+  fired on legitimate seed-bootstrap BIs** added in 1.2.3. Fixed
+  in `maintenance/quality_gate_behavior.py` — `seed_bootstrap`
+  added to the authoritative-source allowlist alongside `manual`
+  and `system_seed` for both the without-source warning AND the
+  prompt-injection-risk error. Regression test:
+  `tests/unit/maintenance/test_quality_gate_seed_bootstrap.py`.
+
+### Added — operator tooling
+
+- `scripts/memory_auto_triage_task.ps1` — Windows scheduled-task
+  wrapper for nightly auto-triage. Actions: Install / Uninstall /
+  Status / RunNow. Default time 03:30, opt-in `-Apply` flag (must
+  be explicit to actually mutate; without it the task runs as
+  dry-run only). Log lands in
+  `<project>/.agent_memory/logs/auto_triage.log`. Pairs with
+  `memory_service_task.ps1` for the HTTP service install. Closes
+  the "manual auto-triage runs leave debt accumulating between
+  prompts" gap.
+
+### UI
+
+- LIVE TRAIL panel now clusters consecutive same-intent events
+  whose `started_at` falls within 2 seconds of each other into a
+  single visual row with `intent ×N` badge + "+N more" suffix in
+  the prompt cell. Click to expand → individual children with
+  their per-call timestamps and durations. Underlying
+  `state.trailGroups` is untouched, so replay/observatory pipeline
+  is unaffected. Fixes "three SEARCH rows at the same timestamp
+  flooding the trail" feedback from copyBot operator.
+
+### Live verification
+
+Ran phases A-D of the audit playbook against production copyBot on
+2026-05-05:
+
+- Backed up `memory.db` as `memory.db.pre-fix-2026-05-05`.
+- Re-ran `setup_agent.py --project copyBot` (without
+  `--no-seed-memory-bootstrap`) → both seed BIs now live in
+  copyBot memory.db (`beh_758aa5cdd7987304` capability-link,
+  `beh_c5ee6cbc13c0152d` search-first).
+- Rejected 9 noise CORRECTION candidates (6 system-block false
+  positives, 3 LLM-extractor false positives now blocked at the
+  source).
+- Backfilled 60 of 105 important decisions with provenance via
+  10-min and 30-min time-window matching to nearest episode.
+- Auto-triage applied 57 capability_links via semantic matching.
+
+Resulting movement on copyBot quality:
+- hygiene_report: 105 → 43 findings (−59%)
+- quality_gate: 93 → 32 findings (−66%); error count 36 → 31
+- CORRECTION review queue: 9 pending → 0 pending
+- behavior_instructions: 45 → 47 active (the 2 seed BIs)
+- capability_links: 145 → 202
+
+### Verification
+
+- 762 pytest tests pass (4 new telemetry, 1 new index-hint, 4 LLM
+  filter, 3 quality_gate seed_bootstrap; remaining match prior
+  count).
+- ruff check + ruff format --check clean.
+- SLOC ceiling enforced — all source files at or below 150.
+- Pre-push crash test: 27 phases / 133 assertions PASS.
+- All 5 contract surfaces (agent-mem CLAUDE.md/AGENTS.md,
+  copyBot CLAUDE.md/AGENTS.md, ~/.claude/CLAUDE.md) byte-identical
+  to the canonical `docs/AGENT_CONTRACT.md`.
+
+### Notes
+
+- Telemetry won't show search calls until the HTTP service
+  restarts to pick up `MEMORY_AUDIT_READS=true` and the new
+  audit-row code path. Pre-restart calls remain unaudited and
+  invisible to telemetry.
+- The new `<hint>` adds ~200 chars per index block (one line per
+  section that has a long tail). Net envelope growth is small —
+  hints only appear when there ARE hidden items, sections that
+  render every item have no `<index>` and no hint.
+- Existing copyBot now has the 2nd seed BI live — agents in next
+  Claude Code session will see "Search before write" rule in
+  every `<behavior_instructions>` envelope.
+
 ## 1.2.3 — 2026-05-05
 
 Closes the structural cause of the "decisions and theories without

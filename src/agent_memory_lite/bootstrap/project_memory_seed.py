@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_memory_lite.bootstrap.project_memory_seed_templates import (
-    link_capability_discipline_instruction,
+    DISCIPLINE_FACTORIES,
     memory_bootstrap_playbook,
     memory_population_skill,
     vocabulary_concepts,
@@ -81,9 +81,9 @@ def seed_neutral_project_memory(
 
     The seed is idempotent because all written objects use upsert semantics on
     `(workspace_id, name)`. It writes ONLY generic discipline objects:
-    one skill, one playbook, vocabulary concepts, and (added 1.2.3) one
-    project-AGNOSTIC behavior_instruction enforcing capability linkage on
-    every decision/theory write. It deliberately avoids project-specific
+    one skill, one playbook, vocabulary concepts, and (1.2.3+) every
+    project-AGNOSTIC behavior_instruction registered in
+    ``DISCIPLINE_FACTORIES``. It deliberately avoids project-specific
     roles, language preferences, communication style, or personality rules.
     """
 
@@ -95,9 +95,13 @@ def seed_neutral_project_memory(
         upsert_domain_concept(conn, payload)
         for payload in vocabulary_concepts(workspace_id, source_episode_id)
     ]
-    discipline_bi = upsert_behavior_instruction(
-        conn, link_capability_discipline_instruction(workspace_id, source_episode_id)
-    )
+    # Every generic-discipline factory in DISCIPLINE_FACTORIES is upserted.
+    # Adding a new rule is one line in seed_behavior.py — no orchestrator
+    # change. Order in the registry is preserved for deterministic output.
+    discipline_bis = [
+        upsert_behavior_instruction(conn, factory(workspace_id, source_episode_id))
+        for factory in DISCIPLINE_FACTORIES
+    ]
 
     return ProjectMemorySeedResult(
         workspace_id=workspace_id,
@@ -111,8 +115,7 @@ def seed_neutral_project_memory(
             for concept in concepts
         ],
         behavior_instructions=[
-            SeedObjectRef(
-                kind="behavior_instruction", id=discipline_bi.id, name=discipline_bi.name
-            ),
+            SeedObjectRef(kind="behavior_instruction", id=bi.id, name=bi.name)
+            for bi in discipline_bis
         ],
     )

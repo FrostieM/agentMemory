@@ -56,7 +56,12 @@ def behavior_instruction_findings(
         if (
             not row["source_episode_id"]
             and not source_id
-            and source_type not in {"manual", "system_seed"}
+            # 1.2.4: ``seed_bootstrap`` is authoritative — we wrote
+            # the rule ourselves via setup_agent.py / project memory
+            # seed. It legitimately has no source_episode_id and
+            # should not raise the without-source warning. Same
+            # status as ``system_seed`` and ``manual``.
+            and source_type not in {"manual", "system_seed", "seed_bootstrap"}
         ):
             findings.append(
                 QualityGateFinding(
@@ -99,6 +104,7 @@ def behavior_instruction_findings(
             "manual",
             "user_direct",
             "system_seed",
+            "seed_bootstrap",  # 1.2.4: authoritative, same trust level
         } and looks_like_prompt_injection(str(row["rule"])):
             findings.append(
                 QualityGateFinding(

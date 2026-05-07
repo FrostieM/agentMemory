@@ -13,14 +13,18 @@ from __future__ import annotations
 
 from agent_memory_lite.bootstrap.project_memory_concepts import vocabulary_concepts
 from agent_memory_lite.bootstrap.project_memory_seed_behavior import (
+    DISCIPLINE_FACTORIES,
     link_capability_discipline_instruction,
+    search_before_write_discipline_instruction,
 )
 from agent_memory_lite.models.capabilities import AgentPlaybookIn, AgentSkillIn
 
 __all__ = [
+    "DISCIPLINE_FACTORIES",
     "link_capability_discipline_instruction",
     "memory_bootstrap_playbook",
     "memory_population_skill",
+    "search_before_write_discipline_instruction",
     "vocabulary_concepts",
 ]
 

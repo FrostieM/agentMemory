@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     api_port: int = Field(8765, ge=1, le=65535, validation_alias="MEMORY_API_PORT")
     require_api_token: bool = Field(False, validation_alias="MEMORY_REQUIRE_API_TOKEN")
     audit_api_auth_failures: bool = Field(False, validation_alias="MEMORY_AUDIT_API_AUTH_FAILURES")
+    # 1.2.4: write a lightweight audit_log row for read operations
+    # (memory_search, memory_get_context). Required for /memory/telemetry
+    # to count the agent's search rate; without it telemetry can only
+    # measure writes. Default true because the perf cost is microseconds
+    # per call and the operator-facing measurement value is high. Set to
+    # false via env if your audit_log volume budget is tight.
+    audit_read_operations: bool = Field(True, validation_alias="MEMORY_AUDIT_READS")
     api_token_file: Path = Field(
         Path(".agent_memory/token"), validation_alias="MEMORY_API_TOKEN_FILE"
     )

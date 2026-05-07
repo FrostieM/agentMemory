@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
+
 from fastapi import APIRouter
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_readable
@@ -13,6 +16,7 @@ from agent_memory_lite.api.schemas.search import (
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.fts.query import search_chunks_fts
+from agent_memory_lite.repositories.audit_repo import insert_audit
 
 router = APIRouter()
 
@@ -58,4 +62,17 @@ def search_route(body: SearchRequest, conn: DbDep, settings: SettingsDep) -> Sea
             ],
         )
         trace.stage_done("response", "Search response ready", counts={"hits": len(response.hits)})
-        return response
+    # 1.2.4: lightweight read-side audit row so /memory/telemetry can
+    # measure search rate. Guarded by settings; failure is swallowed
+    # so a write-only audit_log table (rare) does not break reads.
+    if settings.audit_read_operations:
+        with contextlib.suppress(sqlite3.OperationalError):
+            insert_audit(
+                conn,
+                workspace_id=body.workspace_id,
+                action="search",
+                target_type="search_query",
+                target_id=body.query[:120],
+                after={"limit": body.limit, "mode": body.mode, "hits": len(response.hits)},
+            )
+    return response

@@ -142,6 +142,12 @@ def test_get_context_renders_index_block_for_long_tail(client: TestClient) -> No
     assert "<ref id=" in text
     # At least one ref should reference one of our test decisions.
     assert "Index test decision" in text
+    # 1.2.4 lock: every <index> block must include a discover-then-fetch
+    # <hint> so the agent knows the index is actionable, not decorative.
+    # Without the hint, agents (especially Claude) treat the index as
+    # cosmetic noise and never call memory_get_object on the refs.
+    assert "<hint>" in text
+    assert "memory_get_object" in text
 
 
 def test_get_object_includes_theory_evidence_on_request(client: TestClient) -> None:

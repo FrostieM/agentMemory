@@ -2334,6 +2334,15 @@ function renderHeader(memory) {
 // Persist which group ids the user expanded across re-renders.
 const _expandedTrailGroups = new Set();
 
+// 1.2.4 — visual clustering. When the agent fires several quick
+// requests of the same intent (e.g. three memory_search calls within
+// a second of each other) the raw trail produces three adjacent rows
+// that are visually noisy. Merge them into one cluster row with a
+// "×N" badge; the cluster expands to show each individual member.
+// Clustering is purely visual — underlying trailGroups state is
+// untouched so the replay/observatory pipeline keeps working.
+const TRAIL_CLUSTER_WINDOW_MS = 2000;
+
 function _trailKindForGroup(g) {
   if (g.status === "error") return "warn";
   if (g.endpoint && g.endpoint.includes("ingest")) return "in";
@@ -2342,19 +2351,59 @@ function _trailKindForGroup(g) {
   return "route";
 }
 
+function _clusterTrailGroups(groups) {
+  // Walk newest-first and coalesce consecutive groups that share the
+  // same intent AND started within TRAIL_CLUSTER_WINDOW_MS of each
+  // other. A cluster of size 1 renders identically to a single group;
+  // size > 1 renders with a count badge and an expanded child list.
+  const clusters = [];
+  for (const g of groups) {
+    const last = clusters[clusters.length - 1];
+    const startMs = Date.parse(g.startedAt) || 0;
+    if (
+      last
+      && last.intent === g.intent
+      && startMs > 0
+      && last.minStartMs > 0
+      && Math.abs(last.minStartMs - startMs) <= TRAIL_CLUSTER_WINDOW_MS
+    ) {
+      last.children.push(g);
+      // The cluster's window stretches to the earliest member so a
+      // burst of 4-5 calls coalesces even if the last one trails.
+      if (startMs < last.minStartMs) last.minStartMs = startMs;
+      if (g.status === "error") last.status = "error";
+      else if (g.status === "running" && last.status !== "error") last.status = "running";
+    } else {
+      clusters.push({
+        leader: g,
+        children: [g],
+        intent: g.intent,
+        minStartMs: startMs,
+        status: g.status,
+      });
+    }
+  }
+  return clusters;
+}
+
 function renderFeed() {
   clear(els.lifeFeed);
   const groups = state.trailGroups.slice(0, 30);
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
+  const clusters = _clusterTrailGroups(groups);
+  for (let i = 0; i < clusters.length; i++) {
+    const cluster = clusters[i];
+    const g = cluster.leader;
+    const isCluster = cluster.children.length > 1;
     const row = document.createElement("div");
-    const fresh = i === 0 && g.status === "running" ? " trail-fresh" : "";
+    const fresh = i === 0 && cluster.status === "running" ? " trail-fresh" : "";
     const kind = _trailKindForGroup(g);
-    const expanded = _expandedTrailGroups.has(g.id);
-    row.className = `trail-row trail-${kind} trail-group${expanded ? " is-expanded" : ""}${fresh}`;
+    const clusterId = isCluster ? `cluster:${cluster.intent}:${cluster.minStartMs}` : g.id;
+    const expanded = _expandedTrailGroups.has(clusterId);
+    row.className = `trail-row trail-${kind} trail-group${expanded ? " is-expanded" : ""}${fresh}${isCluster ? " trail-cluster" : ""}`;
     row.dataset.requestId = g.id;
+    if (isCluster) row.dataset.clusterSize = String(cluster.children.length);
 
-    // ---- header line: time · intent · prompt · status badge ----
+    // ---- header line: time · intent[×N] · prompt · status badge ----
     const header = document.createElement("button");
     header.type = "button";
     header.className = "trail-group-head";
@@ -2363,17 +2412,40 @@ function renderFeed() {
     t.textContent = fmtTime(g.startedAt);
     const intentEl = document.createElement("span");
     intentEl.className = "trail-intent";
-    intentEl.textContent = g.intent || "memory";
+    intentEl.textContent = (g.intent || "memory") + (isCluster ? ` ×${cluster.children.length}` : "");
     const prompt = document.createElement("span");
     prompt.className = "trail-text";
-    const promptText = clip(g.prompt || g.endpoint || "", 80);
-    prompt.textContent = promptText || g.endpoint || "(no prompt)";
+    if (isCluster) {
+      // Cluster summary: leader prompt + ", + N more" so the operator
+      // sees what the burst was about without needing to expand.
+      const leadPromptText = clip(g.prompt || g.endpoint || "", 60);
+      const extra = cluster.children.length - 1;
+      prompt.textContent = `${leadPromptText || g.endpoint || "(no prompt)"} · +${extra} more`;
+    } else {
+      const promptText = clip(g.prompt || g.endpoint || "", 80);
+      prompt.textContent = promptText || g.endpoint || "(no prompt)";
+    }
     const stats = document.createElement("span");
     stats.className = "trail-stats";
-    const fams = g.touchedFamilies.size;
-    const stageCount = g.stages.length;
-    const deltaCount = g.deltas.length;
-    const dur = g.durationMs != null ? `${g.durationMs}ms` : (g.status === "running" ? "…" : "");
+    let fams, stageCount, deltaCount, dur;
+    if (isCluster) {
+      // Aggregate over all children for the cluster summary line.
+      const allFams = new Set();
+      let stageSum = 0; let deltaSum = 0; let durSum = 0; let durKnown = false;
+      for (const ch of cluster.children) {
+        for (const f of ch.touchedFamilies) allFams.add(f);
+        stageSum += ch.stages.length;
+        deltaSum += ch.deltas.length;
+        if (ch.durationMs != null) { durSum += ch.durationMs; durKnown = true; }
+      }
+      fams = allFams.size; stageCount = stageSum; deltaCount = deltaSum;
+      dur = durKnown ? `${durSum}ms` : (cluster.status === "running" ? "…" : "");
+    } else {
+      fams = g.touchedFamilies.size;
+      stageCount = g.stages.length;
+      deltaCount = g.deltas.length;
+      dur = g.durationMs != null ? `${g.durationMs}ms` : (g.status === "running" ? "…" : "");
+    }
     stats.textContent = [
       fams ? `${fams}f` : "",
       deltaCount ? `${deltaCount}o` : "",
@@ -2381,42 +2453,56 @@ function renderFeed() {
       dur,
     ].filter(Boolean).join(" · ");
     const statusEl = document.createElement("span");
-    statusEl.className = `trail-status trail-status-${g.status}`;
-    statusEl.textContent = g.status === "running" ? "···" : g.status === "ok" ? "✓" : "✗";
+    statusEl.className = `trail-status trail-status-${cluster.status}`;
+    statusEl.textContent = cluster.status === "running" ? "···" : cluster.status === "ok" ? "✓" : "✗";
 
     header.append(t, intentEl, prompt, stats, statusEl);
     header.addEventListener("click", () => {
-      if (_expandedTrailGroups.has(g.id)) _expandedTrailGroups.delete(g.id);
-      else _expandedTrailGroups.add(g.id);
+      if (_expandedTrailGroups.has(clusterId)) _expandedTrailGroups.delete(clusterId);
+      else _expandedTrailGroups.add(clusterId);
       renderFeed();
     });
     row.appendChild(header);
 
-    // ---- expandable detail: stages + deltas ----
+    // ---- expandable detail ----
     if (expanded) {
       const detail = document.createElement("div");
       detail.className = "trail-group-detail";
-      // Stages first (ordered)
-      for (const st of g.stages) {
-        const line = document.createElement("div");
-        line.className = `trail-substage trail-substage-${st.type}`;
-        const head = `${st.type === "stage_started" ? "→" : st.type === "stage_done" ? "✓" : "·"} ${st.stage || ""}`;
-        const tail = (st.label && st.label !== st.stage) ? ` · ${st.label}` : "";
-        const counts = st.counts && Object.keys(st.counts).length
-          ? " · " + Object.entries(st.counts).slice(0, 2).map(([k, v]) => `${k}=${v}`).join(" ")
-          : "";
-        const dms = st.durationMs != null ? ` (${st.durationMs}ms)` : "";
-        line.textContent = head + tail + counts + dms;
-        detail.appendChild(line);
-      }
-      // Deltas with their family chip
-      for (const d of g.deltas) {
-        const line = document.createElement("div");
-        line.className = "trail-subdelta";
-        const fam = d.familyId ? `[${d.familyId}] ` : "";
-        const idShort = d.objectId ? d.objectId.slice(0, 18) : "";
-        line.textContent = `Δ ${fam}${d.action || "active"} · ${clip(d.label || idShort, 50)}`;
-        detail.appendChild(line);
+      if (isCluster) {
+        // Cluster: each child becomes a one-line summary so the
+        // operator can see what every member of the burst was.
+        for (const ch of cluster.children) {
+          const line = document.createElement("div");
+          line.className = "trail-cluster-child";
+          const tt = fmtTime(ch.startedAt);
+          const pp = clip(ch.prompt || ch.endpoint || "", 90);
+          const dd = ch.durationMs != null ? ` · ${ch.durationMs}ms` : "";
+          const ss = ch.status === "ok" ? "✓" : ch.status === "error" ? "✗" : "···";
+          line.textContent = `${tt}  ${pp || ch.endpoint || ""}${dd}  ${ss}`;
+          detail.appendChild(line);
+        }
+      } else {
+        // Single group: existing stages + deltas detail.
+        for (const st of g.stages) {
+          const line = document.createElement("div");
+          line.className = `trail-substage trail-substage-${st.type}`;
+          const head = `${st.type === "stage_started" ? "→" : st.type === "stage_done" ? "✓" : "·"} ${st.stage || ""}`;
+          const tail = (st.label && st.label !== st.stage) ? ` · ${st.label}` : "";
+          const counts = st.counts && Object.keys(st.counts).length
+            ? " · " + Object.entries(st.counts).slice(0, 2).map(([k, v]) => `${k}=${v}`).join(" ")
+            : "";
+          const dms = st.durationMs != null ? ` (${st.durationMs}ms)` : "";
+          line.textContent = head + tail + counts + dms;
+          detail.appendChild(line);
+        }
+        for (const d of g.deltas) {
+          const line = document.createElement("div");
+          line.className = "trail-subdelta";
+          const fam = d.familyId ? `[${d.familyId}] ` : "";
+          const idShort = d.objectId ? d.objectId.slice(0, 18) : "";
+          line.textContent = `Δ ${fam}${d.action || "active"} · ${clip(d.label || idShort, 50)}`;
+          detail.appendChild(line);
+        }
       }
       row.appendChild(detail);
     }

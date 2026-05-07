@@ -105,5 +105,14 @@ def _render_index_block(
         lines.append(_index_ref(id_value=id_value, title=title, extra=extra, indent=f"{indent}  "))
     if hidden > 0:
         lines.append(f"{indent}  <truncated count={quoteattr(str(hidden))}/>")
+    # 1.2.4: explicit discover-then-fetch nudge so the agent knows
+    # the index is actionable (not decorative). The long tail is NOT
+    # in the rendered top-N items above, only listed by id.
+    lines.append(
+        f"{indent}  <hint>Long tail past the rendered top-N is NOT in this "
+        f"envelope. Call memory_get_object(kind, id) on any &lt;ref/&gt; that "
+        f"matters, OR memory_search with a sharper query, OR re-call "
+        f"memory_get_context with historical=true.</hint>"
+    )
     lines.append(f"{indent}</index>")
     return lines

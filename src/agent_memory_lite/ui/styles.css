@@ -537,6 +537,23 @@ code, pre, .mono {
   0%, 100% { opacity: 0.45; }
   50%      { opacity: 1; }
 }
+/* 1.2.4 — clustered burst rows. The "×N" suffix on .trail-intent is
+   added inline by the renderer; just make the cluster row a touch
+   more prominent so a 5-row burst is visually one unit. */
+.trail-row.trail-cluster .trail-intent {
+  background: oklch(0.85 0.17 var(--accent-hue) / 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.trail-cluster-child {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 2px 0;
+  font-family: var(--mono, monospace);
+}
+.trail-cluster-child + .trail-cluster-child {
+  border-top: 1px dashed oklch(0.85 0.17 var(--accent-hue) / 0.12);
+}
 .trail-group-detail {
   padding: 4px 10px 8px 22px;
   display: flex;

@@ -9,6 +9,9 @@ injection) live in ``context_post_build.py``.
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
+
 from fastapi import APIRouter
 
 from agent_memory_lite.api.deps import (
@@ -28,6 +31,7 @@ from agent_memory_lite.api.schemas.context import (
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.models.retrieval import RetrievalQuery
+from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.retrieval.context_builder import build_context
 from agent_memory_lite.retrieval.explain import used_context_objects
 
@@ -120,4 +124,20 @@ def get_context_route(
         trace.stage_done(
             "response", "Context response ready", counts={"sources": len(response.sources)}
         )
-        return response
+    # 1.2.4: lightweight read-side audit row so /memory/telemetry can
+    # measure get_context rate alongside search rate.
+    if settings.audit_read_operations:
+        with contextlib.suppress(sqlite3.OperationalError):
+            insert_audit(
+                conn,
+                workspace_id=body.workspace_id,
+                action="get_context",
+                target_type="context_query",
+                target_id=(body.query or "")[:120],
+                after={
+                    "sources": len(response.sources),
+                    "max_tokens": body.max_tokens,
+                    "historical": body.historical,
+                },
+            )
+    return response

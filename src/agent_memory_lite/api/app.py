@@ -43,6 +43,7 @@ from agent_memory_lite.api.routes import (
     search,
     sentinel_trends,
     task_state,
+    telemetry,
     theories,
     ui,
     usage,
@@ -129,6 +130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pin.router)
     app.include_router(references.router)
     app.include_router(audit_list.router)
+    app.include_router(telemetry.router)
     app.include_router(memory_state_snapshots.router)
     app.include_router(review_queue.router)
     app.include_router(promote_to_behavior.router)

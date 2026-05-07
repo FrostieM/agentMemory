@@ -25,7 +25,7 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.extraction.base import ExtractorUnavailableError
 from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
-from agent_memory_lite.models.enums import MemoryCandidateKind, TrustLevel
+from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
 from agent_memory_lite.models.episodes import Episode
 
 _log = get_logger("extraction.llm")
@@ -135,6 +135,16 @@ class OllamaExtractor:
             observed_at=episode.created_at,
             valid_from=episode.created_at,
         )
+        # 1.2.4: CORRECTION-kind candidates are reserved for the
+        # v1.10 (claim, correction) pair flow which the heuristic
+        # CorrectionExtractor handles. The LLM extractor was observed
+        # in copyBot 2026-05-05 to emit ``kind=correction`` from
+        # ``agent_action`` episodes that contained audit-findings
+        # phrasing ("HIGH issue X — fixed"); those are NOT user
+        # corrections and pollute the operator review queue. Restrict
+        # CORRECTION-from-LLM to episodes where source_type is
+        # USER_MESSAGE so the kind keeps its v1.10 semantics.
+        episode_is_user_message = episode.source_type == EpisodeSource.USER_MESSAGE
         out: list[MemoryCandidate] = []
         for item in decoded:
             if not isinstance(item, dict):
@@ -142,6 +152,8 @@ class OllamaExtractor:
             try:
                 kind = MemoryCandidateKind(item["kind"])
             except (KeyError, ValueError):
+                continue
+            if kind == MemoryCandidateKind.CORRECTION and not episode_is_user_message:
                 continue
             data: dict[str, Any] = {
                 "kind": kind,
