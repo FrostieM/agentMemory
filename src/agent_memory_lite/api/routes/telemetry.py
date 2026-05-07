@@ -143,11 +143,13 @@ def telemetry_route(
         TelemetryDayRow(date=d, search=by_day_search.get(d, 0), write=by_day_write.get(d, 0))
         for d in sorted(set(by_day_search) | set(by_day_write))
     ]
-    by_action_top = sorted(
-        ({"action": k, "count": v} for k, v in by_action.items()),
-        key=lambda x: x["count"],
-        reverse=True,
-    )[:15]
+    # Sort the (action, count) pairs first so the lambda sorts on int,
+    # not on a heterogeneous dict[str, object] (mypy rejects that). Then
+    # convert to the response dict shape.
+    by_action_sorted = sorted(by_action.items(), key=lambda kv: kv[1], reverse=True)
+    by_action_top: list[dict[str, Any]] = [
+        {"action": k, "count": v} for k, v in by_action_sorted[:15]
+    ]
     ratio = search_total / max(write_total, 1)
     return TelemetryResponse(
         workspace_id=workspace_id,
