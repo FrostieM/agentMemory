@@ -16,6 +16,16 @@ After all four ship, we move to a **fix-and-polish phase**: edge
 cases, performance, docs, real-world calibration on the workspace
 data accumulated by then.
 
+**Versioning note.** Each of the five steps is recorded as a patch
+within the v2.1 series (v2.1.1, v2.1.2, v2.1.3, v2.1.4, v2.1.5)
+rather than as separate minor versions. Operator preference: the
+v2.0 substrate is complete; everything in this roadmap is parity /
+depth / polish on top of that substrate, not new substrate. Strict
+semver would call new endpoints a minor bump, but the operator's
+read is "this is all v2.1 series, recorded as patches". The
+``__version__`` and ``pyproject.toml`` strings will follow that
+convention; no v2.1.0 placeholder release.
+
 ## Goals
 
 1. Bring tree-sitter languages to feature parity with Python on
@@ -44,17 +54,17 @@ data accumulated by then.
 
 | Version | Scope | Effort | Why this order |
 |---|---|---|---|
-| **v2.1.0** | Tree-sitter extends / decorated_by parity | 1 day | Cheapest, closes real parity gap, unblocks Java / C# / Rust users immediately. |
-| **v2.2.0** | D3.js graph visualization | 1.5 days | Highest "wow" payoff. Makes v1.4-v2.0 substrate visible to the operator. |
-| **v2.3.0** | LLM-enriched narrative via Ollama | 1 day | Adds depth to dashboard. Requires Ollama; falls back to heuristic. |
-| **v2.4.0** | `similar_signature` soft edges | 1 day | Most speculative — needs real use case. Ship last so we can calibrate on actual workspace data. |
-| **v2.5.0** | **Polish + fix phase** | 2-3 days | Edge cases, perf, docs, calibration on workspace data accumulated by then. |
+| **v2.1.1** | Tree-sitter extends / decorated_by parity | 1 day | Cheapest, closes real parity gap, unblocks Java / C# / Rust users immediately. |
+| **v2.1.2** | D3.js graph visualization | 1.5 days | Highest "wow" payoff. Makes v1.4-v2.0 substrate visible to the operator. |
+| **v2.1.3** | LLM-enriched narrative via Ollama | 1 day | Adds depth to dashboard. Requires Ollama; falls back to heuristic. |
+| **v2.1.4** | `similar_signature` soft edges | 1 day | Most speculative — needs real use case. Ship last so we can calibrate on actual workspace data. |
+| **v2.1.5** | **Polish + fix phase** | 2-3 days | Edge cases, perf, docs, calibration on workspace data accumulated by then. |
 
 **Total**: 5-7 calendar days.
 
 ---
 
-## v2.1.0 — Tree-sitter parity (extends / decorated_by / implements)
+## v2.1.1 — Tree-sitter parity (extends / decorated_by / implements)
 
 ### Problem
 
@@ -116,7 +126,7 @@ trait implementations, TS framework decorators are invisible to
 
 ---
 
-## v2.2.0 — D3.js graph visualization
+## v2.1.2 — D3.js graph visualization
 
 ### Problem
 
@@ -182,7 +192,7 @@ of 50 edges.
 
 ---
 
-## v2.3.0 — LLM-enriched narrative via Ollama
+## v2.1.3 — LLM-enriched narrative via Ollama
 
 ### Problem
 
@@ -247,7 +257,7 @@ doesn't answer "what does this module DO".
 
 ---
 
-## v2.4.0 — similar_signature edges in soft-graph
+## v2.1.4 — similar_signature edges in soft-graph
 
 ### Problem
 
@@ -274,7 +284,7 @@ auto-suggest applying to fetch_orders") has no signal today.
 
 - Bounded scan: `MEMORY_SIMILAR_SIG_SCAN_LIMIT` (default 200) to
   prevent O(N²) growth on large workspaces. LSH index is a
-  v2.4.x optimization; not in v2.4.0.
+  follow-up patch optimization; not in v2.1.4.
 
 - Env flag: `MEMORY_SIMILAR_SIG_ENABLED` (default true since the
   cost is bounded).
@@ -307,7 +317,7 @@ auto-suggest applying to fetch_orders") has no signal today.
 
 ---
 
-## v2.5.0 — Polish + fix phase
+## v2.1.5 — Polish + fix phase
 
 ### What this phase IS
 
@@ -360,7 +370,7 @@ workspaces (agent-memory-lite + copyBot). The goal is:
 - ~5-10 small commits each touching one concern.
 - One `docs/V2_CALIBRATION.md` report.
 - One operator guide doc.
-- A clean `git log` between v2.4.0 and v2.5.0 that an outside
+- A clean `git log` between v2.1.4 and v2.1.5 that an outside
   reader can follow.
 
 ### Ship-stop gate
@@ -372,12 +382,12 @@ workspaces (agent-memory-lite + copyBot). The goal is:
 
 ---
 
-## Cross-cutting rules (apply to v2.1 — v2.4)
+## Cross-cutting rules (apply to v2.1.1 — v2.1.4)
 
 1. **No version-pump-and-dump.** If an internal review during
-   v2.X uncovers a small bug, fix it inside the SAME release —
-   don't spin a v2.X.1 just for one fix. Operator preference
-   established earlier in v1.4.0.
+   v2.1.X uncovers a small bug, fix it inside the SAME release —
+   don't spin yet another patch just for one fix. Operator
+   preference established earlier in v1.4.0.
 
 2. **CI is the source of truth.** Pre-push crash test is local-only
    and does NOT cover SLOC / mypy / ruff / contract sync. After
@@ -398,8 +408,8 @@ workspaces (agent-memory-lite + copyBot). The goal is:
 
 ## Acceptance criteria for the whole post-v2 phase
 
-When all five releases (v2.1.0, v2.2.0, v2.3.0, v2.4.0, v2.5.0)
-have shipped:
+When all five patch releases (v2.1.1, v2.1.2, v2.1.3, v2.1.4,
+v2.1.5) have shipped:
 
 - [ ] Tree-sitter languages emit ≥ 4 edge kinds (calls, imports,
       instantiates + at least one of extends/decorated_by per
@@ -421,16 +431,38 @@ have shipped:
 
 ## Why this order is the right order
 
-We ship parity (v2.1) first because it's the smallest gap to close
-and gives the best ratio of "users helped per SLOC". v2.2 is the
-big visual unlock that makes the substrate operator-legible —
-which in turn makes calibrating thresholds in v2.5 actually
-possible (you can see the soft-edge density on a graph; you can't
-on a JSON dump). v2.3 + v2.4 are independent depth additions; we
-do v2.3 before v2.4 because LLM narrative has higher upside and
-similar_signature is the most speculative item — getting it last
-means we calibrate on real data, not guesses.
+We ship parity (v2.1.1) first because it's the smallest gap to
+close and gives the best ratio of "users helped per SLOC".
+v2.1.2 is the big visual unlock that makes the substrate
+operator-legible — which in turn makes calibrating thresholds in
+v2.1.5 actually possible (you can see the soft-edge density on a
+graph; you can't on a JSON dump). v2.1.3 + v2.1.4 are independent
+depth additions; we do v2.1.3 before v2.1.4 because LLM narrative
+has higher upside and similar_signature is the most speculative
+item — getting it last means we calibrate on real data, not
+guesses.
 
-Polish (v2.5) at the end is critical: without it we ship four
+Polish (v2.1.5) at the end is critical: without it we ship four
 features and three of them have ad-hoc thresholds nobody validated.
-v2.5 turns "we shipped it" into "we know it works".
+v2.1.5 turns "we shipped it" into "we know it works".
+
+## Tracking
+
+Each patch release follows the established release flow from the
+v1.4 → v2.0 roadmap:
+
+1. Implement scope; keep all gates green at every step.
+2. Bump ``__version__`` and ``pyproject.toml`` to the patch.
+3. Append CHANGELOG entry (one section per patch, like the
+   v1.5.1 / v1.5.2 entries did).
+4. Commit + tag ``v2.1.X``.
+5. ``git push origin main`` (pre-push crash-test runs).
+6. ``git push origin v2.1.X``.
+7. ``gh run watch <id> --exit-status`` to confirm CI green —
+   locked by the v1.4.0 ``verify-ci-actions-after-push``
+   behavior_instruction.
+
+When the whole v2.1.x series finishes, the final acceptance-
+criteria checklist (above) gates a v2.2.0 minor bump if and only
+if we have a NEW substrate-level reason for one. Until then we
+stay on v2.1.x.
