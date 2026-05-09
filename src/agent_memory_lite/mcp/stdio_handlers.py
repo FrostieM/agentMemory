@@ -25,7 +25,6 @@ from agent_memory_lite.mcp.stdio_handlers_decisions import (
     _handle_write_decision,
 )
 from agent_memory_lite.mcp.stdio_handlers_episodes import (
-    _handle_find_symbols,
     _handle_get_context,
     _handle_get_object,
     _handle_ingest_episode,
@@ -67,6 +66,7 @@ from agent_memory_lite.mcp.stdio_handlers_state_snapshots import (
     _handle_snapshot_list,
     _handle_snapshot_save,
 )
+from agent_memory_lite.mcp.stdio_handlers_symbols import _handle_find_symbols
 from agent_memory_lite.mcp.stdio_handlers_theories import (
     _handle_add_theory_evidence,
     _handle_list_theories,
