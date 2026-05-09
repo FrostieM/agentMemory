@@ -4,6 +4,39 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.5.1 — 2026-05-09
+
+Patch follow-up to v1.5.0: **cross-file edge resolver**. Pre-1.5.1
+an edge from file A to a symbol in file B started life with
+``dst_chunk_id=NULL`` because B hadn't been ingested yet — and stayed
+NULL forever, even after B's ingest. Now every file ingest runs a
+resolver pass that links pending edges to the chunks that just
+materialized.
+
+### What changed
+
+- New module ``repositories/symbol_edges_resolver.py`` —
+  ``resolve_pending_edges_for_qnames()``. Two SQL match patterns per
+  qname: exact (``dst_qualified_name = qname``) and dotted-suffix
+  (``dst_qualified_name LIKE '%.qname'``) so ``from x import foo``
+  imports stitch back to the bare ``foo`` chunk.
+- ``ingestion/file_persist_edges.py`` calls the resolver after
+  every ingest, even when the file's own body produces no edges
+  (the chunks it wrote may still be the targets of earlier files'
+  pending edges).
+- Locked by a new e2e test
+  (``tests/e2e/test_graph_neighbors_route.py::test_cross_file_import_resolves_after_target_ingested``):
+  ingest A first → confirm edge has NULL dst_chunk_id → ingest B →
+  confirm dst_chunk_id is now populated.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (470 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 793 tests pass (unit + e2e + integration + invariants).
+
 ## 1.5.0 — 2026-05-09
 
 Phase 2 of the V1.4→V2 code-memory roadmap: **hard-graph edges

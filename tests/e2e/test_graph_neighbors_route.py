@@ -151,6 +151,52 @@ def test_missing_target_rejected(client: TestClient) -> None:
     assert r.status_code == 400, r.text
 
 
+def test_cross_file_import_resolves_after_target_ingested(client: TestClient) -> None:
+    """1.5.1: edge from file A to symbol in file B starts with NULL
+    dst_chunk_id; once B is ingested, the resolver pass populates
+    dst_chunk_id so navigation from A to B works."""
+    a_src = "from helpers import compute\n\ndef use_helper():\n    return compute(1)\n"
+    b_src = "def compute(x):\n    return x * 2\n"
+
+    # Ingest A first — its edge to helpers.compute has nothing to point at.
+    _ingest(client, "src/a.py", a_src)
+    r1 = client.post(
+        "/memory/graph_neighbors",
+        json={
+            "workspace_id": "graph-ws",
+            "qualified_name": "compute",
+            "edge_types": ["calls"],
+            "direction": "upstream",
+        },
+    )
+    assert r1.status_code == 200, r1.text
+    pre_callers = r1.json()["upstream"]
+    # The calls edge to compute exists; dst_chunk_id should be NULL
+    # because helpers/compute hasn't been ingested yet.
+    matching = [e for e in pre_callers if e["src_qualified_name"] == "use_helper"]
+    assert len(matching) == 1
+    assert matching[0]["dst_chunk_id"] is None
+
+    # Now ingest B. The resolver should populate dst_chunk_id on the
+    # imports edge whose dst_qualified_name is 'helpers.compute'.
+    _ingest(client, "src/helpers.py", b_src)
+    r2 = client.post(
+        "/memory/graph_neighbors",
+        json={
+            "workspace_id": "graph-ws",
+            "qualified_name": "helpers.compute",
+            "edge_types": ["imports"],
+            "direction": "upstream",
+        },
+    )
+    assert r2.status_code == 200, r2.text
+    imports_edges = r2.json()["upstream"]
+    # At least one import edge with src_qualified_name='<module>' and
+    # dst_chunk_id now populated.
+    resolved = [e for e in imports_edges if e["dst_chunk_id"] is not None]
+    assert len(resolved) >= 1, f"expected resolved import edge, got {imports_edges}"
+
+
 def test_re_ingest_drops_stale_edges(client: TestClient) -> None:
     """Re-ingesting a file with new content should drop edges that
     pointed at the old chunks. This locks the cleanup invariant."""

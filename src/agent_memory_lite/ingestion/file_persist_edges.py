@@ -27,6 +27,9 @@ from agent_memory_lite.extraction.symbol_edges_python import (
 )
 from agent_memory_lite.models.symbol_edges import EdgeIn
 from agent_memory_lite.repositories.symbol_edges_repo import insert_edges
+from agent_memory_lite.repositories.symbol_edges_resolver import (
+    resolve_pending_edges_for_qnames,
+)
 
 
 def _build_owner_index(chunk_qnames: list[tuple[str, str | None]]) -> dict[str, str]:
@@ -54,12 +57,26 @@ def persist_edges_for_file(
     language: str | None,
     chunk_qnames: list[tuple[str, str | None]],
 ) -> int:
-    """Extract + persist edges for one file. Returns count written."""
+    """Extract + persist edges for one file. Returns count written.
+
+    1.5.1 also runs the cross-file resolver pass so any pre-existing
+    NULL-dst edges that target this file's symbols are now linked.
+    """
     extracted = _extract_edges(text, language)
-    if not extracted:
-        return 0
     owner_index = _build_owner_index(chunk_qnames)
-    if not owner_index:
+
+    # 1.5.1: resolver pass — even when this file's body has no edges
+    # of its own, the chunks it just wrote may be the targets of
+    # earlier files' pending edges. Run the resolver every time so
+    # cross-file dependencies stitch together as the workspace fills.
+    if owner_index:
+        resolve_pending_edges_for_qnames(
+            conn,
+            workspace_id=workspace_id,
+            qname_to_chunk_id=owner_index,
+        )
+
+    if not extracted or not owner_index:
         return 0
     # Module-level edges attach to the first chunk in the file so they
     # are reachable from at least one node. Without this, ``import x``
