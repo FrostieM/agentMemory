@@ -2,117 +2,122 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — code overview</title>
-<link rel="stylesheet" href="/ui/styles.css" />
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-       margin: 0; padding: 1.5em; background: #0d1117; color: #c9d1d9; }
-h1 { margin: 0 0 0.5em; font-size: 1.4em; }
-h2 { margin: 1.4em 0 0.4em; font-size: 1.05em; color: #58a6ff;
-     border-bottom: 1px solid #30363d; padding-bottom: 0.2em; }
-.controls { margin-bottom: 1em; display: flex; gap: 0.6em; align-items: center; }
-.controls input { background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
-                  padding: 0.3em 0.5em; border-radius: 4px; }
-.controls button { background: #238636; color: white; border: 0; padding: 0.4em 0.9em;
-                   border-radius: 4px; cursor: pointer; }
-.counts { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.6em; }
-.count-card { background: #161b22; padding: 0.7em; border-radius: 6px;
-              border: 1px solid #30363d; }
-.count-card .label { color: #8b949e; font-size: 0.78em; text-transform: uppercase; }
-.count-card .value { font-size: 1.6em; font-weight: 600; color: #58a6ff; }
-table { width: 100%; border-collapse: collapse; margin-top: 0.4em;
-        background: #161b22; border-radius: 6px; overflow: hidden; }
-th { text-align: left; padding: 0.45em 0.7em; background: #21262d;
-     color: #8b949e; font-weight: 600; font-size: 0.85em;
-     border-bottom: 1px solid #30363d; }
-td { padding: 0.45em 0.7em; border-bottom: 1px solid #21262d;
-     font-size: 0.9em; vertical-align: top; }
-td.qn { font-family: ui-monospace, "SF Mono", Consolas, monospace; color: #ffa657; }
-td.path { font-family: ui-monospace, monospace; color: #79c0ff; }
-td.sig { font-family: ui-monospace, monospace; color: #c9d1d9; font-size: 0.83em; }
-.empty { color: #8b949e; font-style: italic; }
-.diff-prev { color: #f85149; text-decoration: line-through; }
-.diff-new { color: #56d364; }
-.badge { display: inline-block; padding: 0.05em 0.45em; border-radius: 10px;
-         font-size: 0.78em; background: #1f6feb; color: #fff; margin-left: 0.4em; }
-.narrative { color: #8b949e; font-size: 0.85em; }
-.error { color: #f85149; padding: 1em; }
+  /* Phase 2.3 (v2.2 consolidation): the page hosts data tables that
+     index.html doesn't have, so a small per-page stylesheet adds the
+     count cards / table styling on top of the shared dashboard chrome. */
+  .code-body { padding: 24px 32px; }
+  .code-body h2 { margin: 1.4em 0 0.4em; font-size: 1.05em; color: var(--accent);
+                  border-bottom: 1px solid var(--line-soft); padding-bottom: 0.2em; }
+  .controls { margin-bottom: 1em; display: flex; gap: 0.6em; align-items: center; }
+  .controls input { background: var(--bg-1); color: var(--text-0); border: 1px solid var(--line-soft);
+                    padding: 0.3em 0.5em; border-radius: 4px; }
+  .controls button { background: #238636; color: white; border: 0; padding: 0.4em 0.9em;
+                     border-radius: 4px; cursor: pointer; }
+  .counts { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.6em; }
+  .count-card { background: var(--bg-1); padding: 0.7em; border-radius: 6px;
+                border: 1px solid var(--line-soft); }
+  .count-card .label { color: var(--text-2); font-size: 0.78em; text-transform: uppercase; }
+  .count-card .value { font-size: 1.6em; font-weight: 600; color: var(--accent); }
+  .code-body table { width: 100%; border-collapse: collapse; margin-top: 0.4em;
+                     background: var(--bg-1); border-radius: 6px; overflow: hidden; }
+  .code-body th { text-align: left; padding: 0.45em 0.7em; background: var(--bg-2);
+                  color: var(--text-2); font-weight: 600; font-size: 0.85em;
+                  border-bottom: 1px solid var(--line-soft); }
+  .code-body td { padding: 0.45em 0.7em; border-bottom: 1px solid var(--bg-2);
+                  font-size: 0.9em; vertical-align: top; }
+  .code-body td.qn { font-family: ui-monospace, "SF Mono", Consolas, monospace; color: #ffa657; }
+  .code-body td.path { font-family: ui-monospace, monospace; color: #79c0ff; }
+  .code-body td.sig { font-family: ui-monospace, monospace; color: var(--text-0); font-size: 0.83em; }
+  .empty { color: var(--text-2); font-style: italic; }
+  .diff-prev { color: #f85149; text-decoration: line-through; }
+  .diff-new { color: #56d364; }
+  .narrative { color: var(--text-2); font-size: 0.85em; }
+  .error { color: #f85149; padding: 1em; }
 </style>
 </head>
 <body>
-<nav class="app-nav" aria-label="UI sections" style="margin: -1.5em -1.5em 1em; padding: 0.6em 1.5em; background: #161b22; border-bottom: 1px solid #30363d; display: flex; gap: 0.4em; font-family: ui-monospace, monospace; font-size: 11px;">
-  <a class="app-nav-link" data-nav="ui" href="/ui" style="padding: 0.35em 0.8em; border-radius: 4px; color: #8b949e; text-decoration: none; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.05em;">Observatory</a>
-  <a class="app-nav-link is-active" data-nav="code" href="/ui/code" style="padding: 0.35em 0.8em; border-radius: 4px; color: #58a6ff; text-decoration: none; background: #21262d; border: 1px solid #30363d; text-transform: uppercase; letter-spacing: 0.05em;">Code</a>
-  <a class="app-nav-link" data-nav="graph" href="/ui/graph" style="padding: 0.35em 0.8em; border-radius: 4px; color: #8b949e; text-decoration: none; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.05em;">Graph</a>
-</nav>
-<h1>code overview <span class="badge" id="ws-badge">workspace</span></h1>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Code Dashboard · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link is-active" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+    </nav>
 
-<div class="controls">
-  <label>workspace_id <select id="ws-input" style="background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 0.3em 0.5em; border-radius: 4px; min-width: 18em;"></select></label>
-  <label>breaking_days <input id="days-input" type="number" min="1" max="365" value="7" style="width:5em" /></label>
-  <button id="refresh">refresh</button>
-  <span id="status" class="empty"></span>
-</div>
+    <main class="code-body">
+      <div class="controls">
+        <label>breaking_days <input id="days-input" type="number" min="1" max="365" value="7" style="width:5em" /></label>
+        <button id="refresh">refresh</button>
+        <span id="status" class="empty"></span>
+      </div>
 
-<h2>counts</h2>
-<div class="counts" id="counts"></div>
+      <h2>counts</h2>
+      <div class="counts" id="counts"></div>
 
-<h2>recent files</h2>
-<table id="files-table"><thead><tr>
-<th>path</th><th>language</th><th>symbols</th><th>edges (in / out)</th>
-<th>recent versions</th><th>narrative</th>
-</tr></thead><tbody></tbody></table>
+      <h2>recent files</h2>
+      <table id="files-table"><thead><tr>
+        <th>path</th><th>language</th><th>symbols</th><th>edges (in / out)</th>
+        <th>recent versions</th><th>narrative</th>
+      </tr></thead><tbody></tbody></table>
 
-<h2>breaking changes (last <span id="days-label">7</span> days)</h2>
-<table id="breaking-table"><thead><tr>
-<th>symbol</th><th>file</th><th>previous → new</th><th>at</th>
-</tr></thead><tbody></tbody></table>
+      <h2>breaking changes (last <span id="days-label">7</span> days)</h2>
+      <table id="breaking-table"><thead><tr>
+        <th>symbol</th><th>file</th><th>previous → new</th><th>at</th>
+      </tr></thead><tbody></tbody></table>
 
-<h2>active edits</h2>
-<table id="edits-table"><thead><tr>
-<th>agent</th><th>target</th><th>expires</th><th>note</th>
-</tr></thead><tbody></tbody></table>
+      <h2>active edits</h2>
+      <table id="edits-table"><thead><tr>
+        <th>agent</th><th>target</th><th>expires</th><th>note</th>
+      </tr></thead><tbody></tbody></table>
 
-<h2>most-called symbols</h2>
-<table id="hot-table"><thead><tr>
-<th>qualified name</th><th>inbound calls</th>
-</tr></thead><tbody></tbody></table>
+      <h2>most-called symbols</h2>
+      <table id="hot-table"><thead><tr>
+        <th>qualified name</th><th>inbound calls</th>
+      </tr></thead><tbody></tbody></table>
+    </main>
+  </div>
 
+<script src="/ui/app_header.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
-const wsParam = new URLSearchParams(location.search).get("workspace_id") || "";
-
-async function populateWorkspaces(preselect) {
-  try {
-    const r = await fetch("/memory/workspaces");
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    const sel = $("#ws-input");
-    sel.innerHTML = "";
-    const target = preselect || data.current_workspace_id || (data.workspaces[0] && data.workspaces[0].id);
-    for (const w of data.workspaces || []) {
-      const opt = document.createElement("option");
-      opt.value = w.id;
-      opt.textContent = w.label && w.label !== w.id ? `${w.id} · ${w.label}` : w.id;
-      if (w.id === target) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    $("#ws-badge").textContent = sel.value;
-    return sel.value;
-  } catch (_e) {
-    // Fallback: standalone hub-less mode — show what we have.
-    const sel = $("#ws-input");
-    sel.innerHTML = `<option value="${preselect || "default"}">${preselect || "default"}</option>`;
-    return preselect || "default";
-  }
-}
 
 async function load() {
-  const ws = $("#ws-input").value || "default";
+  const ws = $("#workspaceInput").value || "default";
   const days = parseInt($("#days-input").value || "7", 10);
   $("#status").textContent = "loading...";
   $("#days-label").textContent = days;
-  $("#ws-badge").textContent = ws;
   try {
     const r = await fetch(
       `/memory/code_overview?workspace_id=${encodeURIComponent(ws)}&breaking_days=${days}`
@@ -181,10 +186,10 @@ function renderEdits(items) {
 function renderHot(items) {
   const tbody = $("#hot-table tbody");
   if (!items.length) { tbody.innerHTML = `<tr><td colspan="2" class="empty">no edges yet</td></tr>`; return; }
-  const ws = $("#ws-input").value;
+  const ws = $("#workspaceInput").value;
   tbody.innerHTML = items.map(i => {
     const href = `/ui/graph?workspace_id=${encodeURIComponent(ws)}&center=${encodeURIComponent(i.qualified_name)}`;
-    return `<tr><td class="qn"><a href="${href}" style="color:#ffa657;text-decoration:none;border-bottom:1px dashed #30363d">${escape(i.qualified_name)}</a></td><td>${i.inbound_calls}</td></tr>`;
+    return `<tr><td class="qn"><a href="${href}" style="color:#ffa657;text-decoration:none;border-bottom:1px dashed var(--line-soft)">${escape(i.qualified_name)}</a></td><td>${i.inbound_calls}</td></tr>`;
   }).join("");
 }
 
@@ -195,31 +200,7 @@ function escape(s) {
 }
 
 $("#refresh").addEventListener("click", load);
-$("#ws-input").addEventListener("change", () => {
-  // Push selection into URL so refresh / share keeps the workspace.
-  const ws = $("#ws-input").value;
-  const u = new URL(location.href);
-  u.searchParams.set("workspace_id", ws);
-  history.replaceState(null, "", u);
-  syncNavLinks();
-  load();
-});
-
-function syncNavLinks() {
-  const ws = $("#ws-input").value;
-  document.querySelectorAll(".app-nav-link[data-nav]").forEach((a) => {
-    const base = a.dataset.nav === "ui" ? "/ui"
-      : a.dataset.nav === "code" ? "/ui/code"
-      : "/ui/graph";
-    a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
-  });
-}
-
-(async () => {
-  await populateWorkspaces(wsParam);
-  syncNavLinks();
-  load();
-})();
+window.AppHeader.init({ active: "code", onWorkspaceChange: () => load() });
 </script>
 </body>
 </html>

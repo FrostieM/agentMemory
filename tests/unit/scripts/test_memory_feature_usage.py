@@ -48,15 +48,16 @@ def _seed_db(db_path: Path, *, workspace_id: str, rows: list[tuple[str, str]]) -
     conn.executemany(
         """INSERT INTO audit_log (id, workspace_id, action, created_at)
            VALUES (?, ?, ?, ?)""",
-        [(f"a{i}", workspace_id, action, created_at) for i, (action, created_at) in enumerate(rows)],
+        [
+            (f"a{i}", workspace_id, action, created_at)
+            for i, (action, created_at) in enumerate(rows)
+        ],
     )
     conn.commit()
     conn.close()
 
 
-def test_action_counts_filters_by_workspace_and_window(
-    tmp_path: Path, script: object
-) -> None:
+def test_action_counts_filters_by_workspace_and_window(tmp_path: Path, script: object) -> None:
     """Only rows in the chosen workspace and inside [since, now] are counted."""
     db = tmp_path / "memory.db"
     now = datetime.now(UTC)
@@ -123,12 +124,17 @@ def test_main_emits_json_when_flag_set(
         ],
     )
 
-    rc = script.main([  # type: ignore[attr-defined]
-        "--workspace", "alpha",
-        "--db-path", str(db),
-        "--days", "30",
-        "--json",
-    ])
+    rc = script.main(
+        [  # type: ignore[attr-defined]
+            "--workspace",
+            "alpha",
+            "--db-path",
+            str(db),
+            "--days",
+            "30",
+            "--json",
+        ]
+    )
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["days"] == 30
@@ -156,13 +162,19 @@ def test_main_include_action_filter(
         ],
     )
 
-    rc = script.main([  # type: ignore[attr-defined]
-        "--workspace", "alpha",
-        "--db-path", str(db),
-        "--days", "30",
-        "--include-action", "ingest_",
-        "--json",
-    ])
+    rc = script.main(
+        [  # type: ignore[attr-defined]
+            "--workspace",
+            "alpha",
+            "--db-path",
+            str(db),
+            "--days",
+            "30",
+            "--include-action",
+            "ingest_",
+            "--json",
+        ]
+    )
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert set(payload["workspaces"]["alpha"]) == {"ingest_episode", "ingest_file"}

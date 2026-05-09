@@ -35,6 +35,9 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 _UI_ROOT = _PACKAGE_ROOT / "ui"
 _ASSETS = {
     "app.js": "application/javascript; charset=utf-8",
+    # 2.2 (Phase 2.3): shared header script for /ui/code and /ui/graph.
+    # /ui/index.html keeps its dedicated app.js (owns the live observatory).
+    "app_header.js": "application/javascript; charset=utf-8",
     "styles.css": "text/css; charset=utf-8",
     # 2.0: code-memory dashboard. Served at /ui/code.html alongside the
     # legacy index.html so the user can land directly on the code view.

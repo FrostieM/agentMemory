@@ -47,9 +47,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _action_counts(
-    conn: sqlite3.Connection, workspace_id: str, since_iso: str
-) -> dict[str, int]:
+def _action_counts(conn: sqlite3.Connection, workspace_id: str, since_iso: str) -> dict[str, int]:
     rows = conn.execute(
         """
         SELECT action, COUNT(*) AS n
@@ -81,11 +79,7 @@ def _format_table(counts: dict[str, int], label: str) -> str:
 def _all_workspaces(args: argparse.Namespace) -> list[tuple[str, Path]]:
     """Return [(workspace_id, db_path), ...] from the registry."""
     registry = _registry_for(args)
-    return [
-        (entry.id, Path(entry.db_path))
-        for entry in registry.list()
-        if entry.db_path
-    ]
+    return [(entry.id, Path(entry.db_path)) for entry in registry.list() if entry.db_path]
 
 
 def _resolve_targets(args: argparse.Namespace) -> list[tuple[str, Path]]:

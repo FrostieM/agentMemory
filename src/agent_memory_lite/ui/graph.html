@@ -2,110 +2,99 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — code graph</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-       margin: 0; padding: 0; background: #0d1117; color: #c9d1d9;
-       overflow: hidden; }
-header { padding: 0.7em 1em; background: #161b22; border-bottom: 1px solid #30363d;
-         display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap; }
-header h1 { margin: 0; font-size: 1.05em; color: #58a6ff; }
-header label { font-size: 0.85em; color: #8b949e; }
-header input { background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
-               padding: 0.25em 0.5em; border-radius: 4px; font-size: 0.85em; }
-header button { background: #238636; color: white; border: 0; padding: 0.3em 0.7em;
-                border-radius: 4px; cursor: pointer; font-size: 0.85em; }
-header .status { color: #8b949e; font-size: 0.8em; margin-left: auto; }
-header .badge { background: #1f6feb; color: #fff; padding: 0.05em 0.5em;
-                border-radius: 10px; font-size: 0.75em; }
-header .nav-link { padding: 0.3em 0.7em; border-radius: 4px; color: #8b949e;
-                   text-decoration: none; border: 1px solid transparent;
-                   text-transform: uppercase; font-size: 0.7em; letter-spacing: 0.05em;
-                   font-family: ui-monospace, monospace; }
-header .nav-link:hover { color: #c9d1d9; background: #21262d; border-color: #30363d; }
-header .nav-link.is-active { color: #58a6ff; background: #21262d; border-color: #30363d; }
-header .nav-sep { color: #30363d; margin: 0 0.2em; }
-#graph { width: 100vw; height: calc(100vh - 50px); cursor: grab; }
-#graph.dragging { cursor: grabbing; }
-.legend { position: fixed; bottom: 1em; left: 1em; background: #161b22cc;
-          padding: 0.5em 0.7em; border-radius: 6px; font-size: 0.78em;
-          border: 1px solid #30363d; }
-.legend .row { display: flex; align-items: center; gap: 0.4em; margin: 0.15em 0; }
-.legend .swatch { width: 10px; height: 10px; border-radius: 50%; }
-#tooltip { position: fixed; pointer-events: none; background: #161b22ee;
-           border: 1px solid #30363d; padding: 0.4em 0.6em; border-radius: 4px;
-           font-size: 0.78em; max-width: 320px; display: none; z-index: 10; }
-.error { color: #f85149; padding: 1em; }
-.empty { color: #8b949e; font-style: italic; padding: 1em; }
+  /* Phase 2.3: graph viewport fills the remaining flex-column space
+     under the shared .app-header + .app-nav strip. The .app wrapper has
+     min-height:100vh + display:flex, so flex:1 makes the svg own the
+     visible body. */
+  html, body { height: 100%; margin: 0; }
+  body { overflow: hidden; }
+  .app { height: 100vh; }
+  #graph { flex: 1; width: 100%; min-height: 0; cursor: grab; display: block; }
+  #graph.dragging { cursor: grabbing; }
+  .graph-controls { padding: 0.6em 32px; background: var(--bg-1);
+                    border-bottom: 1px solid var(--line-soft);
+                    display: flex; gap: 0.8em; align-items: center; flex-wrap: wrap;
+                    font-size: 0.82em; color: var(--text-2); }
+  .graph-controls input { background: var(--bg-0); color: var(--text-0);
+                          border: 1px solid var(--line-soft); padding: 0.25em 0.4em;
+                          border-radius: 4px; font-size: 0.85em; }
+  .graph-controls button { background: #238636; color: white; border: 0;
+                           padding: 0.3em 0.7em; border-radius: 4px; cursor: pointer;
+                           font-size: 0.85em; }
+  .graph-controls .status { color: var(--text-2); font-size: 0.78em; }
+  .legend { position: fixed; bottom: 1em; left: 1em; background: var(--bg-1);
+            padding: 0.5em 0.7em; border-radius: 6px; font-size: 0.78em;
+            border: 1px solid var(--line-soft); }
+  .legend .row { display: flex; align-items: center; gap: 0.4em; margin: 0.15em 0; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 50%; }
+  #tooltip { position: fixed; pointer-events: none; background: var(--bg-1);
+             border: 1px solid var(--line-soft); padding: 0.4em 0.6em;
+             border-radius: 4px; font-size: 0.78em; max-width: 320px;
+             display: none; z-index: 10; }
+  .error { color: #f85149; }
 </style>
 </head>
 <body>
-<header>
-  <a class="nav-link" data-nav="ui" href="/ui">Observatory</a>
-  <a class="nav-link" data-nav="code" href="/ui/code">Code</a>
-  <a class="nav-link is-active" data-nav="graph" href="/ui/graph">Graph</a>
-  <span class="nav-sep">|</span>
-  <h1>code graph</h1>
-  <span class="badge" id="ws-badge">workspace</span>
-  <label>workspace_id <select id="ws-input" style="background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 0.25em 0.4em; border-radius: 4px; font-size: 0.85em; min-width: 16em;"></select></label>
-  <label>center <input id="center-input" placeholder="qualified_name (optional)" style="width:18em" /></label>
-  <label>depth <input id="depth-input" type="number" min="1" max="5" value="2" style="width:3.5em" /></label>
-  <label>max_nodes <input id="max-input" type="number" min="10" max="1000" value="200" style="width:5em" /></label>
-  <button id="refresh">refresh</button>
-  <span class="status" id="status"></span>
-</header>
-<svg id="graph"></svg>
-<div class="legend" id="legend"></div>
-<div id="tooltip"></div>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Code Graph · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link is-active" data-nav="graph" href="/ui/graph">Graph</a>
+    </nav>
+
+    <div class="graph-controls">
+      <label>center <input id="center-input" placeholder="qualified_name (optional)" style="width:18em" /></label>
+      <label>depth <input id="depth-input" type="number" min="1" max="5" value="2" style="width:3.5em" /></label>
+      <label>max_nodes <input id="max-input" type="number" min="10" max="1000" value="200" style="width:5em" /></label>
+      <button id="refresh">refresh</button>
+      <span class="status" id="status"></span>
+    </div>
+
+    <svg id="graph"></svg>
+  </div>
+  <div class="legend" id="legend"></div>
+  <div id="tooltip"></div>
+
 <script src="/ui/vendor/d3.v7.8.5.min.js"></script>
+<script src="/ui/app_header.js"></script>
 <script>
 (function () {
   const $ = (s) => document.querySelector(s);
-  const wsParam = new URLSearchParams(location.search).get("workspace_id") || "";
   const centerParam = new URLSearchParams(location.search).get("center") || "";
   $("#center-input").value = centerParam;
-
-  async function populateWorkspaces(preselect) {
-    try {
-      const r = await fetch("/memory/workspaces");
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const data = await r.json();
-      const sel = $("#ws-input");
-      sel.innerHTML = "";
-      const target = preselect || data.current_workspace_id || (data.workspaces[0] && data.workspaces[0].id);
-      for (const w of data.workspaces || []) {
-        const opt = document.createElement("option");
-        opt.value = w.id;
-        opt.textContent = w.label && w.label !== w.id ? `${w.id} · ${w.label}` : w.id;
-        if (w.id === target) opt.selected = true;
-        sel.appendChild(opt);
-      }
-    } catch (_e) {
-      const sel = $("#ws-input");
-      sel.innerHTML = `<option value="${preselect || "default"}">${preselect || "default"}</option>`;
-    }
-    $("#ws-badge").textContent = $("#ws-input").value;
-  }
-
-  // Sync nav hrefs with the active workspace.
-  function syncNav() {
-    const ws = $("#ws-input").value;
-    document.querySelectorAll(".nav-link[data-nav]").forEach((a) => {
-      const base = a.dataset.nav === "ui" ? "/ui"
-        : a.dataset.nav === "code" ? "/ui/code"
-        : "/ui/graph";
-      a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
-    });
-  }
-  $("#ws-input").addEventListener("change", () => {
-    const ws = $("#ws-input").value;
-    const u = new URL(location.href);
-    u.searchParams.set("workspace_id", ws);
-    history.replaceState(null, "", u);
-    $("#ws-badge").textContent = ws;
-    syncNav();
-    load();
-  });
 
   const colorByLang = {
     python: "#3572A5", javascript: "#f1e05a", typescript: "#3178c6",
@@ -114,9 +103,7 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   };
 
   function status(msg, isError = false) {
-    $("#status").innerHTML = isError
-      ? `<span class="error">${msg}</span>`
-      : msg;
+    $("#status").innerHTML = isError ? `<span class="error">${msg}</span>` : msg;
   }
 
   function renderLegend(langs) {
@@ -130,14 +117,13 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
 
   async function load() {
     if (typeof d3 === "undefined") {
-      status("D3 not loaded — open this page online once to cache the CDN script", true);
+      status("D3 not loaded — vendor bundle missing at /ui/vendor/d3.v7.8.5.min.js", true);
       return;
     }
-    const ws = $("#ws-input").value || "default";
+    const ws = $("#workspaceInput").value || "default";
     const center = $("#center-input").value.trim();
     const depth = $("#depth-input").value;
     const maxNodes = $("#max-input").value;
-    $("#ws-badge").textContent = ws;
     status("loading...");
 
     const params = new URLSearchParams({
@@ -170,7 +156,12 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   function drawGraph(data) {
     const svg = d3.select("#graph");
     svg.selectAll("*").remove();
-    const w = window.innerWidth, h = window.innerHeight - 50;
+    // Use the SVG's own client rect so the simulation centers in the
+    // visible area; .app + flex makes SVG fill remaining viewport space.
+    const node0 = svg.node();
+    const r = node0 ? node0.getBoundingClientRect() : null;
+    const w = r && r.width ? r.width : window.innerWidth;
+    const h = r && r.height ? r.height : window.innerHeight;
     svg.attr("viewBox", [0, 0, w, h]);
 
     const g = svg.append("g");
@@ -230,13 +221,15 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   $("#refresh").addEventListener("click", load);
   $("#center-input").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
 
-  // Bootstrap: populate dropdown, sync nav, then load (waits for D3 to be ready).
-  (async () => {
-    await populateWorkspaces(wsParam);
-    syncNav();
-    if (typeof d3 !== "undefined") load();
-    else window.addEventListener("load", () => setTimeout(load, 100));
-  })();
+  // Bootstrap via AppHeader (Phase 2.3): populate dropdown + sync nav,
+  // then load on initial bootstrap and every workspace change.
+  window.AppHeader.init({
+    active: "graph",
+    onWorkspaceChange: () => {
+      if (typeof d3 !== "undefined") load();
+      else window.addEventListener("load", () => setTimeout(load, 100));
+    },
+  });
 })();
 </script>
 </body>
