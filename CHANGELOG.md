@@ -4,6 +4,90 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.1.5 — 2026-05-10
+
+**Final patch in the v2.1 polish series — closes the v2.0 → v2.1.x
+roadmap.** Edge-case fix + operator documentation + calibration
+notes. No new schema, no new endpoints — polish only.
+
+### Edge-case fix
+
+- **Multi-line Python signatures** are now joined into one
+  signature span. Pre-2.1.5 ``signature_extractor`` returned only
+  the first line, so a parameter buried in the middle of a
+  multi-line ``def fetch_users(\n    client: Client,\n    *,\n
+  page: int = 1,\n) -> list[User]:`` did not bump
+  ``signature_hash``. The new logic accumulates following lines
+  until paren / square-bracket balance returns to zero (curly
+  braces stop the span, marking the body opening). Capped at 2000
+  chars.
+
+  Three new tests in
+  ``tests/unit/extraction/test_signature_extractor.py``:
+  multi-line def joined into one signature, parameter change in
+  the middle of the multi-line form bumps the hash, curly brace
+  body opening stops the span (no body included).
+
+### Documentation
+
+- **`docs/CODE_MEMORY_GUIDE.md`** — operator reference for the
+  v1.4 → v2.1.x code-memory substrate. Five-layer architecture
+  diagram, tool index ("when to call which"), four typical
+  workflows (onboarding to a workspace, agent claim before
+  editing, pre-release breaking-change scan, refactor pattern
+  propagation), env-flag reference, backstops.
+
+- **`docs/V2_CALIBRATION.md`** — threshold defaults + empirical
+  targets for v1.4 → v2.1.x. similar_signature 0.7 cutoff,
+  scan_limit=200, breaking-changes 7-day window, active-edits
+  30-min TTL, LLM narrative 10s timeout, D3 dashboard
+  max_nodes=200. Future calibration work explicitly listed —
+  positive-rate measurements, query-latency benchmarks, LLM
+  qualitative review — to be filled in as the substrate
+  accumulates real data.
+
+- **`docs/AGENT_CONTRACT.md`** rule #29 — instructs agents to
+  prefer the v1.4 → v2.1.x code-memory tools (find_symbols,
+  graph_neighbors, breaking_changes, file_digest, code_overview,
+  /ui/code, /ui/graph) for code questions, and to use
+  claim_edit / release_edit / list_active_edits for multi-agent
+  coordination. Synced into ``CLAUDE.md`` + ``AGENTS.md`` via
+  the standard ``setup_agent.py --sync-repo`` flow.
+
+### Tests — 3 new
+
+Total tests now: **882 pass**.
+
+### V1.4 → V2.0 → V2.1.x roadmap — DONE
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0–1.5.2 | Hard graph + tree-sitter edges + cross-file resolver | shipped |
+| 1.6.0   | Symbol versioning + breaking-change detection | shipped |
+| 1.7.0   | Soft graph + active-edit registry | shipped |
+| 1.8.0   | Narrative file digests | shipped |
+| 2.0.0   | Code-memory dashboard | shipped |
+| 2.1.1   | Tree-sitter extends/implements/decorated_by parity | shipped |
+| 2.1.2   | D3.js graph visualization | shipped |
+| 2.1.3   | Ollama LLM narrative | shipped |
+| 2.1.4   | similar_signature soft edges via MinHash | shipped |
+| **2.1.5** | **Multi-line signatures + docs + calibration notes** | **shipped** |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (520 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 882 tests pass.
+
+### Next
+
+Code-memory is feature-complete. Future minor bumps
+(``v2.2.0+``) are reserved for genuine substrate-level additions
+(new schema, new edge model). v2.1.x patch series is closed.
+
 ## 2.1.4 — 2026-05-10
 
 Fourth patch in the v2.1 polish series. Populates the **third

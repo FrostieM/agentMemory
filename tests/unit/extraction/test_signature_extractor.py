@@ -60,3 +60,43 @@ def test_content_hash_changes_on_body_change() -> None:
 def test_empty_input_returns_empty_signature() -> None:
     assert extract_signature("") == ""
     assert extract_signature("   \n  \n") == ""
+
+
+def test_multiline_python_signature_joined() -> None:
+    """2.1.5: a def split across multiple lines is joined into one
+    signature so a parameter change ANYWHERE in the multi-line form
+    bumps signature_hash."""
+    src = (
+        "def fetch_users(\n"
+        "    client: Client,\n"
+        "    *,\n"
+        "    page: int = 1,\n"
+        ") -> list[User]:\n"
+        "    return client.get('users')\n"
+    )
+    sig = extract_signature(src)
+    assert "def fetch_users(" in sig
+    assert "client: Client" in sig
+    assert "page: int = 1" in sig
+    assert ") -> list[User]:" in sig
+    # Body line not included.
+    assert "return" not in sig
+
+
+def test_multiline_signature_change_bumps_hash() -> None:
+    """The whole point of the multi-line fix: a buried parameter
+    change must produce a different signature_hash."""
+    src_v1 = "def foo(\n    x: int,\n) -> int:\n    return x\n"
+    src_v2 = "def foo(\n    x: int,\n    y: int = 0,\n) -> int:\n    return x + y\n"
+    h1 = signature_hash(extract_signature(src_v1))
+    h2 = signature_hash(extract_signature(src_v2))
+    assert h1 != h2
+
+
+def test_multiline_signature_doesnt_swallow_body() -> None:
+    """Curly braces don't continue the span — the moment a TS / Java
+    / C# method body opens, the signature ends."""
+    src = "async fetch(\n  id: number,\n): Promise<User> {\n  return this.db.get(id);\n}\n"
+    sig = extract_signature(src)
+    assert sig.endswith("Promise<User> {")
+    assert "this.db.get" not in sig

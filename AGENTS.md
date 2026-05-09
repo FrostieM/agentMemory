@@ -149,6 +149,17 @@ Apply these rules every session. They are not optional.
     with a hint pointing at `/memory/promote_candidate_to_behavior`. Promote
     with one click to land a durable `behavior_instruction`; reject preserves
     the candidate as audit evidence. The trust gate prevents auto-promote.
+29. **For code-memory questions, use the v1.4 → v2.1.x code-memory tools.**
+    They are language-aware and substrate-aware: when you need to find a
+    specific function, ask `memory_find_symbols`; for "who depends on X", use
+    `memory_graph_neighbors`; for "did this signature change recently", use
+    `memory_breaking_changes`; for "what does this file do", use
+    `memory_file_digest`; for the workspace overview, use
+    `memory_code_overview` or open `/ui/code` / `/ui/graph` in a browser.
+    Multi-agent code coordination: `memory_claim_edit` / `memory_release_edit`
+    / `memory_list_active_edits` advertise that you are touching a target
+    so other agents don't clobber. Operator-facing reference:
+    [`docs/CODE_MEMORY_GUIDE.md`](CODE_MEMORY_GUIDE.md).
 
 ## API surface
 
