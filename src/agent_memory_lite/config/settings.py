@@ -85,12 +85,15 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="LLM_MODEL")
     ollama_probe_skip: bool = Field(default=False, validation_alias="OLLAMA_PROBE_SKIP")
 
-    # 2.1.3: opt-in LLM-driven narrative for file digests (default OFF).
+    # 2.1.3 LLM narrative + 2.1.4 similar_signature soft edges.
     # fmt: off
     llm_narrative_enabled: bool = Field(False, validation_alias="MEMORY_LLM_NARRATIVE_ENABLED")
     llm_narrative_min_symbols: int = Field(3, ge=1, le=100, validation_alias="MEMORY_LLM_NARRATIVE_MIN_SYMBOLS")
     llm_narrative_timeout_sec: float = Field(10.0, gt=0.0, le=120.0, validation_alias="MEMORY_LLM_NARRATIVE_TIMEOUT_SEC")
     llm_narrative_max_input_chars: int = Field(4000, ge=200, le=20000, validation_alias="MEMORY_LLM_NARRATIVE_MAX_INPUT_CHARS")
+    similar_sig_enabled: bool = Field(True, validation_alias="MEMORY_SIMILAR_SIG_ENABLED")
+    similar_sig_threshold: float = Field(0.7, ge=0.0, le=1.0, validation_alias="MEMORY_SIMILAR_SIG_THRESHOLD")
+    similar_sig_scan_limit: int = Field(200, ge=1, le=2000, validation_alias="MEMORY_SIMILAR_SIG_SCAN_LIMIT")
     # fmt: on
 
     # Memory-quality features. As of the 1.1.0 calibration, these
@@ -111,12 +114,10 @@ class Settings(BaseSettings):
         14.0, gt=0.0, validation_alias="MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS"
     )
     conflict_detect_enabled: bool = Field(True, validation_alias="MEMORY_CONFLICT_DETECT_ENABLED")
-    conflict_detect_threshold: float = Field(
-        0.6, ge=0.0, le=1.0, validation_alias="MEMORY_CONFLICT_DETECT_THRESHOLD"
-    )
-    compact_trigger_threshold_chunks: int = Field(
-        0, ge=0, validation_alias="MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS"
-    )
+    # fmt: off
+    conflict_detect_threshold: float = Field(0.6, ge=0.0, le=1.0, validation_alias="MEMORY_CONFLICT_DETECT_THRESHOLD")
+    compact_trigger_threshold_chunks: int = Field(0, ge=0, validation_alias="MEMORY_COMPACT_TRIGGER_THRESHOLD_CHUNKS")
+    # fmt: on
 
     # v1.4 feedback-aware scoring + v1.5 capability maturity. EWMA aggregator
     # runs on demand via /memory/feedback_summary; capability counters move

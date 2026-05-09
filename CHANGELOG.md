@@ -4,6 +4,69 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.1.4 — 2026-05-10
+
+Fourth patch in the v2.1 polish series. Populates the **third
+soft-edge kind** — ``similar_signature`` — that v1.7.0 schema-
+reserved but never wrote rows for. Two functions
+``fetch_users(client) -> list[User]`` and
+``fetch_orders(client) -> list[Order]`` share most signature
+tokens; when an agent rewrites one, the soft graph now surfaces
+the other as a candidate for the same change.
+
+### What changed
+
+- **New module ``extraction/signature_similarity.py``** —
+  bag-of-tokens MinHash + Jaccard estimate. 64 hash permutations
+  per signature. Tokenizer splits on whitespace + common
+  punctuation (``()[]{},:;<>``); the function name, parameter
+  names, and return-type tokens become the comparison set.
+  Deterministic (blake2b-seeded), so the same signature always
+  hashes identically.
+- **New module ``ingestion/file_persist_similar_sigs.py``** —
+  bounded-scan accumulator. After every newly-versioned chunk,
+  compares its signature MinHash against the last
+  ``MEMORY_SIMILAR_SIG_SCAN_LIMIT`` (default 200) distinct
+  signatures from ``symbol_versions`` in the same workspace;
+  emits ``similar_signature`` soft edges in BOTH directions when
+  Jaccard ≥ ``MEMORY_SIMILAR_SIG_THRESHOLD`` (default 0.7).
+- **`record_versions_for_chunks` return type changed** — was
+  ``list[str]`` (qnames), now ``list[tuple[str, str]]`` (qname +
+  signature_text). The v1.7.0 ``co_changed`` accumulator and the
+  v2.1.4 ``similar_signature`` accumulator both consume this list.
+- **Pipeline wiring** — ``file_post_chunk.run_post_chunk_phase``
+  delegates to ``_emit_similar_sigs`` for the per-changed-qname
+  loop. ``persist_chunks_loop`` extracted into its own
+  ``file_chunks_loop.py`` module to free SLOC budget.
+
+### New env flags
+
+```
+MEMORY_SIMILAR_SIG_ENABLED=true       # default ON; cost is bounded
+MEMORY_SIMILAR_SIG_THRESHOLD=0.7      # Jaccard cutoff
+MEMORY_SIMILAR_SIG_SCAN_LIMIT=200     # candidate pool size per check
+```
+
+### Tests — 11 new
+
+- ``tests/unit/extraction/test_signature_similarity.py`` (7):
+  tokenization, MinHash determinism, Jaccard identity (1.0),
+  Jaccard disjoint (low), Jaccard parallel (high), empty
+  signature, symmetry.
+- ``tests/e2e/test_similar_sig_route.py`` (4): parallel
+  signatures emit edges, dissimilar do not, flag-OFF disables
+  emission, edges are bidirectional.
+
+Total tests now: **879 pass**.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (520 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 879 tests pass.
+
 ## 2.1.3 — 2026-05-10
 
 Third patch in the v2.1 polish series. Adds **opt-in LLM-driven

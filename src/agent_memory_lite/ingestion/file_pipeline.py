@@ -18,9 +18,9 @@ from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.ingestion.file_chunking import chunk_for_kind, chunk_kind_for
+from agent_memory_lite.ingestion.file_chunks_loop import persist_chunks_loop
 from agent_memory_lite.ingestion.file_persist import run_vector_phase
 from agent_memory_lite.ingestion.file_post_chunk import (
-    persist_chunks_loop,
     run_post_chunk_phase,
     run_pre_chunk_cleanup,
 )
