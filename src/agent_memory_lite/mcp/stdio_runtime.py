@@ -155,5 +155,10 @@ def _registry_paths_for(runtime: _Runtime, workspace_id: str) -> tuple[str, str]
 _runtime = _Runtime()
 
 
-def workspace_schema() -> dict[str, str]:
-    return {"type": "string", "default": _runtime.settings.workspace_id}
+# 2.2 (Phase 2.7): workspace_schema() lives in stdio_workspace_schema.py
+# so the resolution logic stays under the ≤150-SLOC ceiling. Re-imported
+# here so every existing
+# `from agent_memory_lite.mcp.stdio_runtime import workspace_schema`
+# call site keeps working without churn. The name is listed in
+# ``__all__`` above so this is a deliberate public re-export.
+from agent_memory_lite.mcp.stdio_workspace_schema import workspace_schema  # noqa: E402

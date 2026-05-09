@@ -58,6 +58,7 @@ from agent_memory_lite.api.routes import (
     telemetry,
     theories,
     ui,
+    ui_vendor,
     usage,
     workspaces,
 )
@@ -157,6 +158,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(recurring_findings.router)
     app.include_router(workspaces.router)
     app.include_router(ui.router)
+    app.include_router(ui_vendor.router)
     app.include_router(compact.router)
     app.include_router(evals.router)
     app.include_router(archive.router)
