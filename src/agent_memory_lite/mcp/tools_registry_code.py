@@ -15,6 +15,10 @@ from agent_memory_lite.mcp.tools_coordination import (
     memory_release_edit,
     memory_soft_neighbors,
 )
+from agent_memory_lite.mcp.tools_digests import (
+    memory_file_digest,
+    memory_list_file_digests,
+)
 from agent_memory_lite.mcp.tools_graph import memory_graph_neighbors
 from agent_memory_lite.mcp.tools_payloads import ToolDefinition
 from agent_memory_lite.mcp.tools_symbols import memory_find_symbols
@@ -87,5 +91,18 @@ CODE_TOOLS_REGISTRY: tuple[ToolDefinition, ...] = (
             "you expected."
         ),
         handler=memory_soft_neighbors,
+    ),
+    ToolDefinition(
+        name="memory_file_digest",
+        description=(
+            "1.8.0: narrative + structured digest for one file "
+            "(chunk count, symbol kinds, edge counts, recent versions)."
+        ),
+        handler=memory_file_digest,
+    ),
+    ToolDefinition(
+        name="memory_list_file_digests",
+        description=("1.8.0: workspace overview — every file's digest, newest first."),
+        handler=memory_list_file_digests,
     ),
 )

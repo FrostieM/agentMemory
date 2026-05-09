@@ -4,6 +4,74 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.8.0 — 2026-05-09
+
+Phase 5 of the V1.4→V2 code-memory roadmap: **narrative file
+digests**. The last brick before v2.0's dashboard. Pre-1.8.0 the
+agent had to enumerate chunks + edges + versions to build a "what
+does this file do?" view from scratch every time. The digest is
+that view — derived once at ingest time, persisted as a single
+record per (workspace_id, file_path).
+
+### Headline
+
+- **`file_digests` table** (migration 0032). One row per file with:
+  language, chunk_count, symbol_count, inbound_edge_count,
+  outbound_edge_count, versions_recent (last 7 days), a
+  human-readable ``narrative`` string, and a ``structured`` JSON
+  field carrying the qualified-name list and per-kind tally.
+- **Heuristic digest assembler**
+  (``ingestion/file_digest_builder.py``). Pure derivation from the
+  existing chunks / symbol_edges / symbol_versions tables —
+  no LLM, no I/O beyond SQLite reads. The v1.8.x roadmap includes
+  an optional Ollama enrichment pass; the heuristic baseline ships
+  first because it works without external services.
+- **Pipeline wiring**: digest is upserted on every file ingest
+  pass as the final step in ``run_post_chunk_phase``. Idempotent
+  by design — re-ingesting unchanged content overwrites the row
+  with identical values, so history isn't churned.
+- **`POST /memory/file_digest`** + **`memory_file_digest` MCP
+  tool** — single file lookup. Returns 404 for files with no
+  digest (e.g. non-code files).
+- **`POST /memory/list_file_digests`** + **`memory_list_file_digests`
+  MCP tool** — workspace overview, newest-updated first. The
+  foundation for the v2.0 dashboard surface.
+
+### Tests — 6 new
+
+- ``tests/e2e/test_file_digests_routes.py``:
+    1. digest_built_on_first_ingest — narrative + structured fields
+       populated correctly.
+    2. digest_updated_on_re_ingest — symbol_count tracks new symbols,
+       updated_at advances.
+    3. unknown_file_returns_404.
+    4. list_digests_returns_workspace_overview — multi-file view.
+    5. digest_edge_counts_reflect_graph — inbound/outbound counts
+       reflect actual ``symbol_edges`` rows.
+    6. digest_versions_recent_count — versions_recent ≥ 1 for a
+       freshly-ingested file.
+
+Total tests now: **837 pass** (unit + e2e + integration + invariants).
+
+### Roadmap progress to v2.0
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0–1.5.2 | Hard graph + tree-sitter edges + cross-file resolver | shipped |
+| 1.6.0   | Symbol versioning + breaking-change detection | shipped |
+| 1.7.0   | Soft graph + active-edit registry | shipped |
+| **1.8.0** | **Narrative file digests** | **shipped** |
+| 2.0     | Dashboard surface | next + final |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (501 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 837 tests pass.
+
 ## 1.7.0 — 2026-05-09
 
 Phase 4 of the V1.4→V2 code-memory roadmap: **multi-agent

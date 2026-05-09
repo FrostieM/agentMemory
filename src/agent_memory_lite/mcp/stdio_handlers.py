@@ -30,6 +30,10 @@ from agent_memory_lite.mcp.stdio_handlers_decisions import (
     _handle_update_task_state,
     _handle_write_decision,
 )
+from agent_memory_lite.mcp.stdio_handlers_digests import (
+    _handle_file_digest,
+    _handle_list_file_digests,
+)
 from agent_memory_lite.mcp.stdio_handlers_episodes import (
     _handle_get_context,
     _handle_get_object,
@@ -98,6 +102,8 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_release_edit": _handle_release_edit,
     "memory_list_active_edits": _handle_list_active_edits,
     "memory_soft_neighbors": _handle_soft_neighbors,
+    "memory_file_digest": _handle_file_digest,
+    "memory_list_file_digests": _handle_list_file_digests,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,

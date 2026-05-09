@@ -10,6 +10,7 @@ from agent_memory_lite.mcp.stdio_tools_capability import CAPABILITY_LINK_TOOLS
 from agent_memory_lite.mcp.stdio_tools_code import CODE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_coordination import COORDINATION_TOOLS
 from agent_memory_lite.mcp.stdio_tools_decisions import DECISION_TOOLS
+from agent_memory_lite.mcp.stdio_tools_digests import DIGEST_TOOLS
 from agent_memory_lite.mcp.stdio_tools_episodes import EPISODE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_p1 import P1_TOOLS
 from agent_memory_lite.mcp.stdio_tools_research import RESEARCH_TOOLS
@@ -22,6 +23,7 @@ ALL_TOOLS: list[types.Tool] = [
     *EPISODE_TOOLS,
     *CODE_TOOLS,
     *COORDINATION_TOOLS,
+    *DIGEST_TOOLS,
     *DECISION_TOOLS,
     *REVIEW_TOOLS,
     *CAPABILITY_LINK_TOOLS,

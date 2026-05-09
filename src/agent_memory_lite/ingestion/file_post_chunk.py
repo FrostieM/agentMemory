@@ -20,6 +20,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.ingestion.file_digest_builder import build_digest
 from agent_memory_lite.ingestion.file_persist_edges import persist_edges_for_file
 from agent_memory_lite.ingestion.file_persist_soft_edges import record_co_change_pairs
 from agent_memory_lite.ingestion.file_persist_versions import record_versions_for_chunks
@@ -28,7 +29,9 @@ from agent_memory_lite.repositories.chunks_repo import (
     delete_chunks_by_file,
     list_chunk_ids_for_file,
 )
+from agent_memory_lite.repositories.file_digests_repo import upsert_digest
 from agent_memory_lite.repositories.symbol_edges_repo import delete_edges_by_src_chunks
+from agent_memory_lite.utils.time import iso_now
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +39,7 @@ class PostChunkCounts:
     edges_written: int
     versions_written: int
     soft_pairs_written: int
+    digest_id: str | None
 
 
 def run_pre_chunk_cleanup(
@@ -93,8 +97,18 @@ def run_post_chunk_phase(
         workspace_id=workspace_id,
         changed_qnames=changed_qnames,
     )
+    digest_payload = build_digest(
+        conn,
+        workspace_id=workspace_id,
+        file_path=file_path,
+        language=language,
+        chunks=new_chunks,
+        last_indexed_at=iso_now(),
+    )
+    digest = upsert_digest(conn, digest_payload)
     return PostChunkCounts(
         edges_written=edges_written,
         versions_written=len(changed_qnames),
         soft_pairs_written=soft_pairs_written,
+        digest_id=digest.id,
     )

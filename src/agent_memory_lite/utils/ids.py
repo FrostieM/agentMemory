@@ -44,6 +44,7 @@ class IdKind(StrEnum):
     SYMBOL_VERSION = "symv"
     ACTIVE_EDIT = "edit"
     SOFT_EDGE = "soft"
+    FILE_DIGEST = "fdg"
 
 
 def new_id(kind: IdKind, *, length: int = 16) -> str:

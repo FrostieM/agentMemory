@@ -31,6 +31,7 @@ from agent_memory_lite.api.routes import (
     evals,
     explain_diff,
     feedback_summary,
+    file_digests,
     find_symbols,
     get_object,
     graph_neighbors,
@@ -99,6 +100,7 @@ def _register_code_routers(app: FastAPI) -> None:
     app.include_router(breaking_changes.router)
     app.include_router(active_edits.router)
     app.include_router(soft_neighbors.router)
+    app.include_router(file_digests.router)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
