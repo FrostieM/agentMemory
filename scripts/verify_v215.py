@@ -66,9 +66,9 @@ def main() -> int:
         total_edges += resp.get("edges_written", 0)
         total_versions += resp.get("versions_written", 0)
         print(
-            f"  {path:65}  chunks={resp.get('chunks_written',0):>3}  "
-            f"edges={resp.get('edges_written',0):>3}  "
-            f"versions={resp.get('versions_written',0):>3}"
+            f"  {path:65}  chunks={resp.get('chunks_written', 0):>3}  "
+            f"edges={resp.get('edges_written', 0):>3}  "
+            f"versions={resp.get('versions_written', 0):>3}"
         )
     print(f"\nTotals: chunks={total_chunks} edges={total_edges} versions={total_versions}")
 
@@ -107,10 +107,17 @@ def main() -> int:
 
     r = post(
         "/memory/file_digest",
-        {"workspace_id": WS, "file_path": "src/agent_memory_lite/extraction/symbol_edges_python.py"},
+        {
+            "workspace_id": WS,
+            "file_path": "src/agent_memory_lite/extraction/symbol_edges_python.py",
+        },
     )
     src = r["structured"].get("narrative_source", "?")
-    step("v1.8+v2.1.3 file_digest", r["symbol_count"] > 0, f"symbols={r['symbol_count']}  source={src}")
+    step(
+        "v1.8+v2.1.3 file_digest",
+        r["symbol_count"] > 0,
+        f"symbols={r['symbol_count']}  source={src}",
+    )
 
     r = get(f"/memory/code_overview?workspace_id={WS}")
     counts = r["counts"]
