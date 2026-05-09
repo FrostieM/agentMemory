@@ -42,6 +42,8 @@ class IdKind(StrEnum):
     EMBEDDING = "emb"
     SYMBOL_EDGE = "sedge"
     SYMBOL_VERSION = "symv"
+    ACTIVE_EDIT = "edit"
+    SOFT_EDGE = "soft"
 
 
 def new_id(kind: IdKind, *, length: int = 16) -> str:

@@ -8,6 +8,7 @@ from agent_memory_lite.mcp.stdio_tools_archive import ARCHIVE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_capabilities import CAPABILITY_TOOLS
 from agent_memory_lite.mcp.stdio_tools_capability import CAPABILITY_LINK_TOOLS
 from agent_memory_lite.mcp.stdio_tools_code import CODE_TOOLS
+from agent_memory_lite.mcp.stdio_tools_coordination import COORDINATION_TOOLS
 from agent_memory_lite.mcp.stdio_tools_decisions import DECISION_TOOLS
 from agent_memory_lite.mcp.stdio_tools_episodes import EPISODE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_p1 import P1_TOOLS
@@ -20,6 +21,7 @@ from agent_memory_lite.mcp.stdio_tools_theories import THEORY_TOOLS
 ALL_TOOLS: list[types.Tool] = [
     *EPISODE_TOOLS,
     *CODE_TOOLS,
+    *COORDINATION_TOOLS,
     *DECISION_TOOLS,
     *REVIEW_TOOLS,
     *CAPABILITY_LINK_TOOLS,

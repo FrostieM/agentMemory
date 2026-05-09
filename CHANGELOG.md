@@ -4,6 +4,94 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.7.0 — 2026-05-09
+
+Phase 4 of the V1.4→V2 code-memory roadmap: **multi-agent
+coordination layer** — soft graph + active-edit registry. Two
+distinct features that together close the multi-agent code-
+collaboration loop:
+
+* **Active-edit registry** — short-lived TTL-bounded claims that one
+  agent is currently editing a specific symbol or file. Other agents
+  see the claim before starting work, avoiding clobbering.
+* **Soft graph** — accumulated co-change / co-reference signals
+  between symbols. The hard graph (``symbol_edges``) records EXPLICIT
+  AST relationships; the soft graph captures HEURISTIC ones ("these
+  symbols evolve together"). Weight accumulates per observation so
+  noise filters naturally.
+
+### Headline — active-edit registry
+
+- **`active_edits` table** (migration 0031). Each row carries
+  ``workspace_id``, ``qualified_name`` / ``file_path``, ``agent_id``,
+  ``ttl`` (default 30 min), and ``note``. Lazy expiry: each
+  read/write call cleans up expired rows for the workspace. No
+  background worker.
+- **`POST /memory/claim_edit`** + **`memory_claim_edit` MCP tool** —
+  attempt to claim a target. Returns 200 with the claim row when
+  successful; same agent can re-claim (idempotent extend); 409 when
+  another agent already has an active claim. The MCP tool returns a
+  graceful ``{"claimed": false, "blocked_by": "...", ...}`` rather
+  than raising so the agent can branch on it.
+- **`POST /memory/release_edit`** + **`memory_release_edit` MCP tool**
+  — release a claim by ``claim_id``.
+- **`POST /memory/list_active_edits`** + **`memory_list_active_edits`
+  MCP tool** — read every non-expired claim. The starting agent's
+  first move when entering a workspace.
+
+### Headline — soft graph
+
+- **`soft_edges` table** (migration 0031). Three edge kinds:
+  ``co_changed``, ``co_referenced``, ``similar_signature`` (only
+  ``co_changed`` is populated by the pipeline today; the others are
+  schema-ready for v1.7.x extensions). UNIQUE index on
+  ``(workspace_id, src, dst, edge_kind)`` so updates increment a
+  weight rather than insert duplicates.
+- **`ingestion/file_persist_soft_edges.py`** — co-change accumulator
+  wired into the file ingest pipeline. After every chunk is
+  persisted, every pair of qnames whose ``content_hash`` changed
+  this pass receives a ``co_changed`` weight increment in both
+  directions. ``record_versions_for_chunks`` now returns the list
+  of changed qnames (it returned just a count before) so the
+  accumulator knows which pairs to bump.
+- **`POST /memory/soft_neighbors`** + **`memory_soft_neighbors` MCP
+  tool** — weighted-and-ordered neighbor lookup. Use after the hard
+  graph misses an edge you expected ("these two symbols feel like
+  they should be related but don't have an explicit call site").
+
+### Tests — 10 new
+
+- ``tests/e2e/test_active_edits_routes.py`` (4 tests): claim →
+  release round-trip, conflict 409 between two agents, idempotent
+  re-claim by the same agent, missing-target 400.
+- ``tests/e2e/test_soft_neighbors_route.py`` (6 tests): co-change
+  pairs emitted on first ingest, weight accumulation across
+  re-ingests, unrelated symbol returns empty, unknown kind 400,
+  kind filter, ingest-side accumulator records pairs end-to-end.
+
+Total tests now: **831 pass** (unit + e2e + integration + invariants).
+
+### Roadmap progress to v2.0
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0   | Hard graph (Python edges) | shipped |
+| 1.5.1   | Cross-file edge resolver | shipped |
+| 1.5.2   | Tree-sitter edges for 7 languages | shipped |
+| 1.6.0   | Symbol versioning + breaking-change detection | shipped |
+| **1.7.0** | **Soft graph + active-edit registry** | **shipped** |
+| 1.8.0   | Narrative file digests | next |
+| 2.0     | Dashboard surface | final |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (494 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 831 tests pass.
+
 ## 1.6.0 — 2026-05-09
 
 Phase 3 of the V1.4→V2 code-memory roadmap: **symbol-level version

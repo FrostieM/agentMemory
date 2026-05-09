@@ -21,6 +21,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from agent_memory_lite.ingestion.file_persist_edges import persist_edges_for_file
+from agent_memory_lite.ingestion.file_persist_soft_edges import record_co_change_pairs
 from agent_memory_lite.ingestion.file_persist_versions import record_versions_for_chunks
 from agent_memory_lite.models.chunks import Chunk
 from agent_memory_lite.repositories.chunks_repo import (
@@ -34,6 +35,7 @@ from agent_memory_lite.repositories.symbol_edges_repo import delete_edges_by_src
 class PostChunkCounts:
     edges_written: int
     versions_written: int
+    soft_pairs_written: int
 
 
 def run_pre_chunk_cleanup(
@@ -79,11 +81,20 @@ def run_post_chunk_phase(
         language=language,
         chunk_qnames=chunk_qnames,
     )
-    versions_written = record_versions_for_chunks(
+    changed_qnames = record_versions_for_chunks(
         conn,
         workspace_id=workspace_id,
         chunks=new_chunks,
         file_path=file_path,
         language=language,
     )
-    return PostChunkCounts(edges_written=edges_written, versions_written=versions_written)
+    soft_pairs_written = record_co_change_pairs(
+        conn,
+        workspace_id=workspace_id,
+        changed_qnames=changed_qnames,
+    )
+    return PostChunkCounts(
+        edges_written=edges_written,
+        versions_written=len(changed_qnames),
+        soft_pairs_written=soft_pairs_written,
+    )

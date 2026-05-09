@@ -13,6 +13,7 @@ from agent_memory_lite.api.agent_identity_middleware import AgentIdentityMiddlew
 from agent_memory_lite.api.auth import install_api_token_guard
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.routes import (
+    active_edits,
     archive,
     audit_list,
     behavior,
@@ -48,6 +49,7 @@ from agent_memory_lite.api.routes import (
     review_queue,
     search,
     sentinel_trends,
+    soft_neighbors,
     symbol_history,
     task_state,
     telemetry,
@@ -86,6 +88,17 @@ def _bootstrap(settings: Settings) -> None:
     finally:
         close_connection(conn)
     probe_ollama(settings)
+
+
+def _register_code_routers(app: FastAPI) -> None:
+    """1.7.0: code-memory routers (v1.4 → v1.7) grouped here so
+    create_app stays under the per-function statement ceiling."""
+    app.include_router(find_symbols.router)
+    app.include_router(graph_neighbors.router)
+    app.include_router(symbol_history.router)
+    app.include_router(breaking_changes.router)
+    app.include_router(active_edits.router)
+    app.include_router(soft_neighbors.router)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -148,8 +161,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(memory_state_snapshots.router)
     app.include_router(review_queue.router)
     app.include_router(promote_to_behavior.router)
-    app.include_router(find_symbols.router)
-    app.include_router(graph_neighbors.router)
-    app.include_router(symbol_history.router)
-    app.include_router(breaking_changes.router)
+    _register_code_routers(app)
     return app

@@ -19,6 +19,12 @@ from agent_memory_lite.mcp.stdio_handlers_capability import (
     _handle_list_capability_links,
     _handle_upsert_behavior_instruction,
 )
+from agent_memory_lite.mcp.stdio_handlers_coordination import (
+    _handle_claim_edit,
+    _handle_list_active_edits,
+    _handle_release_edit,
+    _handle_soft_neighbors,
+)
 from agent_memory_lite.mcp.stdio_handlers_decisions import (
     _handle_list_decisions,
     _handle_update_task_state,
@@ -88,6 +94,10 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_graph_neighbors": _handle_graph_neighbors,
     "memory_symbol_history": _handle_symbol_history,
     "memory_breaking_changes": _handle_breaking_changes,
+    "memory_claim_edit": _handle_claim_edit,
+    "memory_release_edit": _handle_release_edit,
+    "memory_list_active_edits": _handle_list_active_edits,
+    "memory_soft_neighbors": _handle_soft_neighbors,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,

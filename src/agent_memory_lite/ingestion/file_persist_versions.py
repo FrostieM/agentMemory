@@ -33,12 +33,14 @@ def record_versions_for_chunks(
     chunks: list[Chunk],
     file_path: str,
     language: str | None,
-) -> int:
+) -> list[str]:
     """For every chunk with a qualified_name, append a symbol_versions
     row when the content_hash differs from the most recent version.
-    Returns the count of new version rows written.
+    Returns the qualified_names that got a NEW version this pass —
+    the soft-edge accumulator uses this list to build co_changed
+    pairs (1.7.0).
     """
-    written = 0
+    changed: list[str] = []
     for chunk in chunks:
         if not chunk.qualified_name:
             continue
@@ -49,7 +51,6 @@ def record_versions_for_chunks(
             qualified_name=chunk.qualified_name,
         )
         if latest is not None and latest.content_hash == chash:
-            # Identical content — no new version row.
             continue
         signature = extract_signature(chunk.text)
         insert_version(
@@ -65,5 +66,5 @@ def record_versions_for_chunks(
                 content_hash=chash,
             ),
         )
-        written += 1
-    return written
+        changed.append(chunk.qualified_name)
+    return changed

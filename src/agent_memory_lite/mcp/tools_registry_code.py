@@ -9,6 +9,12 @@ stays under the SLOC ceiling as the code-memory surface grows.
 
 from __future__ import annotations
 
+from agent_memory_lite.mcp.tools_coordination import (
+    memory_claim_edit,
+    memory_list_active_edits,
+    memory_release_edit,
+    memory_soft_neighbors,
+)
 from agent_memory_lite.mcp.tools_graph import memory_graph_neighbors
 from agent_memory_lite.mcp.tools_payloads import ToolDefinition
 from agent_memory_lite.mcp.tools_symbols import memory_find_symbols
@@ -53,5 +59,33 @@ CODE_TOOLS_REGISTRY: tuple[ToolDefinition, ...] = (
             "caller counts. 'Who could break after my last refactor?'"
         ),
         handler=memory_breaking_changes,
+    ),
+    ToolDefinition(
+        name="memory_claim_edit",
+        description=(
+            "1.7.0: claim a symbol or file for editing. Multi-agent "
+            "coordination — other agents see this lock via "
+            "memory_list_active_edits."
+        ),
+        handler=memory_claim_edit,
+    ),
+    ToolDefinition(
+        name="memory_release_edit",
+        description="1.7.0: release a previously-claimed edit lock by claim_id.",
+        handler=memory_release_edit,
+    ),
+    ToolDefinition(
+        name="memory_list_active_edits",
+        description=("1.7.0: list every non-expired edit claim in the workspace."),
+        handler=memory_list_active_edits,
+    ),
+    ToolDefinition(
+        name="memory_soft_neighbors",
+        description=(
+            "1.7.0: heuristic graph neighbors — symbols that co-change "
+            "or co-reference. Use after the hard graph misses an edge "
+            "you expected."
+        ),
+        handler=memory_soft_neighbors,
     ),
 )
