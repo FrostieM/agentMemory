@@ -88,6 +88,29 @@ def memory_ui_asset(asset_name: str) -> FileResponse:
     )
 
 
+_VENDOR_ROOT = _UI_ROOT / "vendor"
+_VENDOR_ASSETS = {
+    # 2.2 (Phase 2.4): D3 vendored locally instead of CDN. Restores
+    # the local-only philosophy and removes the SRI-mismatch failure
+    # mode (commit f3b3754 fixed an invalid hash from a prior typo).
+    "d3.v7.8.5.min.js": "application/javascript; charset=utf-8",
+}
+
+
+@router.get("/ui/vendor/{asset_name}")
+def memory_ui_vendor_asset(asset_name: str) -> FileResponse:
+    if asset_name not in _VENDOR_ASSETS:
+        return FileResponse(
+            _UI_ROOT / "index.html",
+            media_type="text/html; charset=utf-8",
+            headers=_NO_CACHE,
+        )
+    return FileResponse(
+        _VENDOR_ROOT / asset_name,
+        media_type=_VENDOR_ASSETS[asset_name],
+    )
+
+
 def _maintenance_warnings(
     conn: sqlite3.Connection,
     *,

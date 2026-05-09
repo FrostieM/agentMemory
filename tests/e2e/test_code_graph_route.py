@@ -123,5 +123,21 @@ def test_ui_graph_html_served(client: TestClient) -> None:
     assert "code graph" in r.text.lower()
     # The dashboard fetches /memory/code_graph
     assert "/memory/code_graph" in r.text
-    # And vendors D3 from CDN
-    assert "d3.min.js" in r.text
+    # 2.2 (Phase 2.4): D3 is now vendored locally at /ui/vendor/<file>
+    # instead of pulled from a CDN. Restores the local-only philosophy
+    # and removes the SRI-mismatch failure mode discovered in 2.1.5.
+    assert "/ui/vendor/d3.v7.8.5.min.js" in r.text
+    # No CDN URLs in the rendered page anymore.
+    assert "cdn.jsdelivr.net" not in r.text
+
+
+def test_ui_vendor_d3_served(client: TestClient) -> None:
+    """The local D3 bundle must be reachable at /ui/vendor/d3.v7.8.5.min.js
+    so graph.html's bare <script src> resolves on first paint."""
+    r = client.get("/ui/vendor/d3.v7.8.5.min.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    # File should be the real bundle — d3 is ~270 KB minified.
+    assert len(r.content) > 100_000
+    # And the global object name appears in the source.
+    assert b"d3" in r.content[:5000]
