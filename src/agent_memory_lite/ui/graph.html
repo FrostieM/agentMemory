@@ -41,9 +41,9 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
 </head>
 <body>
 <header>
-  <a class="nav-link" href="/ui">Observatory</a>
-  <a class="nav-link" href="/ui/code">Code</a>
-  <a class="nav-link is-active" href="/ui/graph">Graph</a>
+  <a class="nav-link" data-nav="ui" href="/ui">Observatory</a>
+  <a class="nav-link" data-nav="code" href="/ui/code">Code</a>
+  <a class="nav-link is-active" data-nav="graph" href="/ui/graph">Graph</a>
   <span class="nav-sep">|</span>
   <h1>code graph</h1>
   <span class="badge" id="ws-badge">workspace</span>
@@ -58,7 +58,7 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
 <div class="legend" id="legend"></div>
 <div id="tooltip"></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js"
-        integrity="sha384-eMuIHLIvB+CgnxBrlrzBoZLKsJSuB16ZEKnSOlhbwxXvVnGOmI7ZW0L4G9xDCJXJ"
+        integrity="sha384-su5kReKyYlIFrI62mbQRKXHzFobMa7BHp1cK6julLPbnYcCW9NIZKJiTODjLPeDh"
         crossorigin="anonymous"></script>
 <script>
 (function () {
@@ -68,6 +68,20 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   $("#ws-input").value = wsParam;
   $("#center-input").value = centerParam;
   $("#ws-badge").textContent = wsParam;
+
+  // Sync nav hrefs with the active workspace.
+  function syncNav() {
+    const ws = $("#ws-input").value;
+    document.querySelectorAll(".nav-link[data-nav]").forEach((a) => {
+      const base = a.dataset.nav === "ui" ? "/ui"
+        : a.dataset.nav === "code" ? "/ui/code"
+        : "/ui/graph";
+      a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
+    });
+  }
+  $("#ws-input").addEventListener("input", syncNav);
+  $("#ws-input").addEventListener("change", syncNav);
+  syncNav();
 
   const colorByLang = {
     python: "#3572A5", javascript: "#f1e05a", typescript: "#3178c6",

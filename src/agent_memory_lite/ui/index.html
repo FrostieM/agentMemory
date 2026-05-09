@@ -49,10 +49,35 @@
       </header>
 
       <nav class="app-nav" aria-label="UI sections">
-        <a class="app-nav-link is-active" href="/ui">Observatory</a>
-        <a class="app-nav-link" href="/ui/code">Code</a>
-        <a class="app-nav-link" href="/ui/graph">Graph</a>
+        <a class="app-nav-link is-active" href="/ui" data-nav="ui">Observatory</a>
+        <a class="app-nav-link" href="/ui/code" data-nav="code">Code</a>
+        <a class="app-nav-link" href="/ui/graph" data-nav="graph">Graph</a>
       </nav>
+      <script>
+        // Propagate active workspace_id into nav hrefs so navigating between
+        // /ui /ui/code /ui/graph keeps the same workspace. Re-runs on
+        // dropdown change and on initial load.
+        (function () {
+          const wsSelect = document.getElementById("workspaceInput");
+          const navLinks = document.querySelectorAll(".app-nav-link[data-nav]");
+          function syncNav() {
+            const ws = wsSelect && wsSelect.value;
+            navLinks.forEach((a) => {
+              const base = a.dataset.nav === "ui" ? "/ui"
+                : a.dataset.nav === "code" ? "/ui/code"
+                : "/ui/graph";
+              a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
+            });
+          }
+          if (wsSelect) {
+            wsSelect.addEventListener("change", syncNav);
+            // Sync as soon as the dropdown is populated by app.js.
+            const obs = new MutationObserver(syncNav);
+            obs.observe(wsSelect, { childList: true });
+            syncNav();
+          }
+        })();
+      </script>
 
       <main class="main-grid">
         <section class="graph-pane" aria-label="Live memory graph">
