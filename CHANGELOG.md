@@ -4,6 +4,81 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.1.1 — 2026-05-10
+
+First patch in the v2.1 polish series (see
+``docs/POST_V2_ROADMAP.md``). Closes the tree-sitter parity gap:
+the 7 non-Python languages now emit ``extends``, ``implements``,
+and ``decorated_by`` edges to match Python's stdlib-AST coverage.
+
+### What changed
+
+- **Per-language tables**
+  (``extraction/symbol_edges_ts_decls.py``):
+  - ``CLASSLIKE_NODES`` — class-like declaration node types
+    whose heritage we walk for extends/implements edges.
+  - ``DECORATOR_NODES`` — decorator / annotation / attribute
+    node types per language.
+- **Heritage extraction** (new module
+  ``extraction/symbol_edges_ts_heritage.py``):
+  - TypeScript: ``class_heritage`` → ``extends_clause`` /
+    ``implements_clause``.
+  - JavaScript: ``class_heritage`` → flat ``extends`` keyword
+    + identifier (no clause wrapper, separate path).
+  - Java: ``superclass`` + ``super_interfaces`` siblings;
+    ``extends_interfaces`` for interface-to-interface inheritance.
+  - C++: ``base_class_clause`` (all bases recorded as ``extends``
+    since the syntax doesn't distinguish).
+  - C#: ``base_list`` (same flat extends treatment).
+  - Rust: ``impl Trait for Type`` recorded as ``implements`` from
+    the type to the trait.
+- **Decorator extraction** (new module
+  ``extraction/symbol_edges_ts_decorators.py``): handles two
+  patterns — children of the declaration (TS / Java / C#) and
+  preceding siblings (Rust / C++).
+- **Walker pass** (new module
+  ``extraction/symbol_edges_ts_class_pass.py``): single tree
+  traversal that emits all three new edge kinds, with dedupe
+  via ``(src, dst, kind)`` key set. Decorator edges only
+  attached to REAL declaration nodes (filtered against
+  ``LANG_DECLS``) so a method-level decorator is NOT also
+  attributed to the enclosing class.
+
+### Coverage matrix
+
+| Language    | extends | implements | decorated_by |
+|-------------|---------|------------|--------------|
+| javascript  | yes     | n/a        | n/a (stage-3 decorators rare) |
+| typescript  | yes     | yes        | yes          |
+| go          | n/a (composition) | n/a | n/a    |
+| rust        | n/a (impl-only) | yes | yes      |
+| java        | yes     | yes        | yes          |
+| cpp         | yes     | n/a (no syntactic distinction) | yes |
+| csharp      | yes     | n/a (no syntactic distinction) | yes |
+
+### Tests — 8 new
+
+``tests/unit/extraction/test_symbol_edges_ts_parity.py``:
+1. JavaScript ``extends``.
+2. TypeScript extends + implements + decorator (class + method).
+3. Java extends + implements + ``@Override`` annotation.
+4. C++ ``base_class_clause`` (multiple bases as ``extends``).
+5. C# ``base_list`` + ``[Route]`` / ``[HttpGet]`` attributes.
+6. Rust ``impl Trait for Type`` → ``implements`` + ``#[derive]``.
+7. Class with NO heritage produces NO phantom extends.
+8. Regression: method decorator stays on the method, not on
+   the enclosing class.
+
+Total tests now: **851 pass**.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (509 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 851 tests pass.
+
 ## 2.0.0 — 2026-05-09
 
 **v2.0 — code-memory dashboard.** The final phase of the V1.4→V2

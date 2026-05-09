@@ -43,3 +43,29 @@ IMPORT_NODES: dict[str, frozenset[str]] = {
 # ``new_expression`` is a heap allocation; we treat it the same as
 # Java / C# constructor calls — explicit instantiation.
 INSTANTIATES_NODES: frozenset[str] = frozenset({"new_expression", "object_creation_expression"})
+
+# 2.1.1: class-like declaration node types whose heritage we walk
+# for extends / implements edges. Per-language because grammar
+# names diverge (class_specifier vs class_declaration etc.).
+CLASSLIKE_NODES: dict[str, frozenset[str]] = {
+    "javascript": frozenset({"class_declaration"}),
+    "typescript": frozenset({"class_declaration"}),
+    "java": frozenset({"class_declaration", "interface_declaration"}),
+    "cpp": frozenset({"class_specifier", "struct_specifier"}),
+    "csharp": frozenset({"class_declaration", "struct_declaration"}),
+    # rust: handled separately via impl_item — see ts_heritage.
+}
+
+# 2.1.1: decorator / annotation / attribute node types per language.
+# When one of these precedes or wraps a declaration, the walker
+# emits a ``decorated_by`` edge from the declaration to the
+# decorator's first identifier.
+DECORATOR_NODES: dict[str, frozenset[str]] = {
+    "typescript": frozenset({"decorator"}),
+    "javascript": frozenset({"decorator"}),  # tc39 stage-3
+    "java": frozenset({"annotation", "marker_annotation"}),
+    "cpp": frozenset({"attribute_declaration", "attribute_specifier"}),
+    "csharp": frozenset({"attribute_list"}),
+    "rust": frozenset({"attribute_item"}),
+    # go: no native annotation syntax — intentionally absent.
+}

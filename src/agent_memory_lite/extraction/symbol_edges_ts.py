@@ -24,6 +24,9 @@ from agent_memory_lite.chunking.symbol_query import (
 )
 from agent_memory_lite.chunking.ts_grammar import get_parser
 from agent_memory_lite.extraction.symbol_edges_py_helpers import ExtractedEdge
+from agent_memory_lite.extraction.symbol_edges_ts_class_pass import (
+    collect_heritage_and_decorators,
+)
 from agent_memory_lite.extraction.symbol_edges_ts_decls import (
     CALL_NODES,
     IMPORT_NODES,
@@ -116,4 +119,7 @@ def extract_ts_edges(text: str, lang: str) -> list[ExtractedEdge]:
     out: list[ExtractedEdge] = []
     _collect_imports(tree.root_node, source=source, lang=lang, out=out)
     _collect_calls(tree.root_node, source=source, lang=lang, symbols=symbols, out=out)
+    collect_heritage_and_decorators(
+        tree.root_node, source=source, lang=lang, symbols=symbols, out=out
+    )
     return out
