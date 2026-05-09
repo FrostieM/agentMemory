@@ -62,6 +62,7 @@ def write_decision(
             importance=payload.importance,
             valid_from=timestamp,
             created_at=timestamp,
+            references=payload.references,
         )
         insert_audit(
             conn,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from agent_memory_lite.api.agent_identity_middleware import AgentIdentityMiddleware
 from agent_memory_lite.api.auth import install_api_token_guard
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.routes import (
@@ -19,12 +20,14 @@ from agent_memory_lite.api.routes import (
     capabilities,
     capability_links,
     cold_candidates,
+    cold_decisions,
     compact,
     context,
     decision_candidates,
     decision_lineage,
     decisions,
     evals,
+    explain_diff,
     feedback_summary,
     get_object,
     health,
@@ -98,6 +101,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # X-Memory-DB-Path header. No-op when hub_mode is off, so project
     # mode still uses the anchor DB unchanged.
     app.add_middleware(WorkspaceRoutingMiddleware, settings=settings)
+    # 1.3.0: stash X-Memory-Agent-Id in a request-scoped ContextVar
+    # so insert_audit can attribute every mutating call to its agent
+    # client. Mounted AFTER routing so the workspace_id is already
+    # decided when the audit row is written.
+    app.add_middleware(AgentIdentityMiddleware)
     app.include_router(health.router)
     app.include_router(hygiene.router)
     app.include_router(behavior.router)
@@ -117,6 +125,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(usage.router)
     app.include_router(feedback_summary.router)
     app.include_router(cold_candidates.router)
+    app.include_router(cold_decisions.router)
+    app.include_router(explain_diff.router)
     app.include_router(decision_lineage.router)
     app.include_router(decision_candidates.router)
     app.include_router(insight_candidates.router)

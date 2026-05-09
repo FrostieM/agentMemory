@@ -21,9 +21,23 @@ async def delta():
 
 
 def test_python_chunks_split_by_top_level() -> None:
+    """1.3.0: top-level functions + classes + class methods all
+    chunked. Class chunks keep the bare name; methods get qualified
+    name 'Class.method' so memory_search('Beta.gamma') hits the
+    method body precisely."""
     chunks = chunk_code(PY_SOURCE, language="python")
     names = [c.symbols[0] for c in chunks]
-    assert names == ["alpha", "Beta", "delta"]
+    assert names == ["alpha", "Beta", "Beta.gamma", "delta"]
+
+
+def test_method_chunk_carries_qualified_name() -> None:
+    """1.3.0: ensure the method chunk's symbol is the qualified name."""
+    chunks = chunk_code(PY_SOURCE, language="python")
+    by_name = {c.symbols[0]: c for c in chunks}
+    assert "Beta.gamma" in by_name
+    method_chunk = by_name["Beta.gamma"]
+    assert "def gamma" in method_chunk.text
+    assert method_chunk.line_start <= method_chunk.line_end
 
 
 def test_python_chunks_carry_line_ranges() -> None:

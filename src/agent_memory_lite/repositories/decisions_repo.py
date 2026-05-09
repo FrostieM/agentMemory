@@ -6,36 +6,17 @@ import sqlite3
 
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.models.decisions import Decision
-from agent_memory_lite.models.enums import DecisionStatus
+from agent_memory_lite.repositories.decisions_references import (
+    insert_decision_with_refs,
+    serialize_references,
+)
+from agent_memory_lite.repositories.decisions_references import (
+    row_to_decision as _row_to_decision,
+)
 from agent_memory_lite.repositories.decisions_search import (
     date_range_clause,
     filter_rank_limit,
 )
-
-
-def _row_to_decision(row: sqlite3.Row) -> Decision:
-    # sqlite3.Row has no .get(); handle missing column for back-compat
-    # with rows from databases predating migration 0017. Note: ``in
-    # row`` on sqlite3.Row checks VALUES, not column names — so the
-    # presence check has to go through ``row.keys()``.
-    pinned_value = row["pinned"] if "pinned" in row.keys() else 0  # noqa: SIM118
-    return Decision(
-        id=row["id"],
-        workspace_id=row["workspace_id"],
-        title=row["title"],
-        decision_text=row["decision_text"],
-        rationale=row["rationale"],
-        status=DecisionStatus(row["status"]),
-        supersedes_decision_id=row["supersedes_decision_id"],
-        source_episode_id=row["source_episode_id"],
-        confidence=float(row["confidence"]),
-        importance=float(row["importance"]),
-        valid_from=row["valid_from"],
-        valid_to=row["valid_to"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        pinned=bool(pinned_value),
-    )
 
 
 def set_decision_pinned(
@@ -79,16 +60,15 @@ def insert_decision_row(
     importance: float,
     valid_from: str,
     created_at: str,
+    references: list[str] | None = None,
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO decisions (
-            id, workspace_id, title, decision_text, rationale, status,
-            supersedes_decision_id, source_episode_id, confidence, importance,
-            valid_from, valid_to, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, ?)
-        """,
-        (
+    """1.3.0: ``references`` is a list of file paths / ``path:symbol``
+    markers serialised into ``references_json``. Tolerates pre-0027
+    schemas via the helper's try/except.
+    """
+    insert_decision_with_refs(
+        conn,
+        params_without_refs=(
             decision_id,
             workspace_id,
             title,
@@ -102,6 +82,7 @@ def insert_decision_row(
             created_at,
             created_at,
         ),
+        refs_json=serialize_references(references),
     )
 
 

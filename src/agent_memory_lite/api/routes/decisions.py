@@ -42,6 +42,7 @@ def _decision_item(item: Decision) -> DecisionItem:
         created_at=item.created_at,
         updated_at=item.updated_at,
         pinned=item.pinned,
+        references=item.references,
     )
 
 
@@ -74,6 +75,7 @@ def write_decision_route(
             source_episode_id=body.source_episode_id,
             confidence=body.confidence,
             importance=body.importance,
+            references=body.references,
         )
         trace.stage_started("persist", "Persist decision")
         decision = write_decision(conn, payload)

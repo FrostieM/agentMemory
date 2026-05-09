@@ -10,12 +10,17 @@ param(
     [switch]$Apply
 )
 
-# 1.2.4 — wrapper that registers a Windows scheduled task running
+# 1.2.4 -- wrapper that registers a Windows scheduled task running
 # scripts\memory_auto_triage.py against the chosen workspace nightly.
 # Without this, capability-link / hygiene debt accumulates between
 # manual runs. The task is opt-in (Install action), idempotent on
 # re-install, and uses --backup-first so accidental damage is
 # recoverable.
+#
+# 1.2.5: ASCII-only literals so Windows PowerShell 5.1 can parse the
+# script regardless of console code page (UTF-8 BOM-less files were
+# being read as cp1252, which mangled em-dash characters and threw
+# parser errors).
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -66,23 +71,25 @@ function Build-Args([bool]$ApplyMutations) {
 
 if ($Action -eq "Install") {
     if (-not (Test-Path -LiteralPath $DbPath)) {
-        throw "Memory DB not found at $DbPath — run setup_agent.py --project first."
+        throw "Memory DB not found at $DbPath. Run setup_agent.py --project first."
     }
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     $applyMode = if ($Apply) { $true } else { $false }
     $modeLabel = if ($applyMode) { "apply" } else { "dry-run" }
     $argString = Build-Args -ApplyMutations $applyMode
     # Wrap the call so stderr/stdout land in the log file. Every run
-    # appends; rotate manually if the log grows.
+    # appends; rotate manually if the log grows. The "&" is wrapped
+    # in a string literal so the parser does not treat it as the
+    # call-operator outside an expression.
     $cmdLine = "& '$Python' $argString *>> '$LogPath'"
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    $taskAction = New-ScheduledTaskAction -Execute "powershell.exe" `
         -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"$cmdLine`""
     $trigger = New-ScheduledTaskTrigger -Daily -At $Time
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+    Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger `
         -Settings $settings -Force -RunLevel Limited | Out-Null
     Write-Host "[ok] Installed scheduled task '$TaskName' ($modeLabel mode, daily at $Time)"
-    Write-Host "      log: $LogPath"
+    Write-Host "      log:    $LogPath"
     Write-Host "      script: $ScriptPath"
     if (-not $applyMode) {
         Write-Host "[!]   dry-run mode by default. Re-install with -Apply to actually write capability_links."
@@ -96,7 +103,7 @@ if ($Action -eq "Uninstall") {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         Write-Host "[ok] Uninstalled scheduled task '$TaskName'"
     } else {
-        Write-Host "[--] No task '$TaskName' to uninstall"
+        Write-Host "[skip] No task '$TaskName' to uninstall"
     }
     return
 }
@@ -122,7 +129,7 @@ if ($Action -eq "Status") {
         Write-Host "      lastResult:   $($info.LastTaskResult)"
         Write-Host "      nextRunTime:  $($info.NextRunTime)"
     } else {
-        Write-Host "[--] task '$TaskName' not registered. Install with:"
+        Write-Host "[skip] task '$TaskName' not registered. Install with:"
         Write-Host "      .\scripts\memory_auto_triage_task.ps1 -Action Install -WorkspaceId $WorkspaceId -ProjectRoot $ProjectRoot -Apply"
     }
     return

@@ -18,6 +18,10 @@ class WriteDecisionRequest(BaseModel):
     source_episode_id: str | None = None
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)
     importance: float = Field(default=0.8, ge=0.0, le=1.0)
+    # 1.3.0: explicit file/symbol references. /memory/explain_diff and
+    # /memory/cold_decisions read this field; the agent should populate
+    # it when the decision concretely affects specific files.
+    references: list[str] = Field(default_factory=list)
 
 
 class WriteDecisionResponse(BaseModel):
@@ -60,6 +64,7 @@ class DecisionItem(BaseModel):
     created_at: str
     updated_at: str
     pinned: bool = False
+    references: list[str] = Field(default_factory=list)
 
 
 class ListDecisionsResponse(BaseModel):

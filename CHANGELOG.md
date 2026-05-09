@@ -4,6 +4,192 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.3.0 — 2026-05-09
+
+Substantial release closing the highest-ROI items from the v1.2.4
+post-release audit and laying groundwork for the v1.4 architectural
+code-memory roadmap. Eight features delivered across four areas
+(measurement, code awareness, multi-agent attribution, operator
+tooling) plus one bug fix from the v1.8 era.
+
+### Headline — measurement
+
+- **`X-Memory-Agent-Id` header + per-agent telemetry partition.**
+  `audit_log` gains an `agent_id` column (migration 0026); a new
+  `AgentIdentityMiddleware` reads the request header into a
+  request-scoped `ContextVar` so `insert_audit` can attribute every
+  mutation to its agent client without changing call sites. The
+  `/memory/telemetry` endpoint now returns a `by_agent` block
+  splitting search vs write counts per agent — Claude vs Codex vs
+  hub-mcp vs scripts vs `(unknown)`. Closes the original "we can't
+  prove v1.2.4 helped Claude specifically" gap.
+- **Search hit-rate.** `/memory/telemetry` adds
+  `search_calls_with_hits`, `search_calls_zero_hits`, and
+  `search_hit_rate` derived from `after_json.hits` / `.sources` on
+  search and get_context audit rows. Surfaces agent queries that
+  return nothing — discipline signal.
+- **`MEMORY_AUDIT_READS=true`** (continued from 1.2.4) is the
+  prerequisite. Read-side audit emission powers everything above.
+
+### Headline — code awareness foundations
+
+- **`references[]` field on decisions** (migration 0027). Each
+  decision can declaratively list affected file paths or
+  `path:symbol` markers. The `/memory/explain_diff` endpoint then
+  matches by exact reference rather than guessing through substring
+  search.
+- **`POST /memory/explain_diff`** — give it a unified diff or a
+  list of files; it returns active decisions whose territory the
+  diff touches. Two match modes: `declarative` (precise, via
+  `references_json`) and `substring` (fallback for legacy decisions
+  written without explicit references). Designed to be called from
+  pre-commit hooks or by the agent before non-trivial edits.
+- **Python method-level chunks.** `chunk_code` now emits a separate
+  chunk per method inside a class (`Foo.bar` qualified name) so
+  `memory_search("paperBot.calculate")` lands on the method body
+  precisely instead of the whole class. Class chunk and method
+  chunks textually overlap; both surface for FTS queries on either
+  the class or method name.
+
+### Headline — operator tooling
+
+- **`scripts/memory_pre_commit.ps1`** — Windows PowerShell hook
+  that calls `/memory/explain_diff` against the staged diff and
+  prints a short report of decisions matching changed files.
+  Non-blocking by default; set `MEMORY_PRECOMMIT_BLOCK=1` to abort
+  the commit when high-importance decisions match.
+- **`scripts/memory_status.py`** — single-screen CLI overview.
+  Hits health, hygiene_report, quality_gate, telemetry, and
+  cold_decisions, prints a one-page summary with action hints.
+  Replaces 5 manual curl calls.
+- **`scripts/memory_auto_triage_task.ps1`** (continued from 1.2.4)
+  — wrapper for installing nightly auto-triage as a Windows
+  scheduled task. ASCII-only literals so Windows PowerShell 5.1
+  parses regardless of console code page.
+
+### Headline — operator surfaces
+
+- **`GET /memory/cold_decisions`** — active decisions that haven't
+  been retrieved in `cutoff_days` (default 30) or never. Pinned
+  flag visible per row so the operator does not accidentally
+  archive a critical pinned decision. Kindred to
+  `/memory/cold_candidates` but specifically for the decisions
+  layer.
+
+### Headline — bug fix from the v1.8 era
+
+- **`/memory/compact` now actually triggers reflective compaction.**
+  Pre-1.3.0, the route did NOT pass `settings` to
+  `summarize_old_episodes`, which silently disabled the v1.8
+  lesson-candidate emission even when
+  `MEMORY_REFLECTIVE_COMPACT_ENABLED=true`. Diagnosed in copyBot
+  2026-05-09: 332 episodes, 0 insight_candidates ever. Fixed; the
+  response now exposes `lesson_candidates_emitted` so the operator
+  sees whether the v1.8 pass actually ran. Added
+  `MEMORY_COMPACT_AGE_DAYS` env var (default 30) so operators on
+  young workspaces can lower the threshold to 7-14 days.
+
+### Headline — capability-link discipline rewrite
+
+- **Seed BI rewritten** for stronger imperative framing
+  (`bootstrap/project_memory_seed_behavior.py`). Pre-1.3.0, the
+  search-discipline rule reached 73% follow-up but the
+  capability-link rule stayed at 20% (live measurement on copyBot
+  2026-05-09). Rule now reframes write as a two-step atomic
+  action: `memory_write_decision` is step 1, `memory_link_capability`
+  is mandatory step 2. Search-rule paired textually with the
+  capability-link rule so both rules reinforce each other in the
+  envelope.
+
+### Provenance backfill on copyBot (one-time, not a code change)
+
+Operator ran a 60-min-window backfill over important
+decisions without source_episode_id: 50 → 29 (-21 backfilled).
+Remaining 29 are unrecoverable — written without any episode
+within an hour of the decision write.
+
+### v1.4 roadmap landed
+
+- **`docs/V1_4_TO_V2_ROADMAP.md`** — multi-release plan for
+  architectural code memory in multi-agent team scenarios.
+  Covers symbol-level indexation across 7 languages, hard
+  dependency graph, soft (vector) graph, edit registry, conflict
+  detection, and narrative synthesis. Each phase is independently
+  shippable with a measurable ship-stop gate.
+
+### Added (file-level)
+
+- `src/agent_memory_lite/api/agent_context.py` — request-scoped
+  ContextVar for agent identity.
+- `src/agent_memory_lite/api/agent_identity_middleware.py` —
+  Starlette middleware reading `X-Memory-Agent-Id`.
+- `src/agent_memory_lite/api/routes/cold_decisions.py` — the
+  cold-decisions endpoint.
+- `src/agent_memory_lite/api/routes/explain_diff.py` — the
+  diff-to-decision matching endpoint.
+- `src/agent_memory_lite/api/routes/telemetry_aggregate.py` —
+  pure aggregation helpers split out of telemetry.py for SLOC
+  budget and unit-testability.
+- `src/agent_memory_lite/repositories/decisions_references.py`
+  — references_json (de)serialisation + back-compat INSERT helper.
+- `scripts/memory_pre_commit.ps1` — pre-commit hook.
+- `scripts/memory_status.py` — operator CLI.
+- `scripts/memory_auto_triage_task.ps1` — scheduled task wrapper.
+- `migrations/0026_audit_agent_id.sql`,
+  `migrations/0027_decision_references.sql` — schema additions.
+- 16 new tests across `test_explain_diff_route`,
+  `test_cold_decisions_route`, `test_telemetry_per_agent`,
+  `test_compact_route`, `test_code` (method-level chunk
+  assertions).
+
+### Changed (file-level)
+
+- `src/agent_memory_lite/api/app.py` — wire new middleware + four
+  new routes.
+- `src/agent_memory_lite/api/routes/context.py` and
+  `routes/search.py` — write read-side audit row when
+  `MEMORY_AUDIT_READS=true`.
+- `src/agent_memory_lite/api/routes/compact.py` — pass `settings`
+  through to `summarize_old_episodes` (the v1.8 bug fix).
+- `src/agent_memory_lite/api/routes/telemetry.py` — partition by
+  agent + hit-rate fields.
+- `src/agent_memory_lite/bootstrap/project_memory_seed.py`,
+  `seed_templates.py`, `seed_behavior.py` — capability-link rule
+  rewrite + DISCIPLINE_FACTORIES registry.
+- `src/agent_memory_lite/chunking/code.py` — Python method-level
+  chunks via `ClassDef.body` walk.
+- `src/agent_memory_lite/config/settings.py` —
+  `audit_read_operations` and `compact_age_days` env flags.
+- `src/agent_memory_lite/models/decisions.py`,
+  `api/schemas/decisions.py`,
+  `api/routes/decisions.py`,
+  `ingestion/decision_writer.py`,
+  `repositories/decisions_repo.py` — references[] field plumbed
+  through decision write + read path.
+- `src/agent_memory_lite/repositories/audit_repo.py` — agent_id
+  argument with ContextVar fallback.
+- `docs/AGENT_CONTRACT.md` and all 5 contract surfaces (CLAUDE.md,
+  AGENTS.md ×2 plus copyBot mirrors plus `~/.claude/CLAUDE.md`)
+  — re-synced canonical with rule 2 "Search liberally"
+  consolidation and renumbering.
+
+### Verification
+
+- 781 pytest tests pass (was 765 pre-1.3.0; +16 new).
+- mypy clean — no errors across 449 source files.
+- ruff check + ruff format clean.
+- SLOC ceiling enforced — every source file at or below 150 SLOC.
+- Pre-push crash test: 27 phases / 133 assertions PASS.
+- All 5 contract surfaces byte-identical to canonical
+  `docs/AGENT_CONTRACT.md`.
+
+### Notes for next release
+
+The roadmap commits to v1.4.0 starting next: tree-sitter dependency
+plus symbol-level chunking for the top-7 languages (Python, JS, TS,
+Go, Rust, Java, C++ / C#). Foundation only — no graph yet. Ship
+gate: hit-rate stays at or above the 1.3.0 baseline; no regressions.
+
 ## 1.2.4 — 2026-05-05
 
 Closes the Codex-vs-Claude search-rate gap observed on copyBot

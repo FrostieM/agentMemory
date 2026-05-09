@@ -23,6 +23,12 @@ class DecisionIn(BaseModel):
     source_episode_id: str | None = None
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)
     importance: float = Field(default=0.8, ge=0.0, le=1.0)
+    # 1.3.0: declarative file/symbol references. Each entry is either a
+    # repo-relative file path ("src/foo/bar.py") or a "path:symbol"
+    # marker ("src/foo/bar.py:Baz.method"). /memory/explain_diff uses
+    # these to find decisions whose territory a given diff touches —
+    # without keyword guessing in decision_text + rationale.
+    references: list[str] = Field(default_factory=list)
 
 
 class Decision(BaseModel):
@@ -46,3 +52,5 @@ class Decision(BaseModel):
     # envelope regardless of query relevance or token budget. Set via
     # POST /memory/pin or memory_pin MCP tool.
     pinned: bool = False
+    # 1.3.0: file/symbol references — see DecisionIn.references.
+    references: list[str] = Field(default_factory=list)

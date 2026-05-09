@@ -167,6 +167,14 @@ class Settings(BaseSettings):
     reflective_compact_enabled: bool = Field(
         True, validation_alias="MEMORY_REFLECTIVE_COMPACT_ENABLED"
     )
+    # Age threshold for ``summarize_old_episodes`` — only episodes older
+    # than this number of days are summarized + scanned for lesson
+    # candidates. Default 30 keeps old behaviour (lessons are
+    # "experience accumulated over time"); operators on young
+    # workspaces can lower to 7 or 14 to start getting reflective
+    # insights sooner. Diagnosed in 1.2.5: copyBot @ 13 days had 0
+    # insight_candidates because no episode crossed the 30-day bar.
+    compact_age_days: int = Field(30, ge=1, validation_alias="MEMORY_COMPACT_AGE_DAYS")
     lesson_min_support_episodes: int = Field(
         4, ge=2, validation_alias="MEMORY_LESSON_MIN_SUPPORT_EPISODES"
     )

@@ -18,5 +18,9 @@ class CompactResponse(BaseModel):
 
     summarized_episodes: int
     summary_episode_id: str | None
+    # 1.2.5: number of insight_candidate rows emitted from reflective
+    # compaction (v1.8). Was always implicitly 0 pre-1.2.5 because
+    # settings was not passed through to summarize_old_episodes.
+    lesson_candidates_emitted: int = 0
     stale_facts_archived: int
     cutoff_for_stale: str
