@@ -18,6 +18,13 @@ header button { background: #238636; color: white; border: 0; padding: 0.3em 0.7
 header .status { color: #8b949e; font-size: 0.8em; margin-left: auto; }
 header .badge { background: #1f6feb; color: #fff; padding: 0.05em 0.5em;
                 border-radius: 10px; font-size: 0.75em; }
+header .nav-link { padding: 0.3em 0.7em; border-radius: 4px; color: #8b949e;
+                   text-decoration: none; border: 1px solid transparent;
+                   text-transform: uppercase; font-size: 0.7em; letter-spacing: 0.05em;
+                   font-family: ui-monospace, monospace; }
+header .nav-link:hover { color: #c9d1d9; background: #21262d; border-color: #30363d; }
+header .nav-link.is-active { color: #58a6ff; background: #21262d; border-color: #30363d; }
+header .nav-sep { color: #30363d; margin: 0 0.2em; }
 #graph { width: 100vw; height: calc(100vh - 50px); cursor: grab; }
 #graph.dragging { cursor: grabbing; }
 .legend { position: fixed; bottom: 1em; left: 1em; background: #161b22cc;
@@ -34,6 +41,10 @@ header .badge { background: #1f6feb; color: #fff; padding: 0.05em 0.5em;
 </head>
 <body>
 <header>
+  <a class="nav-link" href="/ui">Observatory</a>
+  <a class="nav-link" href="/ui/code">Code</a>
+  <a class="nav-link is-active" href="/ui/graph">Graph</a>
+  <span class="nav-sep">|</span>
   <h1>code graph</h1>
   <span class="badge" id="ws-badge">workspace</span>
   <label>workspace_id <input id="ws-input" /></label>

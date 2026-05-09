@@ -117,6 +117,39 @@ code, pre, .mono {
 .ws-val:focus { outline: 1px solid var(--accent-soft); }
 .token-input { font-family: ui-monospace, monospace; font-size: 11px; }
 
+/* ===== UI nav strip (links between /ui, /ui/code, /ui/graph) ============= */
+
+.app-nav {
+  display: flex;
+  gap: 6px;
+  padding: 8px 32px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.app-nav-link {
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: var(--text-2);
+  text-decoration: none;
+  border: 1px solid transparent;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.app-nav-link:hover {
+  color: var(--text-0);
+  background: var(--bg-2);
+  border-color: var(--line-soft);
+}
+.app-nav-link.is-active {
+  color: var(--accent);
+  background: var(--bg-2);
+  border-color: var(--accent-soft);
+}
+
 /* ===== Main grid ========================================================= */
 
 .main-grid {
