@@ -13,6 +13,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
+from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.ingestion.file_digest_llm import (
+    maybe_llm_narrative,
+    top_targets,
+)
 from agent_memory_lite.models.chunks import Chunk
 from agent_memory_lite.models.file_digests import FileDigestIn
 
@@ -99,6 +104,7 @@ def build_digest(
     language: str | None,
     chunks: list[Chunk],
     last_indexed_at: str,
+    settings: Settings | None = None,
 ) -> FileDigestIn:
     qnames = [c.qualified_name for c in chunks if c.qualified_name]
     kinds = _summarize_kinds(chunks)
@@ -107,7 +113,7 @@ def build_digest(
         conn, workspace_id=workspace_id, file_path=file_path, since_iso=since_iso
     )
     inbound, outbound = _count_edges(conn, workspace_id=workspace_id, qnames=qnames)
-    narrative = _build_narrative(
+    heuristic = _build_narrative(
         file_path=file_path,
         language=language,
         chunks=chunks,
@@ -116,9 +122,24 @@ def build_digest(
         outbound=outbound,
         versions_recent=versions_recent,
     )
+    narrative = heuristic
+    narrative_source = "heuristic"
+    inbound_targets, outbound_targets = top_targets(conn, workspace_id=workspace_id, qnames=qnames)
+    llm_text = maybe_llm_narrative(
+        settings=settings,
+        file_path=file_path,
+        language=language,
+        qnames=qnames,
+        inbound_targets=inbound_targets,
+        outbound_targets=outbound_targets,
+    )
+    if llm_text:
+        narrative = llm_text
+        narrative_source = "llm"
     structured: dict[str, object] = {
         "qualified_names": qnames[:100],
         "kinds": kinds,
+        "narrative_source": narrative_source,
     }
     return FileDigestIn(
         workspace_id=workspace_id,

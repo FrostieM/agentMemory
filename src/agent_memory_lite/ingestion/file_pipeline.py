@@ -13,17 +13,17 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.ingestion.file_chunking import chunk_for_kind, chunk_kind_for
 from agent_memory_lite.ingestion.file_persist import run_vector_phase
-from agent_memory_lite.ingestion.file_persist_chunk import persist_chunk
 from agent_memory_lite.ingestion.file_post_chunk import (
+    persist_chunks_loop,
     run_post_chunk_phase,
     run_pre_chunk_cleanup,
 )
-from agent_memory_lite.models.chunks import Chunk
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.files import FileRecord
@@ -54,10 +54,10 @@ def ingest_file(
     language: str | None = None,
     embedding_provider: EmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
+    settings: Settings | None = None,
 ) -> FileIngestResult:
     timestamp = iso_now()
     content_hash = blake2b_hex(content)
-
     if embedding_provider is not None:
         pin_or_check(conn, workspace_id, embedding_provider)
 
@@ -74,11 +74,6 @@ def ingest_file(
     file_id = existing.id if existing is not None else new_id(IdKind.FILE)
     chunk_records = chunk_for_kind(content, language=language)
     kind = chunk_kind_for(language)
-
-    new_chunk_ids: list[tuple[str, str, list[str]]] = []
-    new_chunk_qnames: list[tuple[str, str | None]] = []
-    new_chunks_full: list[Chunk] = []
-
     with with_tx(conn):
         upsert_file_row(
             conn,
@@ -105,24 +100,16 @@ def ingest_file(
 
         if existing is not None:
             run_pre_chunk_cleanup(conn, workspace_id=workspace_id, file_id=file_id, path=path)
-
-        for record in chunk_records:
-            if not record.text.strip():
-                continue
-            chunk, fts_symbols = persist_chunk(
-                conn,
-                workspace_id=workspace_id,
-                file_id=file_id,
-                episode_id=episode.id,
-                kind=kind,
-                record=record,
-                path=path,
-                language=language,
-            )
-            new_chunk_ids.append((chunk.id, chunk.text, fts_symbols))
-            new_chunk_qnames.append((chunk.id, chunk.qualified_name))
-            new_chunks_full.append(chunk)
-
+        new_chunk_ids, new_chunk_qnames, new_chunks_full = persist_chunks_loop(
+            conn,
+            workspace_id=workspace_id,
+            file_id=file_id,
+            episode_id=episode.id,
+            kind=kind,
+            records=chunk_records,
+            path=path,
+            language=language,
+        )
         post = run_post_chunk_phase(
             conn,
             workspace_id=workspace_id,
@@ -131,6 +118,7 @@ def ingest_file(
             file_path=path,
             new_chunks=new_chunks_full,
             chunk_qnames=new_chunk_qnames,
+            settings=settings,
         )
         insert_audit(
             conn,

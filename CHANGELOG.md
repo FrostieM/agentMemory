@@ -4,6 +4,68 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.1.3 — 2026-05-10
+
+Third patch in the v2.1 polish series. Adds **opt-in LLM-driven
+narrative** for file digests via Ollama. Pre-2.1.3 the digest
+narrative was a one-line heuristic ("Contains: 1 class, 2
+functions. Edges: 5 inbound."); useful but didn't answer "what
+does this module DO". With ``MEMORY_LLM_NARRATIVE_ENABLED=true``
+the digest builder asks Ollama for a 2-3 sentence coherent
+paragraph. Falls back to the heuristic on any failure.
+
+### What changed
+
+- **New module ``extraction/file_narrative_llm.py``** — prompt
+  builder + Ollama call. Uses the existing ``Settings.llm_base_url``
+  / ``llm_model`` configuration. Times out per
+  ``MEMORY_LLM_NARRATIVE_TIMEOUT_SEC`` (default 10s). Returns
+  ``None`` on any failure (network, parse, empty); never raises.
+- **New module ``ingestion/file_digest_llm.py``** — split helper
+  for ``maybe_llm_narrative()`` + ``top_targets()`` (top 10 inbound
+  callers + 10 outbound callees from ``symbol_edges`` for use as
+  prompt context).
+- **`build_digest()` in `file_digest_builder.py`** — accepts
+  optional ``settings`` kwarg. When LLM is enabled and yields a
+  non-empty result, replaces the heuristic narrative and stamps
+  ``structured.narrative_source = "llm"`` (else ``"heuristic"``).
+- **Pipeline plumbing** — ``settings`` threads through
+  ``ingest_file`` → ``run_post_chunk_phase`` → ``build_digest``.
+  HTTP route ``/memory/ingest_file`` already had ``SettingsDep``;
+  it's now passed through.
+
+### New env flags
+
+```
+MEMORY_LLM_NARRATIVE_ENABLED=false        # default OFF
+MEMORY_LLM_NARRATIVE_MIN_SYMBOLS=3        # skip LLM for tiny files
+MEMORY_LLM_NARRATIVE_TIMEOUT_SEC=10.0
+MEMORY_LLM_NARRATIVE_MAX_INPUT_CHARS=4000
+```
+
+### Tests — 10 new
+
+- ``tests/unit/extraction/test_file_narrative_llm.py`` (7 tests):
+  prompt assembly, max-chars truncation, response cleaning
+  (fence stripping, "Summary:" prefix removal), HTTP error
+  fallback (returns None), canned-response parse, empty-content
+  rejection.
+- ``tests/e2e/test_llm_narrative_integration.py`` (3 tests):
+  flag-OFF parity (heuristic narrative, source = "heuristic"),
+  flag-ON with mocked Ollama (narrative replaced, source = "llm"),
+  flag-ON with mocked unreachable Ollama (heuristic baseline
+  survives gracefully).
+
+Total tests now: **868 pass**.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (517 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 868 tests pass.
+
 ## 2.1.2 — 2026-05-10
 
 Second patch in the v2.1 polish series. Adds the **D3 graph

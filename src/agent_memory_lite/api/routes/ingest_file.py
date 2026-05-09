@@ -52,6 +52,7 @@ def ingest_file_route(
             language=body.language,
             embedding_provider=provider,
             vector_store=store,
+            settings=settings,
         )
         trace.stage_done(
             "chunk",

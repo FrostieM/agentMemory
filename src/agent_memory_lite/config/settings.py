@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="LLM_MODEL")
     ollama_probe_skip: bool = Field(default=False, validation_alias="OLLAMA_PROBE_SKIP")
 
+    # 2.1.3: opt-in LLM-driven narrative for file digests (default OFF).
+    # fmt: off
+    llm_narrative_enabled: bool = Field(False, validation_alias="MEMORY_LLM_NARRATIVE_ENABLED")
+    llm_narrative_min_symbols: int = Field(3, ge=1, le=100, validation_alias="MEMORY_LLM_NARRATIVE_MIN_SYMBOLS")
+    llm_narrative_timeout_sec: float = Field(10.0, gt=0.0, le=120.0, validation_alias="MEMORY_LLM_NARRATIVE_TIMEOUT_SEC")
+    llm_narrative_max_input_chars: int = Field(4000, ge=200, le=20000, validation_alias="MEMORY_LLM_NARRATIVE_MAX_INPUT_CHARS")
+    # fmt: on
+
     # Memory-quality features. As of the 1.1.0 calibration, these
     # default ON: the v1.4-v1.9 + v2 loops are calibrated against real
     # copyBot data (see docs/V1_1_0_CALIBRATION.md) and the older

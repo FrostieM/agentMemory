@@ -20,11 +20,15 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.ingestion.file_chunking import IngestChunk
 from agent_memory_lite.ingestion.file_digest_builder import build_digest
+from agent_memory_lite.ingestion.file_persist_chunk import persist_chunk
 from agent_memory_lite.ingestion.file_persist_edges import persist_edges_for_file
 from agent_memory_lite.ingestion.file_persist_soft_edges import record_co_change_pairs
 from agent_memory_lite.ingestion.file_persist_versions import record_versions_for_chunks
 from agent_memory_lite.models.chunks import Chunk
+from agent_memory_lite.models.enums import ChunkKind
 from agent_memory_lite.repositories.chunks_repo import (
     delete_chunks_by_file,
     list_chunk_ids_for_file,
@@ -68,6 +72,47 @@ def run_pre_chunk_cleanup(
         )
 
 
+def persist_chunks_loop(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    file_id: str,
+    episode_id: str,
+    kind: ChunkKind,
+    records: list[IngestChunk],
+    path: str,
+    language: str | None,
+) -> tuple[
+    list[tuple[str, str, list[str]]],
+    list[tuple[str, str | None]],
+    list[Chunk],
+]:
+    """Iterate ``records`` and persist each non-empty one. Returns
+    (new_chunk_ids, new_chunk_qnames, new_chunks_full) — three lists
+    aligned by index for use in the rest of the pipeline.
+    """
+    new_chunk_ids: list[tuple[str, str, list[str]]] = []
+    new_chunk_qnames: list[tuple[str, str | None]] = []
+    new_chunks_full: list[Chunk] = []
+    for record in records:
+        if not record.text.strip():
+            continue
+        chunk, fts_symbols = persist_chunk(
+            conn,
+            workspace_id=workspace_id,
+            file_id=file_id,
+            episode_id=episode_id,
+            kind=kind,
+            record=record,
+            path=path,
+            language=language,
+        )
+        new_chunk_ids.append((chunk.id, chunk.text, fts_symbols))
+        new_chunk_qnames.append((chunk.id, chunk.qualified_name))
+        new_chunks_full.append(chunk)
+    return new_chunk_ids, new_chunk_qnames, new_chunks_full
+
+
 def run_post_chunk_phase(
     conn: sqlite3.Connection,
     *,
@@ -77,6 +122,7 @@ def run_post_chunk_phase(
     file_path: str,
     new_chunks: list[Chunk],
     chunk_qnames: list[tuple[str, str | None]],
+    settings: Settings | None = None,
 ) -> PostChunkCounts:
     edges_written = persist_edges_for_file(
         conn,
@@ -104,6 +150,7 @@ def run_post_chunk_phase(
         language=language,
         chunks=new_chunks,
         last_indexed_at=iso_now(),
+        settings=settings,
     )
     digest = upsert_digest(conn, digest_payload)
     return PostChunkCounts(
