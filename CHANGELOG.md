@@ -4,6 +4,92 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.5.0 — 2026-05-09
+
+Phase 2 of the V1.4→V2 code-memory roadmap: **hard-graph edges
+between symbol chunks**. v1.4.0 made every function / class / method
+its own indexable chunk; v1.5.0 connects them with explicit
+relationship edges so an agent can ask "who calls `paperBot.calculate`?"
+or "what does `Service.fetch` depend on?" without scanning every
+chunk body for a substring.
+
+### Headline — symbol edges
+
+- **`symbol_edges` table** (migration 0029) with four partial
+  indexes — fast O(log n) lookup by ``(workspace_id, src_chunk_id)``,
+  ``(workspace_id, dst_qualified_name, edge_type)``, and reverse-
+  direction indexes for prefix scans.
+- **Edge types** (8): ``calls``, ``imports``, ``exports``,
+  ``extends``, ``implements``, ``references``, ``instantiates``,
+  ``decorated_by``. Validated at the extractor + repo boundary so
+  a typo surfaces immediately.
+- **Python AST extractor**
+  (``extraction/symbol_edges_python.py`` + helpers). Walks each
+  module body once and emits:
+    - `calls`: every call site whose target name is resolvable
+      (handles bare names, attribute chains like `self.helper`,
+      module-qualified `mod.foo`).
+    - `instantiates`: PascalCase calls (`MyClass(1, 2)`) get this
+      kind instead of `calls` — heuristic but useful for
+      "who instantiates MyClass?" lookups.
+    - `imports`: module-level `import x` and `from x import y`,
+      anchored to a synthetic `<module>` owner.
+    - `extends`: every base class on a `class Foo(Base):` decl.
+    - `decorated_by`: `@decorator` on functions, methods, classes.
+- **Pipeline wiring** (`ingestion/file_persist_edges.py`): after
+  every chunk is persisted, the edge extractor runs and resolves
+  `src_chunk_id` from the freshly-built `qualified_name → chunk_id`
+  map. `dst_chunk_id` is populated for within-file targets;
+  external targets (stdlib, third-party imports, methods we haven't
+  seen yet) leave `dst_chunk_id` NULL so a later resolver pass can
+  fill them in as the workspace fills out.
+- **Re-ingest cleanup**: when a file is re-ingested, the pipeline
+  drops every edge whose `src_chunk_id` references an
+  about-to-be-deleted chunk BEFORE the chunks themselves are
+  deleted. Locked by an e2e regression test.
+
+### Surface
+
+- **`POST /memory/graph_neighbors`** + **`memory_graph_neighbors`
+  MCP tool**. Pass `qualified_name` for upstream lookups (who
+  depends on this symbol?), `chunk_id` for downstream lookups
+  (what does this symbol depend on?), or both for a full
+  neighborhood. Filter by `edge_types` and `direction`.
+
+### Tests — 15 new
+
+- `tests/unit/extraction/test_symbol_edges_python.py` (8 tests):
+  per-edge-type extractor coverage — calls inside functions,
+  method-call ownership, module-level imports, `extends` with
+  simple/dotted/multi bases, decorators on functions and methods,
+  PascalCase instantiation heuristic, unparseable input handling,
+  module-level call skip behavior.
+- `tests/e2e/test_graph_neighbors_route.py` (7 tests): full
+  ingest → graph_neighbors round-trip — upstream by qualified_name,
+  downstream by chunk_id, extends-edge upstream, imports-edge
+  attached to `<module>`, unknown-edge-type rejection (HTTP 400),
+  missing-target rejection, re-ingest stale-edge cleanup.
+
+### Notes
+
+- **Phase 2 ships Python only.** Tree-sitter edge extraction for
+  the other 7 supported languages (JavaScript / TypeScript / Go /
+  Rust / Java / C++ / C#) lands in a follow-up; the schema, pipeline
+  wiring, and resolver are all language-agnostic.
+- **Resolver pass not yet shipped.** When `from x import Foo` writes
+  an edge with `dst_qualified_name="x.Foo"` and the chunk for
+  `x.Foo` doesn't exist yet, `dst_chunk_id` stays NULL. A future
+  follow-up pass can populate it once the target file is ingested.
+  Read paths handle NULL `dst_chunk_id` correctly.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (469 source files) ✓
+- `check_sloc.py --enforce` ✓ (every new module ≤150 SLOC)
+- 792 tests pass (unit + e2e + integration + invariants)
+
 ## 1.4.0 — 2026-05-09
 
 Phase 1 of the V1.4→V2 code-memory roadmap (see

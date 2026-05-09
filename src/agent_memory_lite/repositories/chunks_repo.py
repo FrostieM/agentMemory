@@ -125,6 +125,15 @@ def delete_chunks_by_file(conn: sqlite3.Connection, file_id: str) -> int:
     return int(cur.rowcount)
 
 
+def list_chunk_ids_for_file(conn: sqlite3.Connection, file_id: str) -> list[str]:
+    """Return every chunk id whose file_id matches. Used by the file
+    ingest pipeline to drop dependent rows (FTS, symbol_edges) before
+    the chunks themselves are deleted on re-ingest.
+    """
+    rows = conn.execute("SELECT id FROM chunks WHERE file_id = ?", (file_id,)).fetchall()
+    return [str(r["id"]) for r in rows]
+
+
 def delete_chunks_by_episode(conn: sqlite3.Connection, episode_id: str) -> int:
     cur = conn.execute("DELETE FROM chunks WHERE episode_id = ?", (episode_id,))
     return int(cur.rowcount)

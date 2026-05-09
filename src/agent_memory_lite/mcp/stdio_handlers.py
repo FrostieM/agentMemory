@@ -31,6 +31,7 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
     _handle_ingest_file,
     _handle_search,
 )
+from agent_memory_lite.mcp.stdio_handlers_graph import _handle_graph_neighbors
 from agent_memory_lite.mcp.stdio_handlers_p1 import (
     _handle_list_audit,
     _handle_pin,
@@ -80,6 +81,7 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_get_object": _handle_get_object,
     "memory_search": _handle_search,
     "memory_find_symbols": _handle_find_symbols,
+    "memory_graph_neighbors": _handle_graph_neighbors,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,

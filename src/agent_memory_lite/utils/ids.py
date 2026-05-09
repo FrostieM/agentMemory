@@ -40,6 +40,7 @@ class IdKind(StrEnum):
     FACT = "fact"
     AUDIT = "aud"
     EMBEDDING = "emb"
+    SYMBOL_EDGE = "sedge"
 
 
 def new_id(kind: IdKind, *, length: int = 16) -> str:

@@ -31,6 +31,7 @@ from agent_memory_lite.api.routes import (
     feedback_summary,
     find_symbols,
     get_object,
+    graph_neighbors,
     health,
     hygiene,
     ingest_episode,
@@ -146,4 +147,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(review_queue.router)
     app.include_router(promote_to_behavior.router)
     app.include_router(find_symbols.router)
+    app.include_router(graph_neighbors.router)
     return app

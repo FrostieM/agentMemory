@@ -13,6 +13,7 @@ from agent_memory_lite.mcp.tools_episodes import (
     memory_ingest_file,
     memory_search,
 )
+from agent_memory_lite.mcp.tools_graph import memory_graph_neighbors
 from agent_memory_lite.mcp.tools_payloads import ToolDefinition
 from agent_memory_lite.mcp.tools_review import (
     memory_list_candidates,
@@ -53,6 +54,17 @@ CORE_TOOLS: tuple[ToolDefinition, ...] = (
             "the top-7 supported languages."
         ),
         handler=memory_find_symbols,
+    ),
+    ToolDefinition(
+        name="memory_graph_neighbors",
+        description=(
+            "1.5.0: hard-graph upstream / downstream lookup. Given a "
+            "symbol's qualified_name (upstream — who depends on it?) "
+            "or chunk_id (downstream — what does it depend on?), "
+            "return CALLS / IMPORTS / EXTENDS / IMPLEMENTS / "
+            "REFERENCES / INSTANTIATES / DECORATED_BY edges."
+        ),
+        handler=memory_graph_neighbors,
     ),
     ToolDefinition(
         name="memory_ingest_file",
