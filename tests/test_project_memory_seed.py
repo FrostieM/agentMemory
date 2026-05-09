@@ -27,10 +27,13 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     assert result.roles_written == 0
     # 1.2.3: seed wrote one capability-link discipline rule.
     # 1.2.4: added second rule — search-before-write discipline.
-    # All seeded BIs must be project-AGNOSTIC (no language, personality,
-    # or project-specific behavior). Project-specific rules remain
-    # operator-driven via memory_upsert_behavior_instruction.
-    assert result.behavior_instructions_written == 2
+    # 2.2 (Phase 1.2 of v2.2 consolidation, 2026-05-10): added
+    # memory-first-before-edit and no-unauthorized-git-push discipline
+    # rules; the latter two are pinned by default. All seeded BIs must be
+    # project-AGNOSTIC (no language, personality, or project-specific
+    # behavior). Project-specific rules remain operator-driven via
+    # memory_upsert_behavior_instruction.
+    assert result.behavior_instructions_written == 4
     assert [item.name for item in result.skills] == ["Memory population discipline"]
     assert [item.name for item in result.playbooks] == ["Neutral memory bootstrap"]
     assert {item.name for item in result.concepts} == {
@@ -42,10 +45,12 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     assert {item.name for item in result.behavior_instructions} == {
         "Link capability after every decision and theory write",
         "Search before write — auto-inject is not exhaustive",
+        "Memory-first before reading or editing source",
+        "No git commit/push/CI without explicit operator permission",
     }
 
     assert _count(applied_conn, "agent_roles", "project-x") == 0
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 2
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 4
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
@@ -66,7 +71,7 @@ def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connect
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 2
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 4
 
 
 def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) -> None:
@@ -74,30 +79,40 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
     values and metadata so it's immediately visible in
     <behavior_instructions> of the next memory_get_context envelope.
 
-    All BIs from DISCIPLINE_FACTORIES must share the same baseline
-    (operating_rule + workspace + user_preference + current_user_wins +
-    seed_bootstrap source_type) so an operator's explicit instruction
-    in the same chat always overrides them."""
+    Each BI may pick its own (kind, priority, conflict_policy) — the
+    capability-link and search-before-write rules use operating_rule +
+    user_preference + current_user_wins (overridable by the operator
+    in-chat); the workflow rules (memory-first, no-push) tighten on
+    purpose. All four MUST share source_type='seed_bootstrap' and
+    active=True so they round-trip cleanly into the envelope."""
     seed_neutral_project_memory(applied_conn, workspace_id="project-x")
     rows = applied_conn.execute(
         "SELECT name, kind, scope, priority, conflict_policy, source_type, "
-        "active, applies_to_json FROM behavior_instructions "
+        "active, pinned, applies_to_json FROM behavior_instructions "
         "WHERE workspace_id='project-x' ORDER BY name"
     ).fetchall()
-    assert len(rows) == 2
+    assert len(rows) == 4
     names = {r["name"] for r in rows}
     assert names == {
         "Link capability after every decision and theory write",
         "Search before write — auto-inject is not exhaustive",
+        "Memory-first before reading or editing source",
+        "No git commit/push/CI without explicit operator permission",
     }
-    # Every seed BI must share the canonical baseline metadata
+    # Every seed BI must share the canonical seed-bootstrap source_type and
+    # be active immediately so it shows up in the envelope.
     for row in rows:
-        assert row["kind"] == "operating_rule", row["name"]
         assert row["scope"] == "workspace", row["name"]
-        assert row["priority"] == "user_preference", row["name"]
-        assert row["conflict_policy"] == "current_user_wins", row["name"]
         assert row["source_type"] == "seed_bootstrap", row["name"]
         assert row["active"] in (1, True), row["name"]
+
+    # Pinned subset (Phase 1.2 of v2.2 consolidation): memory-first and
+    # no-push must ride every active envelope regardless of query.
+    pinned_names = {r["name"] for r in rows if bool(r["pinned"])}
+    assert pinned_names == {
+        "Memory-first before reading or editing source",
+        "No git commit/push/CI without explicit operator permission",
+    }
 
     # The capability-link rule applies_to research-mutating APIs
     cap_link = next(
@@ -106,6 +121,9 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
     cap_applies = json.loads(cap_link["applies_to_json"] or "[]")
     assert "memory_write_decision" in cap_applies
     assert "memory_write_theory" in cap_applies
+    assert cap_link["kind"] == "operating_rule"
+    assert cap_link["priority"] == "user_preference"
+    assert cap_link["conflict_policy"] == "current_user_wins"
 
     # The search-first rule applies_to writes that should be preceded by search
     search_rule = next(
@@ -114,3 +132,22 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
     search_applies = json.loads(search_rule["applies_to_json"] or "[]")
     assert "memory_write_decision" in search_applies
     assert "before architectural decisions" in search_applies
+    assert search_rule["kind"] == "operating_rule"
+
+    # The memory-first rule applies_to Read/Grep moments
+    mem_first = next(
+        r for r in rows if r["name"] == "Memory-first before reading or editing source"
+    )
+    mem_first_applies = json.loads(mem_first["applies_to_json"] or "[]")
+    assert "before Read tool" in mem_first_applies
+    assert "before Grep tool" in mem_first_applies
+    assert mem_first["kind"] == "workflow_preference"
+
+    # The no-push rule applies_to git operations
+    no_push = next(
+        r for r in rows if r["name"] == "No git commit/push/CI without explicit operator permission"
+    )
+    no_push_applies = json.loads(no_push["applies_to_json"] or "[]")
+    assert "git push" in no_push_applies
+    assert "shipping to main" in no_push_applies
+    assert no_push["kind"] == "operating_rule"

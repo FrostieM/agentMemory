@@ -14,6 +14,9 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_memory_lite.bootstrap.project_memory_seed_behavior import (
+    PINNED_DISCIPLINE_FACTORIES,
+)
 from agent_memory_lite.bootstrap.project_memory_seed_templates import (
     DISCIPLINE_FACTORIES,
     memory_bootstrap_playbook,
@@ -25,6 +28,7 @@ from agent_memory_lite.ingestion.capability_writer import (
     upsert_agent_playbook,
     upsert_agent_skill,
 )
+from agent_memory_lite.ingestion.pin_service import pin_memory_object
 from agent_memory_lite.ingestion.research_writer import upsert_domain_concept
 
 
@@ -102,6 +106,20 @@ def seed_neutral_project_memory(
         upsert_behavior_instruction(conn, factory(workspace_id, source_episode_id))
         for factory in DISCIPLINE_FACTORIES
     ]
+    # Subset listed in PINNED_DISCIPLINE_FACTORIES gets pinned after
+    # upsert so it rides every active envelope regardless of query
+    # relevance. The factory references give us deterministic name
+    # resolution even though the upserted object's id is what we pin.
+    _pinned_names = {factory.__name__ for factory in PINNED_DISCIPLINE_FACTORIES}
+    for factory, bi in zip(DISCIPLINE_FACTORIES, discipline_bis, strict=True):
+        if factory.__name__ in _pinned_names:
+            pin_memory_object(
+                conn,
+                workspace_id=workspace_id,
+                kind="behavior_instruction",
+                object_id=bi.id,
+                pinned=True,
+            )
 
     return ProjectMemorySeedResult(
         workspace_id=workspace_id,
