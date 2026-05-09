@@ -22,6 +22,7 @@ from agent_memory_lite.mcp.tools_review import (
     memory_reject_candidate,
     memory_resolve_maintenance_event,
 )
+from agent_memory_lite.mcp.tools_symbols import memory_find_symbols
 from agent_memory_lite.mcp.tools_theories import (
     memory_add_theory_evidence,
     memory_list_theories,
@@ -43,6 +44,15 @@ CORE_TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_search",
         description="Exact FTS lookup over chunks (BM25 ordered).",
         handler=memory_search,
+    ),
+    ToolDefinition(
+        name="memory_find_symbols",
+        description=(
+            "1.4.0: exact symbol-level chunk lookup by qualified_name "
+            "(e.g. 'Class.method' or 'Class::method' for C++) across "
+            "the top-7 supported languages."
+        ),
+        handler=memory_find_symbols,
     ),
     ToolDefinition(
         name="memory_ingest_file",

@@ -29,6 +29,7 @@ from agent_memory_lite.api.routes import (
     evals,
     explain_diff,
     feedback_summary,
+    find_symbols,
     get_object,
     health,
     hygiene,
@@ -144,4 +145,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(memory_state_snapshots.router)
     app.include_router(review_queue.router)
     app.include_router(promote_to_behavior.router)
+    app.include_router(find_symbols.router)
     return app

@@ -20,6 +20,15 @@ def _row_label(row: sqlite3.Row) -> str | None:
     return value if value else None
 
 
+def _row_optional_str(row: sqlite3.Row, column: str) -> str | None:
+    """Tolerate pre-migration DBs that lack the requested column."""
+    try:
+        value = row[column]
+    except (IndexError, KeyError):
+        return None
+    return value if value else None
+
+
 def _row_to_chunk(row: sqlite3.Row) -> Chunk:
     return Chunk(
         id=row["id"],
@@ -33,6 +42,9 @@ def _row_to_chunk(row: sqlite3.Row) -> Chunk:
         line_start=row["line_start"],
         line_end=row["line_end"],
         symbols=json.loads(row["symbols_json"] or "[]"),
+        symbol_kind=_row_optional_str(row, "symbol_kind"),
+        qualified_name=_row_optional_str(row, "qualified_name"),
+        parent_qualified_name=_row_optional_str(row, "parent_qualified_name"),
         embedding_id=row["embedding_id"],
         importance=float(row["importance"]),
         confidence=float(row["confidence"]),
@@ -54,8 +66,9 @@ def insert_chunk(
         INSERT INTO chunks (
             id, workspace_id, file_id, episode_id, kind, text, summary, label,
             line_start, line_end, symbols_json, embedding_id, importance,
-            confidence, created_at, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            confidence, created_at, metadata_json,
+            symbol_kind, qualified_name, parent_qualified_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             chunk_id,
@@ -74,6 +87,9 @@ def insert_chunk(
             chunk_in.confidence,
             created_at,
             json.dumps(chunk_in.metadata, sort_keys=True),
+            chunk_in.symbol_kind,
+            chunk_in.qualified_name,
+            chunk_in.parent_qualified_name,
         ),
     )
     return Chunk(
@@ -88,6 +104,9 @@ def insert_chunk(
         line_start=chunk_in.line_start,
         line_end=chunk_in.line_end,
         symbols=chunk_in.symbols,
+        symbol_kind=chunk_in.symbol_kind,
+        qualified_name=chunk_in.qualified_name,
+        parent_qualified_name=chunk_in.parent_qualified_name,
         embedding_id=embedding_id,
         importance=chunk_in.importance,
         confidence=chunk_in.confidence,

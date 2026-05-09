@@ -35,6 +35,12 @@ class ChunkIn(BaseModel):
     line_start: int | None = None
     line_end: int | None = None
     symbols: list[str] = Field(default_factory=list)
+    # 1.4.0 symbol metadata (only populated for code chunks emitted by
+    # the structural chunker; legacy / doc / episode chunks leave them
+    # NULL).
+    symbol_kind: str | None = Field(default=None, max_length=32)
+    qualified_name: str | None = Field(default=None, max_length=400)
+    parent_qualified_name: str | None = Field(default=None, max_length=400)
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -54,6 +60,9 @@ class Chunk(BaseModel):
     line_start: int | None
     line_end: int | None
     symbols: list[str] = Field(default_factory=list)
+    symbol_kind: str | None = None
+    qualified_name: str | None = None
+    parent_qualified_name: str | None = None
     embedding_id: str | None
     importance: float
     confidence: float

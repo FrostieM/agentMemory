@@ -48,6 +48,41 @@ EPISODE_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
+        name="memory_find_symbols",
+        description=(
+            "1.4.0: exact symbol-level lookup. Match by qualified_name "
+            "('Class.method', 'Class::method' for C++) or prefix. "
+            "Filters by symbol_kind (function/class/method/struct/"
+            "interface/enum/type) and language. Returns the chunk body "
+            "directly so a Class.method search lands on the method body."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "name": {"type": "string", "maxLength": 400},
+                "name_prefix": {"type": "string", "maxLength": 400},
+                "kinds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "function",
+                            "class",
+                            "method",
+                            "struct",
+                            "interface",
+                            "enum",
+                            "type",
+                        ],
+                    },
+                },
+                "languages": {"type": "array", "items": {"type": "string"}},
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+            },
+        },
+    ),
+    types.Tool(
         name="memory_ingest_episode",
         description=(
             "Persist an event into episodic memory. Secrets are redacted server "

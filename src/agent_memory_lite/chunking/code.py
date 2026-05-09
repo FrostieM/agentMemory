@@ -1,103 +1,36 @@
-"""Code chunking.
+"""Code chunking dispatcher.
 
-Python code chunks by top-level `FunctionDef`/`AsyncFunctionDef`/`ClassDef`
-nodes when parseable, falling back to a token-window split otherwise. Other
-languages also fall back to the token window. Each chunk carries its own
-symbol list so FTS hits can match by function/class name.
+1.4.0: tree-sitter-driven symbol chunks for the top-7 supported
+languages (python, javascript, typescript, go, rust, java, cpp,
+csharp). Each declaration node — function, class, method, struct,
+enum, interface, type alias — becomes its own chunk so a search
+for ``ClassName.method`` lands precisely on the method body.
+
+Pre-1.4.0 only Python had structural chunks (via stdlib ``ast``).
+Other languages fell back to a token-window split, which made
+symbol-level retrieval impossible on JS / TS / Go / Rust / Java /
+C++ / C#. Tree-sitter is an OPTIONAL dependency: when its grammars
+are absent (or the parse fails) we silently fall back to the existing
+token-window symbol-extraction path so the service stays installable
+without C extensions.
+
+Heavy lifting lives in ``code_python.py`` (stdlib AST) and
+``code_ts.py`` (tree-sitter); this module is just dispatch +
+fallback.
 """
 
 from __future__ import annotations
 
-import ast
-from dataclasses import dataclass
-
-from agent_memory_lite.chunking.line_ranges import line_starts, span_to_line_range
+from agent_memory_lite.chunking.code_python import python_chunks
+from agent_memory_lite.chunking.code_ts import ts_chunks
+from agent_memory_lite.chunking.line_ranges import span_to_line_range
+from agent_memory_lite.chunking.symbol_types import CodeChunk
 from agent_memory_lite.chunking.symbols import extract_symbols
 from agent_memory_lite.chunking.text import chunk_text
 
 DEFAULT_MAX_TOKENS = 600
 
-
-@dataclass(frozen=True, slots=True)
-class CodeChunk:
-    text: str
-    char_start: int
-    char_end: int
-    line_start: int
-    line_end: int
-    symbols: list[str]
-
-
-def _node_to_chunk(
-    node: ast.AST,
-    *,
-    text: str,
-    starts: list[int],
-    qualname: str,
-) -> CodeChunk | None:
-    """Slice a Python AST node into a CodeChunk with qualified-name symbol."""
-    line_start = getattr(node, "lineno", 0)
-    line_end = getattr(node, "end_lineno", line_start) or line_start
-    if line_start <= 0 or line_end <= 0:
-        return None
-    char_start = starts[line_start - 1] if line_start - 1 < len(starts) else 0
-    if line_end < len(starts):
-        char_end = starts[line_end] if line_end < len(starts) else len(text)
-    else:
-        char_end = len(text)
-    body = text[char_start:char_end]
-    if not body.strip():
-        return None
-    return CodeChunk(
-        text=body,
-        char_start=char_start,
-        char_end=char_end,
-        line_start=line_start,
-        line_end=line_end,
-        symbols=[qualname],
-    )
-
-
-def _python_chunks(text: str) -> list[CodeChunk]:
-    """Top-level functions, classes, AND methods inside classes.
-
-    1.3.0: methods get their own chunk with ``symbols=["Class.method"]``
-    so a search for ``paperBot.calculate`` lands precisely on the method
-    body, not on the entire class. Top-level functions/classes still
-    keep their bare name as a symbol. Class chunk and method chunks
-    overlap textually — that's intentional: searching by class name OR
-    by method name both surface the right span.
-    """
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
-        return []
-    starts = line_starts(text)
-    chunks: list[CodeChunk] = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            chunk = _node_to_chunk(node, text=text, starts=starts, qualname=node.name)
-            if chunk is not None:
-                chunks.append(chunk)
-        elif isinstance(node, ast.ClassDef):
-            class_chunk = _node_to_chunk(node, text=text, starts=starts, qualname=node.name)
-            if class_chunk is not None:
-                chunks.append(class_chunk)
-            # Method-level chunks for FunctionDef / AsyncFunctionDef
-            # children of the class body. Skip nested classes inside
-            # classes for now — uncommon and keeps the chunk count
-            # bounded.
-            for child in node.body:
-                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-                    method_chunk = _node_to_chunk(
-                        child,
-                        text=text,
-                        starts=starts,
-                        qualname=f"{node.name}.{child.name}",
-                    )
-                    if method_chunk is not None:
-                        chunks.append(method_chunk)
-    return chunks
+__all__ = ["DEFAULT_MAX_TOKENS", "CodeChunk", "chunk_code", "reassemble_line_range"]
 
 
 def _fallback_chunks(text: str, *, language: str | None, max_tokens: int) -> list[CodeChunk]:
@@ -113,6 +46,7 @@ def _fallback_chunks(text: str, *, language: str | None, max_tokens: int) -> lis
                 line_start=raw.line_start,
                 line_end=raw.line_end,
                 symbols=symbols,
+                language=language,
             )
         )
     return out
@@ -123,8 +57,13 @@ def chunk_code(
 ) -> list[CodeChunk]:
     if not text.strip():
         return []
-    if (language or "").lower() == "python":
-        primary = _python_chunks(text)
+    lang = (language or "").lower()
+    if lang == "python":
+        primary = python_chunks(text)
+        if primary:
+            return primary
+    elif lang:
+        primary = ts_chunks(text, language=lang)
         if primary:
             return primary
     return _fallback_chunks(text, language=language, max_tokens=max_tokens)

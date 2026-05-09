@@ -147,3 +147,19 @@ def _http_write(path: str, payload: dict[str, Any], *, log_label: str) -> dict[s
         default_timeout=_HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS,
         log_label=log_label,
     )
+
+
+def _http_read(path: str, payload: dict[str, Any], *, log_label: str) -> dict[str, Any] | None:
+    """1.4.0: thin helper for read-side HTTP delegation. Used by
+    `_handle_find_symbols` and any future read endpoint that wants to
+    benefit from the warm HTTP service without re-stating the full
+    `_http_memory_request` argument list every call site.
+    """
+    return _http_memory_request(
+        path=path,
+        payload=payload,
+        enabled_env="MCP_SEARCH_HTTP_DELEGATE",
+        timeout_env="MCP_SEARCH_HTTP_TIMEOUT_SEC",
+        default_timeout=_HTTP_SEARCH_DEFAULT_TIMEOUT_SECONDS,
+        log_label=log_label,
+    )

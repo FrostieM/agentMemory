@@ -4,6 +4,105 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.4.0 — 2026-05-09
+
+Phase 1 of the V1.4→V2 code-memory roadmap (see
+`docs/V1_4_TO_V2_ROADMAP.md`): the file-ingest pipeline now produces
+**symbol-level chunks across all top-7 supported languages**
+(JavaScript, TypeScript, Go, Rust, Java, C++, C# alongside Python),
+not just Python. Each declaration node — function, class, method,
+struct, enum, interface, type alias — becomes its own chunk with an
+indexable qualified name, so a search for `paperBot.calculate` lands
+precisely on the method body. Tree-sitter is an OPTIONAL dependency;
+when grammars aren't installed the dispatcher falls back to the
+existing token-window split with zero functional regression.
+
+### Headline — symbol-level chunks across 7 new languages
+
+- **Tree-sitter dispatcher**
+  (`chunking/code.py` + `chunking/code_python.py` + `chunking/code_ts.py`).
+  Python keeps its zero-dep stdlib `ast` fast-path; everything else
+  routes through `chunking/symbol_query.py` (recursive walker over
+  the tree-sitter AST) backed by `chunking/ts_grammar.py` (lazy,
+  cached parser loader). Per-language quirks isolated in
+  `chunking/symbol_naming.py` (Go's `type_declaration` wraps a
+  `type_spec`; C++ buries function names inside `function_declarator`)
+  and the declaration tables live in `chunking/symbol_decls.py`.
+- **Indexable symbol metadata on chunks** (migration 0028 — three
+  new columns: `symbol_kind`, `qualified_name`, `parent_qualified_name`).
+  Every code chunk emitted by the structural chunker carries the
+  symbol's kind (`function | class | method | struct | interface |
+  enum | type`), its qualified name (e.g. `paperBot.calculate` or
+  `Calculator::add` for C++), and the parent container's qualified
+  name when the symbol is a method. Pre-1.4.0 chunks keep
+  `qualified_name = NULL` and remain visible only via FTS / vector
+  retrieval. Two partial indexes (`idx_chunks_qualified_name`,
+  `idx_chunks_symbol_kind`) make exact and prefix lookups O(log n).
+- **`POST /memory/find_symbols` + `memory_find_symbols` MCP tool.**
+  Exact-name match, prefix match, kind filter, language filter — all
+  scan only the indexable columns, never the FTS table or the JSON
+  metadata blob. Enables agents to fetch the body of one
+  `Class.method` without paying for embedding similarity.
+- **CODE_LANGS expanded.** The ingest pipeline's `CODE_LANGS` set
+  drops `ruby` / `kotlin` (no tree-sitter grammar wired) and adds
+  `cpp` / `csharp` so `.cpp` / `.cs` files now go through structural
+  chunking by default. JavaScript / TypeScript / Go / Rust / Java
+  were already in the set but previously fell through to the
+  token-window split.
+
+### Optional dependency surface
+
+`pyproject.toml` `[tree-sitter]` extras now declare all 8 grammar
+packages (`tree_sitter_python`, `tree_sitter_javascript`,
+`tree_sitter_typescript`, `tree_sitter_go`, `tree_sitter_rust`,
+`tree_sitter_java`, `tree_sitter_cpp`, `tree_sitter_c_sharp`) plus
+the core `tree-sitter>=0.23,<1.0`. None of them are installed by the
+default `pip install agent-memory-lite` — the optional install
+(`pip install agent-memory-lite[tree-sitter]`) is what activates the
+new structural chunks. The service stays installable on hosts
+without C extensions because `chunking/ts_grammar.get_parser()`
+silently returns `None` on missing packages.
+
+### Tests
+
+- `tests/unit/chunking/test_code_ts_languages.py` (9 tests, one per
+  language plus an unsupported-language fallback case and a
+  comment-only-input case) locks the per-language structural shapes
+  the dispatcher needs to handle.
+- `tests/e2e/test_find_symbols_route.py` (6 tests) locks the e2e
+  contract: ingest a Python file → exact-name match, prefix match,
+  kind filter, unknown-kind rejection (HTTP 400), TypeScript
+  dispatch, workspace isolation.
+- Updated `tests/unit/chunking/test_code.py` Python expectations
+  remain unchanged (Python AST path is preserved verbatim).
+
+Total new tests: **15**. All gates green: `ruff check` ✓,
+`ruff format` ✓, `mypy` (457 source files) ✓,
+unit + e2e + integration + invariants ✓.
+
+### MCP surface
+
+New tool: **`memory_find_symbols`**. Schema published via
+`stdio_tools_episodes.EPISODE_TOOLS`; handler dispatches HTTP first
+(falling back to local SQLite via `tools_symbols.memory_find_symbols`).
+Pair-call: use `memory_find_symbols(name="Class.method")` when you
+know the symbol, fall back to `memory_search(query="Class.method")`
+when you don't.
+
+### Notes for the operator
+
+- **No upgrade action required for existing workspaces.** Pre-1.4.0
+  code chunks have `qualified_name = NULL` and continue to surface
+  via FTS / vector retrieval. To populate the new columns for
+  existing files, re-ingest them (`memory_ingest_file` — idempotent
+  by content hash, so unchanged files are no-ops).
+- **Phase 1 of 7.** This release ships the structural foundation;
+  the hard graph (CALLS / IMPORTS / EXPORTS / EXTENDS edges),
+  symbol-level versioning + breaking-change detection, the soft graph
+  + active-edit registry for multi-agent coordination, narrative file
+  digests, and the dashboard surface land in v1.5.0 → v2.0 per the
+  roadmap document.
+
 ## 1.3.0 — 2026-05-09
 
 Substantial release closing the highest-ROI items from the v1.2.4

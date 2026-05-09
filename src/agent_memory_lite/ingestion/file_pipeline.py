@@ -107,9 +107,21 @@ def ingest_file(
                     (workspace_id, path),
                 )
 
-        for text, line_start, line_end, symbols in chunk_records:
-            if not text.strip():
+        for record in chunk_records:
+            if not record.text.strip():
                 continue
+            chunk_metadata: dict[str, object] = {"path": path, "language": language}
+            if record.extra_metadata:
+                chunk_metadata.update(record.extra_metadata)
+            # FTS: index the qualified name AND any extra symbols (bare
+            # method name etc.) so a search for "calculate" still hits a
+            # method whose canonical symbol is "paperBot.calculate".
+            fts_symbols = list(record.symbols)
+            extras_raw = record.extra_metadata.get("extra_symbols")
+            extras: list[str] = list(extras_raw) if isinstance(extras_raw, list) else []
+            for extra in extras:
+                if extra and extra not in fts_symbols:
+                    fts_symbols.append(extra)
             chunk = insert_chunk(
                 conn,
                 ChunkIn(
@@ -117,13 +129,16 @@ def ingest_file(
                     file_id=file_id,
                     episode_id=episode.id,
                     kind=kind,
-                    text=text,
-                    line_start=line_start,
-                    line_end=line_end,
-                    symbols=symbols,
+                    text=record.text,
+                    line_start=record.line_start,
+                    line_end=record.line_end,
+                    symbols=record.symbols,
+                    symbol_kind=record.symbol_kind,
+                    qualified_name=record.qualified_name,
+                    parent_qualified_name=record.parent_qualified_name,
                     importance=0.4,
                     confidence=1.0,
-                    metadata={"path": path, "language": language},
+                    metadata=chunk_metadata,
                 ),
             )
             insert_chunk_fts(
@@ -131,11 +146,11 @@ def ingest_file(
                 chunk_id=chunk.id,
                 workspace_id=workspace_id,
                 path=path,
-                symbols=symbols,
+                symbols=fts_symbols,
                 text=chunk.text,
                 summary=chunk.summary,
             )
-            new_chunk_ids.append((chunk.id, chunk.text, symbols))
+            new_chunk_ids.append((chunk.id, chunk.text, fts_symbols))
 
         insert_audit(
             conn,

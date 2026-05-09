@@ -19,6 +19,7 @@ from agent_memory_lite.mcp.stdio_http import (
     _http_ingest_episode,
     _http_ingest_file,
     _http_memory_request,
+    _http_read,
     _http_search,
 )
 from agent_memory_lite.mcp.stdio_runtime import _runtime
@@ -116,6 +117,29 @@ def _handle_search(args: dict[str, Any]) -> dict[str, Any]:
             for hit in hits
         ],
     }
+
+
+def _handle_find_symbols(args: dict[str, Any]) -> dict[str, Any]:
+    """1.4.0: symbol-level chunk lookup. Tries the HTTP service first
+    (so a single-workspace project mode benefits from middleware /
+    audit), falls back to local SQLite via the in-process tool handler.
+    """
+    from agent_memory_lite.mcp.tools_symbols import memory_find_symbols  # noqa: PLC0415
+
+    payload = _with_workspace(args, intent="read")
+    delegated = _http_read("/memory/find_symbols", payload, log_label="find_symbols")
+    if delegated is not None:
+        return delegated
+    workspace_id = str(payload["workspace_id"])
+    return memory_find_symbols(
+        conn=_runtime.db_for(workspace_id),
+        workspace_id=workspace_id,
+        name=payload.get("name"),
+        name_prefix=payload.get("name_prefix"),
+        kinds=payload.get("kinds"),
+        languages=payload.get("languages"),
+        limit=int(payload.get("limit", 20)),
+    )
 
 
 def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
