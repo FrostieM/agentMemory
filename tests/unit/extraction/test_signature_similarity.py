@@ -20,7 +20,8 @@ def test_tokenize_drops_punctuation() -> None:
     # Punctuation got stripped.
     assert "(" not in tokens
     assert ":" not in tokens
-    assert "->" not in tokens or True  # the arrow is a token; that's fine
+    # The "->" arrow MAY or may not survive as a token depending on
+    # the regex split; we don't pin its presence either way.
 
 
 def test_minhash_deterministic() -> None:
