@@ -25,10 +25,16 @@ from agent_memory_lite.extraction.symbol_edges_python import (
     ExtractedEdge,
     extract_python_edges,
 )
+from agent_memory_lite.extraction.symbol_edges_ts import extract_ts_edges
 from agent_memory_lite.models.symbol_edges import EdgeIn
 from agent_memory_lite.repositories.symbol_edges_repo import insert_edges
 from agent_memory_lite.repositories.symbol_edges_resolver import (
     resolve_pending_edges_for_qnames,
+)
+
+# Languages handled by the tree-sitter edge extractor (1.5.2).
+_TS_EDGE_LANGS: frozenset[str] = frozenset(
+    {"javascript", "typescript", "go", "rust", "java", "cpp", "csharp"}
 )
 
 
@@ -42,10 +48,14 @@ def _build_owner_index(chunk_qnames: list[tuple[str, str | None]]) -> dict[str, 
 
 
 def _extract_edges(text: str, language: str | None) -> list[ExtractedEdge]:
-    if (language or "").lower() == "python":
+    lang = (language or "").lower()
+    if lang == "python":
         return extract_python_edges(text)
-    # Phase 2 ships Python only. Tree-sitter edge extraction for the
-    # other 7 languages lands in a follow-up; the schema is ready.
+    if lang in _TS_EDGE_LANGS:
+        # 1.5.2: tree-sitter walker for the other 7 supported languages.
+        # Falls back to [] when the grammar package isn't installed —
+        # the service stays usable without C extensions.
+        return extract_ts_edges(text, lang)
     return []
 
 

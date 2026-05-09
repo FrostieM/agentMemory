@@ -62,5 +62,6 @@ class IngestFileResponse(BaseModel):
     file_id: str
     path: str
     chunks_written: int
+    edges_written: int = 0
     skipped: bool
     last_indexed_at: str

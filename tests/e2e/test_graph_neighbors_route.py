@@ -12,6 +12,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_memory_lite.chunking.ts_grammar import is_supported
+
 PY_SOURCE = '''\
 """mod"""
 from typing import Any
@@ -195,6 +197,39 @@ def test_cross_file_import_resolves_after_target_ingested(client: TestClient) ->
     # dst_chunk_id now populated.
     resolved = [e for e in imports_edges if e["dst_chunk_id"] is not None]
     assert len(resolved) >= 1, f"expected resolved import edge, got {imports_edges}"
+
+
+def test_typescript_calls_emitted_via_tree_sitter(client: TestClient) -> None:
+    """1.5.2: TypeScript files now produce SymbolEdge rows via tree-sitter."""
+    if not is_supported("typescript"):
+        pytest.skip("tree-sitter-typescript not installed")
+    src = "function helper() { return 1; }\nclass Svc {\n  fetch() {\n    helper();\n  }\n}\n"
+    r = client.post(
+        "/memory/ingest_file",
+        json={
+            "workspace_id": "graph-ws",
+            "path": "src/svc.ts",
+            "content": src,
+            "language": "typescript",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["chunks_written"] >= 2  # helper + Svc + Svc.fetch
+    assert body["edges_written"] >= 1, "expected at least the calls edge from Svc.fetch"
+
+    r2 = client.post(
+        "/memory/graph_neighbors",
+        json={
+            "workspace_id": "graph-ws",
+            "qualified_name": "helper",
+            "edge_types": ["calls"],
+            "direction": "upstream",
+        },
+    )
+    assert r2.status_code == 200, r2.text
+    callers = {e["src_qualified_name"] for e in r2.json()["upstream"]}
+    assert "Svc.fetch" in callers
 
 
 def test_re_ingest_drops_stale_edges(client: TestClient) -> None:

@@ -4,6 +4,75 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.5.2 — 2026-05-09
+
+Phase 2 completion: **hard-graph edges now extracted for all 7
+non-Python languages** (JavaScript, TypeScript, Go, Rust, Java, C++,
+C#) via tree-sitter. v1.5.0 shipped Python only; v1.5.2 brings every
+supported language to feature parity for ``calls``, ``imports``, and
+``instantiates`` edges. extends / decorated_by / implements remain
+Python-only for now (extending the table-driven walker is a v1.5.3+
+task).
+
+### What changed
+
+- New module ``extraction/symbol_edges_ts.py`` — tree-sitter-driven
+  edge walker. Re-uses ``extract_symbols_via_ts`` from the chunking
+  layer to identify function / method / class byte ranges, then
+  walks the tree once more looking for call / import nodes. Every
+  call site gets mapped to the smallest enclosing symbol so a call
+  inside ``Service.fetch`` is owned by ``Service.fetch`` (not by
+  the surrounding ``Service`` class).
+- ``extraction/symbol_edges_ts_decls.py`` — per-language node-type
+  tables (call expressions, import statements, instantiation
+  variants). Java's ``method_invocation``, C#'s
+  ``invocation_expression``, and C++'s ``preproc_include`` are all
+  codified here so the walker stays generic.
+- ``extraction/symbol_edges_ts_helpers.py`` — name extraction
+  helpers. Handles strings (Go's ``interpreted_string_literal``,
+  Rust's ``raw_string_literal``, C++'s ``system_lib_string``) and
+  identifier-bearing nodes across grammar variants.
+- ``ingestion/file_persist_edges.py`` dispatches by language:
+  Python → ``extract_python_edges`` (stdlib AST, fastest);
+  JS/TS/Go/Rust/Java/C++/C# → ``extract_ts_edges``. Falls back to
+  empty list when grammars aren't installed — service stays usable
+  without C extensions.
+- ``IngestFileResponse`` (and matching MCP response) now carries
+  ``edges_written`` so an agent can verify the graph populated.
+
+### Tests — 11 new
+
+- ``tests/unit/extraction/test_symbol_edges_ts.py`` (10 tests):
+  per-language calls + imports coverage with skip-if-missing-grammar
+  guards. Locks owner-resolution (calls inside method body owned by
+  ``Class.method``), ``instantiates`` from ``new_expression``,
+  language-specific string-literal handling for Go / C++ imports.
+- ``tests/e2e/test_graph_neighbors_route.py::test_typescript_calls_emitted_via_tree_sitter``:
+  full ingest → graph_neighbors round-trip on a TypeScript file.
+
+Total tests now: **804 pass** (unit + e2e + integration + invariants).
+
+### Roadmap progress to v2.0
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0   | Hard graph (Python edges) | shipped |
+| 1.5.1   | Cross-file edge resolver | shipped |
+| 1.5.2   | Tree-sitter edges for 7 languages | **shipped** |
+| 1.6.0   | Symbol versioning + breaking-change detection | next |
+| 1.7.0   | Soft graph + active-edit registry (multi-agent) | planned |
+| 1.8.0   | Narrative file digests | planned |
+| 2.0     | Dashboard surface | final |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (473 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 804 tests pass.
+
 ## 1.5.1 — 2026-05-09
 
 Patch follow-up to v1.5.0: **cross-file edge resolver**. Pre-1.5.1
