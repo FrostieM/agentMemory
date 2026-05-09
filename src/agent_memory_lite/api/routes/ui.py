@@ -39,6 +39,8 @@ _ASSETS = {
     # 2.0: code-memory dashboard. Served at /ui/code.html alongside the
     # legacy index.html so the user can land directly on the code view.
     "code.html": "text/html; charset=utf-8",
+    # 2.1.2: D3 force-directed graph dashboard.
+    "graph.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -48,25 +50,27 @@ _NO_CACHE = {
 }
 
 
+def _serve_html(filename: str) -> FileResponse:
+    return FileResponse(
+        _UI_ROOT / filename, media_type="text/html; charset=utf-8", headers=_NO_CACHE
+    )
+
+
 @router.get("/ui")
 def memory_ui_index() -> FileResponse:
-    return FileResponse(
-        _UI_ROOT / "index.html",
-        media_type="text/html; charset=utf-8",
-        headers=_NO_CACHE,
-    )
+    return _serve_html("index.html")
 
 
 @router.get("/ui/code")
 def memory_ui_code() -> FileResponse:
-    """2.0: code-memory dashboard. Renders chunks / edges / versions /
-    digests / active edits in one HTML view backed by
-    /memory/code_overview."""
-    return FileResponse(
-        _UI_ROOT / "code.html",
-        media_type="text/html; charset=utf-8",
-        headers=_NO_CACHE,
-    )
+    """2.0 dashboard backed by /memory/code_overview."""
+    return _serve_html("code.html")
+
+
+@router.get("/ui/graph")
+def memory_ui_graph() -> FileResponse:
+    """2.1.2 D3 graph dashboard backed by /memory/code_graph."""
+    return _serve_html("graph.html")
 
 
 @router.get("/ui/{asset_name}")

@@ -8,6 +8,44 @@ from agent_memory_lite.mcp.stdio_runtime import workspace_schema
 
 DIGEST_TOOLS: list[types.Tool] = [
     types.Tool(
+        name="memory_code_graph",
+        description=(
+            "2.1.2: node-link subgraph for D3 dashboard rendering. "
+            "Pass ``center`` for BFS up to ``depth`` hops outward "
+            "from one symbol; omit for top-K most-connected overview."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "center": {"type": "string", "maxLength": 400},
+                "depth": {"type": "integer", "default": 2, "minimum": 1, "maximum": 5},
+                "max_nodes": {
+                    "type": "integer",
+                    "default": 200,
+                    "minimum": 1,
+                    "maximum": 1000,
+                },
+                "edge_kinds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "calls",
+                            "imports",
+                            "exports",
+                            "extends",
+                            "implements",
+                            "references",
+                            "instantiates",
+                            "decorated_by",
+                        ],
+                    },
+                },
+            },
+        },
+    ),
+    types.Tool(
         name="memory_code_overview",
         description=(
             "2.0: workspace dashboard payload — counts, recent files, "

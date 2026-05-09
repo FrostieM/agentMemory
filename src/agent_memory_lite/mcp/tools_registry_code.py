@@ -9,6 +9,7 @@ stays under the SLOC ceiling as the code-memory surface grows.
 
 from __future__ import annotations
 
+from agent_memory_lite.mcp.tools_code_graph import memory_code_graph
 from agent_memory_lite.mcp.tools_coordination import (
     memory_claim_edit,
     memory_list_active_edits,
@@ -113,5 +114,13 @@ CODE_TOOLS_REGISTRY: tuple[ToolDefinition, ...] = (
             "files, breaking changes, active edits, hot symbols)."
         ),
         handler=memory_code_overview,
+    ),
+    ToolDefinition(
+        name="memory_code_graph",
+        description=(
+            "2.1.2: node-link subgraph (BFS from a center symbol or "
+            "top-K connected overview) for the D3 dashboard."
+        ),
+        handler=memory_code_graph,
     ),
 )

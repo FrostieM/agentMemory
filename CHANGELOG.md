@@ -4,6 +4,62 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.1.2 — 2026-05-10
+
+Second patch in the v2.1 polish series. Adds the **D3 graph
+visualization** to the dashboard surface. Pre-2.1.2 ``/ui/code``
+showed tables; tables are great for counts but bad for topology.
+The new ``/ui/graph`` page renders an interactive force-directed
+node-link graph backed by a new ``/memory/code_graph`` endpoint.
+
+### What changed
+
+- **`GET /memory/code_graph`** + **`memory_code_graph` MCP tool**.
+  Two modes:
+    - ``center`` set: BFS up to ``depth`` hops outward from one
+      symbol, both directions, all edge kinds (or filter via
+      ``edge_kinds[]``).
+    - ``center`` absent: top-K most-connected symbols (overview).
+  Cap via ``max_nodes`` (1-1000); response carries ``truncated``
+  flag when the cap is hit.
+- **`/ui/graph` HTML page** — D3.js v7 force-directed graph,
+  loaded from CDN with integrity-checked SRI hash. Nodes colored
+  by language (Python blue, Rust orange, TS deep-blue, etc.),
+  sized by degree. Edge style varies by edge_kind (extends /
+  implements bold blue, calls grey, imports dashed, decorated_by
+  red, instantiates orange). Interactions: zoom + pan, click-
+  drag, hover-tooltip, double-click to re-center the BFS.
+- **Architecture**:
+    - `api/routes/code_graph.py` — endpoint orchestration.
+    - `api/routes/code_graph_bfs.py` — BFS + overview logic.
+    - `api/routes/code_graph_bfs_sql.py` — SQL helpers split out
+      to keep both modules under SLOC.
+    - `api/routes/code_graph_models.py` — three pydantic types.
+    - `mcp/tools_code_graph.py` + handler.
+    - `ui/graph.html` — vanilla HTML+JS, no build step.
+
+### Tests — 7 new
+
+``tests/e2e/test_code_graph_route.py``:
+1. Overview mode returns top-connected symbols.
+2. Center mode BFS surfaces immediate neighbors.
+3. ``max_nodes`` cap respected; ``truncated`` flag set.
+4. Unknown ``edge_kinds`` value rejected with HTTP 400.
+5. ``edge_kinds`` filter excludes other edge types.
+6. Empty workspace returns empty arrays cleanly.
+7. ``/ui/graph`` page is served, references ``/memory/code_graph``
+   and includes the D3 CDN script tag.
+
+Total tests now: **858 pass**.
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (515 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 858 tests pass.
+
 ## 2.1.1 — 2026-05-10
 
 First patch in the v2.1 polish series (see

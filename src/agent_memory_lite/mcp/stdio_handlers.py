@@ -19,6 +19,7 @@ from agent_memory_lite.mcp.stdio_handlers_capability import (
     _handle_list_capability_links,
     _handle_upsert_behavior_instruction,
 )
+from agent_memory_lite.mcp.stdio_handlers_code_graph import _handle_code_graph
 from agent_memory_lite.mcp.stdio_handlers_coordination import (
     _handle_claim_edit,
     _handle_list_active_edits,
@@ -106,6 +107,7 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_file_digest": _handle_file_digest,
     "memory_list_file_digests": _handle_list_file_digests,
     "memory_code_overview": _handle_code_overview,
+    "memory_code_graph": _handle_code_graph,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,
