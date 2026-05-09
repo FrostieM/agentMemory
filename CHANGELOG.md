@@ -4,6 +4,88 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 1.6.0 — 2026-05-09
+
+Phase 3 of the V1.4→V2 code-memory roadmap: **symbol-level version
+history + breaking-change detection**. v1.5.x answered "who calls
+``paperBot.calculate``?" — v1.6.0 answers "the signature of
+``paperBot.calculate`` just changed; who could break?". Together
+they close the multi-agent code-coordination loop the README
+headlines as the v2.0 deliverable.
+
+### Headline — versioning
+
+- **`symbol_versions` table** (migration 0030). Every chunk write
+  appends a row when its content_hash differs from the most recent
+  version for the same (workspace_id, qualified_name). The row
+  carries the ``signature_text`` and ``content_hash`` inline so
+  history stays visible even after the underlying chunk is deleted
+  on file re-ingest.
+- **Signature extractor**
+  (``extraction/signature_extractor.py``). Best-effort first-line
+  extraction across Python / TS / Rust / etc. — strips
+  decorators, comments, docstrings; returns the line carrying
+  ``def`` / ``class`` / ``fn`` / ``async fetch(...) {``. Hashed
+  separately from content so a signature change is detectable
+  without a body diff.
+- **Pipeline wiring** (``ingestion/file_persist_versions.py`` +
+  ``ingestion/file_post_chunk.py``). After every chunk is
+  persisted, the version recorder runs idempotently — re-ingesting
+  unchanged code never produces a new version row, so the history
+  stays clean.
+
+### Headline — breaking-change detection
+
+- **`POST /memory/breaking_changes`** + **`memory_breaking_changes`
+  MCP tool**. Lists every symbol whose signature_hash changed in
+  the last N days, paired with downstream caller count via
+  ``symbol_edges``. Use this right before a release: "who could
+  break after my last refactor?". The query joins each version row
+  to its immediately-prior version for the same (workspace_id,
+  qualified_name) and filters for signature mismatches, then
+  optionally counts inbound CALLS / INSTANTIATES edges per change.
+- **`POST /memory/symbol_history`** + **`memory_symbol_history`
+  MCP tool**. Full version chain for one symbol in descending
+  chronological order; each row carries signature_text +
+  content_hash captured at ingest time.
+- **`IngestFileResponse`** now exposes ``versions_written`` so
+  agents can verify the history is being recorded.
+
+### Tests — 17 new
+
+- ``tests/unit/extraction/test_signature_extractor.py`` (10 tests):
+  per-language signature extraction edge cases — Python def,
+  decorator skip, docstring skip, TS method, Rust attribute,
+  hash stability, parameter-change detection.
+- ``tests/e2e/test_versioning_routes.py`` (7 tests): full
+  ingest → symbol_history / breaking_changes round-trip.
+  Locks idempotence on unchanged content, body-only edits NOT
+  appearing in breaking_changes (signature_hash unchanged), and
+  caller_count via the hard graph for cross-file callers.
+
+Total tests now: **821 pass** (unit + e2e + integration + invariants).
+
+### Roadmap progress to v2.0
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0   | Hard graph (Python edges) | shipped |
+| 1.5.1   | Cross-file edge resolver | shipped |
+| 1.5.2   | Tree-sitter edges for 7 languages | shipped |
+| **1.6.0** | **Symbol versioning + breaking-change detection** | **shipped** |
+| 1.7.0   | Soft graph + active-edit registry | next |
+| 1.8.0   | Narrative file digests | planned |
+| 2.0     | Dashboard surface | final |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (484 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 821 tests pass.
+
 ## 1.5.2 — 2026-05-09
 
 Phase 2 completion: **hard-graph edges now extracted for all 7

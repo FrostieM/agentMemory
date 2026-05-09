@@ -19,25 +19,21 @@ from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.ingestion.file_chunking import chunk_for_kind, chunk_kind_for
 from agent_memory_lite.ingestion.file_persist import run_vector_phase
 from agent_memory_lite.ingestion.file_persist_chunk import persist_chunk
-from agent_memory_lite.ingestion.file_persist_edges import persist_edges_for_file
-from agent_memory_lite.logging_setup import get_logger
+from agent_memory_lite.ingestion.file_post_chunk import (
+    run_post_chunk_phase,
+    run_pre_chunk_cleanup,
+)
+from agent_memory_lite.models.chunks import Chunk
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.files import FileRecord
 from agent_memory_lite.repositories.audit_repo import insert_audit
-from agent_memory_lite.repositories.chunks_repo import (
-    delete_chunks_by_file,
-    list_chunk_ids_for_file,
-)
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.repositories.files_repo import get_file_by_path, upsert_file_row
-from agent_memory_lite.repositories.symbol_edges_repo import delete_edges_by_src_chunks
 from agent_memory_lite.utils.hashing import blake2b_hex
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
-
-_log = get_logger("ingestion.file_pipeline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +41,7 @@ class FileIngestResult:
     file: FileRecord
     chunks_written: int
     edges_written: int
+    versions_written: int
     skipped: bool
 
 
@@ -66,7 +63,13 @@ def ingest_file(
 
     existing = get_file_by_path(conn, workspace_id=workspace_id, path=path)
     if existing is not None and existing.content_hash == content_hash:
-        return FileIngestResult(file=existing, chunks_written=0, edges_written=0, skipped=True)
+        return FileIngestResult(
+            file=existing,
+            chunks_written=0,
+            edges_written=0,
+            versions_written=0,
+            skipped=True,
+        )
 
     file_id = existing.id if existing is not None else new_id(IdKind.FILE)
     chunk_records = chunk_for_kind(content, language=language)
@@ -74,7 +77,7 @@ def ingest_file(
 
     new_chunk_ids: list[tuple[str, str, list[str]]] = []
     new_chunk_qnames: list[tuple[str, str | None]] = []
-    edges_written = 0
+    new_chunks_full: list[Chunk] = []
 
     with with_tx(conn):
         upsert_file_row(
@@ -101,22 +104,7 @@ def ingest_file(
         )
 
         if existing is not None:
-            # 1.5.0: drop edges that point at the about-to-be-deleted
-            # chunks BEFORE the chunks themselves. Without this, re-
-            # ingesting a file leaves orphaned edges with src_chunk_id
-            # references to deleted chunks.
-            old_chunk_ids = list_chunk_ids_for_file(conn, file_id)
-            if old_chunk_ids:
-                delete_edges_by_src_chunks(conn, workspace_id=workspace_id, chunk_ids=old_chunk_ids)
-            removed = delete_chunks_by_file(conn, file_id)
-            if removed:
-                # FTS sync — best-effort; the chunk_id list isn't easily
-                # recoverable post-delete, so we rebuild the workspace's FTS
-                # entries for this file by id below.
-                conn.execute(
-                    "DELETE FROM chunks_fts WHERE workspace_id = ? AND path = ?",
-                    (workspace_id, path),
-                )
+            run_pre_chunk_cleanup(conn, workspace_id=workspace_id, file_id=file_id, path=path)
 
         for record in chunk_records:
             if not record.text.strip():
@@ -133,15 +121,17 @@ def ingest_file(
             )
             new_chunk_ids.append((chunk.id, chunk.text, fts_symbols))
             new_chunk_qnames.append((chunk.id, chunk.qualified_name))
+            new_chunks_full.append(chunk)
 
-        edges_written = persist_edges_for_file(
+        post = run_post_chunk_phase(
             conn,
             workspace_id=workspace_id,
             text=content,
             language=language,
+            file_path=path,
+            new_chunks=new_chunks_full,
             chunk_qnames=new_chunk_qnames,
         )
-
         insert_audit(
             conn,
             workspace_id=workspace_id,
@@ -152,7 +142,8 @@ def ingest_file(
             after={
                 "path": path,
                 "chunks": len(new_chunk_ids),
-                "edges": edges_written,
+                "edges": post.edges_written,
+                "versions": post.versions_written,
             },
         )
 
@@ -171,6 +162,7 @@ def ingest_file(
     return FileIngestResult(
         file=file_record,
         chunks_written=len(new_chunk_ids),
-        edges_written=edges_written,
+        edges_written=post.edges_written,
+        versions_written=post.versions_written,
         skipped=False,
     )

@@ -13,8 +13,8 @@ from agent_memory_lite.mcp.tools_episodes import (
     memory_ingest_file,
     memory_search,
 )
-from agent_memory_lite.mcp.tools_graph import memory_graph_neighbors
 from agent_memory_lite.mcp.tools_payloads import ToolDefinition
+from agent_memory_lite.mcp.tools_registry_code import CODE_TOOLS_REGISTRY
 from agent_memory_lite.mcp.tools_review import (
     memory_list_candidates,
     memory_list_maintenance_events,
@@ -23,7 +23,6 @@ from agent_memory_lite.mcp.tools_review import (
     memory_reject_candidate,
     memory_resolve_maintenance_event,
 )
-from agent_memory_lite.mcp.tools_symbols import memory_find_symbols
 from agent_memory_lite.mcp.tools_theories import (
     memory_add_theory_evidence,
     memory_list_theories,
@@ -46,26 +45,7 @@ CORE_TOOLS: tuple[ToolDefinition, ...] = (
         description="Exact FTS lookup over chunks (BM25 ordered).",
         handler=memory_search,
     ),
-    ToolDefinition(
-        name="memory_find_symbols",
-        description=(
-            "1.4.0: exact symbol-level chunk lookup by qualified_name "
-            "(e.g. 'Class.method' or 'Class::method' for C++) across "
-            "the top-7 supported languages."
-        ),
-        handler=memory_find_symbols,
-    ),
-    ToolDefinition(
-        name="memory_graph_neighbors",
-        description=(
-            "1.5.0: hard-graph upstream / downstream lookup. Given a "
-            "symbol's qualified_name (upstream — who depends on it?) "
-            "or chunk_id (downstream — what does it depend on?), "
-            "return CALLS / IMPORTS / EXTENDS / IMPLEMENTS / "
-            "REFERENCES / INSTANTIATES / DECORATED_BY edges."
-        ),
-        handler=memory_graph_neighbors,
-    ),
+    *CODE_TOOLS_REGISTRY,
     ToolDefinition(
         name="memory_ingest_file",
         description="Index a single file into memory, idempotent by content hash.",

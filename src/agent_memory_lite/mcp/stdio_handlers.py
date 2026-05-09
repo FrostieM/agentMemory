@@ -73,6 +73,10 @@ from agent_memory_lite.mcp.stdio_handlers_theories import (
     _handle_list_theories,
     _handle_write_theory,
 )
+from agent_memory_lite.mcp.stdio_handlers_versions import (
+    _handle_breaking_changes,
+    _handle_symbol_history,
+)
 
 _Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -82,6 +86,8 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_search": _handle_search,
     "memory_find_symbols": _handle_find_symbols,
     "memory_graph_neighbors": _handle_graph_neighbors,
+    "memory_symbol_history": _handle_symbol_history,
+    "memory_breaking_changes": _handle_breaking_changes,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,

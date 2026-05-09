@@ -16,6 +16,7 @@ from agent_memory_lite.api.routes import (
     archive,
     audit_list,
     behavior,
+    breaking_changes,
     candidates,
     capabilities,
     capability_links,
@@ -47,6 +48,7 @@ from agent_memory_lite.api.routes import (
     review_queue,
     search,
     sentinel_trends,
+    symbol_history,
     task_state,
     telemetry,
     theories,
@@ -148,4 +150,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(promote_to_behavior.router)
     app.include_router(find_symbols.router)
     app.include_router(graph_neighbors.router)
+    app.include_router(symbol_history.router)
+    app.include_router(breaking_changes.router)
     return app

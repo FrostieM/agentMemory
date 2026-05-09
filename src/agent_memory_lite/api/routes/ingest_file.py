@@ -77,6 +77,7 @@ def ingest_file_route(
             path=result.file.path,
             chunks_written=result.chunks_written,
             edges_written=result.edges_written,
+            versions_written=result.versions_written,
             skipped=result.skipped,
             last_indexed_at=result.file.last_indexed_at,
         )

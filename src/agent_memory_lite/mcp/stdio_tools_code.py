@@ -14,6 +14,41 @@ from agent_memory_lite.mcp.stdio_runtime import workspace_schema
 
 CODE_TOOLS: list[types.Tool] = [
     types.Tool(
+        name="memory_symbol_history",
+        description=(
+            "1.6.0: list every recorded version of a symbol (qualified_name) "
+            "in descending chronological order. Each row carries the "
+            "signature_text + content_hash captured at ingest time."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "qualified_name": {"type": "string", "minLength": 1, "maxLength": 400},
+                "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+            },
+            "required": ["qualified_name"],
+        },
+    ),
+    types.Tool(
+        name="memory_breaking_changes",
+        description=(
+            "1.6.0: surface every symbol whose signature_hash changed in "
+            "the last N days, paired with downstream caller count via the "
+            "hard graph. Use this right before a release: 'who could break "
+            "after my last refactor?'"
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "since_days": {"type": "integer", "default": 7, "minimum": 1, "maximum": 365},
+                "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+                "include_callers": {"type": "boolean", "default": True},
+            },
+        },
+    ),
+    types.Tool(
         name="memory_find_symbols",
         description=(
             "1.4.0: exact symbol-level lookup. Match by qualified_name "
