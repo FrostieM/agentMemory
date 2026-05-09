@@ -36,6 +36,9 @@ _UI_ROOT = _PACKAGE_ROOT / "ui"
 _ASSETS = {
     "app.js": "application/javascript; charset=utf-8",
     "styles.css": "text/css; charset=utf-8",
+    # 2.0: code-memory dashboard. Served at /ui/code.html alongside the
+    # legacy index.html so the user can land directly on the code view.
+    "code.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -49,6 +52,18 @@ _NO_CACHE = {
 def memory_ui_index() -> FileResponse:
     return FileResponse(
         _UI_ROOT / "index.html",
+        media_type="text/html; charset=utf-8",
+        headers=_NO_CACHE,
+    )
+
+
+@router.get("/ui/code")
+def memory_ui_code() -> FileResponse:
+    """2.0: code-memory dashboard. Renders chunks / edges / versions /
+    digests / active edits in one HTML view backed by
+    /memory/code_overview."""
+    return FileResponse(
+        _UI_ROOT / "code.html",
         media_type="text/html; charset=utf-8",
         headers=_NO_CACHE,
     )

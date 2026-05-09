@@ -8,6 +8,33 @@ from agent_memory_lite.mcp.stdio_runtime import workspace_schema
 
 DIGEST_TOOLS: list[types.Tool] = [
     types.Tool(
+        name="memory_code_overview",
+        description=(
+            "2.0: workspace dashboard payload — counts, recent files, "
+            "breaking changes, active edits, most-called symbols. "
+            "Single call returns everything the /ui/code dashboard "
+            "renders."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "breaking_days": {
+                    "type": "integer",
+                    "default": 7,
+                    "minimum": 1,
+                    "maximum": 365,
+                },
+                "files_limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+        },
+    ),
+    types.Tool(
         name="memory_file_digest",
         description=(
             "1.8.0: get the narrative + structured digest for one file. "

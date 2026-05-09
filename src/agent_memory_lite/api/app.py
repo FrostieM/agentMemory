@@ -21,6 +21,7 @@ from agent_memory_lite.api.routes import (
     candidates,
     capabilities,
     capability_links,
+    code_overview,
     cold_candidates,
     cold_decisions,
     compact,
@@ -101,6 +102,7 @@ def _register_code_routers(app: FastAPI) -> None:
     app.include_router(active_edits.router)
     app.include_router(soft_neighbors.router)
     app.include_router(file_digests.router)
+    app.include_router(code_overview.router)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

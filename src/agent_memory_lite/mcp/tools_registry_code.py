@@ -20,6 +20,7 @@ from agent_memory_lite.mcp.tools_digests import (
     memory_list_file_digests,
 )
 from agent_memory_lite.mcp.tools_graph import memory_graph_neighbors
+from agent_memory_lite.mcp.tools_overview import memory_code_overview
 from agent_memory_lite.mcp.tools_payloads import ToolDefinition
 from agent_memory_lite.mcp.tools_symbols import memory_find_symbols
 from agent_memory_lite.mcp.tools_versions import (
@@ -104,5 +105,13 @@ CODE_TOOLS_REGISTRY: tuple[ToolDefinition, ...] = (
         name="memory_list_file_digests",
         description=("1.8.0: workspace overview — every file's digest, newest first."),
         handler=memory_list_file_digests,
+    ),
+    ToolDefinition(
+        name="memory_code_overview",
+        description=(
+            "2.0: full workspace dashboard payload (counts, recent "
+            "files, breaking changes, active edits, hot symbols)."
+        ),
+        handler=memory_code_overview,
     ),
 )

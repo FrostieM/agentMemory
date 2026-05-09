@@ -4,6 +4,95 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.0.0 — 2026-05-09
+
+**v2.0 — code-memory dashboard.** The final phase of the V1.4→V2
+roadmap. Six prior releases shipped the substrate (chunks, hard
+graph, edges, versions, soft graph, active edits, file digests);
+v2.0 collapses them into a single dashboard surface so an agent or
+operator can answer "what's in this workspace, what's changing,
+who's working on what" in one HTTP call or one browser tab.
+
+### Headline
+
+- **`GET /memory/code_overview`** + **`memory_code_overview` MCP
+  tool**. Single read returns:
+    - `counts` (files / chunks / symbols / edges / versions /
+      soft_edges)
+    - `recent_files` (file digests, newest-updated first, with
+      narrative + edge counts)
+    - `breaking` (signature-changed symbols in the last N days,
+      with prev / new signature pairs)
+    - `active_edits` (live edit claims by agent)
+    - `top_called` (most-referenced symbols via inbound CALLS /
+      INSTANTIATES edges)
+- **`/ui/code` HTML dashboard** at the same hostname. Vanilla
+  HTML+JS, no framework, no build step. Renders all five sections
+  with a workspace selector and breaking-window slider; auto-loads
+  on page open and refreshes on demand.
+- Read-only end to end. Cleanup of expired active-edit claims
+  happens server-side on each call so the view stays accurate.
+
+### Tests — 6 new
+
+- ``tests/e2e/test_code_overview_route.py``:
+    1. empty workspace → zero counts, empty arrays.
+    2. after ingest → file count + symbol count + at least one
+       edge + at least 2 versions; ``helper`` shows up in
+       ``top_called``.
+    3. signature change → ``breaking`` section surfaces the diff.
+    4. active edit claim → appears in ``active_edits``.
+    5. ``files_limit`` parameter respected.
+    6. ``/ui/code`` HTML page served, references the JSON URL.
+
+Total tests now: **843 pass** (unit + e2e + integration + invariants).
+
+### What v2.0 enables (the "team project" scenario)
+
+The original ask was *"team project where multiple AIs work on the
+same code; the memory should show conflicts, dependencies,
+who-touches-what"*. v1.4-v1.8 built every data model that scenario
+needs; v2.0 makes them visible in one place:
+
+- **two agents diverge on the same function**: agent A's claim
+  appears in `active_edits`, agent B sees it in the dashboard
+  before starting.
+- **someone changed `Foo.bar`'s signature**: `breaking` lists it
+  with prev/new diff and downstream caller count via
+  `graph_neighbors`.
+- **operator wants the workspace overview**: `recent_files`
+  shows the narrative for every code file, top-to-bottom by
+  freshness.
+- **agent wants "what depends on X"**: hard-graph
+  `graph_neighbors` upstream lookup; soft-graph `soft_neighbors`
+  for heuristic co-change relationships.
+
+### Roadmap to v2.0 — DONE
+
+| Version | Scope | Status |
+|---------|-------|--------|
+| 1.4.0   | Symbol chunks for 7 languages | shipped |
+| 1.5.0–1.5.2 | Hard graph + tree-sitter edges + cross-file resolver | shipped |
+| 1.6.0   | Symbol versioning + breaking-change detection | shipped |
+| 1.7.0   | Soft graph + active-edit registry | shipped |
+| 1.8.0   | Narrative file digests | shipped |
+| **2.0.0** | **Code-memory dashboard** | **shipped** |
+
+### All gates green
+
+- `ruff check` ✓
+- `ruff format` ✓
+- `mypy` (506 source files) ✓
+- `check_sloc.py --enforce` ✓
+- 843 tests pass.
+
+### Migration guidance
+
+No schema migration required for v2.0 — the dashboard reads only
+existing tables. Re-ingesting code files populates the file digests
+that the dashboard depends on; existing chunks remain searchable
+through `find_symbols` / `graph_neighbors` / `search`.
+
 ## 1.8.0 — 2026-05-09
 
 Phase 5 of the V1.4→V2 code-memory roadmap: **narrative file

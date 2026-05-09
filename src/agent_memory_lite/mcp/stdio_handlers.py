@@ -42,6 +42,7 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
     _handle_search,
 )
 from agent_memory_lite.mcp.stdio_handlers_graph import _handle_graph_neighbors
+from agent_memory_lite.mcp.stdio_handlers_overview import _handle_code_overview
 from agent_memory_lite.mcp.stdio_handlers_p1 import (
     _handle_list_audit,
     _handle_pin,
@@ -104,6 +105,7 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_soft_neighbors": _handle_soft_neighbors,
     "memory_file_digest": _handle_file_digest,
     "memory_list_file_digests": _handle_list_file_digests,
+    "memory_code_overview": _handle_code_overview,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
     "memory_list_decisions": _handle_list_decisions,
