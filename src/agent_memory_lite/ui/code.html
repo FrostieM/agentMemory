@@ -45,31 +45,10 @@ td.sig { font-family: ui-monospace, monospace; color: #c9d1d9; font-size: 0.83em
   <a class="app-nav-link is-active" data-nav="code" href="/ui/code" style="padding: 0.35em 0.8em; border-radius: 4px; color: #58a6ff; text-decoration: none; background: #21262d; border: 1px solid #30363d; text-transform: uppercase; letter-spacing: 0.05em;">Code</a>
   <a class="app-nav-link" data-nav="graph" href="/ui/graph" style="padding: 0.35em 0.8em; border-radius: 4px; color: #8b949e; text-decoration: none; border: 1px solid transparent; text-transform: uppercase; letter-spacing: 0.05em;">Graph</a>
 </nav>
-<script>
-  // Sync nav hrefs to the workspace_id field so links keep the active workspace.
-  (function () {
-    const wsInput = document.getElementById("ws-input");
-    const links = document.querySelectorAll(".app-nav-link[data-nav]");
-    function sync() {
-      const ws = wsInput && wsInput.value;
-      links.forEach((a) => {
-        const base = a.dataset.nav === "ui" ? "/ui"
-          : a.dataset.nav === "code" ? "/ui/code"
-          : "/ui/graph";
-        a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
-      });
-    }
-    if (wsInput) {
-      wsInput.addEventListener("input", sync);
-      wsInput.addEventListener("change", sync);
-      sync();
-    }
-  })();
-</script>
 <h1>code overview <span class="badge" id="ws-badge">workspace</span></h1>
 
 <div class="controls">
-  <label>workspace_id <input id="ws-input" /></label>
+  <label>workspace_id <select id="ws-input" style="background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 0.3em 0.5em; border-radius: 4px; min-width: 18em;"></select></label>
   <label>breaking_days <input id="days-input" type="number" min="1" max="365" value="7" style="width:5em" /></label>
   <button id="refresh">refresh</button>
   <span id="status" class="empty"></span>
@@ -101,9 +80,32 @@ td.sig { font-family: ui-monospace, monospace; color: #c9d1d9; font-size: 0.83em
 
 <script>
 const $ = (s) => document.querySelector(s);
-const wsParam = new URLSearchParams(location.search).get("workspace_id") || "default";
-$("#ws-input").value = wsParam;
-$("#ws-badge").textContent = wsParam;
+const wsParam = new URLSearchParams(location.search).get("workspace_id") || "";
+
+async function populateWorkspaces(preselect) {
+  try {
+    const r = await fetch("/memory/workspaces");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const sel = $("#ws-input");
+    sel.innerHTML = "";
+    const target = preselect || data.current_workspace_id || (data.workspaces[0] && data.workspaces[0].id);
+    for (const w of data.workspaces || []) {
+      const opt = document.createElement("option");
+      opt.value = w.id;
+      opt.textContent = w.label && w.label !== w.id ? `${w.id} · ${w.label}` : w.id;
+      if (w.id === target) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    $("#ws-badge").textContent = sel.value;
+    return sel.value;
+  } catch (_e) {
+    // Fallback: standalone hub-less mode — show what we have.
+    const sel = $("#ws-input");
+    sel.innerHTML = `<option value="${preselect || "default"}">${preselect || "default"}</option>`;
+    return preselect || "default";
+  }
+}
 
 async function load() {
   const ws = $("#ws-input").value || "default";
@@ -179,9 +181,11 @@ function renderEdits(items) {
 function renderHot(items) {
   const tbody = $("#hot-table tbody");
   if (!items.length) { tbody.innerHTML = `<tr><td colspan="2" class="empty">no edges yet</td></tr>`; return; }
-  tbody.innerHTML = items.map(i => `
-    <tr><td class="qn">${escape(i.qualified_name)}</td><td>${i.inbound_calls}</td></tr>`
-  ).join("");
+  const ws = $("#ws-input").value;
+  tbody.innerHTML = items.map(i => {
+    const href = `/ui/graph?workspace_id=${encodeURIComponent(ws)}&center=${encodeURIComponent(i.qualified_name)}`;
+    return `<tr><td class="qn"><a href="${href}" style="color:#ffa657;text-decoration:none;border-bottom:1px dashed #30363d">${escape(i.qualified_name)}</a></td><td>${i.inbound_calls}</td></tr>`;
+  }).join("");
 }
 
 function escape(s) {
@@ -191,7 +195,31 @@ function escape(s) {
 }
 
 $("#refresh").addEventListener("click", load);
-load();
+$("#ws-input").addEventListener("change", () => {
+  // Push selection into URL so refresh / share keeps the workspace.
+  const ws = $("#ws-input").value;
+  const u = new URL(location.href);
+  u.searchParams.set("workspace_id", ws);
+  history.replaceState(null, "", u);
+  syncNavLinks();
+  load();
+});
+
+function syncNavLinks() {
+  const ws = $("#ws-input").value;
+  document.querySelectorAll(".app-nav-link[data-nav]").forEach((a) => {
+    const base = a.dataset.nav === "ui" ? "/ui"
+      : a.dataset.nav === "code" ? "/ui/code"
+      : "/ui/graph";
+    a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
+  });
+}
+
+(async () => {
+  await populateWorkspaces(wsParam);
+  syncNavLinks();
+  load();
+})();
 </script>
 </body>
 </html>

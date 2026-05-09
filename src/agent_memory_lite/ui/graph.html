@@ -47,7 +47,7 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   <span class="nav-sep">|</span>
   <h1>code graph</h1>
   <span class="badge" id="ws-badge">workspace</span>
-  <label>workspace_id <input id="ws-input" /></label>
+  <label>workspace_id <select id="ws-input" style="background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; padding: 0.25em 0.4em; border-radius: 4px; font-size: 0.85em; min-width: 16em;"></select></label>
   <label>center <input id="center-input" placeholder="qualified_name (optional)" style="width:18em" /></label>
   <label>depth <input id="depth-input" type="number" min="1" max="5" value="2" style="width:3.5em" /></label>
   <label>max_nodes <input id="max-input" type="number" min="10" max="1000" value="200" style="width:5em" /></label>
@@ -63,11 +63,31 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
 <script>
 (function () {
   const $ = (s) => document.querySelector(s);
-  const wsParam = new URLSearchParams(location.search).get("workspace_id") || "default";
+  const wsParam = new URLSearchParams(location.search).get("workspace_id") || "";
   const centerParam = new URLSearchParams(location.search).get("center") || "";
-  $("#ws-input").value = wsParam;
   $("#center-input").value = centerParam;
-  $("#ws-badge").textContent = wsParam;
+
+  async function populateWorkspaces(preselect) {
+    try {
+      const r = await fetch("/memory/workspaces");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const sel = $("#ws-input");
+      sel.innerHTML = "";
+      const target = preselect || data.current_workspace_id || (data.workspaces[0] && data.workspaces[0].id);
+      for (const w of data.workspaces || []) {
+        const opt = document.createElement("option");
+        opt.value = w.id;
+        opt.textContent = w.label && w.label !== w.id ? `${w.id} · ${w.label}` : w.id;
+        if (w.id === target) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    } catch (_e) {
+      const sel = $("#ws-input");
+      sel.innerHTML = `<option value="${preselect || "default"}">${preselect || "default"}</option>`;
+    }
+    $("#ws-badge").textContent = $("#ws-input").value;
+  }
 
   // Sync nav hrefs with the active workspace.
   function syncNav() {
@@ -79,9 +99,15 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
       a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
     });
   }
-  $("#ws-input").addEventListener("input", syncNav);
-  $("#ws-input").addEventListener("change", syncNav);
-  syncNav();
+  $("#ws-input").addEventListener("change", () => {
+    const ws = $("#ws-input").value;
+    const u = new URL(location.href);
+    u.searchParams.set("workspace_id", ws);
+    history.replaceState(null, "", u);
+    $("#ws-badge").textContent = ws;
+    syncNav();
+    load();
+  });
 
   const colorByLang = {
     python: "#3572A5", javascript: "#f1e05a", typescript: "#3178c6",
@@ -206,9 +232,13 @@ header .nav-sep { color: #30363d; margin: 0 0.2em; }
   $("#refresh").addEventListener("click", load);
   $("#center-input").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
 
-  // Wait for D3 to load (CDN async)
-  if (typeof d3 !== "undefined") load();
-  else window.addEventListener("load", () => setTimeout(load, 100));
+  // Bootstrap: populate dropdown, sync nav, then load (waits for D3 to be ready).
+  (async () => {
+    await populateWorkspaces(wsParam);
+    syncNav();
+    if (typeof d3 !== "undefined") load();
+    else window.addEventListener("load", () => setTimeout(load, 100));
+  })();
 })();
 </script>
 </body>
