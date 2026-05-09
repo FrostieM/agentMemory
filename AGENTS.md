@@ -6,9 +6,10 @@ Drop this entire document into the system prompt, `CLAUDE.md`, or `AGENTS.md`
 of any AI agent that should use the agent-memory-lite service. It is
 self-contained: zero context required.
 
-For full request/response schemas of every endpoint and MCP tool, see
-[`docs/MEMORY_API.md`](MEMORY_API.md). For day-to-day operator workflow, see
-[`docs/OPERATIONS.md`](OPERATIONS.md).
+For a one-page when-to-call-what summary, see
+[`docs/AGENT_CHEATSHEET.md`](AGENT_CHEATSHEET.md). For full request/response
+schemas of every endpoint and MCP tool, see [`docs/MEMORY_API.md`](MEMORY_API.md).
+For day-to-day operator workflow, see [`docs/OPERATIONS.md`](OPERATIONS.md).
 
 ---
 
