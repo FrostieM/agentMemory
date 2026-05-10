@@ -129,6 +129,7 @@ def write_decision_route(
             status=decision.status.value,
             valid_from=decision.valid_from,
             superseded_decision_id=decision.supersedes_decision_id,
+            source_episode_id=decision.source_episode_id,
             capability_suggestions=suggestions,
         )
         trace.stage_done(

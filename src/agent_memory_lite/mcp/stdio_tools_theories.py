@@ -11,7 +11,11 @@ THEORY_TOOLS: list[types.Tool] = [
         name="memory_write_theory",
         description=(
             "Record a working research theory with claim, mechanism, "
-            "predictions, and experiment plan."
+            "predictions, and experiment plan. Server auto-fills "
+            "source_episode_id from the agent's most recent ingest_episode "
+            "(Move 1, v2.2) unless allow_orphan=true. Response includes "
+            "source_episode_id AND capability_suggestions (Move 4 — top-3 "
+            "ranked workspace roles/skills/playbooks)."
         ),
         inputSchema={
             "type": "object",
@@ -31,6 +35,10 @@ THEORY_TOOLS: list[types.Tool] = [
                 "source_episode_id": {"type": "string"},
                 "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
                 "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                # 2.2 Move 1: opts out of auto-thread when the theory
+                # deliberately has no episode. Mirrors the
+                # write_decision schema field.
+                "allow_orphan": {"type": "boolean", "default": False},
             },
             "required": ["title", "claim"],
         },

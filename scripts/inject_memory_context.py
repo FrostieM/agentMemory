@@ -60,9 +60,9 @@ import httpx
 # hook output is always UTF-8 even when Claude Code spawns the subprocess
 # without ``PYTHONIOENCODING=utf-8`` in the env.
 with contextlib.suppress(AttributeError, ValueError):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 with contextlib.suppress(AttributeError, ValueError):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 DEFAULT_BASE = os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765")
 DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
@@ -708,7 +708,9 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
         # comment lists the registry workspaces it COULD have routed to,
         # so the operator (or agent) can fix it next session.
         try:
-            registry_ws = sorted(e.get("id", "?") for e in _list_registry_entries()) or ["<empty>"]
+            registry_ws = sorted(str(e.get("id", "?")) for e in _list_registry_entries()) or [
+                "<empty>"
+            ]
         except Exception:
             registry_ws = ["<unavailable>"]
         notice = (

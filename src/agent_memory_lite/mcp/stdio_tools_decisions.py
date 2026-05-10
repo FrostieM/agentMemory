@@ -11,7 +11,11 @@ DECISION_TOOLS: list[types.Tool] = [
         name="memory_write_decision",
         description=(
             "Record an architectural decision. Pass supersedes_decision_id to "
-            "close a prior decision atomically."
+            "close a prior decision atomically. Server auto-fills "
+            "source_episode_id from the agent's most recent ingest_episode "
+            "(Move 1, v2.2) unless allow_orphan=true. Response carries "
+            "source_episode_id (resolved or null) AND capability_suggestions "
+            "(top-3 ranked workspace roles/skills/playbooks, Move 3)."
         ),
         inputSchema={
             "type": "object",
@@ -24,6 +28,12 @@ DECISION_TOOLS: list[types.Tool] = [
                 "source_episode_id": {"type": "string"},
                 "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.9},
                 "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.8},
+                # 2.2 Move 1: opts out of auto-thread when the decision
+                # deliberately has no episode (e.g. predates any
+                # recording). Without this flag the server will look up
+                # the agent's most recent ingest_episode in the same
+                # workspace within MEMORY_AUTOTHREAD_WINDOW_MIN.
+                "allow_orphan": {"type": "boolean", "default": False},
             },
             "required": ["title", "decision_text"],
         },

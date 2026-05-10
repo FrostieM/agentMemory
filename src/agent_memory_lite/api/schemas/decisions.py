@@ -56,6 +56,12 @@ class WriteDecisionResponse(BaseModel):
     status: str
     valid_from: str
     superseded_decision_id: str | None
+    # 2.2 Move 1: server returns the resolved source_episode_id so the
+    # agent can tell whether auto-thread succeeded without a follow-up
+    # get_object call. ``None`` means the caller passed allow_orphan=True
+    # OR the auto-thread heuristic found no recent ingest_episode for
+    # this agent in the workspace's window.
+    source_episode_id: str | None = None
     capability_suggestions: list[CapabilitySuggestionPayload] = Field(default_factory=list)
 
 

@@ -15,13 +15,21 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
-> **Latest release: v2.1.5 — code-memory roadmap closed.** Eight
-> code-memory MCP tools (`memory_find_symbols`, `memory_graph_neighbors`,
-> `memory_breaking_changes`, `memory_file_digest`, `memory_code_overview`,
-> `memory_code_graph`, `memory_symbol_history`, `memory_soft_neighbors`)
-> plus three multi-agent edit primitives (`memory_claim_edit` /
-> `release_edit` / `list_active_edits`). Cross-language MinHash signature
-> similarity ships in v2.1.4. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> **Latest release: v2.2.0 — adoption-by-default series.** Four
+> server-side moves close the v1.6 telemetry adoption gap on agentLight
+> (decision_provenance was 0/13, link_after_write 0.31): Move 1
+> auto-threads `source_episode_id` from the agent's most recent
+> `ingest_episode`; Move 2 ships `memory_record_with_evidence` as the
+> atomic `ingest_episode + write_decision + optional link_capability`
+> compound; Moves 3 and 4 surface `capability_suggestions` (top-3
+> ranked workspace roles/skills/playbooks) on the `write_decision`,
+> `record_with_evidence`, AND `write_theory` responses across HTTP,
+> MCP stdio, and in-process MCP. The v1.4 → v2.1.x code-memory tools
+> remain available (`memory_find_symbols`, `memory_graph_neighbors`,
+> `memory_breaking_changes`, `memory_file_digest`,
+> `memory_code_overview`, `memory_code_graph`,
+> `memory_symbol_history`, `memory_soft_neighbors`) plus the three
+> multi-agent edit primitives. See [`CHANGELOG.md`](CHANGELOG.md) for full
 > release notes and [`docs/CODE_MEMORY_GUIDE.md`](docs/CODE_MEMORY_GUIDE.md)
 > for the operator-facing guide.
 
@@ -127,14 +135,17 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 2.1.5
+## Status — 2.2.0
 
-Latest tag: **v2.1.5** (2026-05-10). v1.4 → v2.1.x code-memory roadmap
-is feature-complete (per [`dec_ebc1c147bcde92e3`](docs/CHANGELOG.md)
-in agentLight memory). The next stream of work — provisionally
-v2.2.x — is consolidation only: shrink the contract, retire under-used
-surfaces, vendor browser CDN dependencies, ship UI as the primary
-actionable surface for non-coders.
+Latest tag: **v2.2.0** (2026-05-10). Adoption-by-default series — Moves
+1–4 plus a Windows-stdio + global-fallback hook fix. The v1.4 → v2.1.x
+code-memory roadmap remains feature-complete (per
+[`dec_ebc1c147bcde92e3`](docs/CHANGELOG.md) in agentLight memory). v2.2
+keeps the consolidation philosophy locked in by that decision: zero
+new features outside the four discipline-defaulting Moves, every
+existing surface (HTTP route, MCP stdio, in-process MCP) returns the
+same shape, every grandfathered SLOC violator except
+`config/settings.py` was decomposed back below the 150-line ceiling.
 
 For the full per-release breakdown see [`CHANGELOG.md`](CHANGELOG.md).
 The detail block below remains as 1.1.0 archaeology (the section that
