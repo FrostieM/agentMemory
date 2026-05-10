@@ -84,6 +84,29 @@
                                    text-transform: uppercase;
                                    letter-spacing: 0.06em; }
   .file-detail .err { color: #f85149; }
+  /* Phase 3.5: claim/release UI for active_edits */
+  .claim-form { margin-bottom: 0.6em; }
+  .claim-fields { display: flex; flex-wrap: wrap; gap: 0.6em; align-items: center;
+                  background: var(--bg-1); padding: 0.7em; border-radius: 6px;
+                  border: 1px solid var(--line-soft); }
+  .claim-fields label { display: flex; flex-direction: column; gap: 0.15em;
+                        font-size: 0.78em; color: var(--text-2);
+                        text-transform: uppercase; letter-spacing: 0.04em; }
+  .claim-fields input { background: var(--bg-0); color: var(--text-0);
+                        border: 1px solid var(--line-soft); border-radius: 4px;
+                        padding: 0.3em 0.5em; font-family: inherit;
+                        font-size: 0.85em; min-width: 18em; }
+  .claim-fields input[type="number"] { min-width: 0; }
+  .btn-claim { background: #1f6feb; color: white; border: 0; padding: 0.4em 0.9em;
+               border-radius: 4px; cursor: pointer; font-size: 0.85em;
+               font-family: inherit; align-self: flex-end; }
+  .btn-claim:hover { background: #2779ec; }
+  .btn-release { background: transparent; color: #f85149; border: 1px solid #f85149;
+                 padding: 0.2em 0.6em; border-radius: 4px; cursor: pointer;
+                 font-size: 0.78em; font-family: inherit; }
+  .btn-release:hover { background: rgba(248, 81, 73, 0.12); }
+  #claim-status.error { color: #f85149; }
+  #claim-status.success { color: #56d364; }
 </style>
 </head>
 <body>
@@ -152,8 +175,24 @@
       </tr></thead><tbody></tbody></table>
 
       <h2>active edits</h2>
+      <details class="claim-form" id="claim-form-wrap">
+        <summary style="cursor:pointer;color:var(--accent);font-size:0.9em;margin-bottom:0.4em">+ claim a new edit</summary>
+        <div class="claim-fields">
+          <label>agent_id <input id="claim-agent" type="text" value="operator" /></label>
+          <label>qualified_name (or empty for file claim)
+            <input id="claim-qn" type="text" placeholder="e.g. extract_python_edges" />
+          </label>
+          <label>file_path (or empty for symbol claim)
+            <input id="claim-file" type="text" placeholder="e.g. src/.../symbol_edges_python.py" />
+          </label>
+          <label>ttl_minutes <input id="claim-ttl" type="number" min="1" max="1440" value="30" style="width:5em" /></label>
+          <label>note <input id="claim-note" type="text" placeholder="optional reason" /></label>
+          <button id="claim-submit" class="btn-claim">Claim</button>
+          <span id="claim-status" class="empty"></span>
+        </div>
+      </details>
       <table id="edits-table"><thead><tr>
-        <th>agent</th><th>target</th><th>expires</th><th>note</th>
+        <th>agent</th><th>target</th><th>expires</th><th>note</th><th></th>
       </tr></thead><tbody></tbody></table>
 
       <h2>most-called symbols</h2>
@@ -304,14 +343,82 @@ function renderBreaking(items) {
 
 function renderEdits(items) {
   const tbody = $("#edits-table tbody");
-  if (!items.length) { tbody.innerHTML = `<tr><td colspan="4" class="empty">no active claims</td></tr>`; return; }
+  if (!items.length) { tbody.innerHTML = `<tr><td colspan="5" class="empty">no active claims</td></tr>`; return; }
   tbody.innerHTML = items.map(i => `
-    <tr>
+    <tr data-claim-id="${escape(i.id)}">
       <td>${escape(i.agent_id)}</td>
       <td class="qn">${escape(i.qualified_name || i.file_path || "?")}</td>
-      <td>${escape(i.expires_at)}</td>
+      <td>${escape(new Date(i.expires_at).toLocaleString())}</td>
       <td>${escape(i.note || "")}</td>
+      <td><button class="btn-release" data-claim="${escape(i.id)}">release</button></td>
     </tr>`).join("");
+  // Wire release buttons (Phase 3.5).
+  tbody.querySelectorAll(".btn-release").forEach((btn) => {
+    btn.addEventListener("click", () => releaseClaim(btn));
+  });
+}
+
+async function releaseClaim(btn) {
+  const claimId = btn.dataset.claim;
+  if (!claimId) return;
+  const ws = $("#workspaceInput").value;
+  btn.disabled = true;
+  try {
+    const r = await fetch("/memory/release_edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: ws, claim_id: claimId }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await load();
+  } catch (e) {
+    btn.disabled = false;
+    setClaimStatus(`release failed: ${e.message}`, "error");
+  }
+}
+
+async function submitClaim() {
+  const ws = $("#workspaceInput").value;
+  const agentId = $("#claim-agent").value.trim();
+  const qn = $("#claim-qn").value.trim();
+  const filePath = $("#claim-file").value.trim();
+  const ttl = parseInt($("#claim-ttl").value || "30", 10);
+  const note = $("#claim-note").value.trim();
+  if (!agentId) { setClaimStatus("agent_id is required", "error"); return; }
+  if (!qn && !filePath) {
+    setClaimStatus("either qualified_name or file_path is required", "error");
+    return;
+  }
+  setClaimStatus("claiming…", "");
+  try {
+    const r = await fetch("/memory/claim_edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspace_id: ws,
+        agent_id: agentId,
+        qualified_name: qn || null,
+        file_path: filePath || null,
+        ttl_minutes: ttl,
+        note: note || null,
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    setClaimStatus(`claimed ${qn || filePath}`, "success");
+    $("#claim-qn").value = "";
+    $("#claim-file").value = "";
+    $("#claim-note").value = "";
+    await load();
+  } catch (e) {
+    setClaimStatus(`claim failed: ${e.message}`, "error");
+  }
+}
+
+function setClaimStatus(msg, kind) {
+  const el = $("#claim-status");
+  el.textContent = msg;
+  el.classList.remove("error", "success");
+  if (kind) el.classList.add(kind);
 }
 
 function renderHot(items) {
@@ -331,6 +438,7 @@ function escape(s) {
 }
 
 $("#refresh").addEventListener("click", load);
+$("#claim-submit").addEventListener("click", submitClaim);
 
 // Phase 3.1: memory_find_symbols search bar.
 // Debounced input → POST /memory/find_symbols with name_prefix.
