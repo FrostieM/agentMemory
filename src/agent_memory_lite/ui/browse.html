@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — browse memory</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
+<style>
+  /* Phase 3.6: generic browse page over decisions / theories /
+     insights / behavior_instructions. One layout, kind dropdown
+     switches the data source + per-kind rendering. */
+  .browse-body { padding: 24px 32px; max-width: 1100px; }
+  .browse-controls { display: flex; gap: 0.6em; align-items: center;
+                     margin-bottom: 1.2em; flex-wrap: wrap;
+                     font-size: 0.9em; color: var(--text-2); }
+  .browse-controls select, .browse-controls input {
+    background: var(--bg-1); color: var(--text-0);
+    border: 1px solid var(--line-soft); border-radius: 4px;
+    padding: 0.35em 0.55em; font-family: inherit; font-size: 0.9em;
+  }
+  .browse-controls select { min-width: 12em; }
+  .browse-controls input { min-width: 24em; }
+  .browse-controls button { background: #238636; color: white; border: 0;
+                            padding: 0.4em 0.9em; border-radius: 4px;
+                            cursor: pointer; font-size: 0.85em; }
+  .browse-summary { color: var(--text-2); font-size: 0.85em; margin-bottom: 0.8em; }
+  .browse-card { background: var(--bg-1); border: 1px solid var(--line-soft);
+                 border-radius: 8px; padding: 0.8em 1em; margin-bottom: 0.6em;
+                 cursor: pointer; transition: border-color 0.15s ease; }
+  .browse-card:hover { border-color: var(--accent-soft); }
+  .browse-card.kind-decision { border-left: 3px solid #58a6ff; }
+  .browse-card.kind-theory { border-left: 3px solid #d29922; }
+  .browse-card.kind-insight { border-left: 3px solid #7ee787; }
+  .browse-card.kind-behavior { border-left: 3px solid #bb9af7; }
+  .card-head { display: flex; justify-content: space-between; align-items: flex-start;
+               gap: 0.8em; }
+  .card-title { font-size: 1.05em; color: var(--text-0); font-weight: 500; margin: 0; }
+  .card-meta { color: var(--text-2); font-size: 0.78em; text-transform: uppercase;
+               letter-spacing: 0.05em; font-family: ui-monospace, monospace;
+               margin-top: 0.3em; }
+  .card-body { color: var(--text-1); font-size: 0.88em; margin-top: 0.5em;
+               line-height: 1.45; max-height: 4.4em; overflow: hidden;
+               text-overflow: ellipsis;
+               display: -webkit-box; -webkit-line-clamp: 3;
+               -webkit-box-orient: vertical; }
+  .browse-card.is-expanded .card-body { max-height: none; -webkit-line-clamp: unset;
+                                        display: block; overflow: visible; }
+  .badge { display: inline-block; padding: 0.05em 0.45em; border-radius: 10px;
+           font-size: 0.72em; font-family: ui-monospace, monospace;
+           text-transform: uppercase; letter-spacing: 0.05em;
+           margin-left: 0.3em; }
+  .badge-status { background: #1f6feb; color: white; }
+  .badge-status[data-status="superseded"] { background: #6e7681; }
+  .badge-status[data-status="rejected"] { background: #f85149; }
+  .badge-status[data-status="validated"] { background: #56d364; color: #0d1117; }
+  .badge-pinned { background: #d29922; color: #0d1117; }
+  .badge-archived { background: #6e7681; color: white; }
+  .empty-state { color: var(--text-2); font-style: italic; padding: 2em;
+                 text-align: center; background: var(--bg-1); border-radius: 8px;
+                 border: 1px solid var(--line-soft); }
+  .err { color: #f85149; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Browse · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
+      <a class="app-nav-link is-active" data-nav="browse" href="/ui/browse">Browse</a>
+    </nav>
+
+    <main class="browse-body">
+      <div class="browse-controls">
+        <label>kind
+          <select id="kind-input">
+            <option value="decisions">Decisions</option>
+            <option value="theories">Theories</option>
+            <option value="insights">Insights</option>
+            <option value="behavior_instructions">Behavior Instructions</option>
+          </select>
+        </label>
+        <label>query <input id="query-input" type="text" placeholder="filter by keyword (optional)" /></label>
+        <label><input id="historical-input" type="checkbox" /> include archived/superseded</label>
+        <button id="refresh">refresh</button>
+        <span id="status" class="empty"></span>
+      </div>
+      <div id="browse-summary" class="browse-summary"></div>
+      <div id="browse-list"></div>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]
+  ));
+}
+
+const KIND_CONFIG = {
+  decisions: {
+    endpoint: "/memory/list_decisions",
+    listKey: "decisions",
+    idKey: "decision_id",
+    cardKind: "decision",
+    payloadFlags: (historical) => ({ include_superseded: historical }),
+    render: (d) => ({
+      title: d.title || "(untitled)",
+      meta: [
+        d.status,
+        d.pinned ? "pinned" : null,
+        d.confidence != null ? `conf ${(d.confidence ?? 0).toFixed(2)}` : null,
+        d.importance != null ? `imp ${(d.importance ?? 0).toFixed(2)}` : null,
+        d.created_at ? new Date(d.created_at).toLocaleDateString() : null,
+      ].filter(Boolean).join(" · "),
+      body: (d.decision_text || "") + (d.rationale ? `\n\n— ${d.rationale}` : ""),
+      badges: [
+        ["status", d.status],
+        d.pinned ? ["pinned", "pinned"] : null,
+      ].filter(Boolean),
+    }),
+  },
+  theories: {
+    endpoint: "/memory/list_theories",
+    listKey: "theories",
+    idKey: "theory_id",
+    cardKind: "theory",
+    payloadFlags: (historical) => historical
+      ? { statuses: ["proposed", "testing", "supported", "validated", "weakened", "rejected", "superseded", "archived"] }
+      : { statuses: ["proposed", "testing", "supported", "validated", "weakened"] },
+    render: (t) => ({
+      title: t.title || "(untitled)",
+      meta: [
+        t.status,
+        t.domain,
+        t.confidence != null ? `conf ${(t.confidence ?? 0).toFixed(2)}` : null,
+        t.importance != null ? `imp ${(t.importance ?? 0).toFixed(2)}` : null,
+      ].filter(Boolean).join(" · "),
+      body: (t.claim || "") + (t.mechanism ? `\n\nmechanism: ${t.mechanism}` : ""),
+      badges: [["status", t.status]],
+    }),
+  },
+  insights: {
+    endpoint: "/memory/list_insights",
+    listKey: "insights",
+    idKey: "insight_id",
+    cardKind: "insight",
+    payloadFlags: () => ({}),
+    render: (i) => ({
+      title: i.summary || "(no summary)",
+      meta: [
+        i.insight_type,
+        i.status,
+        i.target_type ? `→ ${i.target_type}` : null,
+        i.confidence != null ? `conf ${(i.confidence ?? 0).toFixed(2)}` : null,
+      ].filter(Boolean).join(" · "),
+      body: (i.proposed_action || "") + (i.tags ? `\n\ntags: ${(i.tags || []).join(", ")}` : ""),
+      badges: [["status", i.status]],
+    }),
+  },
+  behavior_instructions: {
+    endpoint: "/memory/list_behavior_instructions",
+    listKey: "instructions",
+    idKey: "instruction_id",
+    cardKind: "behavior",
+    payloadFlags: () => ({}),
+    render: (b) => ({
+      title: b.name || "(unnamed)",
+      meta: [
+        b.kind,
+        b.scope,
+        b.priority,
+        b.pinned ? "pinned" : null,
+        !b.active ? "inactive" : null,
+        b.confidence != null ? `conf ${(b.confidence ?? 0).toFixed(2)}` : null,
+      ].filter(Boolean).join(" · "),
+      body: (b.rule || "") + (b.rationale ? `\n\n— ${b.rationale}` : ""),
+      badges: [
+        b.pinned ? ["pinned", "pinned"] : null,
+        !b.active ? ["archived", "archived"] : null,
+      ].filter(Boolean),
+    }),
+  },
+};
+
+async function load() {
+  const ws = $("#workspaceInput").value;
+  const kind = $("#kind-input").value;
+  const query = $("#query-input").value.trim();
+  const historical = $("#historical-input").checked;
+  const cfg = KIND_CONFIG[kind];
+  const list = $("#browse-list");
+  list.innerHTML = `<div class="empty-state">loading…</div>`;
+  $("#browse-summary").textContent = "";
+  $("#status").textContent = "";
+
+  const body = {
+    workspace_id: ws,
+    limit: 50,
+    ...(query ? { query } : {}),
+    ...cfg.payloadFlags(historical),
+  };
+  try {
+    const r = await fetch(cfg.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    const items = data[cfg.listKey] || [];
+    if (!items.length) {
+      list.innerHTML = `<div class="empty-state">no ${escape(kind.replace("_", " "))} match`
+        + (query ? ` query '${escape(query)}'` : "")
+        + (!historical ? " (try checking 'include archived/superseded')" : "")
+        + "</div>";
+      return;
+    }
+    $("#browse-summary").textContent =
+      `${items.length} ${kind.replace("_", " ")}${query ? ` matching '${query}'` : ""}`;
+    list.innerHTML = items.map(it => renderCard(cfg, it)).join("");
+    list.querySelectorAll(".browse-card").forEach(card => {
+      card.addEventListener("click", () => card.classList.toggle("is-expanded"));
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state err">load failed: ${escape(e.message)}</div>`;
+  }
+}
+
+function renderCard(cfg, item) {
+  const view = cfg.render(item);
+  const id = item[cfg.idKey] || "";
+  const badgesHtml = (view.badges || []).map(b => {
+    const [type, value] = b;
+    if (type === "status") return `<span class="badge badge-status" data-status="${escape(value)}">${escape(value)}</span>`;
+    if (type === "pinned") return `<span class="badge badge-pinned">pinned</span>`;
+    if (type === "archived") return `<span class="badge badge-archived">archived</span>`;
+    return "";
+  }).join("");
+  return `
+    <div class="browse-card kind-${cfg.cardKind}" data-id="${escape(id)}">
+      <div class="card-head">
+        <div>
+          <h3 class="card-title">${escape(view.title)}${badgesHtml}</h3>
+          <div class="card-meta">${escape(view.meta)} · ${escape(id)}</div>
+        </div>
+      </div>
+      <div class="card-body">${escape(view.body)}</div>
+    </div>`;
+}
+
+$("#refresh").addEventListener("click", load);
+$("#kind-input").addEventListener("change", load);
+$("#historical-input").addEventListener("change", load);
+let qTimer = null;
+$("#query-input").addEventListener("input", () => {
+  if (qTimer) clearTimeout(qTimer);
+  qTimer = setTimeout(load, 300);
+});
+
+window.AppHeader.init({ active: "browse", onWorkspaceChange: () => load() });
+</script>
+</body>
+</html>

@@ -29,6 +29,7 @@
     code: "/ui/code",
     graph: "/ui/graph",
     review: "/ui/review",
+    browse: "/ui/browse",
   };
 
   async function populateWorkspaces(select, preselect) {

@@ -31,6 +31,9 @@ _ASSETS: dict[str, str] = {
     "graph.html": "text/html; charset=utf-8",
     # 2.2 (Phase 3.3): candidate review queue with promote/reject UI.
     "review.html": "text/html; charset=utf-8",
+    # 2.2 (Phase 3.6): generic browse page over decisions / theories /
+    # insights / behavior_instructions with kind selector.
+    "browse.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -69,6 +72,12 @@ def memory_ui_graph() -> FileResponse:
 def memory_ui_review() -> FileResponse:
     """2.2 (Phase 3.3) candidate review page backed by /memory/review_queue."""
     return _serve_html("review.html")
+
+
+@router.get("/ui/browse")
+def memory_ui_browse() -> FileResponse:
+    """2.2 (Phase 3.6) generic browse over decisions / theories / insights / behaviors."""
+    return _serve_html("browse.html")
 
 
 @router.get("/ui/{asset_name}")
