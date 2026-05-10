@@ -187,11 +187,22 @@ function renderCandidate(c) {
   const observed = c.temporal && c.temporal.observed_at
     ? new Date(c.temporal.observed_at).toLocaleString()
     : "?";
-  // Buttons depend on kind: correction → promote_candidate_to_behavior,
-  // decision/procedural_rule/core_memory → promote_candidate, all → reject.
-  const promoteBtn = kind === "correction"
-    ? `<button class="btn btn-promote-behavior" data-action="promote-behavior" data-id="${escape(c.candidate_id)}">→ behavior</button>`
-    : `<button class="btn btn-promote" data-action="promote" data-id="${escape(c.candidate_id)}">→ ${escape(kind)}</button>`;
+  // Buttons depend on kind. The server's promote pipeline only accepts
+  // three durable targets (decision / procedural_rule / constraint),
+  // and correction has its own behavior-instruction route. Every other
+  // kind (project_fact, task_state, relationship, bug, fix, ...) is
+  // descriptive extraction noise with no durable target — for those
+  // we show only the reject button so the operator doesn't get a
+  // 400 from the server.
+  const PROMOTABLE = new Set(["decision", "procedural_rule", "constraint"]);
+  let promoteBtn = "";
+  if (kind === "correction") {
+    promoteBtn = `<button class="btn btn-promote-behavior" data-action="promote-behavior" data-id="${escape(c.candidate_id)}">→ behavior</button>`;
+  } else if (PROMOTABLE.has(kind)) {
+    promoteBtn = `<button class="btn btn-promote" data-action="promote" data-id="${escape(c.candidate_id)}">→ ${escape(kind)}</button>`;
+  } else {
+    promoteBtn = `<span class="meta" style="opacity:0.6">no durable target — reject only</span>`;
+  }
   return `
     <div class="candidate ${kindClass}" data-id="${escape(c.candidate_id)}">
       <div class="candidate-head">
