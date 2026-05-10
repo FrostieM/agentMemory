@@ -37,6 +37,28 @@
   .diff-new { color: #56d364; }
   .narrative { color: var(--text-2); font-size: 0.85em; }
   .error { color: #f85149; padding: 1em; }
+  /* Phase 3.1: memory_find_symbols search bar */
+  .find-symbols { margin-bottom: 1em; }
+  .find-symbols input { width: 100%; max-width: 30em; padding: 0.5em 0.7em;
+                        background: var(--bg-1); color: var(--text-0);
+                        border: 1px solid var(--line-soft); border-radius: 6px;
+                        font-family: ui-monospace, monospace; font-size: 0.9em; }
+  .find-symbols input:focus { outline: 1px solid var(--accent-soft); }
+  .find-results { margin-top: 0.4em; max-width: 100%; }
+  .find-results .row { display: grid; grid-template-columns: 24em 18em 1fr;
+                       gap: 0.6em; padding: 0.35em 0.7em; align-items: center;
+                       border-bottom: 1px solid var(--bg-2); font-size: 0.85em; }
+  .find-results .row:hover { background: var(--bg-1); }
+  .find-results .qn { font-family: ui-monospace, monospace; color: #ffa657; }
+  .find-results .qn a { color: inherit; text-decoration: none;
+                        border-bottom: 1px dashed var(--line-soft); }
+  .find-results .path { font-family: ui-monospace, monospace; color: #79c0ff;
+                        font-size: 0.8em; overflow: hidden; text-overflow: ellipsis;
+                        white-space: nowrap; }
+  .find-results .kind { color: var(--text-2); font-size: 0.8em;
+                        text-transform: uppercase; letter-spacing: 0.05em; }
+  .find-results .empty { color: var(--text-2); font-style: italic;
+                         padding: 0.4em 0.7em; }
 </style>
 </head>
 <body>
@@ -81,6 +103,12 @@
         <label>breaking_days <input id="days-input" type="number" min="1" max="365" value="7" style="width:5em" /></label>
         <button id="refresh">refresh</button>
         <span id="status" class="empty"></span>
+      </div>
+
+      <div class="find-symbols">
+        <input id="find-input" type="text" autocomplete="off"
+               placeholder="find symbols by qualified-name prefix (e.g. extract_)…" />
+        <div id="find-results" class="find-results" hidden></div>
       </div>
 
       <h2>counts</h2>
@@ -200,7 +228,63 @@ function escape(s) {
 }
 
 $("#refresh").addEventListener("click", load);
-window.AppHeader.init({ active: "code", onWorkspaceChange: () => load() });
+
+// Phase 3.1: memory_find_symbols search bar.
+// Debounced input → POST /memory/find_symbols with name_prefix.
+// Each hit becomes a row with the qualified_name as a click-through to
+// /ui/graph?center=<qn> so operators can drill from "find function" to
+// "see its neighborhood" in one click.
+let findTimer = null;
+function debouncedFind() {
+  if (findTimer) clearTimeout(findTimer);
+  findTimer = setTimeout(runFind, 250);
+}
+async function runFind() {
+  const ws = $("#workspaceInput").value;
+  const prefix = $("#find-input").value.trim();
+  const panel = $("#find-results");
+  if (!prefix || prefix.length < 2) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  panel.hidden = false;
+  panel.innerHTML = `<div class="empty">searching…</div>`;
+  try {
+    const r = await fetch("/memory/find_symbols", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: ws, name_prefix: prefix, limit: 20 }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (!data.hits.length) {
+      panel.innerHTML = `<div class="empty">no symbols match prefix '${escape(prefix)}'</div>`;
+      return;
+    }
+    panel.innerHTML = data.hits.map(h => {
+      const href = `/ui/graph?workspace_id=${encodeURIComponent(ws)}&center=${encodeURIComponent(h.qualified_name)}`;
+      const lineRange = h.line_start ? ` :${h.line_start}-${h.line_end}` : "";
+      return `<div class="row">
+        <span class="qn"><a href="${href}">${escape(h.qualified_name)}</a></span>
+        <span class="kind">${escape(h.symbol_kind || "")} · ${escape(h.language || "")}</span>
+        <span class="path">${escape(h.path || "")}${lineRange}</span>
+      </div>`;
+    }).join("");
+  } catch (e) {
+    panel.innerHTML = `<div class="empty error">find_symbols failed: ${e.message}</div>`;
+  }
+}
+$("#find-input").addEventListener("input", debouncedFind);
+
+window.AppHeader.init({
+  active: "code",
+  onWorkspaceChange: () => {
+    load();
+    // Re-run any active find when workspace changes so results stay in sync.
+    if ($("#find-input").value.trim()) runFind();
+  },
+});
 </script>
 </body>
 </html>
