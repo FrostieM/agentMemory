@@ -68,7 +68,7 @@ def get_object(workspace_id: str, route: dict[str, str], kind: str, obj_id: str)
         return None
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0915 - linear ops script, per-section enumeration is the value
     registry = load_registry()
     targets = ["copyBot", "agentLight"]
     print()
