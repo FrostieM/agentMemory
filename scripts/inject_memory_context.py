@@ -53,6 +53,17 @@ from pathlib import Path
 
 import httpx
 
+# Force UTF-8 stdout/stderr regardless of the host console codepage.
+# Windows defaults to cp1251/cp1252 which raises ``UnicodeEncodeError`` on
+# any common non-ASCII character (em-dash, arrows, Cyrillic) and silently
+# truncates the envelope at the first bad byte. Reconfigure here so the
+# hook output is always UTF-8 even when Claude Code spawns the subprocess
+# without ``PYTHONIOENCODING=utf-8`` in the env.
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DEFAULT_BASE = os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765")
 DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_INJECT_TOKENS", "1500"))
@@ -107,6 +118,22 @@ HOOK_FALLBACK_DISABLED = os.environ.get("AGENT_MEMORY_HOOK_FALLBACK", "").strip(
 }
 
 
+def _list_registry_entries() -> list[dict[str, object]]:
+    """Return the raw ``workspaces`` list from the hub registry, or [].
+
+    Tolerates a missing/corrupt registry file -- the caller wants a best-
+    effort breadcrumb (e.g. ``<hook_notice>`` body), not a hard error.
+    """
+    if not DEFAULT_REGISTRY.exists():
+        return []
+    try:
+        payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    entries = payload.get("workspaces") if isinstance(payload, dict) else None
+    return entries if isinstance(entries, list) else []
+
+
 def _resolve_from_registry(cwd: Path) -> dict[str, str] | None:
     """Walk up from cwd; if a parent matches a registered project_root, return it.
 
@@ -114,14 +141,8 @@ def _resolve_from_registry(cwd: Path) -> dict[str, str] | None:
     the hook payload. Lets a single global hook auto-route to the right
     project memory without any per-project --workspace arg.
     """
-    if not DEFAULT_REGISTRY.exists():
-        return None
-    try:
-        payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    entries = payload.get("workspaces") if isinstance(payload, dict) else None
-    if not isinstance(entries, list):
+    entries = _list_registry_entries()
+    if not entries:
         return None
     candidate = cwd.resolve()
     for parent in [candidate, *candidate.parents]:
@@ -500,6 +521,8 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
     # gets memory context. Set AGENT_MEMORY_HOOK_FALLBACK=disabled to
     # opt out and get the legacy "no workspace registered" notice
     # behavior instead (useful for strict project-mode setups).
+    used_global_fallback = False
+    fallback_cwd = ""
     if workspace == "default" and not db_path:
         if HOOK_FALLBACK_DISABLED:
             cwd_now = os.getcwd()
@@ -525,6 +548,15 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
         workspace = fallback["workspace_id"]
         db_path = fallback["db_path"]
         vector_path = fallback["vector_path"]
+        # Hook silently fell back to an empty global workspace because no
+        # registered project root was found above ``cwd``. The agent must
+        # see this fact -- otherwise it spends the whole session looking
+        # at ``<core_memory/>`` self-closing skeleton tags and assumes
+        # there's nothing to remember (real cause: wrong cwd at session
+        # start). We attach a visible <hook_notice> to the final envelope
+        # below so every prompt surfaces the breadcrumb.
+        used_global_fallback = True
+        fallback_cwd = os.getcwd()
 
     if os.environ.get("AGENT_MEMORY_HOOK_DEBUG", "").strip().lower() in {"1", "true", "yes"}:
         debug_path = Path(tempfile.gettempdir()) / "agent_memory_lite_hook_debug.log"
@@ -668,6 +700,28 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
     if not isinstance(text, str) or not text.strip():
         _emit_notice("agent-memory-lite returned no context")
         return 0
+
+    if used_global_fallback:
+        # Prepend a visible <hook_notice> block so the agent sees the
+        # real reason the envelope is mostly empty: wrong cwd at session
+        # start dropped the hook into the empty global workspace. The
+        # comment lists the registry workspaces it COULD have routed to,
+        # so the operator (or agent) can fix it next session.
+        try:
+            registry_ws = sorted(e.get("id", "?") for e in _list_registry_entries()) or ["<empty>"]
+        except Exception:
+            registry_ws = ["<unavailable>"]
+        notice = (
+            f'<hook_notice severity="warn" code="global_fallback">\n'
+            f"  Hook resolved no registered workspace for cwd={fallback_cwd!r}; "
+            f"falling back to empty `global` workspace. Real project memory is "
+            f"NOT visible in this envelope. Registered workspaces: {registry_ws}. "
+            f"To fix: open Claude Code from a project root listed above, OR "
+            f"set AGENT_MEMORY_WORKSPACE=<id> in the env, OR pass "
+            f"--workspace=<id> in the hook command in ~/.claude/settings.json.\n"
+            f"</hook_notice>\n"
+        )
+        text = notice + text
 
     _emit_context(text)
     return 0
