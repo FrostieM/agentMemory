@@ -4,6 +4,141 @@ All notable changes to agent-memory-lite. Versions follow semver — minor
 bumps add functionality (and may flip a default), patch bumps fix bugs
 without behaviour change.
 
+## 2.2.0 — Unreleased — Adoption-by-default series (Moves 1–4 + MCP alignment)
+
+The v1.6 adoption telemetry on ``agentLight`` showed three structural
+gaps that no amount of operator discipline would close:
+``link_after_write=0.31`` (amber), ``candidate_triage=0.30`` (amber),
+``decision_provenance=0.00`` (red — 0/13 decisions had
+``source_episode_id``). The agent kept forgetting the rules. The
+correct fix is to make the rules *unforgettable*: have the server do
+the work the agent reliably skips. v2.2 is that work, sliced into
+four small server-side moves plus an MCP regression fix that wires
+all four through every transport.
+
+### Move 1 — auto-thread ``source_episode_id``
+
+``memory_write_decision`` and ``memory_write_theory`` now auto-thread
+``source_episode_id`` from the agent's most recent
+``memory_ingest_episode`` (10-minute window, scoped by
+``X-Memory-Agent-Id``; anonymous fallback at 60s). Pass
+``allow_orphan: true`` for deliberate untraced writes (decision
+predates any episode recording). Off-switch:
+``MEMORY_AUTOTHREAD_DECISION_SOURCE=false``.
+
+* New: ``ingestion/auto_thread_provenance.find_recent_episode_for_agent``.
+* Routes: ``api/routes/decisions.py``, ``api/routes/theories.py``.
+* Schemas: ``WriteDecisionRequest.allow_orphan``,
+  ``WriteTheoryRequest.allow_orphan``.
+
+### Move 2 — compound write tool ``memory_record_with_evidence``
+
+Bundles ``ingest_episode + write_decision + optional link_capability``
+into one atomic call so the agent doesn't have to remember the
+3-step ritual. ``source_episode_id`` is wired explicitly to the
+just-created episode; capability triplet is all-or-nothing.
+
+* New: ``api/routes/record_compound.py``,
+  ``api/schemas/record_compound.py``.
+* MCP: ``mcp/tools_compound.memory_record_with_evidence``,
+  ``mcp/stdio_handlers_decisions._handle_record_with_evidence``,
+  ``mcp/stdio_tools_compound``.
+
+### Move 3 / Move 4 — server-ranked capability suggestions
+
+``memory_write_decision``, ``memory_record_with_evidence``, AND
+``memory_write_theory`` responses each include a
+``capability_suggestions`` field — top-3 workspace capabilities
+(roles / skills / playbooks) ranked by overlap-coefficient
+``|target ∩ capability| / min(|target|, |capability|)`` between the
+write text and the capability's name + summary. Read-only hint —
+the agent decides whether to call ``memory_link_capability``. Empty
+list when no capability matches.
+
+* New: ``ingestion/capability_suggester.py``,
+  ``ingestion/_capability_suggester_stopwords.py``,
+  ``api/routes/_capability_suggest_payload.py``.
+* Schemas: ``CapabilitySuggestionPayload`` on
+  ``WriteDecisionResponse``, ``RecordWithEvidenceResponse``, and
+  ``TheoryResponse``.
+
+### MCP regression fix — local-fallback alignment
+
+The MCP stdio handler delegates writes to the HTTP service when one
+is reachable; when it's not, it falls back to running the writer
+in-process against the runtime's connection. That fallback used to
+return a bare 4-field dict — silently losing Move 1 + Move 3/4 on
+MCP-only deployments (or any chat where the HTTP service was down).
+
+* New shared helper: ``ingestion/_write_helpers.py`` with
+  ``resolve_source_episode_id`` (Move 1) and
+  ``capability_suggestion_dicts`` (Move 3/4 wire-shape dicts).
+* Aligned: ``mcp/stdio_handlers_decisions._handle_write_decision``,
+  ``mcp/stdio_handlers_theories._handle_write_theory``,
+  ``mcp/tools_decisions.memory_write_decision``,
+  ``mcp/tools_theories.memory_write_theory``. All four now return
+  ``source_episode_id`` + ``capability_suggestions`` in the response
+  dict, matching the HTTP route.
+
+### SLOC polish (debt reduction enabled by helper extraction)
+
+Three Move-related route files trimmed back below the 150-SLOC
+ceiling:
+
+* ``api/routes/decisions.py``: 153 → ~140.
+* ``api/routes/theories.py``: 156 → ~137 (theory_in_from_body /
+  evidence_in_from_body builders moved into theory_responses.py).
+* ``api/routes/record_compound.py``: 164 → ~143 (extracted
+  ``_record_compound_link.optionally_link_capability``; switched to
+  ``capability_suggestion_dicts`` to drop the ``.model_dump()``
+  round-trip).
+
+Only ``config/settings.py`` (152) remains grandfathered — that's a
+documented separate composed-Settings decomposition, scheduled
+independently.
+
+### Tests — Move 1–4 + regression lock
+
+* ``tests/unit/ingestion/test_auto_thread_provenance.py`` — Move 1
+  helper isolation tests.
+* ``tests/unit/ingestion/test_write_helpers.py`` (6) — explicit-wins,
+  allow_orphan opt-out, setting-off short-circuit, recent-episode
+  lookup, wire-shape keys, empty-when-no-match.
+* ``tests/unit/mcp/test_write_local_fallback.py`` (4) — in-process
+  ``memory_write_decision`` / ``memory_write_theory`` return
+  ``source_episode_id`` + ``capability_suggestions`` when audit row
+  + skill exist, and honour ``allow_orphan=True``. Locks the
+  post-fix shape so the regression cannot come back.
+* ``tests/unit/ingestion/test_capability_suggester.py`` (7) —
+  overlap-coefficient ranking, workspace isolation, min_score floor,
+  limit cap, snippet clipping.
+* ``tests/e2e/test_decisions_route.py``,
+  ``tests/e2e/test_theories_route.py`` — Move 1 + Move 3/4 e2e on
+  the HTTP route. ``allow_orphan`` opt-out, explicit
+  ``source_episode_id`` wins, suggestion payload populated /
+  empty.
+* ``tests/e2e/test_record_compound_route.py`` — Move 2 round-trip,
+  capability triplet validation.
+
+### All gates green
+
+- ``ruff check`` ✓
+- ``ruff format --check`` ✓
+- ``mypy`` ✓
+- ``check_sloc.py --enforce`` ✓ (only ``config/settings.py`` over
+  ceiling; documented decomposition plan)
+- **964 tests pass** (was 882 in 2.1.5 — added paired tests for
+  every Move).
+
+### Operator note
+
+After ``git pull``, restart Claude Desktop / Cursor / VS Code so the
+MCP stdio server picks up the new local-fallback shape, AND restart
+the HTTP service (``python -m agent_memory_lite``) so the wire
+schemas pick up ``capability_suggestions`` on the theory response.
+Run ``curl http://127.0.0.1:8765/health`` and confirm
+``version=2.2.0``.
+
 ## 2.1.5 — 2026-05-10
 
 **Final patch in the v2.1 polish series — closes the v2.0 → v2.1.x

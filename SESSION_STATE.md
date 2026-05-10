@@ -2,7 +2,100 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 1.2.0 (v1.10 correction-aware learning loop)
+## Current state — 2.2.0 (adoption-by-default series, Moves 1–4 + MCP fix)
+
+Operator complaint: v1.6 adoption telemetry on ``agentLight`` showed
+``decision_provenance=0.00`` (0/13 decisions had ``source_episode_id``),
+``link_after_write=0.31`` amber, ``candidate_triage=0.30`` amber. The
+agent kept skipping the rules. The right fix is to make the rules
+unforgettable — the server does the discipline work the agent
+reliably forgets. v2.2 is that work.
+
+**Four small server-side moves**, each behind a default-on flag:
+
+1. **Move 1** — auto-thread ``source_episode_id`` on
+   ``write_decision`` / ``write_theory`` from the agent's most
+   recent ``ingest_episode`` (10-min window). ``allow_orphan: true``
+   opts out. Off-switch: ``MEMORY_AUTOTHREAD_DECISION_SOURCE=false``.
+2. **Move 2** — compound write tool ``memory_record_with_evidence``:
+   atomic ``ingest_episode + write_decision + optional
+   link_capability``. Skip the 3-step ritual.
+3. **Move 3** — ``capability_suggestions`` field on
+   ``write_decision`` and ``record_with_evidence`` responses. Top-3
+   workspace capabilities ranked by token-overlap with decision
+   text. Read-only hint, never auto-links.
+4. **Move 4** — ``capability_suggestions`` extended to
+   ``write_theory`` response too. Same shape, same contract.
+
+**MCP regression fix.** All four Moves were initially wired only on
+the HTTP route; the MCP stdio handler's local-fallback branch (used
+when the HTTP service is down) and the in-process MCP tool handlers
+returned bare 4-field dicts without Move 1 / 3 / 4 fields. Extracted
+shared ``ingestion/_write_helpers.py`` (``resolve_source_episode_id``
++ ``capability_suggestion_dicts``) and aligned all four entry points
+(HTTP route + stdio handler + in-process tool, both for decisions
+and theories).
+
+**SLOC polish (debt reduction).** All three Move-related route files
+trimmed back below 150 SLOC by the same helper extraction:
+``decisions.py`` 153 → ~140, ``theories.py`` 156 → ~137,
+``record_compound.py`` 164 → ~143. Only ``config/settings.py``
+remains grandfathered (separate composed-Settings decomposition).
+
+**Quality gates green:**
+- ``ruff check`` ✓
+- ``ruff format --check`` ✓
+- ``mypy`` ✓
+- ``check_sloc.py --enforce`` ✓
+- **964 tests pass** (was 882 in 2.1.5; 82 paired tests added).
+
+**Files added (5 source + 4 test):**
+- ``src/agent_memory_lite/ingestion/auto_thread_provenance.py``
+- ``src/agent_memory_lite/ingestion/capability_suggester.py``
+- ``src/agent_memory_lite/ingestion/_capability_suggester_stopwords.py``
+- ``src/agent_memory_lite/ingestion/_write_helpers.py``
+- ``src/agent_memory_lite/api/routes/_capability_suggest_payload.py``
+- ``src/agent_memory_lite/api/routes/_record_compound_link.py``
+- ``src/agent_memory_lite/api/routes/record_compound.py``
+- ``src/agent_memory_lite/api/schemas/record_compound.py``
+- ``src/agent_memory_lite/mcp/tools_compound.py``
+- ``src/agent_memory_lite/mcp/stdio_tools_compound.py``
+- ``tests/unit/ingestion/test_auto_thread_provenance.py``
+- ``tests/unit/ingestion/test_capability_suggester.py``
+- ``tests/unit/ingestion/test_write_helpers.py``
+- ``tests/unit/mcp/test_write_local_fallback.py``
+
+**Files modified (substantive):**
+- ``src/agent_memory_lite/api/routes/decisions.py`` — Move 1+3 wiring +
+  helper extraction.
+- ``src/agent_memory_lite/api/routes/theories.py`` — Move 1+4 wiring +
+  helper extraction.
+- ``src/agent_memory_lite/api/routes/theory_responses.py`` —
+  ``theory_in_from_body`` / ``evidence_in_from_body`` builders.
+- ``src/agent_memory_lite/api/schemas/decisions.py`` — Move 3 payload
+  (``CapabilitySuggestionPayload``, ``allow_orphan``).
+- ``src/agent_memory_lite/api/schemas/theories.py`` — Move 4 payload
+  + ``allow_orphan``.
+- ``src/agent_memory_lite/config/settings.py`` —
+  ``auto_thread_decision_source`` flag.
+- ``src/agent_memory_lite/mcp/stdio_handlers_decisions.py``,
+  ``stdio_handlers_theories.py``, ``tools_decisions.py``,
+  ``tools_theories.py`` — local-fallback alignment.
+- ``CHANGELOG.md``, ``SESSION_STATE.md``, ``docs/MEMORY_API.md``,
+  ``docs/AGENT_CONTRACT.md``, ``docs/AGENT_CHEATSHEET.md`` — Move 1–4
+  wire docs + agent operating contract updates.
+- ``CLAUDE.md``, ``AGENTS.md`` — re-synced via
+  ``scripts/setup_agent.py --sync-repo``.
+- ``pyproject.toml``, ``src/agent_memory_lite/version.py`` — 2.2.0.
+
+**Operator note.** After ``git pull``, restart Claude Desktop /
+Cursor / VS Code (MCP stdio servers don't auto-reload) AND restart
+the HTTP service (``python -m agent_memory_lite``) so the wire
+schemas pick up ``capability_suggestions`` on the theory response.
+Verify with ``curl http://127.0.0.1:8765/health`` →
+``version=2.2.0``.
+
+## Previous state — 1.2.0 (v1.10 correction-aware learning loop)
 
 Closes the **structurally missing loop** observed in 1.1.1: the
 agent saw user corrections, fixed the immediate thing, then forgot

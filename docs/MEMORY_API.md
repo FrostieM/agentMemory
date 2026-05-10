@@ -349,9 +349,20 @@ Response:
   "valid_from": "2026-...",
   "superseded_decision_id": null,
   "capability_link_id": "caplink_..." | null,
-  "chunk_id": "chk_..."
+  "chunk_id": "chk_...",
+  "capability_suggestions": [
+    {"capability_type": "skill", "capability_id": "sk_...",
+     "capability_name": "<top-ranked match>", "score": 0.42,
+     "snippet": "<first 80 chars of summary>"}
+  ]
 }
 ```
+
+`capability_suggestions` (Move 3) is populated only on the no-link
+path — i.e. when the caller didn't pass the capability triplet. Each
+suggestion is a top-N candidate ranked by token-overlap coefficient
+between the decision text and the capability's name + summary. Empty
+list when a link was already created or no capability matched.
 
 The same operation is exposed as the MCP tool
 `memory_record_with_evidence`.
@@ -373,11 +384,33 @@ The same operation is exposed as the MCP tool
 When `source_episode_id` is omitted and `allow_orphan` is `false`, the
 server (with `MEMORY_AUTOTHREAD_DECISION_SOURCE=true`, default ON)
 auto-fills it from the agent's most recent `memory_ingest_episode` in
-the same workspace within a 10-minute window. The `X-Memory-Agent-Id`
-header determines which agent's history is consulted; without the
-header an anonymous 60-second fallback applies. Pass
-`allow_orphan: true` to deliberately write an untraced decision (e.g.
-the choice predates the recording of any episode).
+the same workspace within a 10-minute window — Move 1 of v2.2. The
+`X-Memory-Agent-Id` header determines which agent's history is
+consulted; without the header an anonymous 60-second fallback
+applies. Pass `allow_orphan: true` to deliberately write an untraced
+decision (e.g. the choice predates the recording of any episode).
+
+Response:
+
+```json
+{
+  "decision_id": "dec_...",
+  "status": "active",
+  "valid_from": "2026-...",
+  "superseded_decision_id": null,
+  "source_episode_id": "ep_..." | null,
+  "capability_suggestions": [
+    {"capability_type": "skill", "capability_id": "sk_...",
+     "capability_name": "<top-ranked match>", "score": 0.42,
+     "snippet": "<first 80 chars of summary>"}
+  ]
+}
+```
+
+`capability_suggestions` (Move 3) lists the top-3 workspace
+capabilities ranked by token-overlap with title + decision_text +
+rationale. Read-only hint — the agent decides whether to call
+`memory_link_capability`. Empty when no capability matches.
 
 ### POST /memory/write_theory
 
@@ -398,13 +431,27 @@ the choice predates the recording of any episode).
   "tags": ["trading-bot", "source-flip", "tennis", "favorite"],
   "status": "testing",
   "confidence": 0.35,
-  "importance": 0.9
+  "importance": 0.9,
+  "source_episode_id": "ep_...",
+  "allow_orphan": false
 }
 ```
 
 Theory status values: `proposed`, `testing`, `supported`, `validated`,
 `weakened`, `rejected`, `superseded`, `archived`. Prefer `validated` only when
 validation criteria are satisfied. Prefer `rejected` for anti-theories.
+
+`source_episode_id` and `allow_orphan` follow the same Move 1
+semantics as `write_decision`: omit `source_episode_id` to let the
+server auto-thread it from your most recent `memory_ingest_episode`,
+or pass `allow_orphan: true` for a deliberate untraced theory.
+
+Response includes `capability_suggestions` (Move 4) — top-3
+workspace capabilities ranked by token-overlap with title + claim +
+mechanism. Same shape and same read-only contract as on the
+decision side. Available on every transport (HTTP route, MCP stdio
+local fallback, in-process MCP) so MCP-only deployments see the
+hint identically to HTTP callers.
 
 ### POST /memory/add_theory_evidence
 
