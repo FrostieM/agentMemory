@@ -15,14 +15,19 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
-> **Latest release: v1.2.0 — correction-aware learning loop.** When the
-> operator corrects an agent claim, the UserPromptSubmit hook captures
-> the (claim, correction) pair, the `CorrectionExtractor` queues a
-> `memory_candidate(kind=correction)`, and one `POST
-> /memory/promote_candidate_to_behavior` click lands a durable
-> `behavior_instruction` that rides every future envelope. See
-> [`CHANGELOG.md`](CHANGELOG.md) and [`docs/V1_2_0.md`](docs/V1_2_0.md)
-> for the operator runbook.
+> **Latest release: v2.1.5 — code-memory roadmap closed.** Eight
+> code-memory MCP tools (`memory_find_symbols`, `memory_graph_neighbors`,
+> `memory_breaking_changes`, `memory_file_digest`, `memory_code_overview`,
+> `memory_code_graph`, `memory_symbol_history`, `memory_soft_neighbors`)
+> plus three multi-agent edit primitives (`memory_claim_edit` /
+> `release_edit` / `list_active_edits`). Cross-language MinHash signature
+> similarity ships in v2.1.4. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> release notes and [`docs/CODE_MEMORY_GUIDE.md`](docs/CODE_MEMORY_GUIDE.md)
+> for the operator-facing guide.
+
+**New to the project?** Read [`docs/README.md`](docs/README.md) for the
+documentation map: which file holds what, in what order to read, and where
+the per-release archaeology lives.
 
 ## What it does — in one picture
 
@@ -122,14 +127,19 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 1.1.0
+## Status — 2.1.5
 
-1.1.0 ship. Six feedback loops (v1.4 feedback-aware scoring through
-v1.9 hygiene recurrence) and three v2 envelope/trigger improvements are
-calibrated against real workspace data and **default ON**. Every
-v1.4-v1.9 + v2 flag flips off via a single explicit `false` in `.env`;
-`tests/invariants/test_v2_parity.py` locks the flag-off path as
-byte-equivalent to v1.0.x, so rollback is atomic.
+Latest tag: **v2.1.5** (2026-05-10). v1.4 → v2.1.x code-memory roadmap
+is feature-complete (per [`dec_ebc1c147bcde92e3`](docs/CHANGELOG.md)
+in agentLight memory). The next stream of work — provisionally
+v2.2.x — is consolidation only: shrink the contract, retire under-used
+surfaces, vendor browser CDN dependencies, ship UI as the primary
+actionable surface for non-coders.
+
+For the full per-release breakdown see [`CHANGELOG.md`](CHANGELOG.md).
+The detail block below remains as 1.1.0 archaeology (the section that
+introduced default-ON quality flags); each later release is layered on
+top of these foundations and documented in CHANGELOG.
 
 What 1.1.0 adds on top of 1.0.3:
 
