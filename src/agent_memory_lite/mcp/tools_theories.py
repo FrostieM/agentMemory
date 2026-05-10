@@ -5,6 +5,10 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from agent_memory_lite.ingestion._write_helpers import (
+    capability_suggestion_dicts,
+    resolve_source_episode_id,
+)
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
 from agent_memory_lite.repositories.theories_repo import (
@@ -16,6 +20,16 @@ from agent_memory_lite.repositories.theories_repo import (
 def memory_write_theory(
     *, conn: sqlite3.Connection, payload: dict[str, Any], **_kwargs: Any
 ) -> dict[str, Any]:
+    """In-process MCP handler. Mirrors the HTTP route: applies Move 1
+    (auto-thread) and Move 4 (capability_suggestions)."""
+    workspace_id = str(payload.get("workspace_id") or "default")
+    allow_orphan = bool(payload.pop("allow_orphan", False))
+    payload["source_episode_id"] = resolve_source_episode_id(
+        conn,
+        workspace_id=workspace_id,
+        explicit=payload.get("source_episode_id"),
+        allow_orphan=allow_orphan,
+    )
     theory = write_theory(conn, TheoryIn(**payload))
     return {
         "theory_id": theory.id,
@@ -24,6 +38,14 @@ def memory_write_theory(
         "importance": theory.importance,
         "evidence_count": theory.evidence_count,
         "evidence_strength": theory.evidence_strength,
+        "source_episode_id": theory.source_episode_id,
+        "capability_suggestions": capability_suggestion_dicts(
+            conn,
+            workspace_id=workspace_id,
+            title=str(payload.get("title") or ""),
+            text=str(payload.get("claim") or ""),
+            rationale=payload.get("mechanism"),
+        ),
     }
 
 

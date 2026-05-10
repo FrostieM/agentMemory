@@ -28,20 +28,16 @@ from agent_memory_lite.api.deps import (
     VectorStoreDep,
     ensure_workspace_writable,
 )
-from agent_memory_lite.api.routes._capability_suggest_payload import (
-    capability_suggestion_payloads,
-)
+from agent_memory_lite.api.routes._record_compound_link import optionally_link_capability
 from agent_memory_lite.api.schemas.record_compound import (
     RecordWithEvidenceRequest,
     RecordWithEvidenceResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.ingestion.capability_link_writer import link_capability
+from agent_memory_lite.ingestion._write_helpers import capability_suggestion_dicts
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
-from agent_memory_lite.models.capability_links import CapabilityLinkIn
 from agent_memory_lite.models.decisions import DecisionIn
-from agent_memory_lite.models.enums import CapabilityLinkTargetType
 from agent_memory_lite.models.episodes import EpisodeIn
 
 router = APIRouter()
@@ -116,36 +112,16 @@ def record_with_evidence_route(
             },
         )
 
-        # Step 3 (optional): link the decision to a capability. Triplet
-        # validity is enforced at schema-level; here we just gate on
-        # presence.
-        link_id: str | None = None
-        if (
-            body.capability_type is not None
-            and body.capability_name is not None
-            and body.capability_relation is not None
-        ):
-            trace.stage_started("capability_link", "Link decision to capability")
-            link = link_capability(
-                conn,
-                CapabilityLinkIn(
-                    workspace_id=body.workspace_id,
-                    target_type=CapabilityLinkTargetType.DECISION,
-                    target_id=decision.id,
-                    capability_type=body.capability_type,
-                    capability_name=body.capability_name,
-                    relation=body.capability_relation,
-                    rationale=body.capability_rationale,
-                    strength=body.capability_strength,
-                    source_episode_id=episode_id,
-                ),
-            )
-            link_id = link.id
-            trace.stage_done(
-                "capability_link",
-                "Capability link persisted",
-                counts={"link_id": link_id, "relation": link.relation},
-            )
+        # Step 3 (optional): persist the capability link when the
+        # caller passed the full triplet. Returns ``None`` for the
+        # no-link path — we then surface suggestions instead.
+        link_id = optionally_link_capability(
+            conn,
+            body=body,
+            decision_id=decision.id,
+            episode_id=episode_id,
+            trace=trace,
+        )
 
         trace.graph_delta(
             object_type="decision",
@@ -159,7 +135,7 @@ def record_with_evidence_route(
         # /ui/review) sees the top 3 candidates and can decide whether
         # to accept any. Empty when a link was already created.
         suggestions = (
-            capability_suggestion_payloads(
+            capability_suggestion_dicts(
                 conn,
                 workspace_id=body.workspace_id,
                 title=body.decision_title,
@@ -178,7 +154,7 @@ def record_with_evidence_route(
             superseded_decision_id=decision.supersedes_decision_id,
             capability_link_id=link_id,
             chunk_id=ingest_result.chunk.id,
-            capability_suggestions=[s.model_dump() for s in suggestions],
+            capability_suggestions=suggestions,
         )
         trace.stage_done(
             "response",

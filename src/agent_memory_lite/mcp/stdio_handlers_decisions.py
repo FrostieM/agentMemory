@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_memory_lite.ingestion._write_helpers import (
+    capability_suggestion_dicts,
+    resolve_source_episode_id,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.mcp.stdio_guards import _with_workspace, _workspace_from_args
@@ -24,12 +28,34 @@ def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
+    # Local-fallback path (HTTP service unreachable): mirror the HTTP
+    # route — apply Move 1 (auto-thread source_episode_id) and Move 3
+    # (capability_suggestions) so MCP-only deployments don't silently
+    # lose either feature. ``allow_orphan`` is consumed by the helper
+    # before DecisionIn() is built (the domain model has no such field).
+    workspace_id = str(payload.get("workspace_id") or _runtime.settings.workspace_id)
+    allow_orphan = bool(payload.pop("allow_orphan", False))
+    payload["source_episode_id"] = resolve_source_episode_id(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        explicit=payload.get("source_episode_id"),
+        allow_orphan=allow_orphan,
+        settings=_runtime.settings,
+    )
     decision = write_decision(_runtime.db(), DecisionIn(**payload))
     return {
         "decision_id": decision.id,
         "status": decision.status.value,
         "valid_from": decision.valid_from,
         "superseded_decision_id": decision.supersedes_decision_id,
+        "source_episode_id": decision.source_episode_id,
+        "capability_suggestions": capability_suggestion_dicts(
+            _runtime.db(),
+            workspace_id=workspace_id,
+            title=str(payload.get("title") or ""),
+            text=str(payload.get("decision_text") or ""),
+            rationale=payload.get("rationale"),
+        ),
     }
 
 

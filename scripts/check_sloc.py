@@ -44,18 +44,17 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # then this file is allowed to creep past the ceiling -- every new
         # flag should still be justified in code review.
         "config/settings.py",
-        # 2.2 Move 3 / Move 4: orchestrator routes that compose Move 1
-        # (auto-thread) + Move 3/4 (capability suggestions) on top of
-        # the base write/compound/theory flow. Splitting helpers
-        # further fragments the read path; better to keep the
-        # orchestration in one file per route. Will revisit if any
-        # grows past 200. theories.py was already decomposed once
-        # (theories.py + theory_responses.py + theory_list.py) — this
-        # second tranche of growth is the auto-thread + suggestion
-        # composition, parallel to decisions.py / record_compound.py.
-        "api/routes/decisions.py",
-        "api/routes/record_compound.py",
-        "api/routes/theories.py",
+        # 2.2 Move 1-4 polish pass: every Move route was trimmed back
+        # below the 150-SLOC ceiling.
+        # decisions.py / theories.py: extracted
+        # ``ingestion/_write_helpers.resolve_source_episode_id`` (Move 1
+        # logic) plus ``api/routes/theory_responses.theory_in_from_body``
+        # / ``evidence_in_from_body`` (TheoryIn / TheoryEvidenceIn
+        # builders).
+        # record_compound.py: extracted
+        # ``api/routes/_record_compound_link.optionally_link_capability``
+        # for the optional third writer and switched to
+        # ``capability_suggestion_dicts`` (no model_dump round-trip).
         # Smaller pre-existing violators (150-300 SLOC). Each will get
         # a dedicated trim/split commit later. Adding NEW files here
         # should raise eyebrows in code review.

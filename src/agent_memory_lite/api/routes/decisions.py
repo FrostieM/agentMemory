@@ -21,7 +21,7 @@ from agent_memory_lite.api.schemas.decisions import (
     WriteDecisionResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.ingestion.auto_thread_provenance import find_recent_episode_for_agent
+from agent_memory_lite.ingestion._write_helpers import resolve_source_episode_id
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.models.decisions import Decision, DecisionIn
 from agent_memory_lite.repositories.decisions_repo import list_active_decisions, list_all_decisions
@@ -70,26 +70,23 @@ def write_decision_route(
             counts={"has_rationale": body.rationale is not None},
             snippet=body.title,
         )
-        # 2.2 Move 1: auto-thread source_episode_id from the agent's
-        # most recent ingest_episode when none was passed. Closes the
-        # 0/13 provenance gap structurally without yet another rule.
-        # allow_orphan=True opts out (deliberate untraced decision).
-        source_episode_id = body.source_episode_id
-        if (
-            source_episode_id is None
-            and not body.allow_orphan
-            and settings.auto_thread_decision_source
-        ):
-            source_episode_id = find_recent_episode_for_agent(
-                conn,
-                workspace_id=body.workspace_id,
+        # 2.2 Move 1: auto-thread source_episode_id (helper in
+        # ingestion/_write_helpers.py is shared with theories.py and
+        # the MCP local-fallback path so all three surfaces honor the
+        # same auto-thread + allow_orphan semantics).
+        source_episode_id = resolve_source_episode_id(
+            conn,
+            workspace_id=body.workspace_id,
+            explicit=body.source_episode_id,
+            allow_orphan=body.allow_orphan,
+            settings=settings,
+        )
+        if source_episode_id is not None and body.source_episode_id is None:
+            trace.stage_done(
+                "auto_thread",
+                "Auto-filled source_episode_id from recent agent activity",
+                counts={"source_episode_id": source_episode_id},
             )
-            if source_episode_id is not None:
-                trace.stage_done(
-                    "auto_thread",
-                    "Auto-filled source_episode_id from recent agent activity",
-                    counts={"source_episode_id": source_episode_id},
-                )
         payload = DecisionIn(
             workspace_id=body.workspace_id,
             title=body.title,

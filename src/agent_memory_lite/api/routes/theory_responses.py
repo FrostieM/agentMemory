@@ -1,18 +1,61 @@
 """Wire-shape converters for theory routes.
 
 Split out of ``theories.py`` so the route file stays under the SLOC
-ceiling. The two helpers below copy domain models into their wire
-schemas; reused by ``write_theory_route``, ``add_theory_evidence_route``,
-and ``list_theories_route``.
+ceiling. The helpers below copy domain models in and out of their
+wire schemas; reused by ``write_theory_route``,
+``add_theory_evidence_route``, and ``list_theories_route``.
 """
 
 from __future__ import annotations
 
 from agent_memory_lite.api.schemas.theories import (
+    AddTheoryEvidenceRequest,
     TheoryEvidenceResponse,
     TheoryResponse,
+    WriteTheoryRequest,
 )
-from agent_memory_lite.models.theories import Theory, TheoryEvidence
+from agent_memory_lite.models.theories import (
+    Theory,
+    TheoryEvidence,
+    TheoryEvidenceIn,
+    TheoryIn,
+)
+
+
+def theory_in_from_body(body: WriteTheoryRequest, *, source_episode_id: str | None) -> TheoryIn:
+    """Build the domain ``TheoryIn`` from the wire body + resolved provenance."""
+    return TheoryIn(
+        workspace_id=body.workspace_id,
+        title=body.title,
+        claim=body.claim,
+        domain=body.domain,
+        mechanism=body.mechanism,
+        predictions=body.predictions,
+        validation_criteria=body.validation_criteria,
+        experiment_plan=body.experiment_plan,
+        dependent_decision_ids=body.dependent_decision_ids,
+        tags=body.tags,
+        status=body.status,
+        supersedes_theory_id=body.supersedes_theory_id,
+        source_episode_id=source_episode_id,
+        confidence=body.confidence,
+        importance=body.importance,
+    )
+
+
+def evidence_in_from_body(body: AddTheoryEvidenceRequest) -> TheoryEvidenceIn:
+    """Build the domain ``TheoryEvidenceIn`` from the wire body."""
+    return TheoryEvidenceIn(
+        workspace_id=body.workspace_id,
+        theory_id=body.theory_id,
+        kind=body.kind,
+        summary=body.summary,
+        source_episode_id=body.source_episode_id,
+        artifact_path=body.artifact_path,
+        metrics=body.metrics,
+        confidence=body.confidence,
+        observed_at=body.observed_at,
+    )
 
 
 def to_theory_response(theory: Theory) -> TheoryResponse:

@@ -10,6 +10,8 @@ from agent_memory_lite.api.routes._capability_suggest_payload import (
 )
 from agent_memory_lite.api.routes.theory_list import router as list_router
 from agent_memory_lite.api.routes.theory_responses import (
+    evidence_in_from_body,
+    theory_in_from_body,
     to_evidence_response,
     to_theory_response,
 )
@@ -20,9 +22,8 @@ from agent_memory_lite.api.schemas.theories import (
     WriteTheoryRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.ingestion.auto_thread_provenance import find_recent_episode_for_agent
+from agent_memory_lite.ingestion._write_helpers import resolve_source_episode_id
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
-from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
 
 router = APIRouter()
 # Mount the listing route on the same prefix so callers see one
@@ -53,44 +54,22 @@ def write_theory_route(
             },
             snippet=body.title,
         )
-        # 2.2 Move 1: auto-thread source_episode_id parallel to write_decision.
-        source_episode_id = body.source_episode_id
-        if (
-            source_episode_id is None
-            and not body.allow_orphan
-            and settings.auto_thread_decision_source
-        ):
-            source_episode_id = find_recent_episode_for_agent(
-                conn,
-                workspace_id=body.workspace_id,
-            )
-            if source_episode_id is not None:
-                trace.stage_done(
-                    "auto_thread",
-                    "Auto-filled source_episode_id from recent agent activity",
-                    counts={"source_episode_id": source_episode_id},
-                )
-        trace.stage_started("persist", "Persist theory")
-        theory = write_theory(
+        # 2.2 Move 1: auto-thread source_episode_id (shared helper).
+        source_episode_id = resolve_source_episode_id(
             conn,
-            TheoryIn(
-                workspace_id=body.workspace_id,
-                title=body.title,
-                claim=body.claim,
-                domain=body.domain,
-                mechanism=body.mechanism,
-                predictions=body.predictions,
-                validation_criteria=body.validation_criteria,
-                experiment_plan=body.experiment_plan,
-                dependent_decision_ids=body.dependent_decision_ids,
-                tags=body.tags,
-                status=body.status,
-                supersedes_theory_id=body.supersedes_theory_id,
-                source_episode_id=source_episode_id,
-                confidence=body.confidence,
-                importance=body.importance,
-            ),
+            workspace_id=body.workspace_id,
+            explicit=body.source_episode_id,
+            allow_orphan=body.allow_orphan,
+            settings=settings,
         )
+        if source_episode_id is not None and body.source_episode_id is None:
+            trace.stage_done(
+                "auto_thread",
+                "Auto-filled source_episode_id from recent agent activity",
+                counts={"source_episode_id": source_episode_id},
+            )
+        trace.stage_started("persist", "Persist theory")
+        theory = write_theory(conn, theory_in_from_body(body, source_episode_id=source_episode_id))
         trace.stage_done("persist", "Theory persisted", counts={"status": theory.status})
         trace.graph_delta(
             object_type="theory",
@@ -142,20 +121,7 @@ def add_theory_evidence_route(
             snippet=body.summary,
         )
         trace.stage_started("persist", "Persist theory evidence")
-        evidence = add_theory_evidence(
-            conn,
-            TheoryEvidenceIn(
-                workspace_id=body.workspace_id,
-                theory_id=body.theory_id,
-                kind=body.kind,
-                summary=body.summary,
-                source_episode_id=body.source_episode_id,
-                artifact_path=body.artifact_path,
-                metrics=body.metrics,
-                confidence=body.confidence,
-                observed_at=body.observed_at,
-            ),
-        )
+        evidence = add_theory_evidence(conn, evidence_in_from_body(body))
         trace.stage_done("persist", "Theory evidence persisted", counts={"kind": evidence.kind})
         trace.graph_delta(
             object_type="theory_evidence",
