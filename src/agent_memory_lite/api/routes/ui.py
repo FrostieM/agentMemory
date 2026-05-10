@@ -10,11 +10,10 @@ maintenance-warning fan-out.
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_readable
 from agent_memory_lite.api.routes.ui_db import table_exists
@@ -31,77 +30,13 @@ from agent_memory_lite.utils.time import iso_now
 
 router = APIRouter(include_in_schema=False)
 
-_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-_UI_ROOT = _PACKAGE_ROOT / "ui"
-_ASSETS = {
-    "app.js": "application/javascript; charset=utf-8",
-    # 2.2 (Phase 2.3): shared header script for /ui/code and /ui/graph.
-    # /ui/index.html keeps its dedicated app.js (owns the live observatory).
-    "app_header.js": "application/javascript; charset=utf-8",
-    "styles.css": "text/css; charset=utf-8",
-    # 2.0: code-memory dashboard. Served at /ui/code.html alongside the
-    # legacy index.html so the user can land directly on the code view.
-    "code.html": "text/html; charset=utf-8",
-    # 2.1.2: D3 force-directed graph dashboard.
-    "graph.html": "text/html; charset=utf-8",
-    # 2.2 (Phase 3.3): candidate review queue with promote/reject UI.
-    "review.html": "text/html; charset=utf-8",
-}
-
-_NO_CACHE = {
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0",
-}
-
-
-def _serve_html(filename: str) -> FileResponse:
-    return FileResponse(
-        _UI_ROOT / filename, media_type="text/html; charset=utf-8", headers=_NO_CACHE
-    )
-
-
-@router.get("/ui")
-def memory_ui_index() -> FileResponse:
-    return _serve_html("index.html")
-
-
-@router.get("/ui/code")
-def memory_ui_code() -> FileResponse:
-    """2.0 dashboard backed by /memory/code_overview."""
-    return _serve_html("code.html")
-
-
-@router.get("/ui/graph")
-def memory_ui_graph() -> FileResponse:
-    """2.1.2 D3 graph dashboard backed by /memory/code_graph."""
-    return _serve_html("graph.html")
-
-
-@router.get("/ui/review")
-def memory_ui_review() -> FileResponse:
-    """2.2 (Phase 3.3) candidate review page backed by /memory/review_queue."""
-    return _serve_html("review.html")
-
-
-@router.get("/ui/{asset_name}")
-def memory_ui_asset(asset_name: str) -> FileResponse:
-    if asset_name not in _ASSETS:
-        return FileResponse(
-            _UI_ROOT / "index.html",
-            media_type="text/html; charset=utf-8",
-            headers=_NO_CACHE,
-        )
-    return FileResponse(
-        _UI_ROOT / asset_name,
-        media_type=_ASSETS[asset_name],
-        headers=_NO_CACHE,
-    )
-
-
-# 2.2 (Phase 2.7): vendor-asset routes live in api/routes/ui_vendor.py
-# so this module stays under the ≤150-SLOC ceiling. The router is
-# registered alongside ours via api/__init__.py.
+# 2.2 (Phase 3.3): static HTML/asset pages and vendor bundles live in
+# their own modules so this file stays under the ≤150-SLOC ceiling.
+# All three routers are registered alongside in api/app.py:
+#
+#   ui_pages.router    — /ui /ui/code /ui/graph /ui/review /ui/{asset}
+#   ui_vendor.router   — /ui/vendor/{asset}
+#   ui.router          — /memory/ui/state SSE + helpers (this file)
 
 
 def _maintenance_warnings(
