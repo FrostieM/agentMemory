@@ -28,6 +28,7 @@ from agent_memory_lite.mcp.stdio_handlers_coordination import (
 )
 from agent_memory_lite.mcp.stdio_handlers_decisions import (
     _handle_list_decisions,
+    _handle_record_with_evidence,
     _handle_update_task_state,
     _handle_write_decision,
 )
@@ -110,6 +111,7 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_code_graph": _handle_code_graph,
     "memory_ingest_episode": _handle_ingest_episode,
     "memory_write_decision": _handle_write_decision,
+    "memory_record_with_evidence": _handle_record_with_evidence,
     "memory_list_decisions": _handle_list_decisions,
     "memory_update_task_state": _handle_update_task_state,
     "memory_ingest_file": _handle_ingest_file,

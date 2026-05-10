@@ -68,3 +68,32 @@ def _handle_update_task_state(args: dict[str, Any]) -> dict[str, Any]:
         "status": state.status,
         "updated_at": state.updated_at,
     }
+
+
+def _handle_record_with_evidence(args: dict[str, Any]) -> dict[str, Any]:
+    """Move 2 (v2.2): bundle ingest_episode + write_decision + optional
+    link_capability into one call. The MCP layer just delegates to the
+    HTTP endpoint when one is reachable; the local-fallback path uses
+    the same handler module as the HTTP route to keep behavior aligned.
+    """
+    payload = _with_workspace(args)
+    delegated = _http_write(
+        "/memory/record_with_evidence", payload, log_label="record_with_evidence"
+    )
+    if delegated is not None:
+        return delegated
+    # Local fallback (no HTTP service): import lazily so the handler
+    # module stays importable when the optional ingestion deps aren't
+    # configured. tools_compound.memory_record_with_evidence does the
+    # full ingest + decision + link composition against the runtime
+    # connection + provider/store.
+    from agent_memory_lite.mcp.tools_compound import (  # noqa: PLC0415 — lazy import
+        memory_record_with_evidence,
+    )
+
+    return memory_record_with_evidence(
+        conn=_runtime.db(),
+        embedding_provider=_runtime.provider(),
+        vector_store=_runtime.store(),
+        payload=payload,
+    )

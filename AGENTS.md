@@ -87,6 +87,16 @@ These rules are not optional.
    has no episode (e.g. it predates any recording). Same for
    `memory_write_theory`.
 
+   **Move 2 shortcut.** When you have BOTH the evidence and the decision
+   ready in one moment, prefer `memory_record_with_evidence` — atomic
+   `ingest_episode + write_decision + optional link_capability` in one
+   call. Pass the capability triplet
+   (`capability_type`, `capability_name`, `capability_relation`) to also
+   create the capability link, or omit all three to skip it. Returns
+   all created object ids in one response. This is the
+   make-compliance-the-default path; the manual three-step version still
+   works when you need it.
+
 8. **For research hypotheses**, call `memory_write_theory` with validation
    criteria — what measurement would confirm, reject, or supersede it.
    Attach evidence via `memory_add_theory_evidence` for ad hoc data, or via

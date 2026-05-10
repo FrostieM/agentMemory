@@ -47,6 +47,7 @@ from agent_memory_lite.api.routes import (
     memory_state_snapshots,
     pin,
     promote_to_behavior,
+    record_compound,
     recurring_findings,
     references,
     research,
@@ -106,6 +107,7 @@ ALL_ROUTERS = (
     memory_state_snapshots,
     review_queue,
     promote_to_behavior,
+    record_compound,
     # Code-memory family (v1.4 → v2.1.x).
     find_symbols,
     graph_neighbors,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_memory_lite.mcp.tools_compound import memory_record_with_evidence
 from agent_memory_lite.mcp.tools_decisions import (
     memory_list_decisions,
     memory_update_task_state,
@@ -87,6 +88,15 @@ CORE_TOOLS: tuple[ToolDefinition, ...] = (
         name="memory_write_decision",
         description="Record an architectural decision; supports supersedes chains.",
         handler=memory_write_decision,
+    ),
+    ToolDefinition(
+        name="memory_record_with_evidence",
+        description=(
+            "Move 2 of v2.2 — atomic compound: ingest_episode + write_decision "
+            "+ optional link_capability in one call. Replaces the 3-step "
+            "discipline ritual."
+        ),
+        handler=memory_record_with_evidence,
     ),
     ToolDefinition(
         name="memory_list_decisions",

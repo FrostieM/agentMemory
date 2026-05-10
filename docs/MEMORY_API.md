@@ -311,6 +311,51 @@ Response includes `candidates_written`. Candidates aren't active until reviewed.
 Idempotent: if `content_hash` matches the prior version, returns
 `skipped: true` with no new chunks.
 
+### POST /memory/record_with_evidence (compound — Move 2 of v2.2)
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "evidence_text": "<the observation that supports this decision>",
+  "evidence_trust_level": "agent_observed",
+  "evidence_importance": 0.6,
+  "decision_title": "<short title>",
+  "decision_text": "<one-paragraph statement>",
+  "decision_rationale": "<why this and not alternative>",
+  "decision_importance": 0.8,
+  "decision_confidence": 0.9,
+  "supersedes_decision_id": "dec_...",
+  "capability_type": "skill",
+  "capability_name": "<existing skill name>",
+  "capability_relation": "method"
+}
+```
+
+Bundles `ingest_episode` + `write_decision` + optional `link_capability`
+into one atomic call so the agent doesn't have to remember each
+discipline-rule follow-up. The decision's `source_episode_id` is wired
+to the just-created episode automatically; the capability link's
+`source_episode_id` likewise. The capability triplet is all-or-nothing
+— provide all three or none.
+
+Response:
+
+```json
+{
+  "workspace_id": "<workspace_id>",
+  "episode_id": "ep_...",
+  "decision_id": "dec_...",
+  "decision_status": "active",
+  "valid_from": "2026-...",
+  "superseded_decision_id": null,
+  "capability_link_id": "caplink_..." | null,
+  "chunk_id": "chk_..."
+}
+```
+
+The same operation is exposed as the MCP tool
+`memory_record_with_evidence`.
+
 ### POST /memory/write_decision
 
 ```json

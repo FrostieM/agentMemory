@@ -19,7 +19,8 @@ One page. Print, pin to wall, follow daily. Full contract:
 | Trigger | Call | Why |
 |---|---|---|
 | Did anything non-trivial | `memory_ingest_episode(raw_text=...)` | Server redacts secrets; episodes are the audit log. |
-| Made an architectural choice | `memory_write_decision(...)` | Pass `supersedes_decision_id` if it replaces a prior. |
+| Made an architectural choice **with evidence ready** | `memory_record_with_evidence(evidence_text, decision_title, decision_text, capability_type?, capability_name?, capability_relation?)` | **Move 2 shortcut.** One call = ingest_episode + write_decision (with provenance threaded) + optional capability link. Skip the 3-step ritual. |
+| Made an architectural choice (legacy 3-step) | `memory_write_decision(...)` | Pass `supersedes_decision_id` if it replaces a prior. Server auto-threads `source_episode_id` from your last `ingest_episode` (Move 1). |
 | Formed a hypothesis with evidence path | `memory_write_theory(... validation_criteria=[...])` | Don't bury claims in episodes. |
 | Defined a new domain term | `memory_upsert_concept(name=..., definition=...)` | Future agents share vocabulary. |
 | Found a reusable lesson | `memory_distill_insight(...)` | Insights are the research backlog. |
