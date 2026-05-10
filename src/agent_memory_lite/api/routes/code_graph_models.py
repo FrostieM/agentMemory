@@ -24,6 +24,12 @@ class GraphLink(BaseModel):
     source: str  # source qualified_name (D3 expects 'source'/'target')
     target: str
     edge_type: str
+    # Phase 3.4 (v2.2): soft edges (similar_signature / co_changed) carry
+    # a weight 0.0..1.0. Hard edges (calls / imports / extends / …) leave
+    # weight=None — the renderer can use this to vary opacity / dash
+    # style per family.
+    weight: float | None = None
+    is_soft: bool = False
 
 
 class CodeGraphResponse(BaseModel):

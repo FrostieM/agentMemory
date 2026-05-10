@@ -25,6 +25,11 @@ from agent_memory_lite.models.symbol_edges import ALLOWED_EDGE_TYPES
 
 router = APIRouter()
 
+# Phase 3.4 (v2.2): the soft-edge family lives in a separate table
+# (``soft_edges``) and uses different vocabulary than hard edges.
+# Whitelisted explicitly so a typo in the query string surfaces 400.
+ALLOWED_SOFT_EDGE_KINDS: frozenset[str] = frozenset({"similar_signature", "co_changed"})
+
 
 @router.get("/memory/code_graph", response_model=CodeGraphResponse)
 def code_graph_route(
@@ -35,6 +40,7 @@ def code_graph_route(
     depth: int = Query(default=2, ge=1, le=5),
     max_nodes: int = Query(default=200, ge=1, le=1000),
     edge_kinds: Annotated[list[str] | None, Query()] = None,
+    soft_edge_kinds: Annotated[list[str] | None, Query()] = None,
 ) -> CodeGraphResponse:
     ensure_workspace_readable(workspace_id, settings)
     if edge_kinds:
@@ -44,6 +50,16 @@ def code_graph_route(
                 status_code=400,
                 detail=f"Unknown edge_kinds {bad!r}. Allowed: {sorted(ALLOWED_EDGE_TYPES)}",
             )
+    if soft_edge_kinds:
+        bad_soft = [k for k in soft_edge_kinds if k not in ALLOWED_SOFT_EDGE_KINDS]
+        if bad_soft:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown soft_edge_kinds {bad_soft!r}. "
+                    f"Allowed: {sorted(ALLOWED_SOFT_EDGE_KINDS)}"
+                ),
+            )
     if center is not None:
         nodes, links, truncated = bfs_from_center(
             conn,
@@ -52,6 +68,7 @@ def code_graph_route(
             depth=depth,
             max_nodes=max_nodes,
             edge_kinds=edge_kinds,
+            soft_edge_kinds=soft_edge_kinds,
         )
     else:
         nodes, links, truncated = overview(
@@ -59,6 +76,7 @@ def code_graph_route(
             workspace_id=workspace_id,
             max_nodes=max_nodes,
             edge_kinds=edge_kinds,
+            soft_edge_kinds=soft_edge_kinds,
         )
     return CodeGraphResponse(
         workspace_id=workspace_id,
