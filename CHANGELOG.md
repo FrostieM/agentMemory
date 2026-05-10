@@ -211,6 +211,22 @@ block listing registered workspaces and three recovery paths so
 the agent / operator can fix the routing rather than stare at an
 empty envelope.
 
+### Browser UI
+
+The HTTP service serves five UI pages (Observatory `/ui`, Code
+`/ui/code`, Graph `/ui/graph`, Review `/ui/review`, Browse
+`/ui/browse`) sharing a workspace dropdown via
+``ui/app_header.js``. Every page attaches the
+``X-Memory-DB-Path`` and ``X-Memory-Vector-Path`` headers to
+its API calls so hub-mode routing lands on the right physical
+DB regardless of which workspace the operator selects. The
+review queue gates the promote button by candidate kind:
+``decision`` / ``procedural_rule`` / ``constraint`` get the
+inline promote, ``correction`` gets the
+behavior-instruction modal, every other kind shows a single
+reject button (descriptive extraction noise has no durable
+target).
+
 ### Operations
 
 - HTTP service: `python -m agent_memory_lite` (or
