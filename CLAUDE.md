@@ -390,6 +390,14 @@ These rules are not optional.
    make-compliance-the-default path; the manual three-step version still
    works when you need it.
 
+   **Move 3 hint.** Both `memory_write_decision` and
+   `memory_record_with_evidence` responses include a
+   `capability_suggestions` field listing the top-3 workspace
+   capabilities (roles / skills / playbooks) that token-overlap the
+   decision text. When you didn't pass a capability triplet, scan the
+   suggestions and call `memory_link_capability` with the best match if
+   one applies. Read-only hint — server never auto-links.
+
 8. **For research hypotheses**, call `memory_write_theory` with validation
    criteria — what measurement would confirm, reject, or supersede it.
    Attach evidence via `memory_add_theory_evidence` for ad hoc data, or via

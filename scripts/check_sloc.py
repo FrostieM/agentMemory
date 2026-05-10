@@ -44,6 +44,13 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # then this file is allowed to creep past the ceiling -- every new
         # flag should still be justified in code review.
         "config/settings.py",
+        # 2.2 Move 3: orchestrator routes that compose Move 1
+        # (auto-thread) + Move 3 (capability suggestions) on top of the
+        # base write/compound flow. Splitting helpers further fragments
+        # the read path; better to keep the orchestration in one file
+        # per route. Will revisit if either grows past 200.
+        "api/routes/decisions.py",
+        "api/routes/record_compound.py",
         # Smaller pre-existing violators (150-300 SLOC). Each will get
         # a dedicated trim/split commit later. Adding NEW files here
         # should raise eyebrows in code review.

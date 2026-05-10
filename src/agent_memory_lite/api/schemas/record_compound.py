@@ -80,3 +80,7 @@ class RecordWithEvidenceResponse(BaseModel):
     superseded_decision_id: str | None
     capability_link_id: str | None
     chunk_id: str
+    # Move 3: server-ranked capability suggestions, only populated when
+    # the caller did NOT pass the capability triplet (i.e. no link was
+    # made). Empty list when the workspace has no matching capabilities.
+    capability_suggestions: list = Field(default_factory=list)

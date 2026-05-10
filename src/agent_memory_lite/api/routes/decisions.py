@@ -10,6 +10,9 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.routes._capability_suggest_payload import (
+    capability_suggestion_payloads,
+)
 from agent_memory_lite.api.schemas.decisions import (
     DecisionItem,
     ListDecisionsRequest,
@@ -114,13 +117,28 @@ def write_decision_route(
             action="created",
             label="Decision written",
         )
+        # Move 3: rank existing capabilities by token overlap with the
+        # decision's title+text+rationale and surface the top-3 in the
+        # response. Read-only hint — never auto-links.
+        suggestions = capability_suggestion_payloads(
+            conn,
+            workspace_id=body.workspace_id,
+            title=body.title,
+            text=body.decision_text,
+            rationale=body.rationale,
+        )
         response = WriteDecisionResponse(
             decision_id=decision.id,
             status=decision.status.value,
             valid_from=decision.valid_from,
             superseded_decision_id=decision.supersedes_decision_id,
+            capability_suggestions=suggestions,
         )
-        trace.stage_done("response", "Decision response ready", counts={"decision_id": decision.id})
+        trace.stage_done(
+            "response",
+            "Decision response ready",
+            counts={"decision_id": decision.id, "capability_suggestions": len(suggestions)},
+        )
         return response
 
 

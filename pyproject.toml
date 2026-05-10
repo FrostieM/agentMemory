@@ -104,6 +104,9 @@ ignore = ["PLR0913", "PLR2004", "E501"]
 # rebinding in the transcript tail-reader is an established idiom.
 "scripts/inject_memory_context.py" = ["PLR0911", "PLR0912", "SIM105"]
 "scripts/transcript_pair_extractor.py" = ["PLW2901"]
+# 2.2 Move 3: stopword list deliberately stored as one-line "x y z".split()
+# instead of a 50-line list literal so the file stays tiny.
+"src/agent_memory_lite/ingestion/_capability_suggester_stopwords.py" = ["SIM905"]
 
 [tool.mypy]
 python_version = "3.12"

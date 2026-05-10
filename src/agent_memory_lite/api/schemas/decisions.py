@@ -31,6 +31,24 @@ class WriteDecisionRequest(BaseModel):
     allow_orphan: bool = False
 
 
+class CapabilitySuggestionPayload(BaseModel):
+    """Server-ranked capability suggestion (Move 3 of v2.2).
+
+    Returned with write_decision / record_with_evidence responses when
+    the workspace has roles/skills/playbooks that token-overlap with
+    the decision text. Read-only hint — the agent (or operator via
+    /ui/review) decides whether to call link_capability with one of
+    these picks.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    capability_type: str
+    capability_id: str
+    capability_name: str
+    score: float
+    snippet: str
+
+
 class WriteDecisionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -38,6 +56,7 @@ class WriteDecisionResponse(BaseModel):
     status: str
     valid_from: str
     superseded_decision_id: str | None
+    capability_suggestions: list[CapabilitySuggestionPayload] = Field(default_factory=list)
 
 
 class ListDecisionsRequest(BaseModel):

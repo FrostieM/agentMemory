@@ -28,6 +28,9 @@ from agent_memory_lite.api.deps import (
     VectorStoreDep,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.routes._capability_suggest_payload import (
+    capability_suggestion_payloads,
+)
 from agent_memory_lite.api.schemas.record_compound import (
     RecordWithEvidenceRequest,
     RecordWithEvidenceResponse,
@@ -151,6 +154,21 @@ def record_with_evidence_route(
             label="Decision recorded with evidence",
             counts={"episode_id": episode_id, "linked": link_id is not None},
         )
+        # Move 3: when no capability was passed, surface server-ranked
+        # suggestions in the response so the agent (or operator via
+        # /ui/review) sees the top 3 candidates and can decide whether
+        # to accept any. Empty when a link was already created.
+        suggestions = (
+            capability_suggestion_payloads(
+                conn,
+                workspace_id=body.workspace_id,
+                title=body.decision_title,
+                text=body.decision_text,
+                rationale=body.decision_rationale,
+            )
+            if link_id is None
+            else []
+        )
         response = RecordWithEvidenceResponse(
             workspace_id=body.workspace_id,
             episode_id=episode_id,
@@ -160,6 +178,7 @@ def record_with_evidence_route(
             superseded_decision_id=decision.supersedes_decision_id,
             capability_link_id=link_id,
             chunk_id=ingest_result.chunk.id,
+            capability_suggestions=[s.model_dump() for s in suggestions],
         )
         trace.stage_done(
             "response",
