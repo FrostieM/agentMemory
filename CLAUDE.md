@@ -373,7 +373,12 @@ These rules are not optional.
    silently ignoring them.
 
 7. **After an architectural decision**, call `memory_write_decision`. Pass
-   `supersedes_decision_id` if it replaces a prior decision.
+   `supersedes_decision_id` if it replaces a prior decision. The server
+   auto-fills `source_episode_id` from your most recent `memory_ingest_episode`
+   in the same workspace (10-minute window) when you don't pass it
+   explicitly. Pass `allow_orphan: true` when the decision deliberately
+   has no episode (e.g. it predates any recording). Same for
+   `memory_write_theory`.
 
 8. **For research hypotheses**, call `memory_write_theory` with validation
    criteria — what measurement would confirm, reject, or supersede it.

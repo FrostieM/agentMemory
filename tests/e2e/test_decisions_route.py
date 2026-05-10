@@ -119,3 +119,112 @@ def test_list_decisions_repairs_display_mojibake(client: TestClient) -> None:
     item = listed.json()["decisions"][0]
     assert item["title"] == "API process \u2014 worker"
     assert item["decision_text"] == "Split API \u2014 worker for reliability."
+
+
+# ---------- 2.2 Move 1: auto-thread source_episode_id ----------
+
+
+def test_auto_thread_fills_from_recent_ingest_episode(client: TestClient) -> None:
+    """When the same agent_id has just ingested an episode, the next
+    write_decision without source_episode_id picks it up automatically."""
+    headers = {"X-Memory-Agent-Id": "claude-test"}
+    ep = client.post(
+        "/memory/ingest_episode",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "raw_text": "exploring the auth refactor",
+            "source_type": "agent_action",
+            "trust_level": "agent_observed",
+            "importance": 0.6,
+        },
+    )
+    assert ep.status_code == 200, ep.text
+    episode_id = ep.json()["episode_id"]
+    dec = client.post(
+        "/memory/write_decision",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "title": "Move auth to JWT",
+            "decision_text": "Replace session cookies with JWT.",
+        },
+    )
+    assert dec.status_code == 200, dec.text
+    listed = client.post(
+        "/memory/list_decisions",
+        json={"workspace_id": "default", "query": "Move auth to JWT", "limit": 1},
+    ).json()
+    assert listed["decisions"][0]["source_episode_id"] == episode_id
+
+
+def test_allow_orphan_skips_auto_thread(client: TestClient) -> None:
+    """allow_orphan=True keeps source_episode_id NULL even when a
+    matching recent episode exists."""
+    headers = {"X-Memory-Agent-Id": "claude-test"}
+    client.post(
+        "/memory/ingest_episode",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "raw_text": "irrelevant context",
+            "source_type": "agent_action",
+        },
+    )
+    dec = client.post(
+        "/memory/write_decision",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "title": "Pre-existing decision",
+            "decision_text": "Decision predates the recording of any episode.",
+            "allow_orphan": True,
+        },
+    )
+    assert dec.status_code == 200, dec.text
+    listed = client.post(
+        "/memory/list_decisions",
+        json={"workspace_id": "default", "query": "Pre-existing decision", "limit": 1},
+    ).json()
+    assert listed["decisions"][0]["source_episode_id"] is None
+
+
+def test_explicit_source_episode_id_wins_over_auto_thread(client: TestClient) -> None:
+    """When the caller passes source_episode_id explicitly, the
+    server uses that value verbatim \u2014 no override by the auto-thread
+    helper, even if a more recent episode exists for this agent."""
+    headers = {"X-Memory-Agent-Id": "claude-test"}
+    older = client.post(
+        "/memory/ingest_episode",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "raw_text": "older episode",
+            "source_type": "agent_action",
+        },
+    ).json()["episode_id"]
+    client.post(
+        "/memory/ingest_episode",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "raw_text": "newer episode",
+            "source_type": "agent_action",
+        },
+    )
+    dec = client.post(
+        "/memory/write_decision",
+        headers=headers,
+        json={
+            "workspace_id": "default",
+            "title": "Explicit source decision",
+            "decision_text": "T",
+            "source_episode_id": older,
+        },
+    )
+    assert dec.status_code == 200, dec.text
+    listed = client.post(
+        "/memory/list_decisions",
+        json={"workspace_id": "default", "query": "Explicit source decision", "limit": 1},
+    ).json()
+    assert listed["decisions"][0]["source_episode_id"] == older

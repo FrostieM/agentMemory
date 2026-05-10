@@ -22,6 +22,13 @@ class WriteDecisionRequest(BaseModel):
     # /memory/cold_decisions read this field; the agent should populate
     # it when the decision concretely affects specific files.
     references: list[str] = Field(default_factory=list)
+    # 2.2 Move 1: when source_episode_id is None and the server has
+    # auto_thread_decision_source enabled, the route auto-fills it from
+    # the agent's most recent ingest_episode in the same workspace.
+    # Pass allow_orphan=True to opt out and write a deliberately
+    # untraced decision (e.g. when the decision predates the recording
+    # of any episode).
+    allow_orphan: bool = False
 
 
 class WriteDecisionResponse(BaseModel):

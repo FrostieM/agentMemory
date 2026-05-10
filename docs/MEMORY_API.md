@@ -319,9 +319,20 @@ Idempotent: if `content_hash` matches the prior version, returns
   "title": "<short title>",
   "decision_text": "<one-paragraph statement>",
   "rationale": "<why this and not alternative>",
-  "supersedes_decision_id": "dec_..."
+  "supersedes_decision_id": "dec_...",
+  "source_episode_id": "ep_...",
+  "allow_orphan": false
 }
 ```
+
+When `source_episode_id` is omitted and `allow_orphan` is `false`, the
+server (with `MEMORY_AUTOTHREAD_DECISION_SOURCE=true`, default ON)
+auto-fills it from the agent's most recent `memory_ingest_episode` in
+the same workspace within a 10-minute window. The `X-Memory-Agent-Id`
+header determines which agent's history is consulted; without the
+header an anonymous 60-second fallback applies. Pass
+`allow_orphan: true` to deliberately write an untraced decision (e.g.
+the choice predates the recording of any episode).
 
 ### POST /memory/write_theory
 

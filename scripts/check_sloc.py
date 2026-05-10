@@ -37,6 +37,13 @@ SRC_ROOT = ROOT / "src" / "agent_memory_lite"
 # the planned split.
 GRANDFATHERED: frozenset[str] = frozenset(
     {
+        # 2.2 Move 1: settings.py is fundamentally a single concern
+        # (Pydantic config class), but it has accumulated 20+ feature flags
+        # across v1.0..v2.2. Decomposition into composed Settings (Embed +
+        # LLM + Quality + Storage) is real work scheduled separately. Until
+        # then this file is allowed to creep past the ceiling -- every new
+        # flag should still be justified in code review.
+        "config/settings.py",
         # Smaller pre-existing violators (150-300 SLOC). Each will get
         # a dedicated trim/split commit later. Adding NEW files here
         # should raise eyebrows in code review.

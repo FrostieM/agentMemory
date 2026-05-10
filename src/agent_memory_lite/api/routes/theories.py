@@ -17,6 +17,7 @@ from agent_memory_lite.api.schemas.theories import (
     WriteTheoryRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.ingestion.auto_thread_provenance import find_recent_episode_for_agent
 from agent_memory_lite.ingestion.theory_writer import add_theory_evidence, write_theory
 from agent_memory_lite.models.theories import TheoryEvidenceIn, TheoryIn
 
@@ -49,6 +50,23 @@ def write_theory_route(
             },
             snippet=body.title,
         )
+        # 2.2 Move 1: auto-thread source_episode_id parallel to write_decision.
+        source_episode_id = body.source_episode_id
+        if (
+            source_episode_id is None
+            and not body.allow_orphan
+            and settings.auto_thread_decision_source
+        ):
+            source_episode_id = find_recent_episode_for_agent(
+                conn,
+                workspace_id=body.workspace_id,
+            )
+            if source_episode_id is not None:
+                trace.stage_done(
+                    "auto_thread",
+                    "Auto-filled source_episode_id from recent agent activity",
+                    counts={"source_episode_id": source_episode_id},
+                )
         trace.stage_started("persist", "Persist theory")
         theory = write_theory(
             conn,
@@ -65,7 +83,7 @@ def write_theory_route(
                 tags=body.tags,
                 status=body.status,
                 supersedes_theory_id=body.supersedes_theory_id,
-                source_episode_id=body.source_episode_id,
+                source_episode_id=source_episode_id,
                 confidence=body.confidence,
                 importance=body.importance,
             ),

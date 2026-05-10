@@ -28,6 +28,9 @@ class WriteTheoryRequest(BaseModel):
     source_episode_id: str | None = None
     confidence: float = Field(default=0.4, ge=0.0, le=1.0)
     importance: float = Field(default=0.6, ge=0.0, le=1.0)
+    # 2.2 Move 1: parallel to write_decision — auto-fill source_episode_id
+    # from the agent's most recent ingest_episode unless allow_orphan=True.
+    allow_orphan: bool = False
 
 
 class TheoryResponse(BaseModel):

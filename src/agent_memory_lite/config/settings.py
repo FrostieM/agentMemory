@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     enforce_workspace_manifest: bool = Field(
         True, validation_alias="MEMORY_ENFORCE_WORKSPACE_MANIFEST"
     )
+    # 2.2 Move 1: auto-fill source_episode_id on write_decision / write_theory
+    # from the agent's most recent ingest_episode (10-minute window, set in
+    # ingestion/auto_thread_provenance.py). Closes the 0/13 provenance gap
+    # structurally instead of relying on the agent to pass the optional parameter.
+    auto_thread_decision_source: bool = Field(
+        True, validation_alias="MEMORY_AUTOTHREAD_DECISION_SOURCE"
+    )
     hub_mode: bool = Field(False, validation_alias="MEMORY_HUB_MODE")
     workspaces_file: Path = Field(
         Path.home() / ".agent_memory" / "workspaces.json",
