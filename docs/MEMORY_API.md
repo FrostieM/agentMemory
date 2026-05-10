@@ -311,7 +311,7 @@ Response includes `candidates_written`. Candidates aren't active until reviewed.
 Idempotent: if `content_hash` matches the prior version, returns
 `skipped: true` with no new chunks.
 
-### POST /memory/record_with_evidence (compound — Move 2 of v2.2)
+### POST /memory/record_with_evidence (compound — Move 2)
 
 ```json
 {
@@ -384,7 +384,7 @@ The same operation is exposed as the MCP tool
 When `source_episode_id` is omitted and `allow_orphan` is `false`, the
 server (with `MEMORY_AUTOTHREAD_DECISION_SOURCE=true`, default ON)
 auto-fills it from the agent's most recent `memory_ingest_episode` in
-the same workspace within a 10-minute window — Move 1 of v2.2. The
+the same workspace within a 10-minute window — Move 1. The
 `X-Memory-Agent-Id` header determines which agent's history is
 consulted; without the header an anonymous 60-second fallback
 applies. Pass `allow_orphan: true` to deliberately write an untraced

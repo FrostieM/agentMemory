@@ -15,21 +15,24 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
-> **Latest release: v2.2.0 — adoption-by-default series.** Four
-> server-side moves close the v1.6 telemetry adoption gap on agentLight
-> (decision_provenance was 0/13, link_after_write 0.31): Move 1
-> auto-threads `source_episode_id` from the agent's most recent
-> `ingest_episode`; Move 2 ships `memory_record_with_evidence` as the
-> atomic `ingest_episode + write_decision + optional link_capability`
-> compound; Moves 3 and 4 surface `capability_suggestions` (top-3
-> ranked workspace roles/skills/playbooks) on the `write_decision`,
-> `record_with_evidence`, AND `write_theory` responses across HTTP,
-> MCP stdio, and in-process MCP. The v1.4 → v2.1.x code-memory tools
-> remain available (`memory_find_symbols`, `memory_graph_neighbors`,
+> **2.0.0 — first public-facing release.** Local-first memory
+> substrate (SQLite + LanceDB + sentence-transformers + Ollama, no
+> cloud, no Docker) with first-class decisions, theories,
+> snapshots, experiments, concepts, insights, roles, skills,
+> playbooks, behavior instructions, and memory candidates. The
+> four adoption-by-default Moves (auto-thread `source_episode_id`,
+> compound `record_with_evidence`, `capability_suggestions` on
+> decision and theory writes) make the discipline rules
+> server-defaulted instead of agent-remembered. Code-memory
+> substrate ships eight language-aware MCP tools
+> (`memory_find_symbols`, `memory_graph_neighbors`,
 > `memory_breaking_changes`, `memory_file_digest`,
 > `memory_code_overview`, `memory_code_graph`,
 > `memory_symbol_history`, `memory_soft_neighbors`) plus the three
-> multi-agent edit primitives. See [`CHANGELOG.md`](CHANGELOG.md) for full
+> multi-agent edit primitives. The correction-aware learning loop
+> closes the "operator corrects agent → lesson dies" gap with a
+> review queue + one-click promote to `behavior_instruction`. See
+> [`CHANGELOG.md`](CHANGELOG.md) for full
 > release notes and [`docs/CODE_MEMORY_GUIDE.md`](docs/CODE_MEMORY_GUIDE.md)
 > for the operator-facing guide.
 
@@ -135,59 +138,89 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 2.2.0
+## Status — 2.0.0
 
-Latest tag: **v2.2.0** (2026-05-10). Adoption-by-default series — Moves
-1–4 plus a Windows-stdio + global-fallback hook fix. The v1.4 → v2.1.x
-code-memory roadmap remains feature-complete (per
-[`dec_ebc1c147bcde92e3`](docs/CHANGELOG.md) in agentLight memory). v2.2
-keeps the consolidation philosophy locked in by that decision: zero
-new features outside the four discipline-defaulting Moves, every
-existing surface (HTTP route, MCP stdio, in-process MCP) returns the
-same shape, every grandfathered SLOC violator except
-`config/settings.py` was decomposed back below the 150-line ceiling.
+Latest tag: **v2.0.0** (2026-05-10) — first public-facing release.
+Consolidates ~6 months of internal incremental development into a
+single coherent baseline. Every memory feature is on by default;
+flag-off parity invariants in `tests/invariants/` lock the legacy
+byte-equivalent path for any operator who wants to peel a layer
+off. The pre-2.0.0 incremental development history is preserved
+verbatim in [`docs/CHANGELOG_LEGACY.md`](docs/CHANGELOG_LEGACY.md)
+for traceability.
 
-For the full per-release breakdown see [`CHANGELOG.md`](CHANGELOG.md).
-The detail block below remains as 1.1.0 archaeology (the section that
-introduced default-ON quality flags); each later release is layered on
-top of these foundations and documented in CHANGELOG.
+For the full breakdown see [`CHANGELOG.md`](CHANGELOG.md). The
+incremental development trail (1.x → 2.1.x → 2.2.x) that produced
+2.0.0 is preserved in
+[`docs/CHANGELOG_LEGACY.md`](docs/CHANGELOG_LEGACY.md) for
+historical trace.
 
-What 1.1.0 adds on top of 1.0.3:
+What 2.0.0 includes (every flag default ON; flag-off parity is
+locked by `tests/invariants/`):
 
-- **v1.4 feedback-aware scoring + v2.1 implicit feedback** — completes the
-  scoring formula with an EWMA term over `memory_usage_feedback`, and
-  derives the rows automatically from operator actions
-  (archive→-1.0, promote→+0.7, link_capability→strength). Calibrated on
-  real copyBot data: 1370 audit entries → 158 implicit feedback rows;
-  95% rank churn; low-EWMA cohort dropped 26 places, biggest faller -51.
-- **v1.5 capability maturity + behavior tracking** — usage / success
-  counters on roles / skills / playbooks; `application_count` advances
-  on every envelope render that surfaces an instruction.
-- **v1.6 cold-memory lifecycle** — retrieval stamps `last_retrieved_at`
-  on the top-K (batched audit, batch_size=100); cold scanner emits
-  `cold_candidate` events for rows untouched > `MEMORY_COLD_STALE_DAYS=60`.
-  Human-driven archival (review queue surfaces them).
-- **v1.7 theory → decision_candidates bridge** — validated theories with
-  ≥3 evidence rows surface as pending decision candidates. Trust gate
-  intact: never auto-promotes.
-- **v1.8 reflective compaction** — `/memory/compact` runs an Ollama pass
-  over recent episodes and proposes lessons into `insight_candidates`.
-  Gracefully degrades when Ollama unreachable.
-- **v1.9 hygiene recurrence + sentinel persistence** — hygiene findings and
-  watchdog runs persisted with recurrence counts.
-- **v2.2 pending-review envelope** — every `/memory/get_context` injects a
-  `<pending_review>` XML block carrying every field an agent needs to
-  promote / reject without an extra `/memory/list_candidates` round-trip.
-- **v2.3 trigger-on-traffic sentinel scheduler** — each `get_context` triggers
-  a background sentinel pass when overdue (default 6h). Per-workspace
-  `threading.Lock` prevents duplicate concurrent daemons. Hub-mode aware:
-  `db_path` resolved from the request-scoped connection via
-  `PRAGMA database_list`.
+- **Adoption-by-default Moves 1–4** — server auto-threads
+  `source_episode_id` from the agent's most recent
+  `ingest_episode`, ships `memory_record_with_evidence` as the
+  atomic compound write, and surfaces `capability_suggestions` on
+  every decision and theory write across HTTP, MCP stdio, and
+  in-process MCP.
+- **Feedback-aware retrieval scoring** — EWMA term over
+  `memory_usage_feedback`, derived automatically from operator
+  actions (archive→-1.0, promote→+0.7,
+  link_capability→strength). Calibrated against real workspace
+  traffic: 1370 audit entries → 158 implicit feedback rows, 95%
+  rank churn, low-EWMA cohort dropped 26 places, biggest faller
+  -51.
+- **Capability maturity + behavior tracking** — usage / success
+  counters on roles / skills / playbooks; `application_count`
+  advances on every envelope render that surfaces an instruction.
+- **Cold-memory lifecycle** — retrieval stamps
+  `last_retrieved_at` on top-K (batched audit, batch_size=100);
+  cold scanner emits `cold_candidate` events for rows untouched
+  > `MEMORY_COLD_STALE_DAYS=60`. Human-driven archival via the
+  review queue.
+- **Theory → decision_candidates bridge** — validated theories
+  with ≥3 evidence rows surface as pending decision candidates.
+  Trust gate intact; never auto-promotes.
+- **Reflective compaction** — `/memory/compact` runs an Ollama
+  pass over recent episodes and proposes lessons into
+  `insight_candidates`. Gracefully degrades when Ollama
+  unreachable.
+- **Hygiene recurrence + sentinel persistence** — hygiene
+  findings and watchdog runs persisted with recurrence counts.
+- **Pending-review envelope** — every `memory_get_context`
+  injects a `<pending_review>` XML block carrying every field an
+  agent needs to promote / reject without an extra
+  `/memory/list_candidates` round-trip.
+- **Trigger-on-traffic sentinel scheduler** — each
+  `get_context` triggers a background sentinel pass when overdue
+  (default 6h). Per-workspace lock prevents duplicate concurrent
+  daemons. Hub-mode aware: `db_path` resolved from the
+  request-scoped connection via `PRAGMA database_list`.
 - **MCP-HTTP parity** — `apply_post_build_hooks()` in
-  `api/routes/context_post_build.py` is the single chokepoint for the
-  four hooks. Both the HTTP route and the MCP stdio local fallback call
-  it, so MCP-only deployments fire v1.5 / v1.6 / v2.2 / v2.3 the same
-  way HTTP does.
+  `api/routes/context_post_build.py` is the single chokepoint
+  for every envelope hook. Both the HTTP route and the MCP stdio
+  local fallback call it, so MCP-only deployments fire every
+  feature the same way HTTP does. The same parity guarantee
+  applies to `memory_write_decision` /
+  `memory_write_theory` (via the shared
+  `ingestion/_write_helpers.py`) so a downed HTTP service does
+  not silently drop Move 1 / Move 3 / Move 4 fields.
+- **Correction-aware learning loop** — `UserPromptSubmit` hook
+  reads the Claude Code transcript JSONL, finds the previous
+  assistant turn, and ingests claim+correction as two
+  cross-referenced episodes when the current prompt matches the
+  heuristic. The `CorrectionExtractor` emits
+  `memory_candidate(kind=correction)` for review; operator
+  promotes via `memory_promote_candidate_to_behavior` to land a
+  durable `behavior_instruction`.
+- **Hook reliability** — UTF-8 stdout reconfigure (no more
+  `UnicodeEncodeError` on Windows cp1251 / cp1252 console),
+  visible `<hook_notice severity="warn" code="global_fallback">`
+  block when the cwd Claude Code reports doesn't match any
+  registered project_root, so the agent sees the real reason an
+  envelope is empty instead of staring at self-closing skeleton
+  tags.
 
 Carried over from 1.0.3: 18+ persistence kinds (episodes, chunks, files,
 decisions, theories, experiments, snapshots, insights, concepts,

@@ -2,7 +2,34 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 2.2.0 (adoption-by-default series, Moves 1–4 + MCP fix)
+## Current state — 2.0.0 (first public release, consolidated baseline)
+
+**2.0.0 ships 2026-05-10 as the first public-facing release.** It
+consolidates ~6 months of internal incremental development (the 1.x
+→ 2.1.x → 2.2.x lineage, archived in
+[`docs/CHANGELOG_LEGACY.md`](docs/CHANGELOG_LEGACY.md)) into a
+single coherent baseline. Every memory feature is on by default;
+flag-off parity invariants in `tests/invariants/` lock the legacy
+byte-equivalent path for any operator who wants to peel a layer
+off.
+
+The four adoption-by-default Moves (auto-thread `source_episode_id`,
+compound `record_with_evidence`, `capability_suggestions` on
+decision and theory writes) are the headline feature: they make the
+discipline rules server-defaulted instead of agent-remembered. The
+v1.6 telemetry that motivated them showed
+``decision_provenance=0.00`` on `agentLight` (0/13 decisions had
+``source_episode_id``); after Move 1 ships every fresh write
+auto-fills the field.
+
+The four Moves work identically across the HTTP route, the MCP
+stdio handler, and the in-process MCP tool — local-fallback
+deployments keep the full surface even when the HTTP service is
+unreachable. The shared chokepoint is
+``ingestion/_write_helpers.py``
+(``resolve_source_episode_id`` + ``capability_suggestion_dicts``).
+
+## Previous state — 2.2.0 (incremental adoption series before consolidation)
 
 Operator complaint: v1.6 adoption telemetry on ``agentLight`` showed
 ``decision_provenance=0.00`` (0/13 decisions had ``source_episode_id``),

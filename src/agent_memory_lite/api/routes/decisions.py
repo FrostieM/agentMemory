@@ -132,11 +132,7 @@ def write_decision_route(
             source_episode_id=decision.source_episode_id,
             capability_suggestions=suggestions,
         )
-        trace.stage_done(
-            "response",
-            "Decision response ready",
-            counts={"decision_id": decision.id, "capability_suggestions": len(suggestions)},
-        )
+        trace.stage_done("response", "Decision response ready", counts={"n": len(suggestions)})
         return response
 
 
