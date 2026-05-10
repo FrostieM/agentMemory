@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — review queue</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
+<style>
+  /* Phase 3.3: candidate review page. Operator promotes / rejects
+     pending memory_candidates from the browser instead of MCP. */
+  .review-body { padding: 24px 32px; max-width: 1100px; }
+  .review-body h2 { margin: 1.4em 0 0.4em; font-size: 1.05em; color: var(--accent);
+                    border-bottom: 1px solid var(--line-soft); padding-bottom: 0.2em; }
+  .summary { display: flex; gap: 1.2em; margin-bottom: 1.4em; align-items: center;
+             font-size: 0.9em; color: var(--text-2); }
+  .summary b { color: var(--text-0); font-weight: 600; }
+  .candidate { background: var(--bg-1); border: 1px solid var(--line-soft);
+               border-radius: 8px; padding: 0.9em 1em; margin-bottom: 0.8em; }
+  .candidate.kind-decision { border-left: 3px solid #58a6ff; }
+  .candidate.kind-procedural_rule { border-left: 3px solid #d29922; }
+  .candidate.kind-correction { border-left: 3px solid #ff7b72; }
+  .candidate.kind-core_memory { border-left: 3px solid #56d364; }
+  .candidate-head { display: flex; justify-content: space-between; align-items: flex-start;
+                    gap: 0.8em; margin-bottom: 0.5em; }
+  .candidate-head .meta { color: var(--text-2); font-size: 0.78em;
+                          text-transform: uppercase; letter-spacing: 0.06em;
+                          font-family: ui-monospace, monospace; }
+  .candidate-subject { font-size: 1.05em; color: var(--text-0); margin: 0;
+                       font-weight: 500; }
+  .candidate-evidence { color: var(--text-1); font-size: 0.88em; margin: 0.4em 0;
+                        line-height: 1.45; }
+  .candidate-id { color: var(--text-3); font-size: 0.72em; font-family: ui-monospace, monospace; }
+  .candidate-actions { display: flex; gap: 0.6em; margin-top: 0.7em; flex-wrap: wrap; }
+  .btn { padding: 0.4em 0.9em; border-radius: 6px; cursor: pointer;
+         font-family: inherit; font-size: 0.85em; border: 1px solid transparent;
+         font-weight: 500; }
+  .btn-promote { background: #238636; color: white; }
+  .btn-promote:hover { background: #2ea043; }
+  .btn-promote-behavior { background: #d29922; color: #0d1117; }
+  .btn-promote-behavior:hover { background: #e5b144; }
+  .btn-reject { background: transparent; color: #f85149; border-color: #f85149; }
+  .btn-reject:hover { background: rgba(248, 81, 73, 0.12); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .empty-state { color: var(--text-2); font-style: italic; padding: 2em;
+                 text-align: center; background: var(--bg-1); border-radius: 8px;
+                 border: 1px solid var(--line-soft); }
+  .toast { position: fixed; bottom: 20px; right: 20px; padding: 0.7em 1em;
+           border-radius: 6px; background: var(--bg-1); border: 1px solid var(--line-soft);
+           color: var(--text-0); font-size: 0.88em; z-index: 100; max-width: 420px;
+           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+  .toast.is-error { border-color: #f85149; color: #f85149; }
+  .toast.is-success { border-color: #56d364; color: #56d364; }
+  /* Behavior-promote modal */
+  .modal-back { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
+                display: flex; align-items: center; justify-content: center;
+                z-index: 200; }
+  .modal { background: var(--bg-0); border: 1px solid var(--line-soft);
+           border-radius: 10px; padding: 1.2em 1.4em; min-width: 480px;
+           max-width: 600px; }
+  .modal h3 { margin: 0 0 0.8em; color: var(--accent); }
+  .modal label { display: block; margin: 0.7em 0 0.3em; color: var(--text-2);
+                 font-size: 0.85em; }
+  .modal input, .modal textarea, .modal select {
+    width: 100%; box-sizing: border-box; background: var(--bg-1);
+    color: var(--text-0); border: 1px solid var(--line-soft);
+    border-radius: 4px; padding: 0.4em 0.6em; font-family: inherit;
+    font-size: 0.88em;
+  }
+  .modal textarea { font-family: ui-monospace, monospace; min-height: 4em; }
+  .modal-actions { display: flex; gap: 0.6em; margin-top: 1em; justify-content: flex-end; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Review Queue · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link is-active" data-nav="review" href="/ui/review">Review</a>
+    </nav>
+
+    <main class="review-body">
+      <div class="summary">
+        <span><b id="cand-total">0</b> pending candidate(s)</span>
+        <span><b id="me-total">0</b> open maintenance event(s)</span>
+        <button id="refresh" class="btn btn-promote" style="margin-left:auto">refresh</button>
+      </div>
+      <div id="candidate-list"></div>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]
+  ));
+}
+
+function toast(msg, kind) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " is-" + kind : "");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+async function load() {
+  const ws = $("#workspaceInput").value;
+  const list = $("#candidate-list");
+  list.innerHTML = `<div class="empty-state">loading…</div>`;
+  try {
+    // Fetch full pending candidates (review_queue gives summary; we need
+    // the full payload to render evidence + decide which promote endpoint
+    // is applicable).
+    const r = await fetch("/memory/list_candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: ws, statuses: ["new"], limit: 50 }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const meRes = await fetch(
+      `/memory/list_maintenance_events?workspace_id=${encodeURIComponent(ws)}&statuses=open&limit=20`
+    ).catch(() => null);
+    let meCount = 0;
+    if (meRes && meRes.ok) {
+      const me = await meRes.json();
+      meCount = (me.events || []).length;
+    }
+    $("#cand-total").textContent = data.candidates.length;
+    $("#me-total").textContent = meCount;
+    if (!data.candidates.length) {
+      list.innerHTML = `<div class="empty-state">no pending candidates — clean queue</div>`;
+      return;
+    }
+    list.innerHTML = data.candidates.map(renderCandidate).join("");
+    list.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => doAction(btn));
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state" style="color:#f85149">load failed: ${escape(e.message)}</div>`;
+  }
+}
+
+function renderCandidate(c) {
+  const kind = c.kind;
+  const kindClass = `kind-${kind}`;
+  const trust = c.trust_level || "?";
+  const conf = (c.confidence ?? 0).toFixed(2);
+  const imp = (c.importance ?? 0).toFixed(2);
+  const observed = c.temporal && c.temporal.observed_at
+    ? new Date(c.temporal.observed_at).toLocaleString()
+    : "?";
+  // Buttons depend on kind: correction → promote_candidate_to_behavior,
+  // decision/procedural_rule/core_memory → promote_candidate, all → reject.
+  const promoteBtn = kind === "correction"
+    ? `<button class="btn btn-promote-behavior" data-action="promote-behavior" data-id="${escape(c.candidate_id)}">→ behavior</button>`
+    : `<button class="btn btn-promote" data-action="promote" data-id="${escape(c.candidate_id)}">→ ${escape(kind)}</button>`;
+  return `
+    <div class="candidate ${kindClass}" data-id="${escape(c.candidate_id)}">
+      <div class="candidate-head">
+        <div>
+          <div class="candidate-subject">${escape(c.subject)}</div>
+          <div class="meta">${escape(kind)} · trust=${escape(trust)} · conf=${conf} · imp=${imp} · observed ${escape(observed)}</div>
+        </div>
+        <div class="candidate-id">${escape(c.candidate_id)}</div>
+      </div>
+      <div class="candidate-evidence">${escape(c.evidence || "(no evidence text)")}</div>
+      <div class="candidate-actions">
+        ${promoteBtn}
+        <button class="btn btn-reject" data-action="reject" data-id="${escape(c.candidate_id)}">reject</button>
+      </div>
+    </div>`;
+}
+
+async function doAction(btn) {
+  const id = btn.dataset.id;
+  const action = btn.dataset.action;
+  if (action === "promote") return promoteSimple(btn, id);
+  if (action === "reject") return rejectCandidate(btn, id);
+  if (action === "promote-behavior") return openBehaviorModal(id);
+}
+
+async function promoteSimple(btn, id) {
+  btn.disabled = true;
+  try {
+    const r = await fetch("/memory/promote_candidate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_id: id }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    toast(`promoted ${id}`, "success");
+    await load();
+  } catch (e) {
+    btn.disabled = false;
+    toast(`promote failed: ${e.message}`, "error");
+  }
+}
+
+async function rejectCandidate(btn, id) {
+  btn.disabled = true;
+  try {
+    const r = await fetch("/memory/reject_candidate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_id: id }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    toast(`rejected ${id}`, "success");
+    await load();
+  } catch (e) {
+    btn.disabled = false;
+    toast(`reject failed: ${e.message}`, "error");
+  }
+}
+
+function openBehaviorModal(id) {
+  const ws = $("#workspaceInput").value;
+  const cand = document.querySelector(`.candidate[data-id="${id}"]`);
+  const subject = cand ? cand.querySelector(".candidate-subject").textContent : "";
+  const back = document.createElement("div");
+  back.className = "modal-back";
+  back.innerHTML = `
+    <div class="modal">
+      <h3>promote correction → behavior_instruction</h3>
+      <label>name (kebab-case, used as identity key)</label>
+      <input id="m-name" type="text" placeholder="e.g. verify-timestamps-before-claiming" />
+      <label>rule (the durable instruction; defaults to candidate subject)</label>
+      <textarea id="m-rule">${escape(subject)}</textarea>
+      <label>kind</label>
+      <select id="m-kind">
+        <option value="operating_rule" selected>operating_rule</option>
+        <option value="communication_style">communication_style</option>
+        <option value="project_convention">project_convention</option>
+        <option value="workflow_preference">workflow_preference</option>
+        <option value="role_guidance">role_guidance</option>
+      </select>
+      <label><input id="m-pinned" type="checkbox" /> pin (rides every envelope)</label>
+      <label><input id="m-overwrite" type="checkbox" /> overwrite existing same-name rule</label>
+      <div class="modal-actions">
+        <button class="btn btn-reject" id="m-cancel">cancel</button>
+        <button class="btn btn-promote-behavior" id="m-confirm">promote</button>
+      </div>
+    </div>`;
+  document.body.appendChild(back);
+  $("#m-cancel").addEventListener("click", () => back.remove());
+  $("#m-confirm").addEventListener("click", async () => {
+    const name = $("#m-name").value.trim();
+    const rule = $("#m-rule").value.trim();
+    if (!name) { toast("name is required", "error"); return; }
+    if (!rule) { toast("rule text is required", "error"); return; }
+    try {
+      const r = await fetch("/memory/promote_candidate_to_behavior", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace_id: ws,
+          candidate_id: id,
+          name,
+          rule_text_override: rule,
+          kind: $("#m-kind").value,
+          scope: "workspace",
+          priority: "user_preference",
+          conflict_policy: "current_user_wins",
+          pinned: $("#m-pinned").checked,
+          overwrite: $("#m-overwrite").checked,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+      toast(`promoted to behavior_instruction '${name}'`, "success");
+      back.remove();
+      await load();
+    } catch (e) {
+      toast(`behavior promote failed: ${e.message}`, "error");
+    }
+  });
+}
+
+$("#refresh").addEventListener("click", load);
+window.AppHeader.init({ active: "review", onWorkspaceChange: () => load() });
+</script>
+</body>
+</html>

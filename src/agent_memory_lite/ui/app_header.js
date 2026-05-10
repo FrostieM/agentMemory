@@ -24,7 +24,12 @@
  * The callback runs on initial bootstrap and every dropdown change.
  */
 (function () {
-  const NAV_BASES = { ui: "/ui", code: "/ui/code", graph: "/ui/graph" };
+  const NAV_BASES = {
+    ui: "/ui",
+    code: "/ui/code",
+    graph: "/ui/graph",
+    review: "/ui/review",
+  };
 
   async function populateWorkspaces(select, preselect) {
     try {

@@ -44,6 +44,8 @@ _ASSETS = {
     "code.html": "text/html; charset=utf-8",
     # 2.1.2: D3 force-directed graph dashboard.
     "graph.html": "text/html; charset=utf-8",
+    # 2.2 (Phase 3.3): candidate review queue with promote/reject UI.
+    "review.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -74,6 +76,12 @@ def memory_ui_code() -> FileResponse:
 def memory_ui_graph() -> FileResponse:
     """2.1.2 D3 graph dashboard backed by /memory/code_graph."""
     return _serve_html("graph.html")
+
+
+@router.get("/ui/review")
+def memory_ui_review() -> FileResponse:
+    """2.2 (Phase 3.3) candidate review page backed by /memory/review_queue."""
+    return _serve_html("review.html")
 
 
 @router.get("/ui/{asset_name}")
