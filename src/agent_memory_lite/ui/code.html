@@ -59,6 +59,31 @@
                         text-transform: uppercase; letter-spacing: 0.05em; }
   .find-results .empty { color: var(--text-2); font-style: italic;
                          padding: 0.4em 0.7em; }
+  /* Phase 3.2: file_digest drawer */
+  .code-body td.path { cursor: pointer; user-select: text; }
+  .code-body tr.expander-row td { padding: 0.7em 0.9em; background: var(--bg-0);
+                                  border-bottom: 1px solid var(--line-soft); }
+  .file-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2em;
+                 font-size: 0.85em; }
+  .file-detail h3 { margin: 0 0 0.4em; font-size: 0.78em; color: var(--text-2);
+                    text-transform: uppercase; letter-spacing: 0.06em;
+                    font-weight: 600; border-bottom: 1px solid var(--bg-2);
+                    padding-bottom: 0.2em; }
+  .file-detail .symbols { display: flex; flex-direction: column; gap: 0.15em; }
+  .file-detail .symbols a { color: #ffa657; text-decoration: none;
+                            font-family: ui-monospace, monospace;
+                            border-bottom: 1px dashed transparent; }
+  .file-detail .symbols a:hover { border-bottom-color: var(--line-soft); }
+  .file-detail .meta { color: var(--text-2); }
+  .file-detail .meta b { color: var(--text-0); font-weight: 500; }
+  .file-detail .narrative-full { color: var(--text-0); font-size: 0.85em;
+                                 grid-column: 1 / -1;
+                                 padding: 0.4em 0.6em; background: var(--bg-1);
+                                 border-radius: 4px; }
+  .file-detail .narrative-source { color: var(--text-2); font-size: 0.75em;
+                                   text-transform: uppercase;
+                                   letter-spacing: 0.06em; }
+  .file-detail .err { color: #f85149; }
 </style>
 </head>
 <body>
@@ -177,14 +202,91 @@ function renderRecent(files) {
   const tbody = $("#files-table tbody");
   if (!files.length) { tbody.innerHTML = `<tr><td colspan="6" class="empty">no files indexed</td></tr>`; return; }
   tbody.innerHTML = files.map(f => `
-    <tr>
-      <td class="path">${escape(f.file_path)}</td>
+    <tr data-file-path="${escape(f.file_path)}">
+      <td class="path" title="click to expand details">${escape(f.file_path)}</td>
       <td>${escape(f.language || "")}</td>
       <td>${f.symbol_count}</td>
       <td>${f.inbound_edge_count} / ${f.outbound_edge_count}</td>
       <td>${f.versions_recent}</td>
       <td class="narrative">${escape(f.narrative)}</td>
     </tr>`).join("");
+  // Phase 3.2: clicking the path cell toggles a sibling row with the
+  // full memory_file_digest payload (symbols, edges, narrative).
+  tbody.querySelectorAll("td.path").forEach((cell) => {
+    cell.addEventListener("click", () => toggleFileDigest(cell.parentElement));
+  });
+}
+
+const _digestCache = new Map();
+
+async function toggleFileDigest(row) {
+  const filePath = row.dataset.filePath;
+  if (!filePath) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("expander-row")) {
+    next.remove();
+    return;
+  }
+  const expander = document.createElement("tr");
+  expander.classList.add("expander-row");
+  const cell = document.createElement("td");
+  cell.colSpan = 6;
+  cell.innerHTML = `<div class="file-detail"><div class="meta">loading file_digest…</div></div>`;
+  expander.appendChild(cell);
+  row.parentElement.insertBefore(expander, row.nextSibling);
+
+  let digest = _digestCache.get(filePath);
+  if (!digest) {
+    const ws = $("#workspaceInput").value;
+    try {
+      const r = await fetch("/memory/file_digest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: ws, file_path: filePath }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      digest = await r.json();
+      _digestCache.set(filePath, digest);
+    } catch (e) {
+      cell.innerHTML = `<div class="file-detail err">file_digest failed: ${escape(e.message)}</div>`;
+      return;
+    }
+  }
+  renderDigest(cell, digest, filePath);
+}
+
+function renderDigest(cell, d, filePath) {
+  const ws = $("#workspaceInput").value;
+  const qns = (d.structured && d.structured.qualified_names) || [];
+  const symLinks = qns.map((qn) => {
+    const href = `/ui/graph?workspace_id=${encodeURIComponent(ws)}&center=${encodeURIComponent(qn)}`;
+    return `<a href="${href}">${escape(qn)}</a>`;
+  }).join("");
+  const lastIndexed = d.last_indexed_at
+    ? new Date(d.last_indexed_at).toLocaleString()
+    : "unknown";
+  const src = (d.structured && d.structured.narrative_source) || "?";
+  cell.innerHTML = `
+    <div class="file-detail">
+      <div>
+        <h3>symbols (${d.symbol_count})</h3>
+        <div class="symbols">${symLinks || '<span class="meta">none</span>'}</div>
+      </div>
+      <div>
+        <h3>edges & versions</h3>
+        <div class="meta">
+          chunks: <b>${d.chunk_count}</b><br/>
+          inbound edges: <b>${d.inbound_edge_count}</b><br/>
+          outbound edges: <b>${d.outbound_edge_count}</b><br/>
+          recent versions (7d): <b>${d.versions_recent}</b><br/>
+          last indexed: <b>${escape(lastIndexed)}</b>
+        </div>
+      </div>
+      <div class="narrative-full">
+        <span class="narrative-source">narrative · ${escape(src)}</span><br/>
+        ${escape(d.narrative || "(empty narrative)")}
+      </div>
+    </div>`;
 }
 
 function renderBreaking(items) {
