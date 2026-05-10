@@ -149,6 +149,52 @@ code, pre, .mono {
   background: var(--bg-2);
   border-color: var(--accent-soft);
 }
+.app-nav-key {
+  margin-left: 4px;
+  opacity: 0.45;
+  font-size: 9px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* ===== Phase 4.1: shared loading spinner ================================ */
+.app-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line-soft);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: app-spinner-rot 0.7s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes app-spinner-rot {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Phase 4.1: shared toast notifications ============================ */
+.app-toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 0.7em 1em;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  color: var(--text-0);
+  font-size: 0.88em;
+  z-index: 9999;
+  max-width: 420px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  animation: app-toast-in 0.18s ease-out;
+}
+.app-toast.is-error  { border-color: #f85149; color: #f85149; }
+.app-toast.is-success { border-color: #56d364; color: #56d364; }
+@keyframes app-toast-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
 
 /* ===== Main grid ========================================================= */
 

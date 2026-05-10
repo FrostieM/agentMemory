@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — code graph</title>
-<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-polish" />
 <style>
   /* Phase 2.3: graph viewport fills the remaining flex-column space
      under the shared .app-header + .app-nav strip. The .app wrapper has
@@ -107,6 +107,7 @@
   };
 
   function status(msg, isError = false) {
+    // Phase 4.1: msg may already contain HTML (e.g. spinner span); inject as-is.
     $("#status").innerHTML = isError ? `<span class="error">${msg}</span>` : msg;
   }
 
@@ -136,7 +137,7 @@
     const center = $("#center-input").value.trim();
     const depth = $("#depth-input").value;
     const maxNodes = $("#max-input").value;
-    status("loading...");
+    status('<span class="app-spinner"></span>loading...');
 
     const params = new URLSearchParams({
       workspace_id: ws, depth, max_nodes: maxNodes,

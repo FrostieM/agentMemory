@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — browse memory</title>
-<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-polish" />
 <style>
   /* Phase 3.6: generic browse page over decisions / theories /
      insights / behavior_instructions. One layout, kind dropdown
@@ -223,7 +223,7 @@ async function load() {
   const historical = $("#historical-input").checked;
   const cfg = KIND_CONFIG[kind];
   const list = $("#browse-list");
-  list.innerHTML = `<div class="empty-state">loading…</div>`;
+  list.innerHTML = `<div class="empty-state"><span class="app-spinner"></span>loading…</div>`;
   $("#browse-summary").textContent = "";
   $("#status").textContent = "";
 

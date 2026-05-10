@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — code overview</title>
-<link rel="stylesheet" href="/ui/styles.css?v=20260510-app-nav" />
+<link rel="stylesheet" href="/ui/styles.css?v=20260510-polish" />
 <style>
   /* Phase 2.3 (v2.2 consolidation): the page hosts data tables that
      index.html doesn't have, so a small per-page stylesheet adds the
@@ -210,7 +210,7 @@ const $ = (s) => document.querySelector(s);
 async function load() {
   const ws = $("#workspaceInput").value || "default";
   const days = parseInt($("#days-input").value || "7", 10);
-  $("#status").textContent = "loading...";
+  $("#status").innerHTML = `<span class="app-spinner"></span>loading...`;
   $("#days-label").textContent = days;
   try {
     const r = await fetch(
@@ -461,7 +461,7 @@ async function runFind() {
     return;
   }
   panel.hidden = false;
-  panel.innerHTML = `<div class="empty">searching…</div>`;
+  panel.innerHTML = `<div class="empty"><span class="app-spinner"></span>searching…</div>`;
   try {
     const r = await fetch("/memory/find_symbols", {
       method: "POST",

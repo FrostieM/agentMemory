@@ -89,6 +89,105 @@
     });
   }
 
+  // Phase 4.1: shared toast helper. Other pages can call
+  // window.AppHeader.toast(msg, "success" | "error" | "") for inline
+  // notifications without rolling their own DOM/CSS.
+  function toast(msg, kind) {
+    const t = document.createElement("div");
+    t.className = "app-toast" + (kind ? " is-" + kind : "");
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => {
+      t.style.transition = "opacity 0.25s";
+      t.style.opacity = "0";
+      setTimeout(() => t.remove(), 260);
+    }, 3500);
+  }
+
+  // Phase 4.2: keyboard shortcuts. Single-key navigation between pages
+  // when the focus is not in a text-editable element.
+  //   "/" → focus the page's search box (id="find-input" or "query-input"
+  //         or the first <input type=text> inside .browse-controls)
+  //   "o" → /ui   "c" → /ui/code   "g" → /ui/graph
+  //   "r" → /ui/review   "b" → /ui/browse
+  //   "?" → toggle a small help overlay
+  function isEditable(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    return el.isContentEditable === true;
+  }
+
+  function navigate(target, currentSelect) {
+    const ws = currentSelect && currentSelect.value;
+    const base = NAV_BASES[target];
+    if (!base) return;
+    const u = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
+    location.href = u;
+  }
+
+  function focusSearch() {
+    const candidates = ["#find-input", "#query-input", ".find-symbols input"];
+    for (const sel of candidates) {
+      const el = document.querySelector(sel);
+      if (el) { el.focus(); el.select && el.select(); return; }
+    }
+  }
+
+  function showHelp() {
+    if (document.getElementById("app-help-overlay")) {
+      document.getElementById("app-help-overlay").remove();
+      return;
+    }
+    const back = document.createElement("div");
+    back.id = "app-help-overlay";
+    back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.7);"
+      + "display:flex;align-items:center;justify-content:center;z-index:9998;";
+    back.innerHTML = `
+      <div style="background:var(--bg-0);border:1px solid var(--line-soft);
+                  border-radius:10px;padding:1.4em 1.6em;font-size:0.92em;
+                  font-family:ui-monospace,monospace;color:var(--text-0);
+                  box-shadow:0 4px 14px rgba(0,0,0,0.5);">
+        <h3 style="margin:0 0 0.6em;color:var(--accent);font-size:1em">keyboard shortcuts</h3>
+        <table style="border-collapse:collapse">
+          <tr><td style="padding:0.2em 0.6em">/</td><td>focus search</td></tr>
+          <tr><td style="padding:0.2em 0.6em">o</td><td>Observatory  (/ui)</td></tr>
+          <tr><td style="padding:0.2em 0.6em">c</td><td>Code         (/ui/code)</td></tr>
+          <tr><td style="padding:0.2em 0.6em">g</td><td>Graph        (/ui/graph)</td></tr>
+          <tr><td style="padding:0.2em 0.6em">r</td><td>Review       (/ui/review)</td></tr>
+          <tr><td style="padding:0.2em 0.6em">b</td><td>Browse       (/ui/browse)</td></tr>
+          <tr><td style="padding:0.2em 0.6em">?</td><td>this overlay</td></tr>
+          <tr><td style="padding:0.2em 0.6em">esc</td><td>close overlay</td></tr>
+        </table>
+        <div style="margin-top:0.8em;color:var(--text-2);font-size:0.78em">
+          shortcuts ignored when typing in a text field.
+        </div>
+      </div>`;
+    back.addEventListener("click", () => back.remove());
+    document.body.appendChild(back);
+  }
+
+  function bindKeyboardShortcuts(select) {
+    document.addEventListener("keydown", (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "Escape") {
+        const overlay = document.getElementById("app-help-overlay");
+        if (overlay) { overlay.remove(); e.preventDefault(); }
+        return;
+      }
+      if (isEditable(e.target)) return;
+      switch (e.key) {
+        case "/": focusSearch(); e.preventDefault(); break;
+        case "?": showHelp(); e.preventDefault(); break;
+        case "o": navigate("ui",    select); break;
+        case "c": navigate("code",  select); break;
+        case "g": navigate("graph", select); break;
+        case "r": navigate("review", select); break;
+        case "b": navigate("browse", select); break;
+      }
+    });
+  }
+
   async function init(options) {
     const opts = options || {};
     const select = document.getElementById("workspaceInput");
@@ -107,10 +206,11 @@
       });
     }
     refreshChips();
+    bindKeyboardShortcuts(select);
     if (typeof opts.onWorkspaceChange === "function" && select) {
       opts.onWorkspaceChange(select.value);
     }
   }
 
-  window.AppHeader = { init };
+  window.AppHeader = { init, toast };
 })();
