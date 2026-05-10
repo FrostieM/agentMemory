@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
+from agent_memory_lite.api.schemas.decisions import CapabilitySuggestionPayload
 from agent_memory_lite.models.enums import TheoryEvidenceKind, TheoryStatus
 
 
@@ -57,6 +58,10 @@ class TheoryResponse(BaseModel):
     created_at: str
     updated_at: str
     last_tested_at: str | None
+    # Move 4 (v2.2): write_theory route populates the top-3 workspace
+    # capabilities ranked by token overlap with the theory's claim +
+    # mechanism. list_theories / individual fetches leave it empty.
+    capability_suggestions: list[CapabilitySuggestionPayload] = Field(default_factory=list)
 
 
 class AddTheoryEvidenceRequest(BaseModel):

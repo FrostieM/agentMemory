@@ -97,3 +97,69 @@ def test_add_evidence_unknown_theory_returns_404(client: TestClient) -> None:
         },
     )
     assert response.status_code == 404
+
+
+# ---------- 2.2 Move 4: capability suggestions on write_theory ----------
+
+
+def test_write_theory_returns_capability_suggestions(client: TestClient) -> None:
+    """When a workspace skill token-overlaps the theory's title + claim +
+    mechanism, write_theory's response surfaces it in capability_suggestions.
+    Mirrors the Move 3 hint on write_decision / record_with_evidence."""
+    skill = client.post(
+        "/memory/upsert_agent_skill",
+        json={
+            "workspace_id": "default",
+            "name": "Source-flip replay",
+            "summary": "tennis source-flip replay cohort design",
+            "when_to_use": ["replay source-flip trades"],
+            "tools": [],
+        },
+    )
+    assert skill.status_code == 200, skill.text
+
+    response = client.post(
+        "/memory/write_theory",
+        json={
+            "workspace_id": "default",
+            "title": "Source-flip tennis favorites",
+            "domain": "trading.paper.edge",
+            "claim": "Source-flip trades on tennis favorites may have positive edge.",
+            "mechanism": "Source wallet reacts before the public odds fully adjust.",
+            "predictions": ["favorite-side outperforms underdog-side"],
+            "validation_criteria": ["minimum 100 settled trades"],
+            "tags": ["trading-bot", "source-flip"],
+            "status": "testing",
+            "confidence": 0.3,
+            "importance": 0.9,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    suggestions = body["capability_suggestions"]
+    assert isinstance(suggestions, list)
+    assert len(suggestions) >= 1
+    top = suggestions[0]
+    assert top["capability_type"] == "skill"
+    assert top["capability_name"] == "Source-flip replay"
+    assert top["score"] > 0.0
+    assert top["snippet"]
+
+
+def test_write_theory_returns_empty_suggestions_when_no_capabilities(
+    client: TestClient,
+) -> None:
+    """No agent_skill / agent_role / agent_playbook in the workspace ->
+    capability_suggestions is an empty list, not missing or null."""
+    response = client.post(
+        "/memory/write_theory",
+        json={
+            "workspace_id": "default",
+            "title": "Isolated theory",
+            "domain": "general",
+            "claim": "Edge case with no capabilities seeded.",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["capability_suggestions"] == []

@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writable
+from agent_memory_lite.api.routes._capability_suggest_payload import (
+    capability_suggestion_payloads,
+)
 from agent_memory_lite.api.routes.theory_list import router as list_router
 from agent_memory_lite.api.routes.theory_responses import (
     to_evidence_response,
@@ -95,8 +98,26 @@ def write_theory_route(
             action="created",
             label="Theory written",
         )
+        # Move 4 (v2.2): rank workspace capabilities by token overlap
+        # with the theory's title + claim + mechanism and surface top-3
+        # in the response. Read-only hint, never auto-links — same
+        # contract as Move 3 for decisions.
         response = to_theory_response(theory)
-        trace.stage_done("response", "Theory response ready", counts={"theory_id": theory.id})
+        response.capability_suggestions = capability_suggestion_payloads(
+            conn,
+            workspace_id=body.workspace_id,
+            title=body.title,
+            text=body.claim,
+            rationale=body.mechanism,
+        )
+        trace.stage_done(
+            "response",
+            "Theory response ready",
+            counts={
+                "theory_id": theory.id,
+                "capability_suggestions": len(response.capability_suggestions),
+            },
+        )
         return response
 
 
