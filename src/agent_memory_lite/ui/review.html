@@ -144,16 +144,19 @@ async function load() {
   try {
     // Fetch full pending candidates (review_queue gives summary; we need
     // the full payload to render evidence + decide which promote endpoint
-    // is applicable).
+    // is applicable). The X-Memory-DB-Path header from AppHeader.jsonHeaders
+    // routes the request to the right physical DB in hub mode; without it
+    // the server falls back to settings.db_path and the row is invisible.
     const r = await fetch("/memory/list_candidates", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: window.AppHeader.jsonHeaders(ws),
       body: JSON.stringify({ workspace_id: ws, statuses: ["new"], limit: 50 }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     const meRes = await fetch(
-      `/memory/list_maintenance_events?workspace_id=${encodeURIComponent(ws)}&statuses=open&limit=20`
+      `/memory/list_maintenance_events?workspace_id=${encodeURIComponent(ws)}&statuses=open&limit=20`,
+      { headers: window.AppHeader.dbHeaders(ws) }
     ).catch(() => null);
     let meCount = 0;
     if (meRes && meRes.ok) {
@@ -215,11 +218,12 @@ async function doAction(btn) {
 }
 
 async function promoteSimple(btn, id) {
+  const ws = $("#workspaceInput").value;
   btn.disabled = true;
   try {
     const r = await fetch("/memory/promote_candidate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: window.AppHeader.jsonHeaders(ws),
       body: JSON.stringify({ candidate_id: id }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
@@ -232,11 +236,12 @@ async function promoteSimple(btn, id) {
 }
 
 async function rejectCandidate(btn, id) {
+  const ws = $("#workspaceInput").value;
   btn.disabled = true;
   try {
     const r = await fetch("/memory/reject_candidate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: window.AppHeader.jsonHeaders(ws),
       body: JSON.stringify({ candidate_id: id }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
@@ -286,7 +291,7 @@ function openBehaviorModal(id) {
     try {
       const r = await fetch("/memory/promote_candidate_to_behavior", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: window.AppHeader.jsonHeaders(ws),
         body: JSON.stringify({
           workspace_id: ws,
           candidate_id: id,

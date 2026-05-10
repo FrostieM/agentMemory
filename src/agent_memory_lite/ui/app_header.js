@@ -32,16 +32,30 @@
     browse: "/ui/browse",
   };
 
+  // Workspace registry cache: id -> { db_path, vector_path, label }.
+  // Populated by populateWorkspaces; consumed by routeFor() / dbHeaders()
+  // so any UI page can attach X-Memory-DB-Path to API calls and route
+  // hub-mode HTTP requests to the right physical DB. Without this, the
+  // server falls back to settings.db_path and POST /memory/promote_candidate
+  // 404s because the candidate lives in a foreign DB.
+  const workspaceRegistry = new Map();
+
   async function populateWorkspaces(select, preselect) {
     try {
       const r = await fetch("/memory/workspaces");
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       select.innerHTML = "";
+      workspaceRegistry.clear();
       const target =
         preselect || data.current_workspace_id ||
         (data.workspaces[0] && data.workspaces[0].id);
       for (const w of data.workspaces || []) {
+        workspaceRegistry.set(w.id, {
+          db_path: w.db_path || "",
+          vector_path: w.vector_path || "",
+          label: w.label || "",
+        });
         const opt = document.createElement("option");
         opt.value = w.id;
         opt.textContent =
@@ -52,6 +66,24 @@
     } catch (_e) {
       select.innerHTML = `<option value="${preselect || "default"}">${preselect || "default"}</option>`;
     }
+  }
+
+  function routeFor(id) {
+    return id ? workspaceRegistry.get(id) || null : null;
+  }
+
+  function dbHeaders(id) {
+    const r = routeFor(id);
+    const h = {};
+    if (r) {
+      if (r.db_path) h["X-Memory-DB-Path"] = r.db_path;
+      if (r.vector_path) h["X-Memory-Vector-Path"] = r.vector_path;
+    }
+    return h;
+  }
+
+  function jsonHeaders(id) {
+    return Object.assign({ "Content-Type": "application/json" }, dbHeaders(id));
   }
 
   async function refreshChips() {
@@ -212,5 +244,5 @@
     }
   }
 
-  window.AppHeader = { init, toast };
+  window.AppHeader = { init, toast, routeFor, dbHeaders, jsonHeaders };
 })();
