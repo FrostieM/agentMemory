@@ -8,6 +8,8 @@ schemas live in their own module to keep the route file under SLOC.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_memory_lite.api.schemas._text_guard import SafeText, SafeTextOptional
@@ -83,4 +85,7 @@ class RecordWithEvidenceResponse(BaseModel):
     # Move 3: server-ranked capability suggestions, only populated when
     # the caller did NOT pass the capability triplet (i.e. no link was
     # made). Empty list when the workspace has no matching capabilities.
-    capability_suggestions: list = Field(default_factory=list)
+    # Element shape: dict with keys capability_type / capability_id /
+    # capability_name / score / snippet (see ``CapabilitySuggestionPayload``
+    # for the typed equivalent on the decision route).
+    capability_suggestions: list[dict[str, Any]] = Field(default_factory=list)
