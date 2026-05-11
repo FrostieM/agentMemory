@@ -111,7 +111,9 @@ def audit_theories(c: sqlite3.Connection) -> None:
     kv("active w/o evidence", len(no_ev))
     weak = [r for r in rows if 0 < (r[2] or 0) < 3 and r[1] not in {"archived", "rejected"}]
     kv("active w/ <3 evidence (under bridge threshold)", len(weak))
-    tested_age = Counter(bucket(age_days(r[5])) for r in rows if r[1] not in {"archived", "rejected"})
+    tested_age = Counter(
+        bucket(age_days(r[5])) for r in rows if r[1] not in {"archived", "rejected"}
+    )
     print(f"  last_tested_at bucket    : {dict(tested_age)}")
 
 
@@ -134,9 +136,11 @@ def audit_behavior(c: sqlite3.Connection) -> None:
         zero = sum(1 for ac in counts if ac == 0)
         kv("active w/ application_count=0 (never fired)", zero)
         kv("active w/ application_count≥10 (workhorses)", sum(1 for ac in counts if ac >= 10))
-        print(f"  application_count buckets: ≤2={sum(1 for ac in counts if ac<=2)}, "
-              f"3-9={sum(1 for ac in counts if 3<=ac<=9)}, "
-              f"≥10={sum(1 for ac in counts if ac>=10)}")
+        print(
+            f"  application_count buckets: ≤2={sum(1 for ac in counts if ac <= 2)}, "
+            f"3-9={sum(1 for ac in counts if 3 <= ac <= 9)}, "
+            f"≥10={sum(1 for ac in counts if ac >= 10)}"
+        )
     last_applied_bucket = Counter(bucket(age_days(r[6])) for r in active)
     print(f"  last_applied_at bucket   : {dict(last_applied_bucket)}")
     # conflict group dups
@@ -160,11 +164,11 @@ def audit_capabilities(c: sqlite3.Connection, table: str, kind: str) -> None:
     for r in never_used[:5]:
         print(f"    - {r[1]} (id={r[0]})")
     if any((r[3] or 0) > 0 for r in active):
-        top = sorted(active, key=lambda r: (r[3] or 0), reverse=True)[:5]
-        print(f"  top-5 by usage_count:")
+        top = sorted(active, key=lambda r: r[3] or 0, reverse=True)[:5]
+        print("  top-5 by usage_count:")
         for r in top:
             print(
-                f"    {r[3]:3d}× {r[1]} "
+                f"    {r[3]:3d}x {r[1]} "
                 f"(success={r[4] or 0}, fail={r[5] or 0}, last={r[6] or 'never'})"
             )
 
@@ -188,8 +192,8 @@ def audit_candidates_lifetime(c: sqlite3.Connection) -> None:
         prm = dist.get("promoted", 0)
         nw = dist.get("new", 0)
         print(
-            f"    {k:14s} n={n:3d}  promote={prm:3d} ({prm/n*100:5.1f}%)  "
-            f"reject={rej:3d} ({rej/n*100:5.1f}%)  new={nw}"
+            f"    {k:14s} n={n:3d}  promote={prm:3d} ({prm / n * 100:5.1f}%)  "
+            f"reject={rej:3d} ({rej / n * 100:5.1f}%)  new={nw}"
         )
 
 
@@ -242,8 +246,7 @@ def audit_episodes_chunks(c: sqlite3.Connection) -> None:
     kv("episodes total / archived", f"{ep_total} / {ep_arch}")
     kv("chunks total / archived", f"{ch_total} / {ch_arch}")
     cold_rows = c.execute(
-        "SELECT last_retrieved_at FROM chunks "
-        "WHERE workspace_id=? AND is_archived=0",
+        "SELECT last_retrieved_at FROM chunks WHERE workspace_id=? AND is_archived=0",
         (WORKSPACE,),
     ).fetchall()
     cold_buckets = Counter(bucket(age_days(r[0])) for r in cold_rows)
@@ -275,9 +278,12 @@ def audit_feedback(c: sqlite3.Connection) -> None:
     # Schema may differ across migrations; introspect columns first.
     cols = {row[1] for row in c.execute("PRAGMA table_info(memory_usage_feedback)").fetchall()}
     signal_col = (
-        "delta" if "delta" in cols
-        else "signal" if "signal" in cols
-        else "value" if "value" in cols
+        "delta"
+        if "delta" in cols
+        else "signal"
+        if "signal" in cols
+        else "value"
+        if "value" in cols
         else None
     )
     source_type_col = "source_type" if "source_type" in cols else "kind" if "kind" in cols else None
@@ -300,9 +306,9 @@ def audit_feedback(c: sqlite3.Connection) -> None:
             print(f"  signal sign distribution : +={pos}, -={neg}")
 
 
-def main() -> int:  # noqa: PLR0915 - linear audit script, per-section narrative is the value
+def main() -> int:
     path = db_path()
-    print(f"=== copyBot usage + effectiveness audit ===")
+    print("=== copyBot usage + effectiveness audit ===")
     print(f"db: {path}")
     print(f"as of: {NOW.isoformat()}")
     with open_ro(path) as c:
