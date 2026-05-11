@@ -69,10 +69,14 @@ def maybe_track_behavior_application(
     request_workspace_id: str,
     built: BuiltContext,
 ) -> None:
-    """v1.5: bump behavior_instructions.application_count for own-workspace reads."""
+    """v1.5 hub-mode-aware: bump application_count for the served workspace.
+
+    Strict mode keeps the legacy anchor guard; hub mode trusts the
+    DbDep route via X-Memory-DB-Path so it stamps regardless of anchor.
+    """
     if not settings.behavior_apply_tracking_enabled:
         return
-    if request_workspace_id != settings.workspace_id:
+    if not settings.hub_mode and request_workspace_id != settings.workspace_id:
         return
     if built.behavior_instructions is None:
         return
@@ -90,10 +94,15 @@ def maybe_track_last_retrieved(
     request_workspace_id: str,
     built: BuiltContext,
 ) -> None:
-    """v1.6: stamp last_retrieved_at on top-K rows for the cold scanner."""
+    """v1.6 hub-mode-aware: stamp last_retrieved_at on top-K rows.
+
+    Same hub-mode shape as maybe_schedule_sentinels. Pre-fix the anchor
+    guard killed cold tracking for any non-anchor workspace, so 524
+    get_context calls against a foreign workspace stamped nothing.
+    """
     if not settings.cold_tracking_enabled:
         return
-    if request_workspace_id != settings.workspace_id:
+    if not settings.hub_mode and request_workspace_id != settings.workspace_id:
         return
     updates = [
         RetrievalUpdate(kind="chunk", ids=tuple(hit.id for hit in built.hits)),

@@ -120,3 +120,119 @@ def test_hub_mode_resolves_db_path_from_connection(
         f"hub-mode scheduler used singleton db_path instead of request-scoped one: "
         f"got {captured_path}, expected {expected_path}"
     )
+
+
+# ---------- hub-mode regression tests for cold tracking + behavior_apply ---
+
+
+def _empty_built_context() -> object:
+    """Tiny BuiltContext stub with empty top-K lists. Only fields touched
+    by the hooks under test are populated."""
+    from agent_memory_lite.retrieval.context_builder_models import BuiltContext  # noqa: PLC0415
+
+    return BuiltContext(text="", hits=[], facts=[], normalized=None)  # type: ignore[arg-type]
+
+
+def test_hub_mode_last_retrieved_fires_for_foreign_workspace(
+    applied_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In hub mode, maybe_track_last_retrieved must stamp even when the
+    request workspace != service anchor. Pre-fix the anchor guard killed
+    cold tracking for every non-anchor request, so 524 get_context calls
+    against copyBot from an agentLight-anchored service stamped nothing."""
+    recorded: list[tuple[str, str]] = []
+
+    def fake_mark_retrieved(conn, *, workspace_id, updates, audit_batch_size):
+        recorded.append(("called", workspace_id))
+
+    monkeypatch.setattr(context_post_build, "mark_retrieved", fake_mark_retrieved)
+    context_post_build.maybe_track_last_retrieved(
+        applied_conn,
+        settings=Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            OLLAMA_PROBE_SKIP="true",
+            MEMORY_HUB_MODE="true",
+            MEMORY_WORKSPACE_ID="anchor",
+            MEMORY_COLD_TRACKING_ENABLED="true",
+        ),
+        request_workspace_id="copyBot",
+        built=_empty_built_context(),  # type: ignore[arg-type]
+    )
+    assert recorded == [("called", "copyBot")], (
+        "hub-mode last_retrieved tracker skipped a foreign workspace"
+    )
+
+
+def test_project_mode_last_retrieved_skips_foreign_workspace(
+    applied_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Project mode keeps the legacy guard. Foreign workspace = skip."""
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        context_post_build,
+        "mark_retrieved",
+        lambda conn, **kw: recorded.append(("called", kw["workspace_id"])),
+    )
+    context_post_build.maybe_track_last_retrieved(
+        applied_conn,
+        settings=Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            OLLAMA_PROBE_SKIP="true",
+            MEMORY_HUB_MODE="false",
+            MEMORY_WORKSPACE_ID="anchor",
+            MEMORY_COLD_TRACKING_ENABLED="true",
+        ),
+        request_workspace_id="copyBot",
+        built=_empty_built_context(),  # type: ignore[arg-type]
+    )
+    assert recorded == [], "project mode stamped a foreign workspace"
+
+
+def test_hub_mode_behavior_apply_fires_for_foreign_workspace(
+    applied_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same hub-mode-aware fix on the behavior_apply hook."""
+    recorded: list[tuple[str, list[str]]] = []
+
+    def fake_mark(conn, *, workspace_id, instruction_ids):
+        recorded.append((workspace_id, list(instruction_ids)))
+
+    monkeypatch.setattr(context_post_build, "mark_behavior_instructions_applied", fake_mark)
+    from dataclasses import dataclass  # noqa: PLC0415
+
+    from agent_memory_lite.retrieval.context_builder_models import BuiltContext  # noqa: PLC0415
+
+    @dataclass(frozen=True)
+    class _StubInstr:
+        id: str = "beh_x"
+
+    @dataclass(frozen=True)
+    class _StubSet:
+        instructions: list = None  # type: ignore[assignment]
+
+    bi_set = _StubSet(instructions=[_StubInstr()])
+    built = BuiltContext(
+        text="",
+        hits=[],
+        facts=[],
+        normalized=None,
+        behavior_instructions=bi_set,  # type: ignore[arg-type]
+    )
+    context_post_build.maybe_track_behavior_application(
+        applied_conn,
+        settings=Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            OLLAMA_PROBE_SKIP="true",
+            MEMORY_HUB_MODE="true",
+            MEMORY_WORKSPACE_ID="anchor",
+            MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED="true",
+        ),
+        request_workspace_id="copyBot",
+        built=built,
+    )
+    assert recorded == [("copyBot", ["beh_x"])], (
+        "hub-mode behavior_apply tracker skipped a foreign workspace"
+    )

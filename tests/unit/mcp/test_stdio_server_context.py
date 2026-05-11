@@ -55,6 +55,12 @@ def test_get_context_falls_back_to_fts_only_without_loading_provider(
 
         def execute(self, sql: str, *_: object) -> object:
             class _Cursor:
+                # rowcount is read by retrieval/last_retrieved_tracker
+                # _update_kind. Post-hub-mode-fix the post_build hook chain
+                # runs for any workspace via hub-mode, including foreign
+                # ones, so the stub must support that signal.
+                rowcount = 0
+
                 def fetchone(self) -> tuple[int, ...]:
                     return (0,)
 
