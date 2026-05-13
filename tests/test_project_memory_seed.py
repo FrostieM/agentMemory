@@ -29,11 +29,16 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     # 1.2.4: added second rule — search-before-write discipline.
     # 2.2 (Phase 1.2 of v2.2 consolidation, 2026-05-10): added
     # memory-first-before-edit and no-unauthorized-git-push discipline
-    # rules; the latter two are pinned by default. All seeded BIs must be
-    # project-AGNOSTIC (no language, personality, or project-specific
-    # behavior). Project-specific rules remain operator-driven via
+    # rules; the latter two are pinned by default.
+    # 2.2.x (2026-05-13): added three cross-project enforcement rules —
+    # applies-to-checklist-must-be-stated-verbatim,
+    # verification-claims-must-cite-prod-evidence,
+    # memory-write-is-not-done-until-candidates-resolved; all three
+    # pinned. Total seed BIs = 7. All seeded BIs must be project-AGNOSTIC
+    # (no language, personality, or project-specific behavior).
+    # Project-specific rules remain operator-driven via
     # memory_upsert_behavior_instruction.
-    assert result.behavior_instructions_written == 4
+    assert result.behavior_instructions_written == 7
     assert [item.name for item in result.skills] == ["Memory population discipline"]
     assert [item.name for item in result.playbooks] == ["Neutral memory bootstrap"]
     assert {item.name for item in result.concepts} == {
@@ -47,10 +52,13 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
         "Search before write — auto-inject is not exhaustive",
         "Memory-first before reading or editing source",
         "No git commit/push/CI without explicit operator permission",
+        "applies-to-checklist-must-be-stated-verbatim",
+        "verification-claims-must-cite-prod-evidence",
+        "memory-write-is-not-done-until-candidates-resolved",
     }
 
     assert _count(applied_conn, "agent_roles", "project-x") == 0
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 4
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 7
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
@@ -71,7 +79,7 @@ def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connect
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 4
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 7
 
 
 def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) -> None:
@@ -91,13 +99,16 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "active, pinned, applies_to_json FROM behavior_instructions "
         "WHERE workspace_id='project-x' ORDER BY name"
     ).fetchall()
-    assert len(rows) == 4
+    assert len(rows) == 7
     names = {r["name"] for r in rows}
     assert names == {
         "Link capability after every decision and theory write",
         "Search before write — auto-inject is not exhaustive",
         "Memory-first before reading or editing source",
         "No git commit/push/CI without explicit operator permission",
+        "applies-to-checklist-must-be-stated-verbatim",
+        "verification-claims-must-cite-prod-evidence",
+        "memory-write-is-not-done-until-candidates-resolved",
     }
     # Every seed BI must share the canonical seed-bootstrap source_type and
     # be active immediately so it shows up in the envelope.
@@ -106,12 +117,16 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         assert row["source_type"] == "seed_bootstrap", row["name"]
         assert row["active"] in (1, True), row["name"]
 
-    # Pinned subset (Phase 1.2 of v2.2 consolidation): memory-first and
-    # no-push must ride every active envelope regardless of query.
+    # Pinned subset (Phase 1.2 of v2.2 consolidation: memory-first + no-push;
+    # v2.2.x 2026-05-13: applies-to-checklist + verification-cite + write-resolve).
+    # All five pinned rules must ride every active envelope regardless of query.
     pinned_names = {r["name"] for r in rows if bool(r["pinned"])}
     assert pinned_names == {
         "Memory-first before reading or editing source",
         "No git commit/push/CI without explicit operator permission",
+        "applies-to-checklist-must-be-stated-verbatim",
+        "verification-claims-must-cite-prod-evidence",
+        "memory-write-is-not-done-until-candidates-resolved",
     }
 
     # The capability-link rule applies_to research-mutating APIs

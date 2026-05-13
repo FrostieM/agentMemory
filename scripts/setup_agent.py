@@ -41,6 +41,10 @@ from textwrap import dedent
 
 import httpx
 
+from agent_memory_lite.bootstrap.project_pre_commit_hook import (
+    install_project_pre_commit_hook,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_context.py"
@@ -651,6 +655,27 @@ def configure_project(  # noqa: PLR0912, PLR0915
     )
     if seed_bootstrap:
         seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
+
+    hook_result = install_project_pre_commit_hook(
+        repo_root=REPO_ROOT, project_root=project_root, workspace_id=workspace_id
+    )
+    status = hook_result["status"]
+    hook_path = hook_result.get("hook_path")
+    if status == "installed":
+        ok(f"pre-commit auto-ingest hook installed at {hook_path}")
+    elif status == "refreshed":
+        ok(f"pre-commit auto-ingest hook refreshed at {hook_path} (workspace_id={workspace_id})")
+    elif status == "unchanged":
+        info(f"pre-commit auto-ingest hook already up to date at {hook_path}")
+    elif status == "skipped_no_git":
+        info(
+            f"pre-commit auto-ingest hook skipped: {project_root} is not a git working tree"
+        )
+    elif status == "skipped_no_template":
+        warn(
+            "pre-commit auto-ingest hook template missing in repo "
+            "(scripts/git_hooks/pre-commit)"
+        )
 
 
 def emit_generic_snippets(diag: Diagnosis) -> None:

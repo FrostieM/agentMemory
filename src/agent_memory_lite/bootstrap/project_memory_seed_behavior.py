@@ -24,6 +24,13 @@ in the appropriate submodule, then append it to ``DISCIPLINE_FACTORIES``
 
 from __future__ import annotations
 
+from agent_memory_lite.bootstrap.project_memory_seed_behavior_post_write import (
+    memory_write_resolve_candidates_instruction,
+)
+from agent_memory_lite.bootstrap.project_memory_seed_behavior_pre_action import (
+    applies_to_checklist_verbatim_instruction,
+    verification_claims_cite_evidence_instruction,
+)
 from agent_memory_lite.bootstrap.project_memory_seed_behavior_workflow import (
     memory_first_before_edit_instruction,
     no_unauthorized_git_push_instruction,
@@ -36,10 +43,13 @@ from agent_memory_lite.bootstrap.project_memory_seed_behavior_writes import (
 __all__ = [
     "DISCIPLINE_FACTORIES",
     "PINNED_DISCIPLINE_FACTORIES",
+    "applies_to_checklist_verbatim_instruction",
     "link_capability_discipline_instruction",
     "memory_first_before_edit_instruction",
+    "memory_write_resolve_candidates_instruction",
     "no_unauthorized_git_push_instruction",
     "search_before_write_discipline_instruction",
+    "verification_claims_cite_evidence_instruction",
 ]
 
 
@@ -50,6 +60,9 @@ DISCIPLINE_FACTORIES = (
     search_before_write_discipline_instruction,
     memory_first_before_edit_instruction,
     no_unauthorized_git_push_instruction,
+    applies_to_checklist_verbatim_instruction,
+    verification_claims_cite_evidence_instruction,
+    memory_write_resolve_candidates_instruction,
 )
 
 
@@ -60,4 +73,7 @@ DISCIPLINE_FACTORIES = (
 PINNED_DISCIPLINE_FACTORIES = (
     memory_first_before_edit_instruction,
     no_unauthorized_git_push_instruction,
+    applies_to_checklist_verbatim_instruction,
+    verification_claims_cite_evidence_instruction,
+    memory_write_resolve_candidates_instruction,
 )

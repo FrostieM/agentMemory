@@ -41,17 +41,24 @@ def memory_first_before_edit_instruction(
         workspace_id=workspace_id,
         name="Memory-first before reading or editing source",
         rule=(
-            "Before deeply reading or editing any source file in this "
-            "workspace, first call memory_file_digest(file_path) to see "
-            "what memory already knows: symbols, in/out edges, narrative, "
-            "recent versions. For symbol lookup, prefer memory_find_symbols "
-            "over Grep — it is qualified-name-aware. For 'who depends on X', "
-            "use memory_graph_neighbors instead of full-text search. Fall "
-            "back to bare Read/Grep only when memory yields nothing or the "
-            "file isn't indexed yet (memory_ingest_file fixes that). "
-            "Skipping this step is the same adoption gap the v1.10 "
-            "correction loop was built to catch — and the agent is the "
-            "first one who must close it."
+            "TRIGGER: before any Read / Grep / Glob / Edit / Write on a source file in "
+            "this workspace, and before answering a question that requires reading code.\n\n"
+            "ACTION:\n"
+            "  1. CALL memory_file_digest(file_path) FIRST. Returns: chunk_count, "
+            "symbol kinds, in/out edges, recent versions, narrative.\n"
+            "  2. IF digest returned found=false: you MUST call "
+            "memory_ingest_file(path, content) BEFORE any Read/Grep/Edit. "
+            "Re-ingest is idempotent (content_hash skip). NEVER fallback to "
+            "bare Read/Grep on a missing-from-index file — that is the loophole "
+            "this rule closes.\n"
+            "  3. FOR EACH function you are about to modify: call "
+            "memory_symbol_history(qualified_name) AND memory_breaking_changes(since_days=7). "
+            "This gives WHAT changed, WHEN, and (via paired decisions/episodes) WHY.\n"
+            "  4. FOR symbol lookup: prefer memory_find_symbols over Grep (qualified-name-aware).\n"
+            "  5. FOR 'who depends on X' questions: use memory_graph_neighbors, not full-text search.\n\n"
+            "KEY INVARIANT: Read/Grep on an un-indexed file is silently making memory "
+            "obsolete. The indexed copy is where 'when and why' lives — bypass it once "
+            "and the next agent has no history."
         ),
         kind=BehaviorInstructionKind.WORKFLOW_PREFERENCE,
         scope=BehaviorInstructionScope.WORKSPACE,
@@ -59,16 +66,22 @@ def memory_first_before_edit_instruction(
         conflict_policy=BehaviorConflictPolicy.HIGHER_PRIORITY_WINS,
         rationale=(
             "Self-audit 2026-05-10: agent shipped a 4-file UI patch via "
-            "Read+Grep, never calling memory_file_digest, "
-            "memory_find_symbols, or memory_search beforehand. The tools "
-            "work; the adoption is the gap. Locking this discipline as a "
-            "seed-pinned rule before it calcifies further."
+            "Read+Grep, never calling memory_file_digest. v2.2.x 2026-05-13 "
+            "strengthening: closed the 'fallback to Read if memory yields "
+            "nothing' loophole (let agents bypass indexing) and added "
+            "symbol_history + breaking_changes requirement so WHAT changed, "
+            "WHEN, and WHY is loaded before modifying a function."
         ),
         applies_to=[
             "before Read tool",
             "before Grep tool",
+            "before Glob tool",
+            "before Edit tool",
+            "before Write tool",
             "before editing any file",
+            "before modifying a function",
             "code editing workflow",
+            "code reading workflow",
         ],
         source_episode_id=source_episode_id,
         source_type="seed_bootstrap",

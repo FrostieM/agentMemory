@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-ingest staged source files into agent-memory-lite.
+#
+# Why: keeps the code-memory index in sync with what is being committed,
+# so memory_file_digest / memory_symbol_history / memory_breaking_changes
+# always reflect HEAD. Closes the adoption gap where agents fall back to
+# Read/Grep because the index is stale.
+#
+# Behaviour: for every staged file matching the indexed extensions
+# (.py, .ts, .tsx, .js, .jsx, .md, .yaml, .yml, .sql, .sh), POST the
+# content to the local HTTP service at $MEMORY_SERVICE_URL (default
+# http://127.0.0.1:8765) /memory/ingest_file with workspace_id =
+# $MEMORY_WORKSPACE_ID (required env). Idempotent via content_hash.
+#
+# Failure policy: NEVER block the commit. If the service is unreachable
+# or the workspace_id is missing, print a notice and exit 0 — the index
+# will simply stay stale until the next successful run. The commit is
+# the operator's intent; we just opportunistically index.
+#
+# Bypass: MEMORY_SKIP_PRECOMMIT_INGEST=1 git commit ...
+
+set -u  # NOT -e: a single ingest failure must not block the commit.
+
+if [[ "${MEMORY_SKIP_PRECOMMIT_INGEST:-0}" == "1" ]]; then
+    echo "[memory-ingest] skipped via MEMORY_SKIP_PRECOMMIT_INGEST=1"
+    exit 0
+fi
+
+WORKSPACE_ID="${MEMORY_WORKSPACE_ID:-}"
+if [[ -z "$WORKSPACE_ID" ]]; then
+    echo "[memory-ingest] MEMORY_WORKSPACE_ID not set — skipping pre-commit ingest" >&2
+    exit 0
+fi
+
+SERVICE_URL="${MEMORY_SERVICE_URL:-http://127.0.0.1:8765}"
+INDEXED_EXTS="py|ts|tsx|js|jsx|md|yaml|yml|sql|sh"
+
+# Reachability probe (15 s — /health can take 4+ s on cold-start; service
+# may be busy serving an MCP request. We allow up to 15 s before giving up).
+if ! curl -sfm 15 "$SERVICE_URL/health" > /dev/null 2>&1; then
+    echo "[memory-ingest] service at $SERVICE_URL unreachable — skipping" >&2
+    exit 0
+fi
+
+# Collect staged files (added/copied/modified), filter by extension.
+# Skip deletions: `git diff --diff-filter=ACM`.
+mapfile -t STAGED < <(git diff --cached --name-only --diff-filter=ACM | grep -E "\.($INDEXED_EXTS)\$" || true)
+
+if [[ ${#STAGED[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+echo "[memory-ingest] indexing ${#STAGED[@]} staged file(s) into workspace=$WORKSPACE_ID"
+
+INGESTED=0
+SKIPPED=0
+FAILED=0
+for path in "${STAGED[@]}"; do
+    if [[ ! -f "$path" ]]; then
+        continue  # might have been deleted between staging and now
+    fi
+    # Detect language by extension for the API hint.
+    ext="${path##*.}"
+    case "$ext" in
+        py)        lang="python" ;;
+        ts|tsx)    lang="typescript" ;;
+        js|jsx)    lang="javascript" ;;
+        md)        lang="markdown" ;;
+        yaml|yml)  lang="yaml" ;;
+        sql)       lang="sql" ;;
+        sh)        lang="bash" ;;
+        *)         lang="text" ;;
+    esac
+
+    # jq encodes the payload safely. Fall back to python if jq is missing.
+    if command -v jq > /dev/null 2>&1; then
+        payload=$(jq -n --arg ws "$WORKSPACE_ID" --arg p "$path" --arg lang "$lang" \
+            --rawfile c "$path" \
+            '{workspace_id: $ws, path: $p, content: $c, language: $lang}')
+    else
+        payload=$(python -c "import json,sys,pathlib; print(json.dumps({'workspace_id':'$WORKSPACE_ID','path':'$path','content':pathlib.Path('$path').read_text(encoding='utf-8'),'language':'$lang'}))" 2>/dev/null || true)
+    fi
+
+    if [[ -z "$payload" ]]; then
+        FAILED=$((FAILED + 1))
+        continue
+    fi
+
+    response=$(curl -sfm 15 -X POST "$SERVICE_URL/memory/ingest_file" \
+        -H "Content-Type: application/json" \
+        -d "$payload" 2>/dev/null || true)
+
+    if [[ -z "$response" ]]; then
+        FAILED=$((FAILED + 1))
+        continue
+    fi
+
+    if echo "$response" | grep -q '"skipped":true'; then
+        SKIPPED=$((SKIPPED + 1))
+    else
+        INGESTED=$((INGESTED + 1))
+    fi
+done
+
+echo "[memory-ingest] indexed=$INGESTED skipped=$SKIPPED failed=$FAILED"
+exit 0

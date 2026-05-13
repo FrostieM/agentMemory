@@ -19,7 +19,7 @@ HOOKS_DIR="$REPO_ROOT/.git/hooks"
 SOURCE_DIR="$REPO_ROOT/scripts/git_hooks"
 
 # Files we manage (one entry per hook).
-HOOKS=(pre-push)
+HOOKS=(pre-push pre-commit)
 
 if [[ "${1:-}" == "--uninstall" ]]; then
     for hook in "${HOOKS[@]}"; do
@@ -48,5 +48,8 @@ done
 echo ""
 echo "[install_hooks] done."
 echo "[install_hooks] crash test will run before every 'git push' to main."
-echo "[install_hooks] bypass with: MEMORY_SKIP_CRASH_TEST=1 git push"
+echo "[install_hooks]   bypass with: MEMORY_SKIP_CRASH_TEST=1 git push"
+echo "[install_hooks] auto-ingest staged files runs before every 'git commit'."
+echo "[install_hooks]   requires MEMORY_WORKSPACE_ID env; service at \$MEMORY_SERVICE_URL (default 127.0.0.1:8765)."
+echo "[install_hooks]   bypass with: MEMORY_SKIP_PRECOMMIT_INGEST=1 git commit"
 echo "[install_hooks] uninstall:    bash scripts/install_hooks.sh --uninstall"
