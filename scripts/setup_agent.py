@@ -668,14 +668,9 @@ def configure_project(  # noqa: PLR0912, PLR0915
     elif status == "unchanged":
         info(f"pre-commit auto-ingest hook already up to date at {hook_path}")
     elif status == "skipped_no_git":
-        info(
-            f"pre-commit auto-ingest hook skipped: {project_root} is not a git working tree"
-        )
+        info(f"pre-commit auto-ingest hook skipped: {project_root} is not a git working tree")
     elif status == "skipped_no_template":
-        warn(
-            "pre-commit auto-ingest hook template missing in repo "
-            "(scripts/git_hooks/pre-commit)"
-        )
+        warn("pre-commit auto-ingest hook template missing in repo (scripts/git_hooks/pre-commit)")
 
 
 def emit_generic_snippets(diag: Diagnosis) -> None:
