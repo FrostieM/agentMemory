@@ -400,6 +400,58 @@ def _read_event() -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {"prompt": str(parsed)}
 
 
+def _maybe_emit_memory_audit(*, event: dict[str, object]) -> None:
+    """Emit a system-reminder audit prompt when the agent skipped memory writes.
+
+    Best-effort: reads the Claude Code transcript JSONL tail, classifies
+    tool_use blocks in the previous assistant turn, and if the agent did
+    real file work (Edit/Write/Bash) without any memory write, emits a
+    forced-language ``<system-reminder>`` block to stdout. The block lands
+    in the agent's context for the new turn AHEAD of the ``<agent-memory>``
+    block, promoting the memory-discipline reminder from background
+    behavior_instructions to foreground system context — which Claude
+    follows reliably.
+
+    Silent on any error (missing transcript, parse error, import failure)
+    so the hook degrades to passthrough. Bypass via env
+    ``MEMORY_SKIP_AUDIT_PROMPT=1``.
+    """
+    if os.environ.get("MEMORY_SKIP_AUDIT_PROMPT") == "1":
+        return
+    transcript_path = event.get("transcript_path")
+    if not transcript_path:
+        return
+    try:
+        from agent_memory_lite.extraction.memory_audit_prompt import (  # noqa: PLC0415
+            analyze_last_assistant_turn,
+            decide_audit,
+        )
+    except ImportError:
+        return
+    # Path-traversal defense: only read transcripts under whitelisted roots.
+    try:
+        from transcript_pair_extractor import _is_under_allowed_root  # noqa: PLC0415
+    except ImportError:
+        try:
+            from scripts.transcript_pair_extractor import (  # noqa: PLC0415
+                _is_under_allowed_root,
+            )
+        except ImportError:
+            return
+    p = Path(str(transcript_path))
+    if not _is_under_allowed_root(p):
+        return
+    try:
+        stats = analyze_last_assistant_turn(p)
+        decision = decide_audit(stats)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    if not decision.inject:
+        return
+    sys.stdout.write(f"<system-reminder>\n{decision.prompt}\n</system-reminder>\n")
+    sys.stdout.flush()
+
+
 def _emit_notice(message: str) -> None:
     sys.stdout.write(f"<agent-memory>\n<!-- memory hook notice: {message} -->\n</agent-memory>\n")
 
@@ -603,6 +655,17 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
         except Exception:
             # capture is opportunistic; never break the hook on failure
             pass
+
+    # Memory-discipline audit (best-effort, never raises). When the
+    # previous assistant turn did real file work without any memory
+    # write, this emits a <system-reminder> with forced language that
+    # the agent must acknowledge before continuing. Promotes the
+    # Memory-first / write-resolve discipline from background envelope
+    # to foreground system context, which Claude follows more reliably.
+    try:
+        _maybe_emit_memory_audit(event=event)
+    except Exception:
+        pass
 
     payload: dict[str, object] = {
         "workspace_id": workspace,
