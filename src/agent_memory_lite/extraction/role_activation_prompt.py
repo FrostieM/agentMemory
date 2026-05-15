@@ -1,11 +1,7 @@
-"""Build a role-activation system-reminder from top-ranked workspace capabilities.
+"""Build a [role-activation] system-reminder from ranked workspace capabilities.
 
-Companion to ``memory_audit_prompt``. Forces the agent to declare which
-ROLE/SKILL it operates under — promoting capability application from ambient
-envelope context to a public foreground commitment in the response.
-
-``decide_role_activation`` is offline-testable and returns ``inject=False`` on
-any malformed input. ``fetch_top_capabilities`` is the HTTP boundary.
+Multi-role hedges ranker errors. ``decide_role_activation`` is offline-testable;
+``fetch_top_capabilities`` is the HTTP boundary.
 """
 
 from __future__ import annotations
@@ -41,8 +37,9 @@ def _trim(text: str, max_len: int = _MAX_PURPOSE_CHARS) -> str:
     return cut + "..."
 
 
-def _first_confident(items: list[Any], *, min_confidence: float) -> dict[str, Any] | None:
-    """Return the first active capability entry above the confidence floor."""
+def _top_n_confident(items: list[Any], *, n: int, min_confidence: float) -> list[dict[str, Any]]:
+    """Return up to ``n`` active capability entries above the confidence floor."""
+    out: list[dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -54,8 +51,23 @@ def _first_confident(items: list[Any], *, min_confidence: float) -> dict[str, An
             continue
         if conf < min_confidence:
             continue
-        return item
-    return None
+        out.append(item)
+        if len(out) >= n:
+            break
+    return out
+
+
+_LABELS = ("PRIMARY", "SECONDARY", "TERTIARY")
+
+
+def _render_role(role: dict[str, Any], *, label: str | None) -> list[str]:
+    name = role.get("name") or "(unnamed)"
+    purpose = _trim(
+        role.get("purpose") or "(no purpose)", max_len=200 if label else _MAX_PURPOSE_CHARS
+    )
+    if label is None:
+        return [f"  ROLE:    {name}", f"  PURPOSE: {purpose}"]
+    return [f"  ROLE {label}: {name}", f"    purpose: {purpose}"]
 
 
 def decide_role_activation(
@@ -64,17 +76,9 @@ def decide_role_activation(
     capabilities: dict[str, Any] | None,
     min_prompt_len: int = _MIN_PROMPT_LEN,
     min_confidence: float = _MIN_CONFIDENCE,
+    top_k_roles: int = 2,
 ) -> RoleActivation:
-    """Decide whether to inject a [role-activation] reminder for this turn.
-
-    Returns ``inject=True`` only when:
-    * ``user_prompt`` length (after strip) >= ``min_prompt_len`` (filters
-      trivial replies like "ok"/"делай"), AND
-    * ``capabilities['roles']`` contains at least one active role with
-      ``confidence >= min_confidence``.
-
-    Skills/playbooks are best-effort additions to the prompt.
-    """
+    """Decide whether to inject a [role-activation] reminder; multi-role stack hedges ranker errors."""
     if not user_prompt or len(user_prompt.strip()) < min_prompt_len:
         return RoleActivation(inject=False, prompt="")
     if not isinstance(capabilities, dict):
@@ -82,32 +86,35 @@ def decide_role_activation(
     roles = capabilities.get("roles") or []
     if not isinstance(roles, list) or not roles:
         return RoleActivation(inject=False, prompt="")
-    top_role = _first_confident(list(roles), min_confidence=min_confidence)
-    if top_role is None:
+    top_roles = _top_n_confident(list(roles), n=max(1, top_k_roles), min_confidence=min_confidence)
+    if not top_roles:
         return RoleActivation(inject=False, prompt="")
-    skills = capabilities.get("skills") or []
-    top_skill = (
-        _first_confident(list(skills), min_confidence=min_confidence)
-        if isinstance(skills, list)
-        else None
+    skills_field = capabilities.get("skills") or []
+    top_skills = (
+        _top_n_confident(list(skills_field), n=1, min_confidence=min_confidence)
+        if isinstance(skills_field, list)
+        else []
     )
-    role_name = top_role.get("name") or "(unnamed role)"
-    role_purpose = _trim(top_role.get("purpose") or "(no purpose recorded)")
-    lines = [
-        "[role-activation] Top capability matches for this task:",
-        f"  ROLE:    {role_name}",
-        f"  PURPOSE: {role_purpose}",
-    ]
+    top_skill = top_skills[0] if top_skills else None
+    single = len(top_roles) == 1
+    lines = ["[role-activation] Top capability matches for this task:"]
+    if single:
+        lines.extend(_render_role(top_roles[0], label=None))
+    else:
+        for idx, role in enumerate(top_roles):
+            label = _LABELS[idx] if idx < len(_LABELS) else f"ROLE-{idx + 1}"
+            lines.extend(_render_role(role, label=label))
     if top_skill is not None:
-        skill_name = top_skill.get("name") or "(unnamed skill)"
-        skill_summary = _trim(top_skill.get("summary") or "(no summary recorded)")
-        lines.append(f"  SKILL:   {skill_name}")
-        lines.append(f"  METHOD:  {skill_summary}")
+        lines.append(f"  SKILL:   {top_skill.get('name') or '(unnamed skill)'}")
+        lines.append(f"  METHOD:  {_trim(top_skill.get('summary') or '(no summary recorded)')}")
     lines.append("")
     lines.append("REQUIRED in your response:")
-    lines.append('  1. First sentence: "Acting as <role>." (verbatim opening).')
-    lines.append("  2. Apply the ROLE purpose as a hard boundary — if a step")
-    lines.append("     violates it, STOP and surface the conflict.")
+    if single:
+        lines.append('  1. First sentence: "Acting as <role>." (verbatim opening).')
+    else:
+        names = " + ".join(r.get("name") or "?" for r in top_roles)
+        lines.append(f'  1. First sentence: "Acting as role stack: {names}." (verbatim).')
+    lines.append("  2. Apply each ROLE purpose as a hard boundary; STOP on conflict.")
     if top_skill is not None:
         lines.append("  3. Use the SKILL method, not ad-hoc reasoning.")
     lines.append("")
@@ -125,20 +132,16 @@ def fetch_top_capabilities(
     timeout: float = 5.0,
 ) -> dict[str, Any] | None:
     """POST /memory/list_agent_capabilities with the user query. Returns ``None`` on error."""
-    payload = {"workspace_id": workspace_id, "query": query, "limit": limit}
     try:
         response = httpx.post(
             f"{base_url}/memory/list_agent_capabilities",
-            json=payload,
+            json={"workspace_id": workspace_id, "query": query, "limit": limit},
             headers=headers or {},
             timeout=timeout,
         )
-    except (httpx.ConnectError, httpx.HTTPError):
-        return None
-    if response.status_code != 200:
-        return None
-    try:
+        if response.status_code != 200:
+            return None
         body = response.json()
-    except ValueError:
+    except (httpx.ConnectError, httpx.HTTPError, ValueError):
         return None
     return body if isinstance(body, dict) else None

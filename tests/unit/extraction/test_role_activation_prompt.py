@@ -71,8 +71,66 @@ def test_valid_role_injects_with_required_sections() -> None:
     assert "[role-activation]" in d.prompt
     assert "Quant Research Engineer" in d.prompt
     assert "Replay and backtest design" in d.prompt
+    # Single role => verbatim Acting-as opener
     assert "Acting as <role>." in d.prompt
     assert "discipline violation" in d.prompt
+
+
+def test_multi_role_stack_injection_when_top_k_available() -> None:
+    """Multiple confident roles => PRIMARY + SECONDARY stack reminder."""
+    caps = {
+        "roles": [
+            _role("Senior Frontend UX Architect", "Design operator interfaces"),
+            _role("Quant Research Engineer", "Evaluate strategy quality with replay"),
+            _role("Production Reliability Engineer", "Diagnose runtime issues"),
+        ],
+        "skills": [_skill("Replay and backtest design", "Explicit baselines")],
+    }
+    d = decide_role_activation(
+        user_prompt="should we deploy tier2 calibration today without backtest?",
+        capabilities=caps,
+    )
+    assert d.inject is True
+    assert "ROLE PRIMARY:" in d.prompt
+    assert "ROLE SECONDARY:" in d.prompt
+    assert "Senior Frontend UX Architect" in d.prompt
+    assert "Quant Research Engineer" in d.prompt
+    # 3rd role NOT present at default top_k=2
+    assert "Production Reliability Engineer" not in d.prompt
+    # Acting-as line uses role stack form
+    assert "Acting as role stack:" in d.prompt
+    assert "Senior Frontend UX Architect + Quant Research Engineer" in d.prompt
+
+
+def test_top_k_roles_configurable() -> None:
+    caps = {
+        "roles": [
+            _role("R1", "p1"),
+            _role("R2", "p2"),
+            _role("R3", "p3"),
+        ],
+    }
+    d_k3 = decide_role_activation(
+        user_prompt="design a backtest for the source-flip edge analysis",
+        capabilities=caps,
+        top_k_roles=3,
+    )
+    assert d_k3.inject is True
+    assert "ROLE PRIMARY:" in d_k3.prompt
+    assert "ROLE SECONDARY:" in d_k3.prompt
+    assert "ROLE TERTIARY:" in d_k3.prompt
+    assert "R1 + R2 + R3" in d_k3.prompt
+
+    d_k1 = decide_role_activation(
+        user_prompt="design a backtest for the source-flip edge analysis",
+        capabilities=caps,
+        top_k_roles=1,
+    )
+    assert d_k1.inject is True
+    # Single-role form when top_k=1
+    assert "ROLE PRIMARY:" not in d_k1.prompt
+    assert "ROLE:" in d_k1.prompt
+    assert "Acting as <role>." in d_k1.prompt
 
 
 def test_role_without_skill_still_injects() -> None:
