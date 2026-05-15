@@ -31,6 +31,14 @@ from agent_memory_lite.bootstrap.project_memory_seed_behavior_pre_action import 
     applies_to_checklist_verbatim_instruction,
     verification_claims_cite_evidence_instruction,
 )
+from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_payload import (
+    decision_must_have_provenance_pretooluse_instruction,
+    no_magic_number_in_strategy_pretooluse_instruction,
+)
+from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_trail import (
+    read_before_edit_pretooluse_instruction,
+    search_before_arch_write_pretooluse_instruction,
+)
 from agent_memory_lite.bootstrap.project_memory_seed_behavior_workflow import (
     memory_first_before_edit_instruction,
     no_unauthorized_git_push_instruction,
@@ -44,10 +52,14 @@ __all__ = [
     "DISCIPLINE_FACTORIES",
     "PINNED_DISCIPLINE_FACTORIES",
     "applies_to_checklist_verbatim_instruction",
+    "decision_must_have_provenance_pretooluse_instruction",
     "link_capability_discipline_instruction",
     "memory_first_before_edit_instruction",
     "memory_write_resolve_candidates_instruction",
+    "no_magic_number_in_strategy_pretooluse_instruction",
     "no_unauthorized_git_push_instruction",
+    "read_before_edit_pretooluse_instruction",
+    "search_before_arch_write_pretooluse_instruction",
     "search_before_write_discipline_instruction",
     "verification_claims_cite_evidence_instruction",
 ]
@@ -63,6 +75,10 @@ DISCIPLINE_FACTORIES = (
     applies_to_checklist_verbatim_instruction,
     verification_claims_cite_evidence_instruction,
     memory_write_resolve_candidates_instruction,
+    no_magic_number_in_strategy_pretooluse_instruction,
+    decision_must_have_provenance_pretooluse_instruction,
+    read_before_edit_pretooluse_instruction,
+    search_before_arch_write_pretooluse_instruction,
 )
 
 
@@ -76,4 +92,8 @@ PINNED_DISCIPLINE_FACTORIES = (
     applies_to_checklist_verbatim_instruction,
     verification_claims_cite_evidence_instruction,
     memory_write_resolve_candidates_instruction,
+    no_magic_number_in_strategy_pretooluse_instruction,
+    decision_must_have_provenance_pretooluse_instruction,
+    read_before_edit_pretooluse_instruction,
+    search_before_arch_write_pretooluse_instruction,
 )

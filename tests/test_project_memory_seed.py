@@ -38,7 +38,7 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     # (no language, personality, or project-specific behavior).
     # Project-specific rules remain operator-driven via
     # memory_upsert_behavior_instruction.
-    assert result.behavior_instructions_written == 7
+    assert result.behavior_instructions_written == 11
     assert [item.name for item in result.skills] == ["Memory population discipline"]
     assert [item.name for item in result.playbooks] == ["Neutral memory bootstrap"]
     assert {item.name for item in result.concepts} == {
@@ -55,10 +55,14 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
         "applies-to-checklist-must-be-stated-verbatim",
         "verification-claims-must-cite-prod-evidence",
         "memory-write-is-not-done-until-candidates-resolved",
+        "pretooluse:no-magic-number-in-strategy",
+        "pretooluse:decision-must-have-provenance",
+        "pretooluse:read-before-edit",
+        "pretooluse:search-before-architectural-write",
     }
 
     assert _count(applied_conn, "agent_roles", "project-x") == 0
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 7
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 11
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
@@ -79,7 +83,7 @@ def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connect
     assert _count(applied_conn, "agent_skills", "project-x") == 1
     assert _count(applied_conn, "agent_playbooks", "project-x") == 1
     assert _count(applied_conn, "domain_concepts", "project-x") == 4
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 7
+    assert _count(applied_conn, "behavior_instructions", "project-x") == 11
 
 
 def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) -> None:
@@ -99,7 +103,7 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "active, pinned, applies_to_json FROM behavior_instructions "
         "WHERE workspace_id='project-x' ORDER BY name"
     ).fetchall()
-    assert len(rows) == 7
+    assert len(rows) == 11
     names = {r["name"] for r in rows}
     assert names == {
         "Link capability after every decision and theory write",
@@ -109,6 +113,10 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "applies-to-checklist-must-be-stated-verbatim",
         "verification-claims-must-cite-prod-evidence",
         "memory-write-is-not-done-until-candidates-resolved",
+        "pretooluse:no-magic-number-in-strategy",
+        "pretooluse:decision-must-have-provenance",
+        "pretooluse:read-before-edit",
+        "pretooluse:search-before-architectural-write",
     }
     # Every seed BI must share the canonical seed-bootstrap source_type and
     # be active immediately so it shows up in the envelope.
@@ -127,6 +135,10 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "applies-to-checklist-must-be-stated-verbatim",
         "verification-claims-must-cite-prod-evidence",
         "memory-write-is-not-done-until-candidates-resolved",
+        "pretooluse:no-magic-number-in-strategy",
+        "pretooluse:decision-must-have-provenance",
+        "pretooluse:read-before-edit",
+        "pretooluse:search-before-architectural-write",
     }
 
     # The capability-link rule applies_to research-mutating APIs

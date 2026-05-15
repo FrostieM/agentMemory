@@ -41,6 +41,9 @@ from textwrap import dedent
 
 import httpx
 
+from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (
+    install_pre_tool_use_hook,
+)
 from agent_memory_lite.bootstrap.project_pre_commit_hook import (
     install_project_pre_commit_hook,
 )
@@ -48,6 +51,8 @@ from agent_memory_lite.bootstrap.project_pre_commit_hook import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_context.py"
+PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
+PRETOOLUSE_HOOK_MATCHER = "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_.*"
 MARKER_BEGIN = "<!-- agent-memory-lite-contract:begin -->"
 MARKER_END = "<!-- agent-memory-lite-contract:end -->"
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
@@ -439,6 +444,11 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
         else:
             existing["hooks"] = [new_hook]
         ok("UserPromptSubmit hook installed (auto-injects memory context per prompt)")
+
+        pretooluse_status = install_pre_tool_use_hook(
+            settings, venv_python=diag.venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT
+        )
+        ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
     else:
         warn("hook install skipped (--no-hook); agent only sees memory if it asks")
 
@@ -618,8 +628,13 @@ def configure_project(  # noqa: PLR0912, PLR0915
         ups.append({"hooks": [new_hook]})
     else:
         existing["hooks"] = [new_hook]
+
+    pretooluse_status = install_pre_tool_use_hook(
+        settings, venv_python=diag.venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT
+    )
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     ok(f"MCP entry + project-scoped hook written to {settings_path}")
+    ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
 
     contract_path = project_root / "CLAUDE.md"
     status = upsert_contract(contract_path)
