@@ -127,6 +127,7 @@ def test_analyze_returns_none_when_no_assistant_turn(tmp_path: Path) -> None:
 
 
 def test_analyze_counts_tool_use_in_last_assistant_turn(tmp_path: Path) -> None:
+    """Single assistant message with multiple tool_use blocks (legacy shape)."""
     f = tmp_path / "t.jsonl"
     _write_transcript(
         f,
@@ -144,7 +145,6 @@ def test_analyze_counts_tool_use_in_last_assistant_turn(tmp_path: Path) -> None:
                     ],
                 }
             },
-            {"message": {"role": "user", "content": "next"}},
         ],
     )
     stats = analyze_last_assistant_turn(f)
@@ -154,8 +154,10 @@ def test_analyze_counts_tool_use_in_last_assistant_turn(tmp_path: Path) -> None:
     assert stats.memory_writes == 0
 
 
-def test_analyze_finds_assistant_turn_even_when_later_user_turn_exists(tmp_path: Path) -> None:
-    """Walks from end and returns the LAST assistant turn regardless of trailing user turn."""
+def test_analyze_returns_none_when_user_prompt_pending_no_assistant_response(
+    tmp_path: Path,
+) -> None:
+    """User just sent a prompt, agent hasn't started — no turn to audit yet."""
     f = tmp_path / "t.jsonl"
     _write_transcript(
         f,
@@ -169,9 +171,90 @@ def test_analyze_finds_assistant_turn_even_when_later_user_turn_exists(tmp_path:
             {"message": {"role": "user", "content": "thanks"}},
         ],
     )
+    assert analyze_last_assistant_turn(f) is None
+
+
+def test_analyze_aggregates_across_tool_use_chain(tmp_path: Path) -> None:
+    """Multiple assistant messages with tool_result interleaves count as one turn."""
+    f = tmp_path / "t.jsonl"
+    _write_transcript(
+        f,
+        [
+            {"message": {"role": "user", "content": "do work"}},
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "ok"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Bash", "id": "b1"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "b1", "content": "ok"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Edit", "id": "e1"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "e1", "content": "ok"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Edit", "id": "e2"}],
+                }
+            },
+        ],
+    )
     stats = analyze_last_assistant_turn(f)
     assert stats is not None
-    assert stats.file_mutations == 1
+    assert stats.file_mutations == 3, "1 Bash + 2 Edit across 3 assistant messages"
+
+
+def test_analyze_stops_at_real_user_prompt_not_tool_result(tmp_path: Path) -> None:
+    """Tool_result user messages must NOT terminate turn accumulation."""
+    f = tmp_path / "t.jsonl"
+    _write_transcript(
+        f,
+        [
+            {"message": {"role": "user", "content": "do work"}},
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Bash", "id": "b1"}],
+                }
+            },
+            # tool_result: user-role but NOT a real prompt — keep accumulating across it
+            {
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "tool_use_id": "b1", "content": "ok"}],
+                }
+            },
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "name": "Edit", "id": "e1"}],
+                }
+            },
+        ],
+    )
+    stats = analyze_last_assistant_turn(f)
+    assert stats is not None
+    assert stats.file_mutations == 2
 
 
 def test_analyze_skips_malformed_jsonl_lines(tmp_path: Path) -> None:

@@ -33,10 +33,34 @@ _DEFAULT_MIN_MUTATIONS = 2
 _DEFAULT_TAIL_LINES = 600
 
 
+def _is_real_user_prompt(msg: dict[str, object]) -> bool:
+    """True if a user-role message is a real prompt (not a tool_result wrapper).
+
+    In Claude Code's JSONL, tool_result blocks come back as user-role messages
+    too. We want to stop accumulating an agent turn only on a genuine user
+    prompt — text content, not tool_result content.
+    """
+    content = msg.get("content")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                return True
+    return False
+
+
 def analyze_last_assistant_turn(
     transcript_path: str | Path, *, tail_lines: int = _DEFAULT_TAIL_LINES
 ) -> TurnToolStats | None:
-    """Read transcript JSONL tail; classify tool_use blocks in last assistant turn."""
+    """Aggregate tool_use blocks across the agent's most recent turn.
+
+    A 'turn' is all consecutive assistant messages back to the previous REAL
+    user prompt — in Claude Code's JSONL each tool_use is its own assistant
+    message with a user-role tool_result message between, so a single turn
+    can span N assistant messages. Stops when a user-role message with text
+    content is reached.
+    """
     p = Path(transcript_path)
     if not p.is_file():
         return None
@@ -44,6 +68,8 @@ def analyze_last_assistant_turn(
         all_lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
+    collected: list[object] = []
+    saw_assistant = False
     for line in reversed(all_lines[-tail_lines:]):
         if not line.strip():
             continue
@@ -54,13 +80,18 @@ def analyze_last_assistant_turn(
         msg = event.get("message") if isinstance(event, dict) else None
         if not isinstance(msg, dict):
             continue
-        if msg.get("role") != "assistant":
+        role = msg.get("role")
+        if role == "user" and _is_real_user_prompt(msg):
+            break
+        if role != "assistant":
             continue
         content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        return count_tools_in_turn(content)
-    return None
+        if isinstance(content, list):
+            collected.extend(content)
+            saw_assistant = True
+    if not saw_assistant:
+        return None
+    return count_tools_in_turn(collected)
 
 
 def _summarize(stats: TurnToolStats) -> str:
