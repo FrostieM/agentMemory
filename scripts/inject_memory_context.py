@@ -452,6 +452,54 @@ def _maybe_emit_memory_audit(*, event: dict[str, object]) -> None:
     sys.stdout.flush()
 
 
+def _maybe_emit_role_activation(
+    *,
+    workspace_id: str,
+    user_prompt: str,
+    db_path: str | None,
+    vector_path: str | None,
+) -> None:
+    """Emit a [role-activation] system-reminder when a confident role matches the prompt.
+
+    Companion to ``_maybe_emit_memory_audit``. Where the audit hook forces the
+    agent to record what it DID, role-activation forces the agent to declare
+    which ROLE/SKILL it operates under for the current task.
+
+    Silent on any error (HTTP unreachable, import failure, no qualifying role).
+    Bypass via env ``MEMORY_SKIP_ROLE_ACTIVATION=1``.
+    """
+    if os.environ.get("MEMORY_SKIP_ROLE_ACTIVATION") == "1":
+        return
+    if not user_prompt:
+        return
+    try:
+        from agent_memory_lite.extraction.role_activation_prompt import (  # noqa: PLC0415
+            decide_role_activation,
+            fetch_top_capabilities,
+        )
+    except ImportError:
+        return
+    headers: dict[str, str] = {}
+    if db_path:
+        headers["X-Memory-DB-Path"] = db_path
+    if vector_path:
+        headers["X-Memory-Vector-Path"] = vector_path
+    try:
+        capabilities = fetch_top_capabilities(
+            workspace_id=workspace_id,
+            query=user_prompt[:1000],
+            base_url=DEFAULT_BASE,
+            headers=headers,
+        )
+        decision = decide_role_activation(user_prompt=user_prompt, capabilities=capabilities)
+    except (OSError, ValueError):
+        return
+    if not decision.inject:
+        return
+    sys.stdout.write(f"<system-reminder>\n{decision.prompt}\n</system-reminder>\n")
+    sys.stdout.flush()
+
+
 def _emit_notice(message: str) -> None:
     sys.stdout.write(f"<agent-memory>\n<!-- memory hook notice: {message} -->\n</agent-memory>\n")
 
@@ -664,6 +712,21 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
     # to foreground system context, which Claude follows more reliably.
     try:
         _maybe_emit_memory_audit(event=event)
+    except Exception:
+        pass
+
+    # Role activation (best-effort, never raises). Fetches top-ranked
+    # capabilities for the user prompt and, if a confident role exists,
+    # emits a <system-reminder> forcing the agent to declare which
+    # ROLE/SKILL it operates under for this task. Promotes capability
+    # application from ambient envelope context to a public commitment.
+    try:
+        _maybe_emit_role_activation(
+            workspace_id=workspace,
+            user_prompt=prompt,
+            db_path=db_path,
+            vector_path=vector_path,
+        )
     except Exception:
         pass
 
