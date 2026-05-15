@@ -141,8 +141,7 @@ request flow as it happens. Layout:
 ## Status — 2.0.0
 
 Latest tag: **v2.0.0** (2026-05-10) — first public-facing release.
-Consolidates ~6 months of internal incremental development into a
-single coherent baseline. Every memory feature is on by default;
+Every memory feature is on by default;
 flag-off parity invariants in `tests/invariants/` lock the legacy
 byte-equivalent path for any operator who wants to peel a layer
 off. The pre-2.0.0 incremental development history is preserved
