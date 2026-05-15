@@ -77,7 +77,9 @@ def _seed_rule(
     rule_id: str,
     name: str,
     applies_to: list[str],
+    pinned: int = 1,
 ) -> None:
+    """Seed a behavior_instruction. Default pinned=1 since loader only enforces pinned rules."""
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -93,7 +95,7 @@ def _seed_rule(
                 "rule body",
                 json.dumps(applies_to),
                 1,
-                0,
+                pinned,
                 "2026-05-15T00:00:00Z",
             ),
         )

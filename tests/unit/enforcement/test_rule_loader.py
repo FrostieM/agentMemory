@@ -10,6 +10,7 @@ import pytest
 
 from agent_memory_lite.enforcement.rule_loader import (
     MECHANICAL_TAG,
+    OPT_OUT_TAG,
     SEMANTIC_TAG,
     filter_by_level,
     load_enforcement_rules,
@@ -41,7 +42,7 @@ def _insert(
     name: str,
     applies_to: list[str],
     active: int = 1,
-    pinned: int = 0,
+    pinned: int = 1,
     workspace_id: str = "ws",
 ) -> None:
     conn.execute(
@@ -77,93 +78,128 @@ def test_no_rules_returns_empty(conn: sqlite3.Connection) -> None:
     assert load_enforcement_rules(conn, "ws") == []
 
 
-def test_untagged_rules_are_ignored(conn: sqlite3.Connection) -> None:
-    _insert(conn, instruction_id="beh_1", name="no-tag", applies_to=["random tag"])
+def test_unpinned_rules_skipped(conn: sqlite3.Connection) -> None:
+    """Only pinned rules are enforced — pinning is the operator's signal."""
+    _insert(conn, instruction_id="beh_1", name="unpinned", applies_to=[], pinned=0)
     assert load_enforcement_rules(conn, "ws") == []
 
 
-def test_mechanical_tag_classified(conn: sqlite3.Connection) -> None:
+def test_inactive_rules_skipped(conn: sqlite3.Connection) -> None:
+    _insert(conn, instruction_id="beh_1", name="inactive", applies_to=[], active=0)
+    assert load_enforcement_rules(conn, "ws") == []
+
+
+def test_pinned_rule_without_tag_defaults_to_semantic(conn: sqlite3.Connection) -> None:
+    """The pivot: every pinned rule is enforced. Unknown shape => semantic."""
+    _insert(conn, instruction_id="beh_1", name="bare", applies_to=["before commit"])
+    rules = load_enforcement_rules(conn, "ws")
+    assert len(rules) == 1
+    assert rules[0].level == "semantic"
+
+
+def test_opt_out_tag_disables_enforcement(conn: sqlite3.Connection) -> None:
+    """enforcement:none tag keeps a rule as foreground reminder only."""
+    _insert(conn, instruction_id="beh_1", name="reminder-only", applies_to=[OPT_OUT_TAG])
+    assert load_enforcement_rules(conn, "ws") == []
+
+
+def test_mechanical_detector_tag_routes_to_mechanical(conn: sqlite3.Connection) -> None:
     _insert(
         conn,
         instruction_id="beh_1",
         name="mech-rule",
-        applies_to=["before Edit", MECHANICAL_TAG],
-    )
-    rules = load_enforcement_rules(conn, "ws")
-    assert len(rules) == 1
-    assert rules[0].level == "mechanical"
-    assert rules[0].id == "beh_1"
-
-
-def test_semantic_tag_classified(conn: sqlite3.Connection) -> None:
-    _insert(
-        conn,
-        instruction_id="beh_2",
-        name="sem-rule",
-        applies_to=[SEMANTIC_TAG, "code editing workflow"],
-    )
-    rules = load_enforcement_rules(conn, "ws")
-    assert rules[0].level == "semantic"
-
-
-def test_both_tags_mechanical_wins(conn: sqlite3.Connection) -> None:
-    """Mechanical wins so the cheap layer short-circuits semantic Ollama cost."""
-    _insert(
-        conn,
-        instruction_id="beh_3",
-        name="dual",
-        applies_to=[MECHANICAL_TAG, SEMANTIC_TAG],
+        applies_to=["mechanical:no-magic-number", "before Edit"],
     )
     rules = load_enforcement_rules(conn, "ws")
     assert rules[0].level == "mechanical"
 
 
-def test_inactive_rules_skipped(conn: sqlite3.Connection) -> None:
+def test_explicit_mechanical_tag_overrides_classification(conn: sqlite3.Connection) -> None:
     _insert(
         conn,
         instruction_id="beh_1",
-        name="inactive",
-        applies_to=[MECHANICAL_TAG],
-        active=0,
+        name="explicit-mech",
+        applies_to=[MECHANICAL_TAG, "before Edit"],
+    )
+    assert load_enforcement_rules(conn, "ws")[0].level == "mechanical"
+
+
+def test_explicit_semantic_tag_overrides_classification(conn: sqlite3.Connection) -> None:
+    _insert(
+        conn,
+        instruction_id="beh_1",
+        name="explicit-sem",
+        applies_to=[SEMANTIC_TAG, "mechanical:no-magic-number"],
+    )
+    # Explicit SEMANTIC_TAG wins over detector tag.
+    assert load_enforcement_rules(conn, "ws")[0].level == "semantic"
+
+
+def test_opt_out_wins_over_other_tags(conn: sqlite3.Connection) -> None:
+    """If both opt-out and mechanical detector tags present, opt-out wins."""
+    _insert(
+        conn,
+        instruction_id="beh_1",
+        name="conflicted",
+        applies_to=[OPT_OUT_TAG, "mechanical:no-magic-number"],
     )
     assert load_enforcement_rules(conn, "ws") == []
 
 
 def test_workspace_isolation(conn: sqlite3.Connection) -> None:
-    _insert(
-        conn, instruction_id="beh_1", name="r", applies_to=[MECHANICAL_TAG], workspace_id="ws-a"
-    )
-    _insert(
-        conn, instruction_id="beh_2", name="r", applies_to=[MECHANICAL_TAG], workspace_id="ws-b"
-    )
+    _insert(conn, instruction_id="beh_1", name="r", applies_to=[], workspace_id="ws-a")
+    _insert(conn, instruction_id="beh_2", name="r", applies_to=[], workspace_id="ws-b")
     rules_a = load_enforcement_rules(conn, "ws-a")
     rules_b = load_enforcement_rules(conn, "ws-b")
     assert {r.id for r in rules_a} == {"beh_1"}
     assert {r.id for r in rules_b} == {"beh_2"}
 
 
-def test_pinned_rules_come_first(conn: sqlite3.Connection) -> None:
-    _insert(conn, instruction_id="beh_1", name="not-pinned", applies_to=[MECHANICAL_TAG])
-    _insert(conn, instruction_id="beh_2", name="pinned", applies_to=[MECHANICAL_TAG], pinned=1)
-    rules = load_enforcement_rules(conn, "ws")
-    assert [r.id for r in rules] == ["beh_2", "beh_1"]
-
-
-def test_malformed_applies_to_json_treated_as_no_tags(conn: sqlite3.Connection) -> None:
+def test_malformed_applies_to_json_defaults_to_semantic(conn: sqlite3.Connection) -> None:
+    """Pinned rule with corrupt applies_to is still enforced — semantic layer."""
     conn.execute(
         """
         INSERT INTO behavior_instructions (
             id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("beh_x", "ws", "malformed", "rule", "{not-json", 1, 0, "2026-05-15T00:00:00Z"),
+        ("beh_x", "ws", "malformed", "rule", "{not-json", 1, 1, "2026-05-15T00:00:00Z"),
     )
-    assert load_enforcement_rules(conn, "ws") == []
+    rules = load_enforcement_rules(conn, "ws")
+    assert len(rules) == 1
+    assert rules[0].level == "semantic"
 
 
 def test_filter_by_level_separates_layers(conn: sqlite3.Connection) -> None:
-    _insert(conn, instruction_id="beh_m", name="m", applies_to=[MECHANICAL_TAG])
-    _insert(conn, instruction_id="beh_s", name="s", applies_to=[SEMANTIC_TAG])
+    _insert(
+        conn,
+        instruction_id="beh_m",
+        name="m",
+        applies_to=["mechanical:no-magic-number"],
+    )
+    _insert(conn, instruction_id="beh_s", name="s", applies_to=["before commit"])
     rules = load_enforcement_rules(conn, "ws")
     assert {r.id for r in filter_by_level(rules, "mechanical")} == {"beh_m"}
     assert {r.id for r in filter_by_level(rules, "semantic")} == {"beh_s"}
+
+
+def test_multiple_pinned_returned_newest_first(conn: sqlite3.Connection) -> None:
+    """Order is updated_at DESC so the operator's freshest rules dominate."""
+    conn.execute(
+        """
+        INSERT INTO behavior_instructions (
+            id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("beh_old", "ws", "old", "rule", "[]", 1, 1, "2026-01-01T00:00:00Z"),
+    )
+    conn.execute(
+        """
+        INSERT INTO behavior_instructions (
+            id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("beh_new", "ws", "new", "rule", "[]", 1, 1, "2026-05-15T00:00:00Z"),
+    )
+    rules = load_enforcement_rules(conn, "ws")
+    assert [r.id for r in rules] == ["beh_new", "beh_old"]

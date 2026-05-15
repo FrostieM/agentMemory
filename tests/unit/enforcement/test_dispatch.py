@@ -41,12 +41,12 @@ def _sem_rule(rule_id: str) -> EnforcementRule:
 def patched_ollama() -> Iterator[list[str]]:
     responses: list[str] = []
 
-    def _fake_call(prompt: str, *, base_url: str, model: str, timeout: float) -> str:
+    async def _fake_call(prompt: str, *, base_url: str, model: str, timeout: float) -> str:
         del prompt, base_url, model, timeout
         return responses.pop(0) if responses else ""
 
     with patch(
-        "agent_memory_lite.enforcement.semantic_review._call_ollama",
+        "agent_memory_lite.enforcement.semantic_review._call_ollama_async",
         side_effect=_fake_call,
     ):
         yield responses
