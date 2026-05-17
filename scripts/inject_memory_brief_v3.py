@@ -55,6 +55,20 @@ REGISTRY_PATH = (
     if os.environ.get("MEMORY_WORKSPACES_FILE")
     else Path.home() / ".agent_memory" / "workspaces.json"
 )
+# Fallback workspace when cwd is not inside any registered project_root.
+# Mirrors the v2 inject_memory_context.py global-fallback behaviour so the
+# operator who opens Claude Code from a parent / unregistered directory
+# still gets a meaningful brief (pinned rules from the global workspace)
+# instead of an empty envelope. Disable with
+# ``AGENT_MEMORY_HOOK_FALLBACK=disabled``.
+GLOBAL_FALLBACK_WORKSPACE = os.environ.get("AGENT_MEMORY_FALLBACK_WORKSPACE", "global")
+HOOK_FALLBACK_DISABLED = os.environ.get("AGENT_MEMORY_HOOK_FALLBACK", "").strip().lower() in {
+    "0",
+    "false",
+    "no",
+    "disabled",
+    "off",
+}
 
 
 def _read_event() -> dict[str, object]:
@@ -143,7 +157,7 @@ def _fetch_brief(
     return data if isinstance(data, dict) else None
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early returns per failure mode
     event = _read_event()
     prompt = str(event.get("prompt", "")).strip()
     if not prompt:
@@ -168,13 +182,30 @@ def main() -> int:
                 vector_path = vector_path or vec
                 break
 
+    used_global_fallback = False
     if not workspace:
-        _emit_notice(
-            "no workspace registered for this cwd. "
-            "Run `python scripts/setup_agent.py --project <path>` "
-            "from the agent-memory-lite repo."
-        )
-        return 0
+        if HOOK_FALLBACK_DISABLED:
+            _emit_notice(
+                "no workspace registered for this cwd. "
+                "Run `python scripts/setup_agent.py --project <path>` "
+                "from the agent-memory-lite repo, or unset "
+                "AGENT_MEMORY_HOOK_FALLBACK to use the `global` workspace."
+            )
+            return 0
+        # Fall back to the global workspace — operator opened Claude Code
+        # from a directory that doesn't match any registered project_root.
+        # The global workspace is seeded with the same 3 pinned discipline
+        # rules so the brief is still useful (not the empty envelope that
+        # blocked v1.x users from seeing anything at all).
+        workspace = GLOBAL_FALLBACK_WORKSPACE
+        # Look up the global workspace's db_path / vector_path in the
+        # registry so the HTTP service routes there via X-Memory-DB-Path.
+        for entry in _list_registry():
+            if isinstance(entry, dict) and entry.get("id") == workspace:
+                db_path = db_path or str(entry.get("db_path") or "")
+                vector_path = vector_path or str(entry.get("vector_path") or "")
+                break
+        used_global_fallback = True
 
     headers: dict[str, str] = {}
     if db_path:
@@ -199,6 +230,25 @@ def main() -> int:
     if not isinstance(body_md, str) or not body_md.strip():
         _emit_notice("v3 brief returned no body — empty workspace?")
         return 0
+
+    if used_global_fallback:
+        # Prefix the brief with a visible breadcrumb so the agent (and
+        # operator) see that the brief is from the global workspace, not
+        # the project they meant to open. Mirrors v2 inject_memory_context.py
+        # hook_notice for parity.
+        registered = sorted(
+            str(e.get("id", "?")) for e in _list_registry() if isinstance(e, dict)
+        ) or ["<empty>"]
+        notice = (
+            f'<hook_notice severity="info" code="global_fallback">\n'
+            f"  v3 brief hook resolved no project workspace for cwd; using "
+            f"`{workspace}` (registered workspaces: {registered}). "
+            f"To get a project-scoped brief, open Claude Code from one of the "
+            f"registered project roots, or set "
+            f"AGENT_MEMORY_WORKSPACE=<id> in the env.\n"
+            f"</hook_notice>\n"
+        )
+        body_md = notice + body_md
 
     _emit_brief(body_md)
     return 0

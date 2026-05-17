@@ -188,3 +188,76 @@ def test_emit_notice_format(capsys: pytest.CaptureFixture) -> None:
     v3hook._emit_notice("service down")
     out = capsys.readouterr().out
     assert "<!-- v3 brief hook notice: service down -->" in out
+
+
+# ============================================================
+# Global-fallback behaviour
+# ============================================================
+
+
+def test_main_falls_back_to_global_when_cwd_unregistered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """When cwd matches no project_root, brief must fall back to `global`."""
+    registry = tmp_path / "workspaces.json"
+    _write_registry(
+        registry,
+        [
+            {
+                "id": "global",
+                "project_root": str(tmp_path / "global-dir"),
+                "db_path": str(tmp_path / "global.db"),
+                "vector_path": "",
+            }
+        ],
+    )
+    monkeypatch.setattr(v3hook, "REGISTRY_PATH", registry)
+    monkeypatch.setattr(v3hook, "HOOK_FALLBACK_DISABLED", False)
+
+    # Stub _fetch_brief to confirm the workspace_id passed in is "global".
+    captured: dict[str, Any] = {}
+
+    def fake_fetch(
+        *, base_url: str, workspace_id: str, max_tokens: int, headers: Any
+    ) -> dict[str, Any] | None:
+        captured["workspace_id"] = workspace_id
+        return {"body_md": "# fallback body\nrules ...", "token_count": 8}
+
+    monkeypatch.setattr(v3hook, "_fetch_brief", fake_fetch)
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO('{"prompt": "anything", "cwd": "/some/unregistered/path"}')
+    )
+    monkeypatch.setattr("os.getcwd", lambda: "/some/unregistered/path")
+
+    rc = v3hook.main()
+    assert rc == 0
+    assert captured.get("workspace_id") == "global"
+    out = capsys.readouterr().out
+    # Brief should appear with the hook_notice prefix.
+    assert "global_fallback" in out
+    assert "<memory_brief>" in out
+    assert "# fallback body" in out
+
+
+def test_main_respects_hook_fallback_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """When AGENT_MEMORY_HOOK_FALLBACK=disabled, no global fallback — old notice."""
+    registry = tmp_path / "workspaces.json"
+    _write_registry(registry, [])
+    monkeypatch.setattr(v3hook, "REGISTRY_PATH", registry)
+    monkeypatch.setattr(v3hook, "HOOK_FALLBACK_DISABLED", True)
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "x", "cwd": "/nowhere"}'))
+    monkeypatch.setattr("os.getcwd", lambda: "/nowhere")
+
+    rc = v3hook.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "no workspace registered" in out
+    assert "<memory_brief>" not in out
