@@ -38,6 +38,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 import httpx
 
@@ -330,11 +331,44 @@ def install_v3_postedit_hook(
         existing["matcher"] = V3_POSTTOOLUSE_MATCHER
 
 
+# v3-only columns that ``CREATE TABLE IF NOT EXISTS`` skips for v2-shape
+# tables. We patch them in explicitly via ALTER TABLE. Discovered when v3
+# writer crashed on agentLight workspace:
+# ``sqlite3.OperationalError: table decisions has no column named gist``.
+# Add new entries here when v3 grows additional columns on shared kinds.
+_V3_INPLACE_COLUMNS = (
+    ("decisions", "gist", "TEXT"),
+    ("theories", "gist", "TEXT"),
+    ("episodes", "gist", "TEXT"),
+)
+
+
+def _apply_v3_inplace_columns(conn: Any) -> int:
+    """ALTER TABLE add v3-only columns to v2-shape tables. Returns count added."""
+    added = 0
+    for table, column, sql_type in _V3_INPLACE_COLUMNS:
+        try:
+            cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        except Exception:  # table may simply not exist yet (fresh v3 DB)
+            continue
+        if column in cols:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+            added += 1
+        except Exception as exc:  # surface but don't crash setup
+            warn(f"could not ALTER {table} ADD {column}: {exc}")
+    return added
+
+
 def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
     """Apply v3 schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
 
     Safe to call on a v2 DB: v3 adds new tables alongside v2 tables;
-    existing tables are skipped by CREATE TABLE IF NOT EXISTS.
+    existing tables are skipped by CREATE TABLE IF NOT EXISTS.  For
+    columns that v3 adds to *existing* v2 tables (gist on decisions /
+    theories / episodes), we patch via ALTER TABLE so the v3 writer
+    can populate them.
     """
     import sqlite3  # noqa: PLC0415 — std-lib local import keeps top imports tidy
 
@@ -346,6 +380,11 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
     try:
         conn.executescript(V3_SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.commit()
+        # Patch v3-only columns onto pre-existing v2-shape tables.
+        added = _apply_v3_inplace_columns(conn)
+        if added:
+            conn.commit()
+            ok(f"v3 inplace columns added (+{added}: gist on decisions/theories/episodes)")
         # Defer the seed import: keeps setup_agent's top imports clean,
         # and the script directory is added to sys.path below if needed.
         repo_root_str = str(REPO_ROOT)
