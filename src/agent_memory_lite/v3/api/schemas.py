@@ -75,6 +75,13 @@ class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     kinds: list[str] | None = None
     limit: int = Field(default=10, ge=1, le=50)
+    rerank: bool = Field(
+        default=False,
+        description=(
+            "Run the optional cross-encoder reranker over the initial hit set."
+            " Requires the [rerank] extra; falls back silently if unavailable."
+        ),
+    )
 
 
 class LintRequest(BaseModel):

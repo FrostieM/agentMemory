@@ -50,7 +50,9 @@ V3_TOOLS: list[types.Tool] = [
         description=(
             "v3 search — BM25 + projection. Returns a list of compact "
             "projections (~30 tokens per hit) with scores. Pass ``kinds`` "
-            "to restrict the search to specific kinds; default = all."
+            "to restrict the search to specific kinds; default = all. "
+            "Set ``rerank=true`` to run the optional cross-encoder "
+            "reranker (requires the [rerank] extra)."
         ),
         inputSchema={
             "type": "object",
@@ -62,6 +64,7 @@ V3_TOOLS: list[types.Tool] = [
                     "items": {"type": "string", "enum": _KINDS},
                 },
                 "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 50},
+                "rerank": {"type": "boolean", "default": False},
             },
             "required": ["query"],
         },

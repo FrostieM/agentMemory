@@ -120,6 +120,7 @@ def search_endpoint(req: SearchRequest, conn: DbDep) -> Envelope:
         query=req.query,
         kinds=req.kinds,
         limit=req.limit,
+        rerank=req.rerank,
     )
     data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
     return _ok(data)

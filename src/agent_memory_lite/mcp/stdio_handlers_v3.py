@@ -67,12 +67,14 @@ def _handle_v3_search(args: dict[str, Any]) -> dict[str, Any]:
     if kinds is not None and not isinstance(kinds, list):
         return _err("invalid_args", "kinds must be a list of strings")
     limit = int(payload.get("limit") or 10)
+    rerank = bool(payload.get("rerank") or False)
     hits = search(
         _runtime.db(),
         workspace_id=workspace_id,
         query=query,
         kinds=kinds,
         limit=limit,
+        rerank=rerank,
     )
     data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
     return _ok(data)

@@ -219,12 +219,17 @@ def search(
     query: str,
     kinds: list[str] | None = None,
     limit: int = 10,
+    rerank: bool = False,
 ) -> list[SearchHit]:
     """Multi-kind search. Returns compact projections sorted by relevance.
 
     By default searches across all known kinds. Pass ``kinds=['decision',
     'behavior']`` to narrow scope. Per-kind limit divides ``limit`` so
     a wide search returns balanced results, not all one kind.
+
+    ``rerank=True`` runs the optional cross-encoder reranker over the
+    initial hit set. Requires the ``[rerank]`` extra; falls back to the
+    BM25/LIKE order if the model is unavailable.
     """
     if not query.strip():
         return []
@@ -241,6 +246,10 @@ def search(
                 search_kind(conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind)
             )
     hits.sort(key=lambda h: h.score, reverse=True)
+    if rerank and hits:
+        from agent_memory_lite.v3.retrieval.rerank import rerank_hits  # noqa: PLC0415
+
+        return rerank_hits(query, hits, top_k=limit)
     return hits[:limit]
 
 
