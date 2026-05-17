@@ -38,6 +38,8 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
 )
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
+from agent_memory_lite.mcp.v2_compat import compat_dispatch
+from agent_memory_lite.mcp.v2_compat import is_enabled as v2_compat_enabled
 from agent_memory_lite.version import __version__
 
 __all__ = [
@@ -73,11 +75,39 @@ async def _list_tools() -> list[types.Tool]:
     return _TOOLS
 
 
+def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    """Route ``name`` through the v2→v3 compat shim when enabled.
+
+    Returns an envelope dict when the shim handled the call, ``None``
+    otherwise (caller falls through to the native v2 handler).
+
+    Gate: ``MEMORY_V2_COMPAT_ENABLED`` env. Off by default during the
+    v3 transition; flip to ``true`` at the week-8 cutover to route
+    every legacy v2 tool name through the v3 backend.
+    """
+    if not v2_compat_enabled():
+        return None
+    # The shim only handles v2 names; v3-prefixed names always use the
+    # native v3 handler.
+    if name.startswith("memory_v3_"):
+        return None
+    try:
+        return compat_dispatch(_runtime.db(), name, args)
+    except Exception as exc:  # shim must never raise into the dispatcher
+        _log.warning("v2_compat_dispatch_failed", tool=name, error=str(exc))
+        return None
+
+
 @_call_tool_decorator
 async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
+    args = arguments or {}
+    # Compat shim runs FIRST when enabled — translates a v2 tool name
+    # into a v3 backend call before the native v2 handler sees the request.
+    shim_result = await asyncio.to_thread(_maybe_compat_dispatch, name, args)
+    if shim_result is not None:
+        return [types.TextContent(type="text", text=json.dumps(shim_result, ensure_ascii=False))]
     if name not in _HANDLERS:
         return [types.TextContent(type="text", text=json.dumps({"error": f"unknown tool: {name}"}))]
-    args = arguments or {}
     try:
         result = await asyncio.to_thread(_HANDLERS[name], args)
     except Exception as exc:
