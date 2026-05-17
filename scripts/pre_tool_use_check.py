@@ -40,6 +40,7 @@ import json
 import os
 import sqlite3
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,10 +56,31 @@ _DEFAULT_REGISTRY = (
     if os.environ.get("MEMORY_WORKSPACES_FILE")
     else Path.home() / ".agent_memory" / "workspaces.json"
 )
+_DEBUG_LOG_ENV = "MEMORY_PRETOOLUSE_DEBUG"
 
 
 def _bypass_enabled() -> bool:
     return os.environ.get("MEMORY_SKIP_PRETOOLUSE_CHECK", "").strip().lower() in _BYPASS_FLAGS
+
+
+def _debug_log(*, tool_name: str, workspace_id: str, decision: str) -> None:
+    """Append one tab-separated invocation row when MEMORY_PRETOOLUSE_DEBUG is set.
+
+    Opt-in trace so the operator can confirm the hook is firing and see
+    its decisions per tool call. Any IO failure is swallowed — the hook
+    must never crash because the debug log is misconfigured.
+    """
+    target = os.environ.get(_DEBUG_LOG_ENV, "").strip()
+    if not target:
+        return
+    try:
+        stamp = datetime.now(UTC).isoformat(timespec="seconds")
+        line = f"{stamp}\t{tool_name}\t{workspace_id}\t{decision}\n"
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        with Path(target).open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except OSError:
+        return
 
 
 def _load_registry_entries() -> list[dict[str, Any]]:
@@ -115,37 +137,38 @@ def _read_event() -> dict[str, Any] | None:
     return event if isinstance(event, dict) else None
 
 
-def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str]:  # noqa: PLR0911 - guard chain
-    """Resolve workspace + run dispatch.decide; return (allow, diagnostic).
+def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str]:  # noqa: PLR0911 - guard chain
+    """Resolve workspace + run dispatch.decide.
 
-    Every failure path along the way collapses to ``(True, "")`` so the
-    hook fails open. Diagnostic is only populated when a real block
-    fires.
+    Returns ``(allow, diagnostic, workspace_id)``. ``workspace_id`` is
+    ``"-"`` when no registry match was found, so the debug log can
+    record both "hook ran but no workspace" and "hook ran for ws=X".
+    Every failure path along the way collapses to a fail-open allow.
     """
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input") or {}
     transcript_path = event.get("transcript_path")
     cwd = event.get("cwd") or os.getcwd()
     if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
-        return True, ""
+        return True, "", "-"
     resolved = _resolve_workspace(cwd)
     if resolved is None:
-        return True, ""
+        return True, "", "-"
     workspace_id, db_path = resolved
     if not Path(db_path).exists():
-        return True, ""
+        return True, "", workspace_id
     try:
         from agent_memory_lite.enforcement.dispatch import decide  # noqa: PLC0415
         from agent_memory_lite.enforcement.session_trail import (  # noqa: PLC0415
             read_prior_tool_calls,
         )
     except ImportError:
-        return True, ""
+        return True, "", workspace_id
     trail = read_prior_tool_calls(transcript_path)
     try:
         conn = sqlite3.connect(db_path)
     except sqlite3.Error:
-        return True, ""
+        return True, "", workspace_id
     try:
         decision = decide(
             conn,
@@ -157,19 +180,24 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str]:  # noqa: PLR09
             ollama_model=os.environ.get("OLLAMA_MODEL"),
         )
     except (sqlite3.Error, ValueError, KeyError, TypeError):
-        return True, ""
+        return True, "", workspace_id
     finally:
         conn.close()
-    return decision.allow, decision.diagnostic
+    return decision.allow, decision.diagnostic, workspace_id
 
 
 def main() -> int:
     if _bypass_enabled():
+        _debug_log(tool_name="-", workspace_id="-", decision="bypass")
         return 0
     event = _read_event()
     if event is None:
+        _debug_log(tool_name="-", workspace_id="-", decision="no_event")
         return 0
-    allow_call, diagnostic = _decide_for_event(event)
+    tool_name = str(event.get("tool_name") or "-")
+    allow_call, diagnostic, workspace_id = _decide_for_event(event)
+    decision_label = "allow" if allow_call else "block"
+    _debug_log(tool_name=tool_name, workspace_id=workspace_id, decision=decision_label)
     if allow_call:
         return 0
     print(diagnostic, file=sys.stderr)

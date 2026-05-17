@@ -231,6 +231,93 @@ def test_no_active_rules_allows_call(
     assert result.returncode == 0
 
 
+def test_debug_log_records_allow_invocation(fake_workspace: dict[str, str], tmp_path: Path) -> None:
+    """When MEMORY_PRETOOLUSE_DEBUG points at a file, every hook invocation appends a row."""
+    log_path = tmp_path / "trace.log"
+    result = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/api/x.py", "new_string": "ok = 1"},
+            "cwd": fake_workspace["project_root"],
+        },
+        env_overrides={
+            "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
+            "MEMORY_PRETOOLUSE_DEBUG": str(log_path),
+        },
+    )
+    assert result.returncode == 0
+    assert log_path.exists()
+    rows = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 1
+    fields = rows[0].split("\t")
+    assert fields[1] == "Edit"
+    assert fields[2] == "test-ws"
+    assert fields[3] == "allow"
+
+
+def test_debug_log_records_block_invocation(fake_workspace: dict[str, str], tmp_path: Path) -> None:
+    _seed_rule(
+        fake_workspace["db_path"],
+        rule_id="beh_mn",
+        name="magic-number",
+        applies_to=["enforcement:mechanical", "mechanical:no-magic-number"],
+    )
+    log_path = tmp_path / "trace.log"
+    result = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "src/strategy/x.py",
+                "new_string": "if confidence > 0.85:\n    pass",
+            },
+            "cwd": fake_workspace["project_root"],
+        },
+        env_overrides={
+            "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
+            "MEMORY_PRETOOLUSE_DEBUG": str(log_path),
+        },
+    )
+    assert result.returncode == 2
+    rows = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 1
+    fields = rows[0].split("\t")
+    assert fields[3] == "block"
+
+
+def test_debug_log_silent_when_env_unset(fake_workspace: dict[str, str], tmp_path: Path) -> None:
+    log_path = tmp_path / "trace.log"
+    _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/a.py", "new_string": "x"},
+            "cwd": fake_workspace["project_root"],
+        },
+        env_overrides={"MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"]},
+    )
+    assert not log_path.exists()
+
+
+def test_debug_log_records_bypass(tmp_path: Path) -> None:
+    log_path = tmp_path / "trace.log"
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=json.dumps({"tool_name": "Edit", "tool_input": {}}),
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "MEMORY_SKIP_PRETOOLUSE_CHECK": "1",
+            "MEMORY_PRETOOLUSE_DEBUG": str(log_path),
+        },
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0
+    rows = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(rows) == 1
+    assert rows[0].endswith("bypass")
+
+
 def test_explicit_workspace_env_override(
     fake_workspace: dict[str, str],
 ) -> None:
