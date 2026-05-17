@@ -50,7 +50,7 @@ def detect_arch_write_without_search(
         return None
     if has_called(trail, *_PRIOR_TOOLS):
         return None
-    title = tool_input.get("title") or "(no title)"
+    title = tool_input.get("title") or tool_input.get("decision_title") or "(no title)"
     return (
         f"{tool_name} titled {title!r} fires without prior memory_search "
         f"or memory_list_decisions/theories; the agent must check for "

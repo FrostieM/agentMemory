@@ -76,3 +76,12 @@ def test_unrelated_prior_tools_do_not_count() -> None:
         "memory_write_decision", {"title": "T"}, ["Read", "Bash"]
     )
     assert out is not None
+
+
+def test_record_with_evidence_uses_decision_title_in_diagnostic() -> None:
+    """memory_record_with_evidence renames title to decision_title — surface it."""
+    out = detect_arch_write_without_search(
+        "memory_record_with_evidence", {"decision_title": "Live arm gate"}, []
+    )
+    assert out is not None
+    assert "Live arm gate" in out

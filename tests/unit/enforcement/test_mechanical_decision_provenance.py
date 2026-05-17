@@ -91,6 +91,55 @@ def test_record_with_evidence_with_provenance_passes() -> None:
     assert out is None
 
 
+def test_record_with_evidence_decision_rationale_field_passes() -> None:
+    """memory_record_with_evidence renames the field to decision_rationale —
+    detector must recognize it so the live MCP payload does not false-positive.
+    """
+    out = detect_decision_without_provenance(
+        "memory_record_with_evidence",
+        {
+            "decision_title": "T",
+            "decision_text": "...",
+            "decision_rationale": "Long enough rationale to clear the 30-char floor easily",
+        },
+    )
+    assert out is None
+
+
+def test_record_with_evidence_text_alone_passes() -> None:
+    """evidence_text on the atomic combo IS the provenance — it writes the episode in-line."""
+    out = detect_decision_without_provenance(
+        "memory_record_with_evidence",
+        {
+            "decision_title": "T",
+            "decision_text": "...",
+            "evidence_text": "Concrete evidence captured at the moment of the decision write",
+        },
+    )
+    assert out is None
+
+
+def test_record_with_evidence_episode_raw_text_field_passes() -> None:
+    out = detect_decision_without_provenance(
+        "memory_record_with_evidence",
+        {
+            "title": "T",
+            "episode_raw_text": "Raw observation that justifies the decision in this turn",
+        },
+    )
+    assert out is None
+
+
+def test_decision_title_field_appears_in_diagnostic() -> None:
+    """The atomic-combo payload uses decision_title, not title — diagnostic must surface it."""
+    out = detect_decision_without_provenance(
+        "memory_record_with_evidence",
+        {"decision_title": "Live arm gate"},
+    )
+    assert out is not None
+    assert "Live arm gate" in out
+
+
 def test_non_dict_payload_passes_silently() -> None:
     """Malformed input should not crash the detector."""
     assert detect_decision_without_provenance("memory_write_decision", None) is None  # type: ignore[arg-type]
