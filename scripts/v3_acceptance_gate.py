@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import contextlib
 import json
 import sqlite3
 import statistics
@@ -60,6 +61,13 @@ from typing import Any
 
 from agent_memory_lite.v3.cognition.brief import compose_brief
 from agent_memory_lite.v3.storage.reader import search
+
+# Force UTF-8 stdout/stderr — the human-readable rendering contains ≤ / ≥
+# glyphs that crash a default Windows cp1251 console.
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 # Default query bundle for search measurements. Covers each major kind.
 DEFAULT_QUERIES = (
