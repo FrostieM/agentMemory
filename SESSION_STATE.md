@@ -354,10 +354,13 @@ All green on Python 3.13 / 3.14 (Windows / macOS / Linux):
 - `python scripts/check_sloc.py --enforce` — every `src/**/*.py` ≤ 150 SLOC.
 - `python scripts/run_evals.py --workspace <ws> --no-vector` — eval cases pass
   with the recall / precision / stale-fact / leak targets from the spec.
-- `python scripts/crash_test_v3.py` against a fresh `qa-crash` workspace —
-  70/70 assertions verifying retrieval, search, context envelope,
-  cross-references, pin/archive semantics, capability links, audit trail,
-  hygiene queue, snapshots, and relationship integrity end-to-end.
+- `python -m scripts.crash_test --skip-llm` against a fresh `qa-crash`
+  workspace — modular crash test (~133 assertions) verifying retrieval,
+  search, context envelope, cross-references, pin/archive semantics,
+  capability links, audit trail, hygiene queue, snapshots, and
+  relationship integrity end-to-end. (The monolithic
+  `crash_test_v3.py` was retired during the v3 cutover; the modular
+  ``scripts/crash_test/`` package supersedes it.)
 
 ## What you get out of the box
 
