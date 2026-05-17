@@ -10,6 +10,19 @@ Read this AFTER you've shipped v2.1.5 and have at least one
 project's worth of code ingested. Without ingested code, all the
 endpoints below return empty.
 
+> **v3.0.0 — start with `memory_v3_impact_check`.** The version-
+> current discipline primitive replaces a 3-call sequence
+> (`memory_file_digest` + `memory_graph_neighbors` + ad-hoc Grep)
+> with one envelope:  digest + callers + hot_symbols + verdict +
+> advisory. Returns `verdict ∈ {not_indexed, low, medium, high}`
+> and a one-sentence advisory naming the right follow-up tool.
+> Pinned as the workspace rule **graph-tools-first** via
+> `scripts/seed_v3_discipline.py`. See
+> [`V3_AGENT_RUNTIMES.md`](V3_AGENT_RUNTIMES.md) §"Tool name
+> reference". The v1.4-2.1.x tools below remain available for
+> deeper drilldowns once impact_check identifies the right hot
+> symbol.
+
 ---
 
 ## What was shipped — five layers

@@ -51,6 +51,11 @@ from agent_memory_lite.bootstrap.project_pre_commit_hook import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_context.py"
+# v3.0.0 — discipline stack hooks (see docs/V3_AGENT_RUNTIMES.md).
+V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief_v3.py"
+V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
+V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "v3" / "0001_init.sql"
+V3_POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
 PRETOOLUSE_HOOK_MATCHER = "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_.*"
 MARKER_BEGIN = "<!-- agent-memory-lite-contract:begin -->"
@@ -234,6 +239,132 @@ def bootstrap_db() -> None:
         [str(Path(sys.executable)), str(REPO_ROOT / "scripts" / "bootstrap_db.py")],
         check=True,
         cwd=str(REPO_ROOT),
+    )
+
+
+def install_v3_brief_hook(
+    settings: dict[str, object],
+    *,
+    venv_python: Path,
+    db_path: Path | None = None,
+    vector_path: Path | None = None,
+    workspace_id: str | None = None,
+) -> None:
+    """Add the v3 UserPromptSubmit brief hook (replaces the v2 inject_memory_context path).
+
+    Idempotent: identifies prior entries by the ``v3-brief`` marker substring
+    and overwrites them on re-run.
+    """
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings["hooks"] = hooks
+    ups = hooks.setdefault("UserPromptSubmit", [])
+    if not isinstance(ups, list):
+        ups = []
+        hooks["UserPromptSubmit"] = ups
+    cmd = f'"{venv_python}" "{V3_BRIEF_HOOK_SCRIPT}"'
+    # Project-scoped installs bake the workspace into env via the hook script's
+    # registry-walk — no extra args needed. We attach a tag comment so future
+    # setup_agent runs can find and refresh this entry.
+    marker = "agent-memory-lite-v3-brief"
+    cmd = cmd + f" # {marker}"
+    new_hook = {"type": "command", "command": cmd}
+    existing = next(
+        (
+            entry
+            for entry in ups
+            if isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(
+                isinstance(h, dict) and marker in str(h.get("command", ""))
+                for h in entry["hooks"]
+            )
+        ),
+        None,
+    )
+    if existing is None:
+        ups.append({"hooks": [new_hook]})
+    else:
+        existing["hooks"] = [new_hook]
+
+
+def install_v3_postedit_hook(
+    settings: dict[str, object], *, venv_python: Path
+) -> None:
+    """Add the v3 PostToolUse digest-queue hook on Edit/Write/NotebookEdit/MultiEdit.
+
+    Idempotent: identifies prior entries by the ``v3-postedit`` marker.
+    """
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings["hooks"] = hooks
+    post = hooks.setdefault("PostToolUse", [])
+    if not isinstance(post, list):
+        post = []
+        hooks["PostToolUse"] = post
+    marker = "agent-memory-lite-v3-postedit"
+    cmd = f'"{venv_python}" "{V3_POSTEDIT_HOOK_SCRIPT}" # {marker}'
+    new_entry = {
+        "matcher": V3_POSTTOOLUSE_MATCHER,
+        "hooks": [{"type": "command", "command": cmd}],
+    }
+    existing = next(
+        (
+            entry
+            for entry in post
+            if isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(
+                isinstance(h, dict) and marker in str(h.get("command", ""))
+                for h in entry["hooks"]
+            )
+        ),
+        None,
+    )
+    if existing is None:
+        post.append(new_entry)
+    else:
+        existing["hooks"] = new_entry["hooks"]
+        existing["matcher"] = V3_POSTTOOLUSE_MATCHER
+
+
+def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
+    """Apply v3 schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
+
+    Safe to call on a v2 DB: v3 adds new tables alongside v2 tables;
+    existing tables are skipped by CREATE TABLE IF NOT EXISTS.
+    """
+    import sqlite3  # noqa: PLC0415 — std-lib local import keeps top imports tidy
+
+    if not V3_SCHEMA_PATH.exists():
+        warn(f"v3 schema missing at {V3_SCHEMA_PATH} — skipping v3 deployment")
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(V3_SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.commit()
+        # Defer the seed import: keeps setup_agent's top imports clean,
+        # and the script directory is added to sys.path below if needed.
+        repo_root_str = str(REPO_ROOT)
+        if repo_root_str not in sys.path:
+            sys.path.insert(0, repo_root_str)
+        from scripts.seed_v3_discipline import seed_discipline  # noqa: PLC0415
+
+        results = seed_discipline(conn, workspace_id=workspace_id)
+    except sqlite3.Error as exc:
+        warn(f"v3 schema/seed failed: {exc}")
+        return
+    finally:
+        conn.close()
+    inserted = sum(1 for r in results if r.status == "inserted")
+    skipped = sum(1 for r in results if r.status == "skipped")
+    ok(
+        f"v3 schema applied + discipline rules seeded "
+        f"(inserted={inserted}, skipped={skipped}, "
+        f"total={len(results)})"
     )
 
 
@@ -449,6 +580,12 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
             settings, venv_python=diag.venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT
         )
         ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
+
+        # v3.0.0 discipline stack — global mode (no per-project DB args; the
+        # v3 brief hook resolves the workspace via the registry walker).
+        install_v3_brief_hook(settings, venv_python=diag.venv_python)
+        install_v3_postedit_hook(settings, venv_python=diag.venv_python)
+        ok("v3 brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
     else:
         warn("hook install skipped (--no-hook); agent only sees memory if it asks")
 
@@ -629,11 +766,25 @@ def configure_project(  # noqa: PLR0912, PLR0915
     else:
         existing["hooks"] = [new_hook]
 
+    # v3.0.0 discipline stack — installed alongside the legacy v2 inject hook
+    # for backwards compat. New projects get both surfaces; the v3 brief hook
+    # uses a distinct ``agent-memory-lite-v3-brief`` marker so it doesn't
+    # collide with the v2 ``agent-memory-lite-inject`` entry.
+    install_v3_brief_hook(
+        settings,
+        venv_python=diag.venv_python,
+        db_path=db_path,
+        vector_path=vector_path,
+        workspace_id=workspace_id,
+    )
+    install_v3_postedit_hook(settings, venv_python=diag.venv_python)
+
     pretooluse_status = install_pre_tool_use_hook(
         settings, venv_python=diag.venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT
     )
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     ok(f"MCP entry + project-scoped hook written to {settings_path}")
+    ok("v3 brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
     ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
 
     contract_path = project_root / "CLAUDE.md"
@@ -670,6 +821,12 @@ def configure_project(  # noqa: PLR0912, PLR0915
     )
     if seed_bootstrap:
         seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
+
+    # v3.0.0 — apply v3 schema (idempotent) + seed the 3 pinned discipline
+    # rules so every Claude Code session in this project sees the graph-tools-
+    # first / search-before-write / capability-link-on-write rules in the
+    # brief's behaviors section.
+    apply_v3_schema_and_seed(db_path, workspace_id=workspace_id)
 
     hook_result = install_project_pre_commit_hook(
         repo_root=REPO_ROOT, project_root=project_root, workspace_id=workspace_id

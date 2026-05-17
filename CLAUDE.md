@@ -322,9 +322,70 @@ workspaces are always allowed.
 Memory persists across chat sessions. Without the service you are working
 blind — say so, do not fall back to "internal memory".
 
-## Operating contract — apply every session
+## v3.0.0 — compact-projection surface (start here)
 
-These rules are not optional.
+The agent now has two coexisting surfaces:
+
+* **`memory_v3_*` tools** (10 of them) — compact projections by default,
+  ~20-40 tokens per item, full content opt-in via `fields=`. This is
+  the version-current surface. **Prefer these whenever possible.**
+* **Legacy `memory_*` tools** — full-body responses (~500-2000 tokens).
+  Still registered for backwards compat; will be retired at v4.0.
+
+### Discipline rules — call these FIRST (override any reflex)
+
+1. **`memory_v3_impact_check(file_path=<path>)`** before any
+   `Read` / `Edit` / `Grep` / `Write` on source code. Returns digest +
+   callers + hot symbols + verdict + advisory in ONE envelope. `Read`
+   is fallback only — for understanding algorithm logic, not for
+   impact analysis or symbol discovery.
+2. **`memory_v3_search(query=<topic>)`** before writing a new decision /
+   theory / behavior / skill. Pass `supersedes_id` when replacing an
+   existing decision. Create-new only when there is no overlap.
+3. **`memory_link_capability`** after writing a decision or theory —
+   scan the response's `capability_suggestions` field and link the
+   best-matching role/skill/playbook. Unlinked decisions force the
+   next agent to re-derive execution knowledge from raw episodes.
+
+These three rules ship as **pinned** workspace behaviors via
+`scripts/seed_v3_discipline.py` and ride every brief automatically.
+
+### v3 strict tools (the agent's primary surface)
+
+| Tool | Returns |
+|---|---|
+| `memory_v3_impact_check(file_path)` | digest + callers + verdict (the cornerstone) |
+| `memory_v3_search(query, kinds?, rerank?)` | list of compact projections w/ scores |
+| `memory_v3_get(kind, id, fields?)` | compact projection; full fields opt-in |
+| `memory_v3_write(kind, payload)` | new row, returns compact projection |
+| `memory_v3_edit(kind, id, fields)` | partial update, returns projection |
+| `memory_v3_pin(kind, id, pinned)` | toggle pin bit on decision/behavior |
+| `memory_v3_archive(kind, id, reason?)` | mark archived |
+| `memory_v3_brief(task?, max_tokens?)` | session-start brief, ≤500 tokens |
+| `memory_v3_lint(tool_name, tool_payload)` | pre-task advisory (PreToolUse path) |
+| `memory_v3_invoke_skill(skill_id)` | full `body_md` of a skill (ONLY surface that returns full markdown) |
+
+### Discover-then-fetch pattern (compact projections)
+
+Every read tool returns ~20-40 tokens per item by default. When a
+projection looks important, opt into full content:
+
+```text
+# Discover (cheap)
+hits = memory_v3_search(query="kelly sizing", limit=5)
+# Fetch full content for ONE hit (expensive)
+full = memory_v3_get(kind="decision", id="dec_x",
+                    fields=["decision_text", "rationale"])
+```
+
+This is the v3 cornerstone: the agent pays for what it actually reads,
+not for the entire body of every search hit.
+
+---
+
+## Legacy v2 contract (still supported until v4.0)
+
+These rules are not optional for projects on the v2 surface.
 
 ### Read before acting
 

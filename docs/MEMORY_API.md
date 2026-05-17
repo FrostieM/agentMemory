@@ -7,6 +7,77 @@ this file is the lookup table for "what's the JSON shape of endpoint X".
 All endpoints accept JSON and return JSON. Default header:
 `Content-Type: application/json`. Service base URL: `http://127.0.0.1:8765`.
 
+## v3.0.0 endpoints — `/v3/memory/*`
+
+The v3 surface returns compact projections by default (~20-40 tokens per
+item) and the uniform envelope `{"ok": bool, "data": ..., "error": ...}`.
+Full content is opt-in via `fields=[...]`. Full schema reference:
+[`V3_SCHEMA.md`](V3_SCHEMA.md). Wiring per agent runtime:
+[`V3_AGENT_RUNTIMES.md`](V3_AGENT_RUNTIMES.md).
+
+### GET /v3/memory/impact_check (discipline primitive)
+
+```text
+GET /v3/memory/impact_check?workspace_id=<id>&file_path=<path>
+    &callers_limit=20&hot_threshold=3
+```
+
+Response data shape:
+
+```json
+{
+  "file_path": "src/foo.py",
+  "digest": {
+    "file_path": "src/foo.py", "file_sha1": "...", "language": "python",
+    "chunk_count": 5, "symbol_count": 3, "inbound_edge_count": 7,
+    "purpose_short": "Compute fees", "top_symbols": [...],
+    "last_indexed_at": "2026-05-17T...", "is_stale": false
+  },
+  "callers": [
+    {"qualified_name": "x.Y.foo", "src_chunk_id": "chk_...",
+     "src_file_path": "src/x.py", "edge_type": "calls"}
+  ],
+  "hot_symbols": [{"qualified_name": "foo.crit", "callers_count": 7}],
+  "verdict": "high",
+  "advisory": "HIGH impact: hub file (≥6 callers ...). Call memory_graph_neighbors..."
+}
+```
+
+Call this **before** any `Read` / `Edit` / `Grep` on a source file —
+returns digest + callers + verdict in one envelope, replacing a 3-call
+sequence (`memory_file_digest` + `memory_graph_neighbors` + ad-hoc Grep).
+
+### Other v3 endpoints
+
+| Method | Path | Body / params |
+|---|---|---|
+| GET | `/v3/memory/brief` | `workspace_id, task?, max_tokens=500` |
+| POST | `/v3/memory/search` | `{workspace_id, query, kinds?, limit, rerank?}` |
+| GET | `/v3/memory/get` | `workspace_id, kind, id, fields?` |
+| GET | `/v3/memory/list` | `workspace_id, kind, limit, pinned_only, status?` |
+| GET | `/v3/memory/count` | `workspace_id, kind, pinned_only, status?` |
+| POST | `/v3/memory/write` | `{workspace_id, kind, payload, agent_id?, source_episode_id?}` |
+| POST | `/v3/memory/edit` | `{workspace_id, kind, id, fields, agent_id?}` |
+| POST | `/v3/memory/pin` | `{workspace_id, kind, id, pinned}` |
+| POST | `/v3/memory/archive` | `{workspace_id, kind, id, reason?}` |
+| POST | `/v3/memory/lint` | `{workspace_id, tool_name, tool_payload, transcript_path?}` |
+| GET | `/v3/memory/skill/{skill_id}` | `workspace_id` (returns `body_md` — only full-content surface) |
+| POST | `/v3/memory/rollback` | `{workspace_id, kind, id, to_version, why}` |
+| GET | `/v3/memory/versions` | `workspace_id, kind, id` |
+
+Every response wraps in `{"ok": bool, "data": ..., "error": {"code": str, "message": str} | null}`.
+
+The MCP tools that wrap these are named `memory_v3_*` and share the same
+shapes — see [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) §v3.0.0 for the
+canonical list.
+
+---
+
+## Legacy v2 endpoints — `/memory/*`
+
+The v2 surface stays registered until v4.0 for backwards compat. v2 reads
+return full bodies; new code should prefer v3.
+
 ## Read endpoints
 
 ### POST /memory/get_context (primary surface)

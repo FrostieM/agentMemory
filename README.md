@@ -22,7 +22,18 @@ Ollama drives local LLM extraction.
 > compact projections (~20-40 tokens per item) returned by every read
 > tool by default; full content is opt-in via `fields=[...]`. Target
 > metrics: token cost per session ≤50% of v2, rule adherence ≥95%,
-> 9 MCP tools down from 30+, 14 SQL migrations → 1 DDL.
+> 10 MCP tools down from 30+, 14 SQL migrations → 1 DDL.
+>
+> **One-line deploy** (canonical path):
+>
+>     python scripts/setup_agent.py --project /path/to/your/project
+>
+> This applies the v3 schema, seeds the 3 pinned discipline rules
+> (graph-tools-first / search-before-write / capability-link-on-write),
+> wires the `UserPromptSubmit` brief hook + `PostToolUse` digest hook
+> into `.claude/settings.json`, and registers the workspace in
+> `~/.agent_memory/workspaces.json`. Idempotent — safe to re-run.
+>
 > See [`docs/V3_AGENT_RUNTIMES.md`](docs/V3_AGENT_RUNTIMES.md),
 > [`docs/V3_SCHEMA.md`](docs/V3_SCHEMA.md), and
 > [`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md) for wiring + cutover

@@ -7,6 +7,97 @@ legacy DB behaviour, troubleshooting common failure modes. Pair with
 [`docs/V1_1_0_CALIBRATION.md`](V1_1_0_CALIBRATION.md) for calibration
 evidence.
 
+## v3.0.0 deployment (canonical path)
+
+One command sets up everything on a new project:
+
+```bash
+python scripts/setup_agent.py --project /path/to/your/project
+```
+
+This:
+
+1. Bootstraps the project's SQLite + LanceDB pair under
+   `<project>/.agent_memory/`.
+2. Registers the workspace in `~/.agent_memory/workspaces.json` so the
+   hub mode can route to it.
+3. Applies the v3 schema (idempotent — `CREATE TABLE IF NOT EXISTS`
+   for every table; safe on existing v2 DBs).
+4. Seeds the 3 pinned discipline rules (graph-tools-first /
+   search-before-write / capability-link-on-write) into the v3
+   `behaviors` table.
+5. Writes hooks to `<project>/.claude/settings.json`:
+   * `UserPromptSubmit` → `inject_memory_brief_v3.py`
+     (≤500-token brief)
+   * `PostToolUse` (`Edit|Write|NotebookEdit|MultiEdit`) →
+     `post_edit_enqueue.py` (digest queue)
+   * `PreToolUse` enforcement (existing v2 path, unchanged)
+6. Updates project `CLAUDE.md` + `AGENTS.md` with the agent contract.
+
+Idempotent — re-running is safe. New rules / hooks insert; existing
+ones are detected by marker substring and refreshed.
+
+### Verify deployment
+
+After `setup_agent.py` finishes:
+
+```bash
+# 1. Settings.json has both v3 hooks
+python -c "import json; d = json.load(open('<project>/.claude/settings.json')); \
+  print('UserPromptSubmit:', any('v3-brief' in str(h) for h in d.get('hooks', {}).get('UserPromptSubmit', []))); \
+  print('PostToolUse:',     any('v3-postedit' in str(h) for h in d.get('hooks', {}).get('PostToolUse', [])))"
+
+# 2. Pinned rules in DB
+sqlite3 <project>/.agent_memory/memory.db \
+  "SELECT name, pinned FROM behaviors WHERE pinned=1 ORDER BY name;"
+
+# 3. Compose a brief manually (no Claude Code session needed)
+python -c "import sqlite3; from agent_memory_lite.v3.cognition.brief import compose_brief; \
+  conn = sqlite3.connect('<project>/.agent_memory/memory.db'); \
+  print(compose_brief(conn, workspace_id='<your-workspace>').body_md)"
+```
+
+After 1-2 days of work in the project, measure adoption:
+
+```bash
+python scripts/measure_tool_usage.py --since-days 2
+```
+
+Target: `graph_share >= 0.30` — agent reaches for `memory_v3_*`
+instead of `Read` / `Grep`. Baseline measured on existing projects:
+`0.00%` (graph tools effectively unused before v3 stack).
+
+### Restart what
+
+After installing v3 hooks, the agent runtime needs a refresh to pick
+them up:
+
+* **Claude Code chats**: open a **new** session in the project root —
+  `.claude/settings.json` is read at session start, current chats
+  don't re-read it mid-flight.
+* **MCP stdio server**: spawned per chat — new chat = new MCP =
+  fresh v3 handler code.
+* **HTTP service** on port 8765: rebuild only needed if you want
+  `/v3/memory/*` routes (mounted via `api/app_routes.py`). The
+  hook-based brief/discipline stack doesn't go through HTTP.
+
+### v3-only installer (advanced)
+
+`scripts/install_v3_hooks.py` is the lower-level installer used
+internally by `setup_agent.py`. Useful when you only want to refresh
+hooks without re-running the full `setup_agent.py` flow:
+
+```bash
+# Dry-run (default):
+python scripts/install_v3_hooks.py --project /path/to/project
+
+# Apply:
+python scripts/install_v3_hooks.py --project /path/to/project --apply --backup-first
+
+# Hooks only, skip seed:
+python scripts/install_v3_hooks.py --project /path/to/project --apply --no-seed
+```
+
 ## After upgrading the repo
 
 After `git pull` / a new tag, three things may need refreshing:

@@ -2,8 +2,25 @@
 
 One page. Print, pin to wall, follow daily. Full contract:
 [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md). Full API: [`MEMORY_API.md`](MEMORY_API.md).
+v3 surface details: [`V3_AGENT_RUNTIMES.md`](V3_AGENT_RUNTIMES.md).
 
-## Before any non-trivial action
+## v3.0.0 — call these FIRST
+
+These three rules ship pinned in every workspace's behaviors section
+and ride every brief automatically. They override default reflexes.
+
+| Trigger | **v3 call (prefer)** | Legacy fallback |
+|---|---|---|
+| About to `Read` / `Edit` / `Grep` a source file | **`memory_v3_impact_check(file_path=...)`** — digest + callers + verdict in one envelope | `memory_file_digest` + `memory_graph_neighbors` (3 calls) |
+| About to write a decision / theory / behavior / skill | **`memory_v3_search(query=<topic>)`** to surface duplicates | `memory_list_decisions(query=..., include_superseded=true)` |
+| Just wrote a decision/theory | Scan response `capability_suggestions`, **`memory_link_capability(...)`** the best match | (same) |
+| Session start | **`memory_v3_brief()`** — ≤500-token compact brief | `memory_get_context(query=...)` — ~1500-token envelope |
+
+`memory_v3_impact_check` returns `{verdict: low|medium|high|not_indexed,
+advisory: "<next step>", digest, callers, hot_symbols}`. The advisory
+field tells you exactly which follow-up tool to call next.
+
+## Before any non-trivial action (legacy v2 — supported until v4.0)
 
 | Trigger | Call | Why |
 |---|---|---|
