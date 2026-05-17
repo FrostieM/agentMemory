@@ -30,7 +30,15 @@ from agent_memory_lite.enforcement.rule_loader import (
     load_enforcement_rules,
 )
 from agent_memory_lite.enforcement.session_trail import read_prior_tool_calls
+from agent_memory_lite.v3.cognition.impact_check import impact_check
 from agent_memory_lite.v3.storage.reader import search
+
+# Tools that read or mutate source files. When the agent calls one of
+# these with a ``file_path`` payload, lint surfaces the impact_check
+# hint so the agent has an obvious cheaper-than-Read alternative.
+_DISCIPLINE_TOOLS = frozenset(
+    {"Read", "Edit", "Write", "Grep", "Glob", "MultiEdit", "NotebookEdit"}
+)
 
 # ============================================================
 # Result type
@@ -46,6 +54,7 @@ class LintResult:
     related_decisions: list[dict[str, Any]] = field(default_factory=list)
     prior_failures: list[dict[str, Any]] = field(default_factory=list)
     watch_outs: str = ""
+    discipline_hint: str = ""
     diagnostic: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,6 +64,7 @@ class LintResult:
             "related_decisions": list(self.related_decisions),
             "prior_failures": list(self.prior_failures),
             "watch_outs": self.watch_outs,
+            "discipline_hint": self.discipline_hint,
             "diagnostic": self.diagnostic,
         }
 
@@ -167,6 +177,56 @@ def _build_watch_outs(
     return " | ".join(parts)
 
 
+def _build_discipline_hint(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    tool_name: str,
+    tool_payload: dict[str, Any],
+) -> str:
+    """Surface the impact_check redirect when a discipline-relevant tool is called.
+
+    The point: every Read/Grep/Edit/Write on a known file is an
+    opportunity for the agent to call memory_v3_impact_check FIRST and
+    learn (a) the file's purpose without reading source, (b) who
+    depends on it before mutating signatures, (c) whether the digest
+    is stale.
+
+    Returns an empty string when:
+      * tool is not in the discipline set (e.g. memory_v3_* tools
+        themselves — those ARE the right path)
+      * no file_path in payload
+      * file is not_indexed AND not stale (no digest signal to leverage)
+    """
+    if tool_name not in _DISCIPLINE_TOOLS:
+        return ""
+    raw_path = tool_payload.get("file_path") or tool_payload.get("pattern")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return ""
+    try:
+        report = impact_check(conn, workspace_id=workspace_id, file_path=raw_path)
+    except Exception:  # discipline hint must never break lint
+        return ""
+    verdict = report.verdict
+    if verdict == "not_indexed":
+        # Don't pester for unindexed files — fallback to Read is the
+        # only option until the digest pipeline catches up. We still
+        # advise IF the file matters to the project (caller count
+        # could be derived from digest if it existed).
+        return ""
+    callers_count = int(report.digest.get("inbound_edge_count") or 0)
+    hot_count = len(report.hot_symbols)
+    if verdict == "low" and callers_count == 0 and hot_count == 0:
+        # No leverage — file has no recorded callers. Read is fine here.
+        return ""
+    return (
+        f"memory_v3_impact_check shows verdict={verdict!r} "
+        f"({callers_count} callers, {hot_count} hot symbol(s)) "
+        f"for {raw_path!r}. CALL memory_v3_impact_check(file_path={raw_path!r}) "
+        f"BEFORE {tool_name} for the full digest + callers + advisory."
+    )
+
+
 # ============================================================
 # Main entry point
 # ============================================================
@@ -218,6 +278,16 @@ def lint(
         failures = _prior_failures(conn, workspace_id, query)
         verdict = _verdict_from_decision(decision.allow, bool(applicable))
         watch_outs = _build_watch_outs(applicable, failures)
+        discipline_hint = _build_discipline_hint(
+            conn,
+            workspace_id=workspace_id,
+            tool_name=tool_name,
+            tool_payload=tool_payload,
+        )
+        # Promote verdict from "allow" → "allow_with_advisories" when
+        # discipline_hint fires, so the hook script knows to surface it.
+        if discipline_hint and verdict == "allow":
+            verdict = "allow_with_advisories"
         diagnostic = decision.diagnostic if not decision.allow else ""
         return LintResult(
             verdict=verdict,
@@ -225,6 +295,7 @@ def lint(
             related_decisions=related,
             prior_failures=failures,
             watch_outs=watch_outs,
+            discipline_hint=discipline_hint,
             diagnostic=diagnostic,
         )
     except (sqlite3.Error, KeyError, ValueError, TypeError) as exc:

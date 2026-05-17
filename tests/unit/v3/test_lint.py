@@ -206,6 +206,7 @@ def test_lint_to_dict_serialization(conn: sqlite3.Connection) -> None:
     assert "related_decisions" in data
     assert "prior_failures" in data
     assert "watch_outs" in data
+    assert "discipline_hint" in data
 
 
 def test_lint_failure_soft_on_subsystem_error(conn: sqlite3.Connection) -> None:
@@ -229,3 +230,112 @@ def test_lint_payload_query_extraction_for_decisions(conn: sqlite3.Connection) -
     )
     ids = [d["id"] for d in result.related_decisions]
     assert "dec_d" in ids
+
+
+# ============================================================
+# discipline_hint — redirects Read/Edit/Grep to memory_v3_impact_check
+# ============================================================
+
+
+def _seed_digest(
+    conn: sqlite3.Connection,
+    *,
+    file_path: str,
+    inbound: int = 0,
+    workspace_id: str = "ws",
+) -> None:
+    import time  # noqa: PLC0415
+
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn.execute(
+        """INSERT INTO code_digests (id, workspace_id, file_path, file_sha1,
+                                     language, chunk_count, symbol_count,
+                                     inbound_edge_count, outbound_edge_count,
+                                     purpose_short, top_symbols_json,
+                                     last_indexed_at, updated_at)
+           VALUES (?, ?, ?, ?, 'python', 1, 1, ?, 0, 'purpose',
+                   '[]', ?, ?)""",
+        (f"digest_{file_path}", workspace_id, file_path, "h" * 40, inbound, ts, ts),
+    )
+    conn.commit()
+
+
+def test_lint_discipline_hint_fires_on_read_with_callers(
+    conn: sqlite3.Connection,
+) -> None:
+    """Read against a file with recorded callers → hint redirects to impact_check."""
+    _seed_digest(conn, file_path="src/hub.py", inbound=4)
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Read",
+        tool_payload={"file_path": "src/hub.py"},
+    )
+    assert "memory_v3_impact_check" in result.discipline_hint
+    assert "verdict='medium'" in result.discipline_hint
+    # verdict promoted from allow → allow_with_advisories so the hook
+    # surfaces the hint in the system-reminder.
+    assert result.verdict == "allow_with_advisories"
+
+
+def test_lint_discipline_hint_fires_on_edit(conn: sqlite3.Connection) -> None:
+    _seed_digest(conn, file_path="src/x.py", inbound=2)
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Edit",
+        tool_payload={"file_path": "src/x.py"},
+    )
+    assert "memory_v3_impact_check" in result.discipline_hint
+
+
+def test_lint_no_discipline_hint_for_unindexed_file(
+    conn: sqlite3.Connection,
+) -> None:
+    """File not in code_digests → no hint (fallback to Read is forced anyway)."""
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Read",
+        tool_payload={"file_path": "src/never_indexed.py"},
+    )
+    assert result.discipline_hint == ""
+
+
+def test_lint_no_discipline_hint_for_low_impact_file(
+    conn: sqlite3.Connection,
+) -> None:
+    """File with 0 callers → no leverage, hint stays empty."""
+    _seed_digest(conn, file_path="src/leaf.py", inbound=0)
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Read",
+        tool_payload={"file_path": "src/leaf.py"},
+    )
+    assert result.discipline_hint == ""
+
+
+def test_lint_no_discipline_hint_for_v3_tools(conn: sqlite3.Connection) -> None:
+    """memory_v3_* tools ARE the right path — no redirect."""
+    _seed_digest(conn, file_path="src/hub.py", inbound=10)
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="memory_v3_get",
+        tool_payload={"file_path": "src/hub.py"},
+    )
+    assert result.discipline_hint == ""
+
+
+def test_lint_no_discipline_hint_when_no_file_path(
+    conn: sqlite3.Connection,
+) -> None:
+    """Bash, etc. — no file_path → no hint."""
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Bash",
+        tool_payload={"command": "ls"},
+    )
+    assert result.discipline_hint == ""
