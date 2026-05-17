@@ -9,6 +9,129 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.0.0-dev — Unreleased (v3 development branch)
+
+**Architectural pivot.** The audit findings in [`docs/POST_V2_ROADMAP.md`](docs/POST_V2_ROADMAP.md)
+showed three binding constraints: token cost (every tool call returned
+500-2000 tokens of full markdown body), tool-surface bloat (30+ MCP
+tools, 71 env vars, 32 SQL migrations), and the adoption gap (~80%
+rule-adherence plateau). v3 keeps SQL as source of truth and adds a
+compact-projection retrieval layer; tool surface collapses to 9 MCP
+tools + 2 hook primitives, 14 migrations consolidate into one DDL.
+
+Target metrics on cutover: tokens/Claude Code session ≤50% of v2,
+rule adherence ≥95%, brief cache hit rate ≥70%, code-digest staleness
+median ≤2h. Acceptance gate runs via `scripts/v3_acceptance_gate.py`.
+
+The 3.0.0-dev work runs in parallel with the stable 2.x surface; both
+ship from the same checkout. v3 endpoints mount at `/v3/memory/*`,
+v3 MCP tools are prefixed `memory_v3_*`, v2 surface keeps working
+unchanged until the week-8 canary flip.
+
+### Foundation (Phase 1)
+
+- **`migrations/v3/0001_init.sql`** — consolidated DDL replacing
+  v2 migrations 0001 + 0020-0032. 35 tables: 12 core kinds
+  (decisions, theories, behaviors, skills, concepts, tasks,
+  episodes, insights, code_digests, chunks, theory_evidence,
+  versions) + audit_log + FTS5 virtual tables + indexes.
+  `gist` / `*_one_line` / `*_short` columns persisted on write
+  so projections are pre-computed.
+- **`scripts/migrate_v2_to_v3.py`** — idempotent SQLite-to-SQLite
+  port. Resumable on partial failure. Computes gist columns via
+  cheap heuristic during the port; Ollama backfill is a separate
+  optional pass.
+- **Compact projections** (`src/agent_memory_lite/v3/storage/projections.py`)
+  — per-kind ~20-40-token shapes. Decision projection: `{id, title,
+  status, gist, supersedes, valid_from}`. Full content opt-in via
+  `memory_v3_get(kind, id, fields=[...])`.
+- **Reader + writer** with versioned mutations. Every write
+  snapshots prior content to `versions` table; `memory_v3_rollback`
+  writes historical content as a new version (linear history).
+
+### Cognition (Phase 2)
+
+- **`memory_v3_brief`** — ≤500-token session-start brief composed
+  from 5 sections (identity 100 + behaviors 120 + decisions 130 +
+  state 60 + code_hubs 90). Replaces v2's verbose `<memory_context>`
+  envelope (~1500 tokens). In-process LRU cache keyed on workspace
+  fingerprint; cache hit ~sub-millisecond, miss ~30-80ms (pure SQL,
+  no LLM).
+- **`memory_v3_lint`** — pre-task advisory wrapping the existing
+  `enforcement/dispatch.py` mechanical + semantic stack. Returns
+  `{verdict, applicable_rules, related_decisions, prior_failures,
+  watch_outs}`. Failure-soft: any error degrades to `allow`.
+- **Auto file-digest pipeline** — `scripts/post_edit_enqueue.py`
+  PostToolUse hook drops markers into `~/.agent_memory/digest_queue.jsonl`;
+  `agent_memory_lite.v3.cognition.digest_worker` daemon consumes
+  queue, runs heuristic per-file digest (Python AST top symbols +
+  docstring first line; generic prefix scan for non-Python), UPSERTs
+  into `code_digests` table. Hard cap 5000 pending tasks.
+- **Sleep-time consolidation cron** —
+  `agent_memory_lite.v3.cognition.consolidation` runs every 6h
+  (03/09/15/21 local via `scripts/memory_consolidation_task.ps1`):
+  clusters last-24h episodes by Jaccard similarity (0.30 threshold),
+  distills one insight candidate per cluster. Catches up after sleep
+  via `-StartWhenAvailable`.
+- **Optional cross-encoder reranker** — opt-in `[rerank]` extra
+  installs `sentence-transformers + torch`. `memory_v3_search`
+  accepts `rerank=true` and reorders the top-N hits by
+  `jina-reranker-v1-tiny-en` (~33 MB CPU). Failure-soft: extra not
+  installed or model load fails → falls back to BM25 order silently.
+
+### Agent surface (Phase 1+2)
+
+- **HTTP `/v3/memory/*`** — 13 endpoints returning uniform
+  `{ok, data, error}` envelope. Routes are thin wrappers around v3
+  storage / cognition.
+- **9 MCP tools** (`memory_v3_*` prefix during transition):
+  6 strict (search, get, write, edit, pin, archive) + 2 hook
+  primitives (brief, lint) + invoke_skill. Registered alongside
+  v2 tools without collisions.
+- **`memory-cli`** entrypoint — 13 subcommands mirroring HTTP.
+  For shell agents (Aider, Codex CLI, CI scripts); httpx-based,
+  JSON to stdout, `--text` mode strips envelope.
+- **v2→v3 compat shim** (`src/agent_memory_lite/mcp/v2_compat.py`)
+  — 26 v2 tool names mapped to v3 backends. Tier 1: full
+  translation (write_decision/theory, get_object, upsert_concept/
+  behavior/role/skill/playbook, archive, pin, search, list_*).
+  Tier 3: `translation_pending` stub. Activation gate
+  `MEMORY_V2_COMPAT_ENABLED` (default off until cutover); wired
+  into MCP dispatch so v2 calls route through v3 backend when on.
+
+### Docs (Phase 3)
+
+- [`docs/V3_SCHEMA.md`](docs/V3_SCHEMA.md) — table-by-table reference
+- [`docs/V3_AGENT_RUNTIMES.md`](docs/V3_AGENT_RUNTIMES.md) — wiring
+  per agent (Claude Code, Cursor, Codex, Aider, CI)
+- [`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md) — cutover playbook
+- [`docs/V3_REMOVED.md`](docs/V3_REMOVED.md) — week-8 kill-list
+  (~9,500 SLOC across 9 categories)
+
+### Verification (Phase 4)
+
+- **Brief cache** keyed on `(workspace_id, max_tokens, fingerprint)`
+  where fingerprint = SHA1 of cardinal mutation timestamps across
+  decisions/behaviors/tasks/code_digests/episodes. Automatic
+  invalidation on any write; bounded to 16 entries with LRU eviction.
+- **`scripts/v3_acceptance_gate.py`** — 4 measurements + pass/warn/
+  fail verdict against plan targets: brief within_budget, cache
+  hit rate ≥70%, median projection tokens ≤30, digest staleness
+  ≤120 minutes.
+- **Cutover round 1**: deleted 2,462 SLOC of one-off scripts
+  (tier0_*, v2_1_followup, verify_v215, post_bug_fix_reset,
+  crash_test_v3 monolith — replaced by modular `scripts/crash_test/`
+  package).
+- **Cutover round 2**: v2 compat shim wired into MCP dispatch behind
+  `MEMORY_V2_COMPAT_ENABLED=true`. Zero behaviour change when off.
+
+### Remaining for v3.0.0 final
+
+- Migrate all 8 registered workspaces to v3 schema
+- Acceptance gate measurements on real workspace data
+- Drop remaining ~7,000 SLOC per `V3_REMOVED.md` after canary flip
+- Flip canary workspace to `mode: v3`
+
 ## 2.0.0 — 2026-05-10
 
 **First public-facing release.** Consolidates ~6 months of internal

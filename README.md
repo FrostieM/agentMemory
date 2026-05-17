@@ -15,6 +15,19 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
+> **3.0.0-dev — compact-projection retrieval (in-development).** The v3
+> work ships in parallel with the stable 2.x surface: v3 endpoints mount
+> at `/v3/memory/*`, v3 MCP tools are prefixed `memory_v3_*`, and the
+> v2 surface keeps working unchanged. The architectural pivot is
+> compact projections (~20-40 tokens per item) returned by every read
+> tool by default; full content is opt-in via `fields=[...]`. Target
+> metrics: token cost per session ≤50% of v2, rule adherence ≥95%,
+> 9 MCP tools down from 30+, 14 SQL migrations → 1 DDL.
+> See [`docs/V3_AGENT_RUNTIMES.md`](docs/V3_AGENT_RUNTIMES.md),
+> [`docs/V3_SCHEMA.md`](docs/V3_SCHEMA.md), and
+> [`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md) for wiring + cutover
+> playbook.
+
 > **2.0.0 — first public-facing release.** Local-first memory
 > substrate (SQLite + LanceDB + sentence-transformers + Ollama, no
 > cloud, no Docker) with first-class decisions, theories,
