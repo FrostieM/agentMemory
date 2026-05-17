@@ -1,4 +1,11 @@
-"""GET /health - liveness plus retrieval-integrity summary."""
+"""GET /health - liveness (shallow, default) + retrieval-integrity (deep).
+
+Shallow mode (no query params) returns in milliseconds — the question is
+"is the HTTP service actually serving?", not "is every retrieval index
+intact?". ``?deep=true`` runs the 12-check audit which can take 30-60s
+on a real workspace. Response shape is identical in both modes; shallow
+mode fills the audit/feedback/review sections with ``not_checked`` stubs.
+"""
 
 from __future__ import annotations
 
@@ -63,10 +70,50 @@ class HealthResponse(BaseModel):
     pending_review: PendingReviewModel
 
 
+_SHALLOW_INTEGRITY_STUB = RetrievalIntegritySummary(
+    status="not_checked",
+    counts={},
+    failures=[],
+    warnings=[],
+    repair_hints=["pass ?deep=true to /health to run the integrity audit"],
+)
+_SHALLOW_FEEDBACK_STUB = FeedbackSignalSummaryModel(
+    enabled=False, total_rows=0, unique_sources=0, self_loop_ratio=0.0, last_feedback_at=None
+)
+_SHALLOW_REVIEW_STUB = PendingReviewModel(decision_candidates=0, insight_candidates=0, total=0)
+
+
+def _base_response(settings: Any, versions: list[str]) -> dict[str, Any]:
+    return {
+        "version": __version__,
+        "db": "ok",
+        "workspace_id": settings.workspace_id,
+        "embedding_backend": settings.embedding_backend,
+        "embedding_model": settings.embedding_model,
+        "vector_backend": settings.vector_backend,
+        "llm_backend": settings.llm_backend,
+        "llm_model": settings.llm_model,
+        "applied_migrations": versions,
+    }
+
+
 @router.get("/health", response_model=HealthResponse)
-def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthResponse:
+def health(
+    settings: SettingsDep,
+    conn: DbDep,
+    store: VectorStoreDep,
+    deep: bool = False,
+) -> HealthResponse:
     rows = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
     versions = [str(row[0]) for row in rows]
+    if not deep:
+        return HealthResponse(
+            status="ok",
+            **_base_response(settings, versions),
+            retrieval_integrity=_SHALLOW_INTEGRITY_STUB,
+            feedback_signal=_SHALLOW_FEEDBACK_STUB,
+            pending_review=_SHALLOW_REVIEW_STUB,
+        )
     report = run_integrity_audit(
         conn,
         workspace_id=settings.workspace_id,
@@ -84,15 +131,7 @@ def health(settings: SettingsDep, conn: DbDep, store: VectorStoreDep) -> HealthR
     review = load_pending_review(conn, workspace_id=settings.workspace_id)
     return HealthResponse(
         status="degraded" if report.status == "degraded" else "ok",
-        version=__version__,
-        db="ok",
-        workspace_id=settings.workspace_id,
-        embedding_backend=settings.embedding_backend,
-        embedding_model=settings.embedding_model,
-        vector_backend=settings.vector_backend,
-        llm_backend=settings.llm_backend,
-        llm_model=settings.llm_model,
-        applied_migrations=versions,
+        **_base_response(settings, versions),
         retrieval_integrity=RetrievalIntegritySummary(
             status=report.status,
             counts=report.counts,
