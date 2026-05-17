@@ -285,6 +285,53 @@ def test_fetch_skill_body_unknown_returns_none(conn: sqlite3.Connection) -> None
 
 
 # ============================================================
+# Identity discipline reminder
+# ============================================================
+
+
+def _seed_code_digest(
+    conn: sqlite3.Connection, *, file_path: str, workspace_id: str = "ws"
+) -> None:
+    import time  # noqa: PLC0415
+
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn.execute(
+        """INSERT INTO code_digests (id, workspace_id, file_path, file_sha1,
+                                     language, chunk_count, symbol_count,
+                                     inbound_edge_count, outbound_edge_count,
+                                     purpose_short, top_symbols_json,
+                                     last_indexed_at, updated_at)
+           VALUES (?, ?, ?, ?, 'python', 1, 1, 0, 0, 'p', '[]', ?, ?)""",
+        (f"digest_{file_path}", workspace_id, file_path, "h" * 40, ts, ts),
+    )
+    conn.commit()
+
+
+def test_brief_identity_includes_discipline_reminder_when_digests_exist(
+    conn: sqlite3.Connection,
+) -> None:
+    """At least one code_digest row → identity carries the impact_check rule."""
+    _seed_code_digest(conn, file_path="src/x.py")
+    brief = compose_brief(conn, workspace_id="ws")
+    identity = next(s for s in brief.sections if s.name == "identity")
+    body = "\n".join(identity.lines)
+    assert "DISCIPLINE" in body
+    assert "memory_v3_impact_check" in body
+    assert "before Read/Edit/Grep" in body
+
+
+def test_brief_identity_skips_discipline_line_when_no_digests(
+    conn: sqlite3.Connection,
+) -> None:
+    """Empty code-graph → no discipline line (would be noise)."""
+    brief = compose_brief(conn, workspace_id="ws")
+    identity = next(s for s in brief.sections if s.name == "identity")
+    body = "\n".join(identity.lines)
+    assert "DISCIPLINE" not in body
+    assert "memory_v3_impact_check" not in body
+
+
+# ============================================================
 # Brief cache
 # ============================================================
 

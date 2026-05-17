@@ -93,7 +93,14 @@ def fit_to_budget(lines: list[str], budget: int) -> list[str]:
 
 
 def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
-    """Identity layer: workspace name + counts overview."""
+    """Identity layer: workspace name + counts overview + discipline reminder.
+
+    The discipline reminder is the single most important line in the
+    brief — it's how v3 closes the "agent knows about graph tools but
+    still uses Read" gap. The line stays foreground in every session,
+    so the agent's first instinct on a new file is impact_check, not
+    Read.
+    """
     lines = [f"# {workspace_id}"]
     pinned_decisions = count_kind(
         conn, workspace_id=workspace_id, kind="decision", pinned_only=True
@@ -108,6 +115,15 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
         f"{pinned_behaviors} pinned behaviors, {code_count} code digests, "
         f"{open_tasks} in-progress tasks."
     )
+    # Discipline reminder — only fires when there are code digests to
+    # leverage. Empty workspaces skip the line (it would be noise).
+    if code_count > 0:
+        lines.append(
+            "DISCIPLINE: before Read/Edit/Grep on any source file, "
+            "call memory_v3_impact_check(file_path=<path>) FIRST. "
+            "It returns purpose + callers + verdict in one envelope; "
+            "Read is fallback for understanding algorithm logic only."
+        )
     return BriefSection(name="identity", budget=budget, lines=fit_to_budget(lines, budget))
 
 
