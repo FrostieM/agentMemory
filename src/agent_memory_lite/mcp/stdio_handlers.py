@@ -86,6 +86,7 @@ from agent_memory_lite.mcp.stdio_handlers_theories import (
     _handle_list_theories,
     _handle_write_theory,
 )
+from agent_memory_lite.mcp.stdio_handlers_v3 import V3_HANDLERS
 from agent_memory_lite.mcp.stdio_handlers_versions import (
     _handle_breaking_changes,
     _handle_symbol_history,
@@ -151,4 +152,6 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_snapshot_diff": _handle_snapshot_diff,
     "memory_review_queue": _handle_review_queue,
     "memory_compact_trigger": _handle_compact_trigger,
+    # v3 surface — agent-facing minimal tool set; envelope shape {ok, data, error}.
+    **V3_HANDLERS,
 }

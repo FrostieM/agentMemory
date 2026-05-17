@@ -19,6 +19,7 @@ from agent_memory_lite.mcp.stdio_tools_review import REVIEW_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review_queue import REVIEW_QUEUE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_state_snapshots import STATE_SNAPSHOT_TOOLS
 from agent_memory_lite.mcp.stdio_tools_theories import THEORY_TOOLS
+from agent_memory_lite.mcp.stdio_tools_v3 import V3_TOOLS
 
 ALL_TOOLS: list[types.Tool] = [
     *EPISODE_TOOLS,
@@ -36,4 +37,6 @@ ALL_TOOLS: list[types.Tool] = [
     *P1_TOOLS,
     *STATE_SNAPSHOT_TOOLS,
     *REVIEW_QUEUE_TOOLS,
+    # v3 surface — alongside v2 with `memory_v3_*` prefix to avoid collisions.
+    *V3_TOOLS,
 ]
