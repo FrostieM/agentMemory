@@ -53,6 +53,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from agent_memory_lite.v3.cognition.code_indexer import (  # noqa: E402
+    index_file,
+    refresh_digest_edge_counts,
+    resolve_all_pending_edges,
+)
 from agent_memory_lite.v3.cognition.digest_worker import (  # noqa: E402
     compute_digest,
     upsert_digest,
@@ -85,6 +90,13 @@ DEFAULT_SKIP_DIRS = frozenset(
         ".tox",
         ".idea",
         ".vscode",
+        # Transient / generated artifacts that shouldn't enter the
+        # workspace's code graph — Playwright screenshot dumps include
+        # bundled Chrome extension cache scripts that dominate the
+        # caller-count ranking with thousands of synthetic edges.
+        "tmp-ui-shots",
+        "tmp",
+        "coverage",
     }
 )
 
@@ -106,6 +118,10 @@ class IndexReport:
     skipped_unchanged: int = 0
     skipped_unindexable: int = 0
     errors: int = 0
+    chunks: int = 0
+    edges_first_pass: int = 0
+    edges_resolved_second_pass: int = 0
+    digests_edge_refreshed: int = 0
     languages: Counter[str] = field(default_factory=Counter)
     error_details: list[str] = field(default_factory=list)
 
@@ -119,6 +135,10 @@ class IndexReport:
             "skipped_unchanged": self.skipped_unchanged,
             "skipped_unindexable": self.skipped_unindexable,
             "errors": self.errors,
+            "chunks": self.chunks,
+            "edges_first_pass": self.edges_first_pass,
+            "edges_resolved_second_pass": self.edges_resolved_second_pass,
+            "digests_edge_refreshed": self.digests_edge_refreshed,
             "languages": dict(self.languages),
             "error_details": list(self.error_details)[:20],
         }
@@ -160,7 +180,7 @@ def _existing_sha(conn: sqlite3.Connection, *, workspace_id: str, file_path: str
     return row[0] if row else None
 
 
-def bulk_index(
+def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches per per-file outcome
     project_root: Path,
     *,
     workspace_id: str,
@@ -169,8 +189,15 @@ def bulk_index(
     extensions: frozenset[str] = DEFAULT_EXTENSIONS,
     skip_dirs: frozenset[str] = DEFAULT_SKIP_DIRS,
     relative_paths: bool = True,
+    with_edges: bool = True,
 ) -> IndexReport:
-    """Walk ``project_root`` and UPSERT a digest per source file. Idempotent.
+    """Walk ``project_root`` and index each source file via ``index_file``.
+
+    With ``with_edges=True`` (default) the indexer populates the full
+    chunks + symbol_edges + code_digests trio so ``memory_v3_impact_check``
+    returns differentiated verdicts.  With ``with_edges=False`` only the
+    ``code_digests`` row is upserted (faster, but ``impact_check`` will
+    return ``verdict='low'`` for every file).
 
     ``relative_paths=True`` stores ``file_path`` as project-relative
     (``src/foo.py``) so digests survive moving the project root.
@@ -195,25 +222,44 @@ def bulk_index(
                 report.errors += 1
                 report.error_details.append(f"read {file_path}: {exc}")
                 continue
-            result = compute_digest(str(file_path), content)
-            if result.language is None:
+            digest_preview = compute_digest(str(file_path), content)
+            if digest_preview.language is None:
                 report.skipped_unindexable += 1
                 continue
-            # Store as project-relative for cross-host stability.
             stored_path = (
                 str(file_path.relative_to(project_root)).replace("\\", "/")
                 if relative_paths
                 else str(file_path)
             )
-            # Idempotency: skip when SHA matches and not forced.
+            if with_edges:
+                result = index_file(
+                    conn,
+                    workspace_id=workspace_id,
+                    rel_path=stored_path,
+                    content=content,
+                    language=digest_preview.language,
+                    force=force,
+                )
+                if result.error:
+                    report.errors += 1
+                    report.error_details.append(f"index {stored_path}: {result.error}")
+                    continue
+                if result.skipped_unchanged:
+                    report.skipped_unchanged += 1
+                    continue
+                report.indexed += 1
+                report.chunks += result.chunks
+                report.edges_first_pass += result.edges
+                report.languages[digest_preview.language or "unknown"] += 1
+                conn.commit()
+                continue
+            # with_edges=False: digest-only legacy path
             if not force:
                 existing = _existing_sha(conn, workspace_id=workspace_id, file_path=stored_path)
-                if existing == result.file_sha1:
+                if existing == digest_preview.file_sha1:
                     report.skipped_unchanged += 1
                     continue
             try:
-                # upsert_digest writes using result.file_path; substitute
-                # the relative form so the row stores the portable path.
                 portable = compute_digest(stored_path, content)
                 upsert_digest(conn, workspace_id=workspace_id, result=portable)
                 report.indexed += 1
@@ -221,6 +267,21 @@ def bulk_index(
             except sqlite3.Error as exc:
                 report.errors += 1
                 report.error_details.append(f"upsert {stored_path}: {exc}")
+        # Cross-file resolver: stitch up edges whose targets appeared in
+        # files indexed AFTER the source.  Then refresh digest counts so
+        # impact_check verdicts reflect the final graph.
+        if with_edges:
+            try:
+                report.edges_resolved_second_pass = resolve_all_pending_edges(
+                    conn, workspace_id=workspace_id
+                )
+                report.digests_edge_refreshed = refresh_digest_edge_counts(
+                    conn, workspace_id=workspace_id
+                )
+                conn.commit()
+            except sqlite3.Error as exc:
+                report.errors += 1
+                report.error_details.append(f"cross-file resolve: {exc}")
     finally:
         conn.close()
     return report
@@ -242,6 +303,11 @@ def render_human(report: IndexReport) -> str:
         f"  skipped_unchanged = {report.skipped_unchanged}",
         f"  skipped_unindexable = {report.skipped_unindexable}",
         f"  errors            = {report.errors}",
+        "",
+        f"  chunks            = {report.chunks}",
+        f"  edges (1st pass)  = {report.edges_first_pass}",
+        f"  edges (2nd pass)  = {report.edges_resolved_second_pass}",
+        f"  digests refreshed = {report.digests_edge_refreshed}",
     ]
     if report.languages:
         lines.append("")
@@ -279,6 +345,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Store absolute file_path (default: relative to --project).",
     )
+    parser.add_argument(
+        "--no-edges",
+        action="store_true",
+        help=(
+            "Skip chunks + symbol_edges extraction.  Only writes code_digests"
+            " rows (faster but impact_check verdicts stay at 'low')."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human render.")
     args = parser.parse_args(argv)
 
@@ -296,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
         extensions=extensions,
         relative_paths=not args.absolute_paths,
+        with_edges=not args.no_edges,
     )
 
     if args.json:

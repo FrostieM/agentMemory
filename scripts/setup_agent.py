@@ -388,6 +388,7 @@ _V3_INPLACE_COLUMNS = (
     ("decisions", "gist", "TEXT"),
     ("theories", "gist", "TEXT"),
     ("episodes", "gist", "TEXT"),
+    ("chunks", "gist", "TEXT"),
 )
 
 
