@@ -17,9 +17,14 @@ What it does (idempotent — safe to re-run):
    - An MCP server entry pointing at this venv's `agent_memory_lite.mcp.stdio_server`
    - The agent contract (`docs/AGENT_CONTRACT.md`) into the runtime's "always-loaded"
      instructions file (CLAUDE.md / AGENTS.md / .cursorrules).
-6. (Claude Code only) Optionally installs a `UserPromptSubmit` hook that calls
-   `scripts/inject_memory_context.py` so memory context is injected before every
-   prompt, even if the agent forgets to ask. Skip with `--no-hook`.
+6. (Claude Code only) Optionally installs the v3 discipline hooks:
+   - `UserPromptSubmit` → `scripts/inject_memory_brief_v3.py` (≤500-token
+     compact brief composed from v3 projections).
+   - `PostToolUse` (Edit|Write|NotebookEdit|MultiEdit) →
+     `scripts/post_edit_enqueue.py` (digest worker queue feeder).
+   - `PreToolUse` enforcement (unchanged from v2).
+   The legacy v2 `inject_memory_context.py` hook is auto-evicted on every
+   run — v3 is the canonical surface. Skip all hook wiring with `--no-hook`.
 7. Emits a per-runtime "generic" snippet to stdout for any agent not detected.
 8. Smoke-tests the MCP server (initialize + tools/list) and prints a "verified"
    summary.
@@ -51,8 +56,10 @@ from agent_memory_lite.bootstrap.project_pre_commit_hook import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
-HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_context.py"
-# v3.0.0 — discipline stack hooks (see docs/V3_AGENT_RUNTIMES.md).
+# v3.0.0 discipline stack hooks (see docs/V3_AGENT_RUNTIMES.md).
+# The legacy v2 ``scripts/inject_memory_context.py`` hook still ships as
+# a backwards-compat surface but is no longer installed by this script;
+# ``_remove_v2_inject_hook`` evicts it from settings.json on every run.
 V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief_v3.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
 V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "v3" / "0001_init.sql"
@@ -241,6 +248,47 @@ def bootstrap_db() -> None:
         check=True,
         cwd=str(REPO_ROOT),
     )
+
+
+def _remove_v2_inject_hook(settings: dict[str, object]) -> int:
+    """Strip the legacy ``agent-memory-lite-inject`` entry from UserPromptSubmit.
+
+    v2's ``inject_memory_context.py`` hook used to ship alongside the v3
+    brief hook; running both on every prompt doubles token cost.  v3 is
+    now the canonical surface, so future setup_agent runs evict the v2
+    entry.  Idempotent: returns the count actually removed (0 when the
+    hook was never installed or already evicted).
+    """
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return 0
+    ups = hooks.get("UserPromptSubmit")
+    if not isinstance(ups, list):
+        return 0
+    removed = 0
+    kept: list[dict[str, object]] = []
+    for entry in ups:
+        if not isinstance(entry, dict):
+            kept.append(entry)
+            continue
+        inner = entry.get("hooks", [])
+        if not isinstance(inner, list):
+            kept.append(entry)
+            continue
+        survivors = [
+            h
+            for h in inner
+            if not (
+                isinstance(h, dict)
+                and "agent-memory-lite-inject" in str(h.get("command", ""))
+            )
+        ]
+        removed += len(inner) - len(survivors)
+        if survivors:
+            entry["hooks"] = survivors
+            kept.append(entry)
+    hooks["UserPromptSubmit"] = kept
+    return removed
 
 
 def install_v3_brief_hook(
@@ -581,39 +629,12 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
     ok("MCP server entry written to ~/.claude/settings.json")
 
     if install_hook:
-        hooks = settings.setdefault("hooks", {})
-        if not isinstance(hooks, dict):
-            hooks = {}
-            settings["hooks"] = hooks
-        ups = hooks.setdefault("UserPromptSubmit", [])
-        if not isinstance(ups, list):
-            ups = []
-            hooks["UserPromptSubmit"] = ups
-
-        hook_command = f'"{diag.venv_python}" "{HOOK_SCRIPT}"'
-        marker = "agent-memory-lite-inject"
-        existing = next(
-            (
-                entry
-                for entry in ups
-                if isinstance(entry, dict)
-                and isinstance(entry.get("hooks"), list)
-                and any(
-                    isinstance(h, dict) and marker in str(h.get("command", ""))
-                    for h in entry["hooks"]
-                )
-            ),
-            None,
-        )
-        new_hook = {
-            "type": "command",
-            "command": hook_command + f" # {marker}",
-        }
-        if existing is None:
-            ups.append({"hooks": [new_hook]})
-        else:
-            existing["hooks"] = [new_hook]
-        ok("UserPromptSubmit hook installed (auto-injects memory context per prompt)")
+        # v3.0.0 is the canonical surface; evict the legacy v2
+        # inject_memory_context hook on every run so we don't double-emit
+        # memory context on each UserPromptSubmit.
+        evicted = _remove_v2_inject_hook(settings)
+        if evicted:
+            ok(f"removed legacy v2 inject hook ({evicted} entr{'y' if evicted == 1 else 'ies'})")
 
         pretooluse_status = install_pre_tool_use_hook(
             settings, venv_python=diag.venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT
@@ -774,41 +795,15 @@ def configure_project(  # noqa: PLR0912, PLR0915
 
     db_path = project_root / ".agent_memory" / "memory.db"
     vector_path = project_root / ".agent_memory" / "vectors.lance"
-    hooks = settings.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        hooks = {}
-        settings["hooks"] = hooks
-    ups = hooks.setdefault("UserPromptSubmit", [])
-    if not isinstance(ups, list):
-        ups = []
-        hooks["UserPromptSubmit"] = ups
-    marker = "agent-memory-lite-inject"
-    hook_command = (
-        f'"{diag.venv_python}" "{HOOK_SCRIPT}" --db-path "{db_path}" '
-        f'--vector-path "{vector_path}" --workspace "{workspace_id}"'
-    )
-    new_hook = {"type": "command", "command": hook_command + f" # {marker}"}
-    existing = next(
-        (
-            entry
-            for entry in ups
-            if isinstance(entry, dict)
-            and isinstance(entry.get("hooks"), list)
-            and any(
-                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
-            )
-        ),
-        None,
-    )
-    if existing is None:
-        ups.append({"hooks": [new_hook]})
-    else:
-        existing["hooks"] = [new_hook]
 
-    # v3.0.0 discipline stack — installed alongside the legacy v2 inject hook
-    # for backwards compat. New projects get both surfaces; the v3 brief hook
-    # uses a distinct ``agent-memory-lite-v3-brief`` marker so it doesn't
-    # collide with the v2 ``agent-memory-lite-inject`` entry.
+    # v3.0.0 is canonical — evict the legacy v2 inject hook if it was
+    # installed by an older setup_agent run.  Idempotent.
+    evicted = _remove_v2_inject_hook(settings)
+    if evicted:
+        ok(f"removed legacy v2 inject hook from project ({evicted} entries)")
+
+    # v3.0.0 discipline stack — the only UserPromptSubmit + PostToolUse
+    # surface installed by this version.
     install_v3_brief_hook(
         settings,
         venv_python=diag.venv_python,
