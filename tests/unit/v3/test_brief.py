@@ -19,6 +19,18 @@ from agent_memory_lite.v3.cognition.brief import (
 SCHEMA_V3_PATH = Path(__file__).resolve().parents[3] / "migrations" / "v3" / "0001_init.sql"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_brief_cache() -> Iterator[None]:
+    """Module-level brief cache must not leak between tests."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    try:
+        yield
+    finally:
+        brief_mod._BRIEF_CACHE.clear()
+
+
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
@@ -270,3 +282,87 @@ def test_fetch_skill_body_bumps_usage_count(conn: sqlite3.Connection) -> None:
 
 def test_fetch_skill_body_unknown_returns_none(conn: sqlite3.Connection) -> None:
     assert fetch_skill_body(conn, workspace_id="ws", skill_id="missing") is None
+
+
+# ============================================================
+# Brief cache
+# ============================================================
+
+
+def test_compose_brief_caches_repeat_call(conn: sqlite3.Connection) -> None:
+    """Second call with same (workspace, max_tokens, fingerprint) hits cache."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    _seed_decision(conn, id="dec_a", workspace_id="ws", title="A")
+    first = compose_brief(conn, workspace_id="ws")
+    second = compose_brief(conn, workspace_id="ws")
+    assert first.cache_hit is False
+    assert second.cache_hit is True
+    # Body identical between cache miss + hit.
+    assert second.body_md == first.body_md
+
+
+def test_compose_brief_cache_invalidates_on_write(conn: sqlite3.Connection) -> None:
+    """Writing a new decision flips the workspace fingerprint → cache miss."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    _seed_decision(conn, id="dec_a", workspace_id="ws", title="A")
+    first = compose_brief(conn, workspace_id="ws")
+    _seed_decision(
+        conn,
+        id="dec_b",
+        workspace_id="ws",
+        title="B",
+        updated_at="2026-05-17T00:01:00Z",
+    )
+    second = compose_brief(conn, workspace_id="ws")
+    assert first.cache_hit is False
+    assert second.cache_hit is False  # fingerprint flipped
+
+
+def test_compose_brief_cache_isolates_workspaces(conn: sqlite3.Connection) -> None:
+    """Different workspace_ids do not share cache entries."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    _seed_decision(conn, id="dec_a", workspace_id="ws_a", title="A")
+    _seed_decision(conn, id="dec_b", workspace_id="ws_b", title="B")
+    a1 = compose_brief(conn, workspace_id="ws_a")
+    b1 = compose_brief(conn, workspace_id="ws_b")
+    a2 = compose_brief(conn, workspace_id="ws_a")
+    assert a1.cache_hit is False
+    assert b1.cache_hit is False  # different workspace, separate entry
+    assert a2.cache_hit is True
+
+
+def test_compose_brief_cache_respects_max_tokens(conn: sqlite3.Connection) -> None:
+    """Different max_tokens budgets do not share cache entries."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    _seed_decision(conn, id="dec_a", workspace_id="ws", title="A")
+    big = compose_brief(conn, workspace_id="ws", max_tokens=500)
+    small = compose_brief(conn, workspace_id="ws", max_tokens=200)
+    assert big.cache_hit is False
+    assert small.cache_hit is False
+
+
+def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
+    """Cache evicts oldest entry when size exceeds _BRIEF_CACHE_MAX."""
+    from agent_memory_lite.v3.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    # Force a small cache to keep the test fast.
+    original_max = brief_mod._BRIEF_CACHE_MAX
+    try:
+        brief_mod._BRIEF_CACHE_MAX = 3
+        for ws_idx in range(5):
+            _seed_decision(
+                conn, id=f"dec_{ws_idx}", workspace_id=f"ws_{ws_idx}", title=f"T{ws_idx}"
+            )
+            compose_brief(conn, workspace_id=f"ws_{ws_idx}")
+        assert len(brief_mod._BRIEF_CACHE) <= 3
+    finally:
+        brief_mod._BRIEF_CACHE_MAX = original_max

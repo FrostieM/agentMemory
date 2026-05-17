@@ -21,6 +21,7 @@ task updated_at). Cache hit ~5ms, miss ~80ms (pure SQL).
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,14 @@ from agent_memory_lite.v3.storage.reader import (
 )
 
 DEFAULT_TOKEN_BUDGET = 500
+
+# In-process brief cache, keyed on (workspace_id, max_tokens, fingerprint).
+# Fingerprint is a hash of cardinal "last write" timestamps for the kinds
+# that contribute to the brief — invalidates automatically on any
+# mutation in those tables. Bounded to 16 entries; eviction is LRU via
+# dict insertion order.
+_BRIEF_CACHE_MAX = 16
+_BRIEF_CACHE: dict[tuple[str, int, str], Brief] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +193,54 @@ def _build_code_hubs(
 # ============================================================
 
 
+def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
+    """Hash the cardinal mutation timestamps that affect the brief.
+
+    Reads ``MAX(updated_at)`` from decisions / behaviors / tasks /
+    code_digests and ``MAX(created_at)`` from episodes for the
+    workspace. Any write in those tables changes at least one of those
+    maxima, so the fingerprint flips → cache miss on next call.
+
+    Returns the first 12 chars of SHA1 (collision-safe at this cache
+    size). On any SQL error returns a unique sentinel so the call
+    bypasses the cache instead of returning stale content.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+              COALESCE(MAX(d.updated_at), '') AS d_ts,
+              COALESCE(MAX(b.updated_at), '') AS b_ts,
+              COALESCE(MAX(t.updated_at), '') AS t_ts,
+              COALESCE(MAX(cd.updated_at), '') AS cd_ts,
+              COALESCE(MAX(e.created_at), '') AS e_ts
+            FROM (SELECT 1) one
+            LEFT JOIN decisions d ON d.workspace_id = ?
+            LEFT JOIN behaviors b ON b.workspace_id = ?
+            LEFT JOIN tasks t ON t.workspace_id = ?
+            LEFT JOIN code_digests cd ON cd.workspace_id = ?
+            LEFT JOIN episodes e ON e.workspace_id = ?
+            """,
+            (workspace_id, workspace_id, workspace_id, workspace_id, workspace_id),
+        ).fetchone()
+    except sqlite3.Error:
+        return f"err-{workspace_id}-{id(conn)}"
+    if rows is None:
+        return f"empty-{workspace_id}"
+    raw = "|".join(str(v) for v in rows)
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+
+
+def _cache_remember(key: tuple[str, int, str], brief: Brief) -> None:
+    """LRU-style insert into the bounded brief cache."""
+    _BRIEF_CACHE.pop(key, None)
+    _BRIEF_CACHE[key] = brief
+    while len(_BRIEF_CACHE) > _BRIEF_CACHE_MAX:
+        # Pop oldest (insertion-order = LRU because we del+set on hit).
+        oldest = next(iter(_BRIEF_CACHE))
+        del _BRIEF_CACHE[oldest]
+
+
 def compose_brief(
     conn: sqlite3.Connection,
     *,
@@ -197,8 +254,28 @@ def compose_brief(
     for future task-biased section selection (e.g. rank decisions by
     overlap with task tokens). v1 ignores it and returns the static
     brief.
+
+    Cached on (workspace_id, max_tokens, workspace_fingerprint). Cache
+    hits return ``Brief(cache_hit=True)`` in ~sub-millisecond. The
+    fingerprint flips on any decision / behavior / task / code_digest /
+    episode mutation, so a stale cache cannot survive a write.
     """
     del task  # reserved; future task-biased ranking
+    fingerprint = _workspace_fingerprint(conn, workspace_id)
+    cache_key = (workspace_id, max_tokens, fingerprint)
+    cached = _BRIEF_CACHE.get(cache_key)
+    if cached is not None:
+        # Refresh LRU position so frequently-used briefs stay hot.
+        del _BRIEF_CACHE[cache_key]
+        _BRIEF_CACHE[cache_key] = cached
+        # Return a new Brief with cache_hit=True; the underlying body
+        # is identical (Brief is frozen so this is cheap).
+        return Brief(
+            body_md=cached.body_md,
+            token_count=cached.token_count,
+            sections=cached.sections,
+            cache_hit=True,
+        )
     # Per-section budget allocation (target ratios — sum to max_tokens).
     weights = {
         "identity": 0.20,
@@ -238,12 +315,14 @@ def compose_brief(
         for section in sections:
             body_parts.extend(section.lines)
         body_md = "\n".join(body_parts)
-    return Brief(
+    result = Brief(
         body_md=body_md,
         token_count=approx_tokens(body_md),
         sections=sections,
         cache_hit=False,
     )
+    _cache_remember(cache_key, result)
+    return result
 
 
 # ============================================================
