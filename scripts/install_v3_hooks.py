@@ -47,7 +47,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
+# Make sibling scripts importable when this file is run directly. Tests use
+# pytest's auto-rootdir, but `python scripts/install_v3_hooks.py` runs with
+# only ``scripts/`` on sys.path, which means ``from scripts.seed_v3_discipline``
+# fails. Prepend the repo root so both run styles work.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from agent_memory_lite.config.workspace_registry import WorkspaceRegistry  # noqa: E402
 
 # Force UTF-8 stdout — the human render has → / em-dash / non-ASCII
 # glyphs that crash a default Windows cp1251 console.
