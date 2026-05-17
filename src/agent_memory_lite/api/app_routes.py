@@ -66,6 +66,7 @@ from agent_memory_lite.api.routes import (
     usage,
     workspaces,
 )
+from agent_memory_lite.v3.api import routes as v3_routes
 
 ALL_ROUTERS = (
     health,
@@ -120,6 +121,8 @@ ALL_ROUTERS = (
     file_digests,
     code_overview,
     code_graph,
+    # v3 surface (mounts at /v3/memory/*).
+    v3_routes,
 )
 
 
