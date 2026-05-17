@@ -1,7 +1,11 @@
 # V3 Schema — one-page reference
 
-Source of truth: `migrations/schema_v3.sql`. Applied as a single DDL on a
-fresh database; replaces the v2 chain (`0001_init` + `0020`–`0032`).
+Source of truth: `migrations/v3/0001_init.sql`. Applied as a single DDL
+on a fresh v3 database via `scripts/migrate_v2_to_v3.py`. Lives in a
+separate `migrations/v3/` subdirectory so the v2 migration runner
+(`db/migrations.py`, walks `migrations/*.sql` non-recursively) does
+NOT pick it up. The v3 chain starts here and grows forward as
+`migrations/v3/0002_*.sql`, etc.
 
 ## Design principles
 

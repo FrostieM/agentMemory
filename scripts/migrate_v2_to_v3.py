@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCHEMA_V3_PATH = REPO_ROOT / "migrations" / "schema_v3.sql"
+SCHEMA_V3_PATH = REPO_ROOT / "migrations" / "v3" / "0001_init.sql"
 
 # Order of kinds matters: foreign-key dependencies first.
 KIND_ORDER = [
