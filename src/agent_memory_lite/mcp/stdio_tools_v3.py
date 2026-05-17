@@ -237,4 +237,40 @@ V3_TOOLS: list[types.Tool] = [
             "required": ["skill_id"],
         },
     ),
+    types.Tool(
+        name="memory_v3_impact_check",
+        description=(
+            "DISCIPLINE PRIMITIVE — call this BEFORE reading or editing "
+            "source files. Returns the one-shot impact envelope: "
+            "digest (purpose + top symbols), callers (who depends on "
+            "this file), hot symbols (≥3 callers each), verdict "
+            "(low / medium / high / not_indexed), and an advisory "
+            "naming the right follow-up tool. Replaces a 3-call "
+            "sequence (memory_file_digest + memory_graph_neighbors + "
+            "ad-hoc Grep) with one cheap envelope. Use this INSTEAD "
+            "of Read whenever the goal is impact analysis or symbol "
+            "discovery; Read is fallback for understanding unknown "
+            "algorithm logic."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "file_path": {"type": "string", "minLength": 1, "maxLength": 400},
+                "callers_limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+                "hot_threshold": {
+                    "type": "integer",
+                    "default": 3,
+                    "minimum": 1,
+                    "maximum": 20,
+                },
+            },
+            "required": ["file_path"],
+        },
+    ),
 ]

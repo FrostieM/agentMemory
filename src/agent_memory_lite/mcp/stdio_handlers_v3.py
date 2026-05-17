@@ -24,6 +24,7 @@ from typing import Any
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.v3.cognition.brief import compose_brief, fetch_skill_body
+from agent_memory_lite.v3.cognition.impact_check import impact_check
 from agent_memory_lite.v3.cognition.lint import lint as run_lint
 from agent_memory_lite.v3.storage.reader import get_object, search
 from agent_memory_lite.v3.storage.writer import archive, edit, pin, write
@@ -248,6 +249,24 @@ def _handle_v3_invoke_skill(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(out)
 
 
+def _handle_v3_impact_check(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _with_workspace(args, intent="read")
+    workspace_id = str(payload["workspace_id"])
+    file_path = str(payload.get("file_path") or "")
+    if not file_path:
+        return _err("invalid_args", "file_path is required")
+    callers_limit = int(payload.get("callers_limit") or 20)
+    hot_threshold = int(payload.get("hot_threshold") or 3)
+    report = impact_check(
+        _runtime.db(),
+        workspace_id=workspace_id,
+        file_path=file_path,
+        callers_limit=callers_limit,
+        hot_threshold=hot_threshold,
+    )
+    return _ok(report.to_dict())
+
+
 # ============================================================
 # Dispatch table — name → handler
 # ============================================================
@@ -263,4 +282,5 @@ V3_HANDLERS: dict[str, Any] = {
     "memory_v3_brief": _handle_v3_brief,
     "memory_v3_lint": _handle_v3_lint,
     "memory_v3_invoke_skill": _handle_v3_invoke_skill,
+    "memory_v3_impact_check": _handle_v3_impact_check,
 }

@@ -24,6 +24,7 @@ from agent_memory_lite.v3.api.schemas import (
     WriteRequest,
 )
 from agent_memory_lite.v3.cognition.brief import compose_brief, fetch_skill_body
+from agent_memory_lite.v3.cognition.impact_check import impact_check
 from agent_memory_lite.v3.cognition.lint import lint as run_lint
 from agent_memory_lite.v3.storage.reader import (
     count_kind,
@@ -239,6 +240,38 @@ def invoke_skill_endpoint(
     if out is None:
         return _err("not_found", f"skill:{skill_id} not in {workspace_id}")
     return _ok(out)
+
+
+@router.get("/impact_check", response_model=Envelope)
+def impact_check_endpoint(
+    conn: DbDep,
+    workspace_id: str = Query(min_length=1),
+    file_path: str = Query(min_length=1),
+    callers_limit: int = Query(default=20, ge=1, le=100),
+    hot_threshold: int = Query(default=3, ge=1, le=20),
+) -> Envelope:
+    """Pre-edit / pre-read impact analysis. Discipline primitive.
+
+    Replaces the 3-call sequence (memory_file_digest +
+    memory_graph_neighbors + ad-hoc analysis) with one envelope:
+    digest + callers + hot_symbols + verdict + advisory.
+
+    Verdict rollup:
+      - not_indexed: file has no code_digests row
+      - low:        0 callers
+      - medium:     1-5 callers, no concentration
+      - high:       6+ callers OR any symbol with >= hot_threshold callers
+
+    Failure-soft: schema mismatch or missing file → not_indexed.
+    """
+    report = impact_check(
+        conn,
+        workspace_id=workspace_id,
+        file_path=file_path,
+        callers_limit=callers_limit,
+        hot_threshold=hot_threshold,
+    )
+    return _ok(report.to_dict())
 
 
 @router.post("/rollback", response_model=Envelope)

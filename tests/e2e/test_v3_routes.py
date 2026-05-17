@@ -268,6 +268,35 @@ def test_v3_rollback_requires_why(client: TestClient) -> None:
     assert r.status_code == 422
 
 
+def test_v3_impact_check_not_indexed(client: TestClient) -> None:
+    """File with no code_digests row → not_indexed verdict."""
+    r = client.get(
+        "/v3/memory/impact_check",
+        params={"workspace_id": "default", "file_path": "src/missing.py"},
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"]["verdict"] == "not_indexed"
+    assert "not in code_digests" in body["data"]["advisory"]
+
+
+def test_v3_impact_check_envelope_shape(client: TestClient) -> None:
+    r = client.get(
+        "/v3/memory/impact_check",
+        params={"workspace_id": "default", "file_path": "src/x.py"},
+    )
+    body = r.json()
+    assert body["ok"] is True
+    assert set(body["data"].keys()) == {
+        "file_path",
+        "digest",
+        "callers",
+        "hot_symbols",
+        "verdict",
+        "advisory",
+    }
+
+
 def test_v3_write_unsupported_kind_error(client: TestClient) -> None:
     r = client.post(
         "/v3/memory/write",

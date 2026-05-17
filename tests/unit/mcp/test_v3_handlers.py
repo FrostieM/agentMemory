@@ -73,7 +73,8 @@ def test_v3_tools_match_handlers() -> None:
     tool_names = {t.name for t in ALL_TOOLS if t.name.startswith("memory_v3_")}
     handler_names = {n for n in _HANDLERS if n.startswith("memory_v3_")}
     assert tool_names == handler_names
-    assert len(tool_names) == 9  # 6 strict + 2 hook + invoke_skill
+    # 6 strict + 2 hook + invoke_skill + impact_check (discipline primitive)
+    assert len(tool_names) == 10
 
 
 # ============================================================
@@ -273,3 +274,35 @@ def test_invoke_skill_requires_id(db_conn: sqlite3.Connection) -> None:
     env = v3._handle_v3_invoke_skill({"workspace_id": "default"})
     assert env["ok"] is False
     assert env["error"]["code"] == "invalid_args"
+
+
+# ============================================================
+# memory_v3_impact_check (discipline primitive)
+# ============================================================
+
+
+def test_impact_check_not_indexed_envelope(db_conn: sqlite3.Connection) -> None:
+    env = v3._handle_v3_impact_check({"workspace_id": "default", "file_path": "src/missing.py"})
+    assert env["ok"] is True
+    assert env["data"]["verdict"] == "not_indexed"
+    assert "not in code_digests" in env["data"]["advisory"]
+
+
+def test_impact_check_requires_file_path(db_conn: sqlite3.Connection) -> None:
+    env = v3._handle_v3_impact_check({"workspace_id": "default"})
+    assert env["ok"] is False
+    assert env["error"]["code"] == "invalid_args"
+
+
+def test_impact_check_returns_full_envelope_shape(db_conn: sqlite3.Connection) -> None:
+    env = v3._handle_v3_impact_check({"workspace_id": "default", "file_path": "src/foo.py"})
+    assert env["ok"] is True
+    data = env["data"]
+    assert set(data.keys()) == {
+        "file_path",
+        "digest",
+        "callers",
+        "hot_symbols",
+        "verdict",
+        "advisory",
+    }
