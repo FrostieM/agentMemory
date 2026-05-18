@@ -1,10 +1,8 @@
-"""Phase 2 (skeleton) → Phase 7 (full): ``memory_recall`` MCP handler.
+"""Phase 7 full implementation: ``memory_recall`` MCP handler.
 
-Phase 2 implements the bare-minimum recall: BM25-search the topic to
-get seeds, then run spreading_activation 1-2 hops over soft_edges,
-return projections ordered by activation. Phase 7 will fold in
-causal_links, outcome_floor as a hard filter, and as_of bi-temporal
-selection.
+Delegates to ``retrieval.recall.recall`` for the spreading activation +
+causal_links + outcome_floor + bi-temporal pipeline. The handler is a
+thin shape-conversion layer; the math lives in ``recall.py``.
 """
 
 from __future__ import annotations
@@ -13,69 +11,46 @@ from typing import Any
 
 from agent_memory_lite.mcp.stdio_guards import _workspace_from_args
 from agent_memory_lite.mcp.stdio_runtime import _runtime
-from agent_memory_lite.retrieval.spreading_activation import spread
-from agent_memory_lite.storage.reader import get_object, search
+from agent_memory_lite.retrieval.recall import recall
 
 
 def _handle_recall(args: dict[str, Any]) -> dict[str, Any]:
     workspace_id = _workspace_from_args(args, intent="read")
     topic = str(args.get("topic", "")).strip()
     if not topic:
-        return {"hits": [], "seed_ids": [], "depth": 0}
+        return {"hits": [], "depth": 0}
     depth = int(args.get("depth", 2))
     outcome_floor = float(args.get("outcome_floor", -1.0))
     kinds_filter = args.get("kinds") or []
     limit = int(args.get("limit", 10))
+    as_of = args.get("as_of")
+    if isinstance(as_of, str):
+        as_of = as_of.strip() or None
     conn = _runtime.db_for(workspace_id)
-    # Seed selection: BM25-rank the topic across all kinds, take top 3.
-    # Don't log this as a coactivation -- internal seeds, not agent reads.
-    seed_hits = search(
+    hits = recall(
         conn,
         workspace_id=workspace_id,
-        query=topic,
-        limit=6,
-        log_coactivations=False,
+        topic=topic,
+        depth=depth,
+        outcome_floor=outcome_floor,
+        kinds=list(kinds_filter) if kinds_filter else None,
+        as_of=as_of if isinstance(as_of, str) else None,
+        limit=limit,
     )
-    seeds: list[tuple[str, str, float]] = []
-    for hit in seed_hits[:3]:
-        item_id = str(hit.projection.get("id") or "")
-        if not item_id:
-            continue
-        seeds.append((hit.kind, item_id, max(0.5, hit.score)))
-    if not seeds:
-        return {"hits": [], "seed_ids": [], "depth": depth}
-    # Spread activation outward from seeds.
-    activations = spread(
-        conn,
-        workspace_id=workspace_id,
-        seeds=seeds,
-        max_hops=depth,
-        max_nodes=limit * 4,
-    )
-    # Resolve each activated node back to its projection. Apply
-    # kind-filter and outcome_floor.
-    out: list[dict[str, Any]] = []
-    for node in activations:
-        if kinds_filter and node.kind not in kinds_filter:
-            continue
-        proj = get_object(conn, workspace_id=workspace_id, kind=node.kind, object_id=node.object_id)
-        if proj is None:
-            continue
-        if float(proj.get("outcome_score") or 0.0) < outcome_floor:
-            continue
-        out.append(
-            {
-                "kind": node.kind,
-                "id": node.object_id,
-                "activation": round(node.activation, 4),
-                "hops": node.hops,
-                "projection": proj,
-            }
-        )
-        if len(out) >= limit:
-            break
     return {
-        "hits": out,
-        "seed_ids": [f"{k}:{i}" for k, i, _ in seeds],
+        "topic": topic,
         "depth": depth,
+        "hits": [
+            {
+                "kind": h.kind,
+                "id": h.object_id,
+                "activation": round(h.activation, 4),
+                "hops": h.hops,
+                "outcome_score": round(h.outcome_score, 4),
+                "score": round(h.score, 4),
+                "projection": h.projection,
+                "causal_links": h.causal_links,
+            }
+            for h in hits
+        ],
     }

@@ -203,6 +203,12 @@ class Settings(BaseSettings):
     # all NULL valid_to columns mean "valid forever", so the filter is a
     # byte-equivalent no-op against the pre-Phase-6 corpus.
     bi_temporal_enabled: bool = Field(True, validation_alias="MEMORY_BI_TEMPORAL_ENABLED")
+    # v3.0.0-final Phase 7: associative recall API + causal_links extractor.
+    # memory_recall(topic) walks soft_edges + capability_links + causal_links;
+    # the recall_outcome_floor is the default minimum outcome_score the
+    # endpoint accepts when the caller doesn't pass an explicit value.
+    recall_enabled: bool = Field(True, validation_alias="MEMORY_RECALL_ENABLED")
+    recall_default_depth: int = Field(2, ge=1, le=3, validation_alias="MEMORY_RECALL_DEFAULT_DEPTH")
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )

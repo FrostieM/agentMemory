@@ -64,6 +64,13 @@ RECALL_TOOLS: list[types.Tool] = [
                     "maximum": 50,
                     "default": 10,
                 },
+                "as_of": {
+                    "type": "string",
+                    "description": (
+                        "ISO 8601 timestamp -- recall as of this point in time. "
+                        "Default = now. Phase 6 bi-temporal hook."
+                    ),
+                },
             },
             "required": ["topic"],
         },
