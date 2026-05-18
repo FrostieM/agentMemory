@@ -86,9 +86,17 @@ for path in "${STAGED[@]}"; do
         continue
     fi
 
-    response=$(curl -sfm 15 -X POST "$SERVICE_URL/memory/ingest_file" \
+    # Pipe payload via stdin to bypass the Windows / Git-Bash command-line
+    # length limit (~32 KB). Inlining the JSON with `curl -d "$payload"`
+    # silently fails for any file > ~32 KB (CLAUDE.md, AGENT_CONTRACT.md,
+    # V1_*.md and similar) with "Argument list too long" -- those files
+    # then show up under `failed=N` in the hook summary. The 60 s curl
+    # ceiling covers first-time ingest of ~30 KB markdown through
+    # sentence-transformers embedding (cold path takes 20-40 s; warm
+    # path is a sub-100 ms skip).
+    response=$(printf '%s' "$payload" | curl -sfm 60 -X POST "$SERVICE_URL/memory/ingest_file" \
         -H "Content-Type: application/json" \
-        -d "$payload" 2>/dev/null || true)
+        --data-binary @- 2>/dev/null || true)
 
     if [[ -z "$response" ]]; then
         FAILED=$((FAILED + 1))
