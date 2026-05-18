@@ -103,6 +103,24 @@ def record_with_evidence_route(
                 references=body.references,
             ),
         )
+        # Phase 1 outcome-loop: emit implicit supersede feedback on the
+        # OLD decision so its outcome_score drops on next refresh.
+        if decision.supersedes_decision_id:
+            try:
+                from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+                from agent_memory_lite.maintenance.implicit_feedback import (  # noqa: PLC0415
+                    record_implicit_supersede,
+                )
+
+                record_implicit_supersede(
+                    conn,
+                    settings=get_settings(),
+                    workspace_id=decision.workspace_id,
+                    source_type="decision",
+                    source_id=decision.supersedes_decision_id,
+                )
+            except Exception:  # pragma: no cover - defensive
+                pass
         trace.stage_done(
             "decision",
             "Decision persisted",

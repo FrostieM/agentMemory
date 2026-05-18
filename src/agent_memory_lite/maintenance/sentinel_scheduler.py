@@ -126,40 +126,54 @@ def _run_sentinel_pass(
     vector_store: VectorStore | None,
 ) -> None:
     discovery = discover_sentinel_file(db_path=db_path)
-    if discovery.path is None:
-        # No yaml — record the timestamp anyway so we don't retry on every
-        # request. Operator notices via /health.sentinel_scheduler.
-        _stamp_last_run(db_path=db_path, workspace_id=workspace_id)
-        return
-    cases = load_retrieval_quality_cases(discovery.path)
-    if not cases:
-        _stamp_last_run(db_path=db_path, workspace_id=workspace_id)
-        return
+    cases = load_retrieval_quality_cases(discovery.path) if discovery.path is not None else []
     conn = sqlite3.connect(db_path, timeout=10.0)
     try:
-        report = run_retrieval_quality_evals(
-            conn,
-            workspace_id=workspace_id,
-            cases=cases,
-            embedding_provider=embedding_provider,
-            vector_store=vector_store,
-        )
-        results = [
-            SentinelResultIn(
-                case_name=r.name,
-                status=r.status,
-                matched_count=len(r.matched_ids),
-                expected_count=len(r.expected_ids),
-                failures=r.failures,
-                metrics=r.metrics,
+        # Path A: YAML retrieval-quality sentinels (v1.9). Only run when
+        # the workspace has a sentinels YAML with cases.
+        if cases:
+            report = run_retrieval_quality_evals(
+                conn,
+                workspace_id=workspace_id,
+                cases=cases,
+                embedding_provider=embedding_provider,
+                vector_store=vector_store,
             )
-            for r in report.results
-        ]
-        record_sentinel_run(conn, workspace_id=workspace_id, results=results)
+            results = [
+                SentinelResultIn(
+                    case_name=r.name,
+                    status=r.status,
+                    matched_count=len(r.matched_ids),
+                    expected_count=len(r.expected_ids),
+                    failures=r.failures,
+                    metrics=r.metrics,
+                )
+                for r in report.results
+            ]
+            record_sentinel_run(conn, workspace_id=workspace_id, results=results)
+        # Path B: v3.0.0-final organ maintenance (Phases 1-7). Runs on
+        # every overdue tick regardless of YAML presence so newly-
+        # bootstrapped workspaces still grow an organ.
+        _maybe_run_organ_pass(conn, workspace_id=workspace_id)
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:
         conn.close()
+
+
+def _maybe_run_organ_pass(conn: sqlite3.Connection, *, workspace_id: str) -> None:
+    """Best-effort v3 organ maintenance. Never raises -- single bad
+    workspace cannot block the sentinel commit."""
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+        from agent_memory_lite.maintenance.organ_pass import run_organ_pass  # noqa: PLC0415
+
+        settings = get_settings()
+        if not getattr(settings, "organ_pass_enabled", True):
+            return
+        run_organ_pass(conn, workspace_id=workspace_id, settings=settings)
+    except Exception:  # pragma: no cover - defensive
+        _log.exception("organ_pass failed for workspace=%s", workspace_id)
 
 
 def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:

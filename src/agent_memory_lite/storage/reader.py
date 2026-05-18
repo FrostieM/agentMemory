@@ -118,17 +118,26 @@ def list_kind(
     if min_outcome > -1.0 and kind in _OUTCOME_KINDS:
         where.append("COALESCE(outcome_score, 0.0) >= ?")
         params.append(min_outcome)
-    # Phase 6: bi-temporal filter when the table has the columns.
+    # Phase 6: bi-temporal filter when the table has the columns AND
+    # the master flag is on. Off-path = byte-equivalent to v3.0.0-base
+    # (no validity bracket applied even on a migrated DB).
     if kind in _BI_TEMPORAL_KINDS:
-        from agent_memory_lite.storage.bi_temporal import (  # noqa: PLC0415
-            has_validity_columns,
-            where_valid,
-        )
+        try:
+            from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
 
-        if has_validity_columns(conn, table):
-            clause, vparams = where_valid(as_of=as_of)
-            where.append(clause)
-            params.extend(vparams)
+            bi_temporal_on = get_settings().bi_temporal_enabled
+        except Exception:  # pragma: no cover - defensive
+            bi_temporal_on = True
+        if bi_temporal_on:
+            from agent_memory_lite.storage.bi_temporal import (  # noqa: PLC0415
+                has_validity_columns,
+                where_valid,
+            )
+
+            if has_validity_columns(conn, table):
+                clause, vparams = where_valid(as_of=as_of)
+                where.append(clause)
+                params.extend(vparams)
     sql = f"SELECT * FROM {table} WHERE {' AND '.join(where)} ORDER BY updated_at DESC LIMIT ?"
     params.append(limit)
     try:

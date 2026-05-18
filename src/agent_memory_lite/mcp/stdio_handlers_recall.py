@@ -15,11 +15,25 @@ from agent_memory_lite.retrieval.recall import recall
 
 
 def _handle_recall(args: dict[str, Any]) -> dict[str, Any]:
+    # MEMORY_RECALL_ENABLED off-path: byte-equivalent to "feature missing".
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        if not get_settings().recall_enabled:
+            return {"hits": [], "depth": 0, "disabled": True}
+    except Exception:  # pragma: no cover - defensive
+        pass
     workspace_id = _workspace_from_args(args, intent="read")
     topic = str(args.get("topic", "")).strip()
     if not topic:
         return {"hits": [], "depth": 0}
-    depth = int(args.get("depth", 2))
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        default_depth = get_settings().recall_default_depth
+    except Exception:  # pragma: no cover - defensive
+        default_depth = 2
+    depth = int(args.get("depth", default_depth))
     outcome_floor = float(args.get("outcome_floor", -1.0))
     kinds_filter = args.get("kinds") or []
     limit = int(args.get("limit", 10))

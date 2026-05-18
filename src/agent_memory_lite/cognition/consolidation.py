@@ -273,13 +273,22 @@ def _record_evidence_episode_feedback(
 
     Uses the Phase 1 ``usage_feedback`` whitelist (extended to include
     ``episode`` in Phase 3). Wraps the call in try/except so a missing
-    table or stale schema cannot abort the consolidation pass.
+    table or stale schema cannot abort the consolidation pass. Gated on
+    MEMORY_CONSOLIDATION_FEEDBACK_ENABLED so the operator can opt out
+    cleanly (off-path = byte-equivalent to v3.0.0-base, no feedback rows
+    emitted, no episode boost).
     """
     try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
         from agent_memory_lite.maintenance.usage_feedback import (  # noqa: PLC0415
             record_usage_feedback,
         )
     except ImportError:
+        return
+    try:
+        if not get_settings().consolidation_feedback_enabled:
+            return
+    except Exception:  # pragma: no cover - defensive
         return
     for ep_id in evidence_episode_ids:
         try:

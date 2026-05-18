@@ -209,6 +209,12 @@ class Settings(BaseSettings):
     # endpoint accepts when the caller doesn't pass an explicit value.
     recall_enabled: bool = Field(True, validation_alias="MEMORY_RECALL_ENABLED")
     recall_default_depth: int = Field(2, ge=1, le=3, validation_alias="MEMORY_RECALL_DEFAULT_DEPTH")
+    # v3.0.0-final master switch. When the sentinel_scheduler fires (every
+    # MEMORY_SENTINEL_AUTORUN_HOURS = 6h), the six Phase 1-7 organ loops
+    # run automatically against the workspace. Default ON so the organ
+    # grows by itself after a service start; set to false to disable
+    # the whole background path without touching individual phase flags.
+    organ_pass_enabled: bool = Field(True, validation_alias="MEMORY_ORGAN_PASS_ENABLED")
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )

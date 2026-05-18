@@ -212,8 +212,25 @@ def _audit(
 # ============================================================
 
 
+_BI_TEMPORAL_WRITE_KINDS = {"decision", "theory", "concept", "behavior", "insight"}
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """PRAGMA-based column probe. Schema-aware writes use this to skip
+    columns added by later migrations on a partially-migrated DB."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.OperationalError:
+        return False
+    return any(row[1] == column for row in rows)
+
+
 def _build_column_payload(
-    kind: str, payload: dict[str, Any], workspace_id: str, object_id: str
+    conn: sqlite3.Connection,
+    kind: str,
+    payload: dict[str, Any],
+    workspace_id: str,
+    object_id: str,
 ) -> dict[str, Any]:
     """Ensure required columns are set; fill defaults; compute gist."""
     now = _now_iso()
@@ -224,8 +241,16 @@ def _build_column_payload(
     }
     if kind in _HAS_UPDATED_AT:
         base["updated_at"] = now
-    if kind == "decision":
-        base["valid_from"] = payload.get("valid_from") or now
+    # Phase 6 bi-temporal: every kind that carries valid_from/valid_to
+    # gets it defaulted to ``now`` on write so the as_of selector works.
+    # Decisions had this from 0001_init; theory/concept/behavior/insight
+    # got the columns in migration 0007 — probe the table so a pre-0007
+    # DB (test fixtures, partial migration) doesn't crash on the unknown
+    # column.
+    if kind in _BI_TEMPORAL_WRITE_KINDS:
+        table = _KIND_META[kind][0]
+        if _table_has_column(conn, table, "valid_from"):
+            base["valid_from"] = payload.get("valid_from") or now
     if kind == "code_digest":
         base["last_indexed_at"] = payload.get("last_indexed_at") or now
     base.update(payload)
@@ -273,7 +298,7 @@ def write(
             row=prior,
             actor=agent_id,
         )
-    columns = _build_column_payload(kind, payload, workspace_id, object_id)
+    columns = _build_column_payload(conn, kind, payload, workspace_id, object_id)
     _insert_or_replace(conn, table=table, columns=columns)
     _audit(
         conn,

@@ -106,15 +106,23 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
     on the page. Empty / missing row degrades gracefully -- the
     workspace name + counts + discipline line still render.
     """
-    lines = [f"# {workspace_id}"]
+    # Sanitize workspace_id so a newline/tab in the id can't break the
+    # brief's structural invariant (`lines[0]` = title, `lines[1]` =
+    # identity text).
+    safe_ws = " ".join(str(workspace_id).split())[:64] or "workspace"
+    lines = [f"# {safe_ws}"]
     # Phase 5 self-model line goes immediately under the workspace title.
+    # Gated on MEMORY_SELF_MODEL_ENABLED so off-path = byte-equivalent
+    # to v3.0.0-base (workspace title without narrative).
     try:
         from agent_memory_lite.cognition.self_model import load_self_model  # noqa: PLC0415
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
 
-        sm = load_self_model(conn, workspace_id=workspace_id)
-        if sm is not None and sm.identity_text:
-            lines.append(sm.identity_text)
-    except ImportError:
+        if get_settings().self_model_enabled:
+            sm = load_self_model(conn, workspace_id=workspace_id)
+            if sm is not None and sm.identity_text:
+                lines.append(" ".join(sm.identity_text.split()))
+    except (ImportError, sqlite3.OperationalError):
         pass
     pinned_decisions = count_kind(
         conn, workspace_id=workspace_id, kind="decision", pinned_only=True
@@ -262,9 +270,17 @@ def _build_recent_insights(
     the auto-promotion gate.
 
     Empty section (no lines) when:
+    - MEMORY_CONSOLIDATION_FEEDBACK_ENABLED is false (off-path)
     - no candidate insights
     - migration 0004 not yet applied (no last_surfaced_at column)
     """
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        if not get_settings().consolidation_feedback_enabled:
+            return BriefSection(name="recent_insights", budget=budget, lines=[])
+    except Exception:  # pragma: no cover - defensive
+        pass
     try:
         rows = conn.execute(
             """
