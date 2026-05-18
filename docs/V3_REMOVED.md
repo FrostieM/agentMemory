@@ -17,7 +17,7 @@ The v2 codebase grew organically over a year. The audit findings (see
 * **30+ MCP tools were aspirational; only 6 are needed.** The other 24 became
   shimmed v2 names that route to v3 backends, or are dropped entirely.
 * **70 MCP files duplicated handler + schema per tool.** v3 collapses to one
-  file per domain (`stdio_tools_v3.py` + `stdio_handlers_v3.py`).
+  file per domain (`stdio_tools_memory.py` + `stdio_handlers_memory.py`).
 * **17 always-on env flags are now defaults.** Inline'd, env vars dropped.
 
 ## Categories
@@ -94,7 +94,7 @@ Total env var count: 71 → ≤30.
 ### 8. SQL migrations consolidated (~750 SLOC)
 
 * `migrations/0001_init.sql` + `0020_*.sql` … `0032_*.sql` (14 files,
-  one starting point + 13 forward-only migrations) → `migrations/v3/0001_init.sql`
+  one starting point + 13 forward-only migrations) → `migrations/canonical/0001_init.sql`
   (single consolidated DDL).
 * Migrations 0002-0019 were lost in v2 forward-only flow; v3 ignores them
   entirely.

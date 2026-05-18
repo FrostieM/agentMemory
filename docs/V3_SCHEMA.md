@@ -1,11 +1,11 @@
 # V3 Schema — one-page reference
 
-Source of truth: `migrations/v3/0001_init.sql`. Applied as a single DDL
-on a fresh v3 database via `scripts/migrate_v2_to_v3.py`. Lives in a
-separate `migrations/v3/` subdirectory so the v2 migration runner
+Source of truth: `migrations/canonical/0001_init.sql`. Applied as a single DDL
+on a fresh v3 database via `scripts/migrate_to_canonical.py`. Lives in a
+separate `migrations/canonical/` subdirectory so the v2 migration runner
 (`db/migrations.py`, walks `migrations/*.sql` non-recursively) does
 NOT pick it up. The v3 chain starts here and grows forward as
-`migrations/v3/0002_*.sql`, etc.
+`migrations/canonical/0002_*.sql`, etc.
 
 ## Design principles
 
@@ -124,7 +124,7 @@ top-5 decisions (130) + state (60) + top-10 code-digest projections (90).
 
 ## Migration path
 
-`scripts/migrate_v2_to_v3.py` (Phase 0 Week 2 deliverable):
+`scripts/migrate_to_canonical.py` (Phase 0 Week 2 deliverable):
 1. Read v2 SQLite at registered workspace path.
 2. Create v3 SQLite at `<workspace>/.agent_memory.v3-trial/memory.db`.
 3. Apply `schema_v3.sql` once.

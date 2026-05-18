@@ -40,7 +40,7 @@ def _run(argv: list[str]) -> int:
 def test_brief_calls_brief_endpoint(captured: dict, capsys: pytest.CaptureFixture) -> None:
     rc = _run(["brief", "--workspace", "ws-x"])
     assert rc == 0
-    assert captured["path"] == "/v3/memory/brief"
+    assert captured["path"] == "/memory/brief"
     assert captured["method"] == "GET"
     assert captured["kwargs"]["params"]["workspace_id"] == "ws-x"
     out = capsys.readouterr().out
@@ -203,7 +203,7 @@ def test_lint_via_tool_name(captured: dict) -> None:
 
 def test_skill_invoke(captured: dict) -> None:
     _run(["skill", "skill_x", "--workspace", "ws"])
-    assert captured["path"] == "/v3/memory/skill/skill_x"
+    assert captured["path"] == "/memory/skill/skill_x"
 
 
 def test_rollback_required_args(captured: dict) -> None:

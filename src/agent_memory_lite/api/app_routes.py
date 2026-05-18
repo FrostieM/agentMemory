@@ -66,7 +66,7 @@ from agent_memory_lite.api.routes import (
     usage,
     workspaces,
 )
-from agent_memory_lite.v3.api import routes as v3_routes
+from agent_memory_lite.api.routes import memory as memory_routes
 
 ALL_ROUTERS = (
     health,
@@ -121,8 +121,14 @@ ALL_ROUTERS = (
     file_digests,
     code_overview,
     code_graph,
-    # v3 surface (mounts at /v3/memory/*).
-    v3_routes,
+    # Canonical surface (mounts at /memory/*). Listed LAST so any
+    # legacy v2 route at the same path resolves first (FastAPI uses
+    # first-match) -- keeps the v2 wire-shape stable for existing
+    # callers while the canonical surface owns all NEW paths
+    # (/memory/brief, /memory/get, /memory/write, /memory/edit,
+    # /memory/lint, /memory/invoke_skill, /memory/impact_check,
+    # /memory/versions, /memory/rollback, /memory/list, /memory/count).
+    memory_routes,
 )
 
 

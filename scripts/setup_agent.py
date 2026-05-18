@@ -18,7 +18,7 @@ What it does (idempotent — safe to re-run):
    - The agent contract (`docs/AGENT_CONTRACT.md`) into the runtime's "always-loaded"
      instructions file (CLAUDE.md / AGENTS.md / .cursorrules).
 6. (Claude Code only) Optionally installs the v3 discipline hooks:
-   - `UserPromptSubmit` → `scripts/inject_memory_brief_v3.py` (≤500-token
+   - `UserPromptSubmit` → `scripts/inject_memory_brief.py` (≤500-token
      compact brief composed from v3 projections).
    - `PostToolUse` (Edit|Write|NotebookEdit|MultiEdit) →
      `scripts/post_edit_enqueue.py` (digest worker queue feeder).
@@ -60,9 +60,9 @@ CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 # The legacy v2 ``scripts/inject_memory_context.py`` hook still ships as
 # a backwards-compat surface but is no longer installed by this script;
 # ``_remove_v2_inject_hook`` evicts it from settings.json on every run.
-V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief_v3.py"
+V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
-V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "v3" / "0001_init.sql"
+V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "canonical" / "0001_init.sql"
 V3_POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
 PRETOOLUSE_HOOK_MATCHER = "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_.*"
@@ -278,10 +278,7 @@ def _remove_v2_inject_hook(settings: dict[str, object]) -> int:
         survivors = [
             h
             for h in inner
-            if not (
-                isinstance(h, dict)
-                and "agent-memory-lite-inject" in str(h.get("command", ""))
-            )
+            if not (isinstance(h, dict) and "agent-memory-lite-inject" in str(h.get("command", "")))
         ]
         removed += len(inner) - len(survivors)
         if survivors:
@@ -326,8 +323,7 @@ def install_v3_brief_hook(
             if isinstance(entry, dict)
             and isinstance(entry.get("hooks"), list)
             and any(
-                isinstance(h, dict) and marker in str(h.get("command", ""))
-                for h in entry["hooks"]
+                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
             )
         ),
         None,
@@ -338,9 +334,7 @@ def install_v3_brief_hook(
         existing["hooks"] = [new_hook]
 
 
-def install_v3_postedit_hook(
-    settings: dict[str, object], *, venv_python: Path
-) -> None:
+def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) -> None:
     """Add the v3 PostToolUse digest-queue hook on Edit/Write/NotebookEdit/MultiEdit.
 
     Idempotent: identifies prior entries by the ``v3-postedit`` marker.
@@ -366,8 +360,7 @@ def install_v3_postedit_hook(
             if isinstance(entry, dict)
             and isinstance(entry.get("hooks"), list)
             and any(
-                isinstance(h, dict) and marker in str(h.get("command", ""))
-                for h in entry["hooks"]
+                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
             )
         ),
         None,
@@ -439,7 +432,7 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
         repo_root_str = str(REPO_ROOT)
         if repo_root_str not in sys.path:
             sys.path.insert(0, repo_root_str)
-        from scripts.seed_v3_discipline import seed_discipline  # noqa: PLC0415
+        from scripts.seed_memory_discipline import seed_discipline  # noqa: PLC0415
 
         results = seed_discipline(conn, workspace_id=workspace_id)
     except sqlite3.Error as exc:

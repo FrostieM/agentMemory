@@ -1,7 +1,7 @@
 """Unit tests for WorkspaceRoutingMiddleware._is_target_request.
 
 Regression coverage for the 2026-05-18 fix: the middleware originally
-matched only ``/memory/*`` paths, so any ``/v3/memory/*`` request
+matched only ``/memory/*`` paths, so any ``/memory/*`` request
 slipped past the routing layer and silently landed on the service's
 anchor DB regardless of ``workspace_id``. In hub mode this made the v3
 brief endpoint unusable cross-workspace — copyBot's brief always
@@ -9,7 +9,7 @@ returned agent-memory-lite's data, hiding the v3 pinned rules from
 the copyBot agent and dropping v3 adoption to 0%.
 
 These tests pin the contract: both legacy ``/memory/*`` and v3
-``/v3/memory/*`` paths are routing targets when hub mode is on.
+``/memory/*`` paths are routing targets when hub mode is on.
 """
 
 from __future__ import annotations
@@ -63,16 +63,16 @@ def test_routing_matches_legacy_memory_paths(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "/v3/memory/brief",
-        "/v3/memory/search",
-        "/v3/memory/impact_check",
-        "/v3/memory/get",
-        "/v3/memory/write",
-        "/v3/memory/lint",
+        "/memory/brief",
+        "/memory/search",
+        "/memory/impact_check",
+        "/memory/get",
+        "/memory/write",
+        "/memory/lint",
     ],
 )
 def test_routing_matches_v3_memory_paths(path: str) -> None:
-    """v3 /v3/memory/* paths are routing targets in hub mode.
+    """v3 /memory/* paths are routing targets in hub mode.
 
     Before the 2026-05-18 fix this returned False and v3 requests
     silently hit the anchor DB regardless of workspace_id.
@@ -103,7 +103,7 @@ def test_routing_skips_non_memory_paths(path: str) -> None:
     "path",
     [
         "/memory/get_context",
-        "/v3/memory/brief",
+        "/memory/brief",
     ],
 )
 def test_routing_disabled_when_hub_mode_off(path: str) -> None:
@@ -116,7 +116,7 @@ def test_routing_disabled_when_hub_mode_off(path: str) -> None:
     "path",
     [
         "/memory/get_context",
-        "/v3/memory/brief",
+        "/memory/brief",
     ],
 )
 def test_routing_skipped_when_caller_set_explicit_db_header(path: str) -> None:
@@ -128,7 +128,7 @@ def test_routing_skipped_when_caller_set_explicit_db_header(path: str) -> None:
 def test_routing_skips_non_http_scopes() -> None:
     """Websocket / lifespan scopes are not targets."""
     mw = _make_middleware(hub_mode=True)
-    ws_scope = {"type": "websocket", "method": "GET", "path": "/v3/memory/brief"}
+    ws_scope = {"type": "websocket", "method": "GET", "path": "/memory/brief"}
     assert mw._is_target_request(ws_scope) is False  # type: ignore[arg-type]
     lifespan_scope = {"type": "lifespan"}
     assert mw._is_target_request(lifespan_scope) is False  # type: ignore[arg-type]

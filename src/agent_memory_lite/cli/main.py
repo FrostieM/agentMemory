@@ -75,7 +75,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         params["task"] = args.task
     env = _request(
         "GET",
-        "/v3/memory/brief",
+        "/memory/brief",
         base_url=args.base_url,
         timeout=args.timeout,
         params=params,
@@ -95,7 +95,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         params["status"] = args.status
     env = _request(
         "GET",
-        "/v3/memory/list",
+        "/memory/list",
         base_url=args.base_url,
         timeout=args.timeout,
         params=params,
@@ -113,7 +113,7 @@ def cmd_get(args: argparse.Namespace) -> int:
         params["fields"] = args.fields
     env = _request(
         "GET",
-        "/v3/memory/get",
+        "/memory/get",
         base_url=args.base_url,
         timeout=args.timeout,
         params=params,
@@ -129,7 +129,7 @@ def cmd_count(args: argparse.Namespace) -> int:
         params["status"] = args.status
     env = _request(
         "GET",
-        "/v3/memory/count",
+        "/memory/count",
         base_url=args.base_url,
         timeout=args.timeout,
         params=params,
@@ -147,7 +147,7 @@ def cmd_search(args: argparse.Namespace) -> int:
         body["kinds"] = args.kinds.split(",")
     env = _request(
         "POST",
-        "/v3/memory/search",
+        "/memory/search",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -177,7 +177,7 @@ def cmd_write(args: argparse.Namespace) -> int:
     }
     env = _request(
         "POST",
-        "/v3/memory/write",
+        "/memory/write",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -195,7 +195,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
     }
     env = _request(
         "POST",
-        "/v3/memory/edit",
+        "/memory/edit",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -213,7 +213,7 @@ def cmd_pin(args: argparse.Namespace) -> int:
     }
     env = _request(
         "POST",
-        "/v3/memory/pin",
+        "/memory/pin",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -232,7 +232,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
         body["reason"] = args.reason
     env = _request(
         "POST",
-        "/v3/memory/archive",
+        "/memory/archive",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -250,7 +250,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
         body["transcript_path"] = args.transcript
     env = _request(
         "POST",
-        "/v3/memory/lint",
+        "/memory/lint",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -261,7 +261,7 @@ def cmd_lint(args: argparse.Namespace) -> int:
 def cmd_skill(args: argparse.Namespace) -> int:
     env = _request(
         "GET",
-        f"/v3/memory/skill/{args.id}",
+        f"/memory/skill/{args.id}",
         base_url=args.base_url,
         timeout=args.timeout,
         params={"workspace_id": args.workspace},
@@ -280,7 +280,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
     }
     env = _request(
         "POST",
-        "/v3/memory/rollback",
+        "/memory/rollback",
         base_url=args.base_url,
         timeout=args.timeout,
         json=body,
@@ -291,7 +291,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 def cmd_versions(args: argparse.Namespace) -> int:
     env = _request(
         "GET",
-        "/v3/memory/versions",
+        "/memory/versions",
         base_url=args.base_url,
         timeout=args.timeout,
         params={"workspace_id": args.workspace, "kind": args.kind, "id": args.id},

@@ -26,7 +26,7 @@ import pytest
 
 from agent_memory_lite.mcp import v2_compat
 
-SCHEMA_V3_PATH = Path(__file__).resolve().parents[3] / "migrations" / "v3" / "0001_init.sql"
+SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "v3.db"
     c = sqlite3.connect(db_path)
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_V3_PATH.read_text(encoding="utf-8"))
+    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     c.commit()
     try:
         yield c

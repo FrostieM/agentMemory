@@ -36,7 +36,7 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
     _handle_ingest_file,
     _handle_search,
 )
-from agent_memory_lite.mcp.stdio_handlers_v3 import V3_HANDLERS
+from agent_memory_lite.mcp.stdio_handlers_memory import MEMORY_HANDLERS
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
 from agent_memory_lite.mcp.v2_compat import compat_dispatch
@@ -92,8 +92,8 @@ def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | 
         return None
     # The shim only handles legacy v2 names that need translation to
     # the canonical backend. Canonical names (memory_search,
-    # memory_write, memory_get, etc.) always hit V3_HANDLERS directly.
-    if name in V3_HANDLERS:
+    # memory_write, memory_get, etc.) always hit MEMORY_HANDLERS directly.
+    if name in MEMORY_HANDLERS:
         return None
     try:
         return compat_dispatch(_runtime.db(), name, args)

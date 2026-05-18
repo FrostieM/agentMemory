@@ -8,7 +8,7 @@ Covers the *dispatch boundary*, not the translation logic itself
 * ``MEMORY_V2_COMPAT_ENABLED=true`` (default) -> legacy v2-only tool
   names are routed through the shim instead of the native v2 handler.
 * Canonical names (``memory_search``, ``memory_write``, etc., served
-  by V3_HANDLERS) bypass the shim even when enabled.
+  by MEMORY_HANDLERS) bypass the shim even when enabled.
 * Shim internal raise -> returns None -> native handler still runs
   (failure-soft contract).
 """
@@ -23,7 +23,7 @@ import pytest
 
 from agent_memory_lite.mcp import stdio_server
 
-SCHEMA_V3_PATH = Path(__file__).resolve().parents[3] / "migrations" / "v3" / "0001_init.sql"
+SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def v3_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3
     db_path = tmp_path / "v3.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_V3_PATH.read_text(encoding="utf-8"))
+    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()
     monkeypatch.setattr(stdio_server._runtime, "db", lambda: conn)
     try:

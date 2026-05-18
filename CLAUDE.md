@@ -348,7 +348,7 @@ The agent now has two coexisting surfaces:
    next agent to re-derive execution knowledge from raw episodes.
 
 These three rules ship as **pinned** workspace behaviors via
-`scripts/seed_v3_discipline.py` and ride every brief automatically.
+`scripts/seed_memory_discipline.py` and ride every brief automatically.
 
 ### v3 strict tools (the agent's primary surface)
 

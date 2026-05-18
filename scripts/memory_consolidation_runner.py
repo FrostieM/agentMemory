@@ -28,7 +28,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from agent_memory_lite.v3.cognition.consolidation import consolidate_workspace
+from agent_memory_lite.cognition.consolidation import consolidate_workspace
 
 logger = logging.getLogger("agent_memory_lite.scripts.consolidation_runner")
 

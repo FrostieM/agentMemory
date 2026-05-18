@@ -17,7 +17,7 @@ endpoints below return empty.
 > advisory. Returns `verdict ∈ {not_indexed, low, medium, high}`
 > and a one-sentence advisory naming the right follow-up tool.
 > Pinned as the workspace rule **graph-tools-first** via
-> `scripts/seed_v3_discipline.py`. See
+> `scripts/seed_memory_discipline.py`. See
 > [`V3_AGENT_RUNTIMES.md`](V3_AGENT_RUNTIMES.md) §"Tool name
 > reference". The v1.4-2.1.x tools below remain available for
 > deeper drilldowns once impact_check identifies the right hot

@@ -118,7 +118,7 @@ def main() -> int:
         # Defer the heavy import until we have something to enqueue. The
         # queue I/O itself is cheap (one append per hook); we don't want
         # to add tens of ms for events that don't apply.
-        from agent_memory_lite.v3.cognition.digest_worker import enqueue  # noqa: PLC0415
+        from agent_memory_lite.cognition.digest_worker import enqueue  # noqa: PLC0415
 
         enqueue(workspace_id=workspace_id, db_path=db_path, file_path=str(src.resolve()))
     except Exception:  # hook must never raise into the agent

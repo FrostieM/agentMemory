@@ -1,9 +1,9 @@
-"""Unit tests for scripts/inject_memory_brief_v3.py.
+"""Unit tests for scripts/inject_memory_brief.py.
 
 Covers:
 
 * Workspace resolution via the registry walker.
-* /v3/memory/brief call success path (envelope unwrap → emit body_md).
+* /memory/brief call success path (envelope unwrap → emit body_md).
 * Failure modes: HTTP error, non-JSON, ok=false, empty body_md.
 * Emission shape — ``<agent-memory><memory_brief>...``.
 """
@@ -16,7 +16,7 @@ from typing import Any
 
 import httpx
 import pytest
-from scripts import inject_memory_brief_v3 as v3hook
+from scripts import inject_memory_brief as v3hook
 
 # ============================================================
 # Workspace resolution
@@ -95,7 +95,7 @@ def test_resolve_tolerates_missing_registry(
 
 
 # ============================================================
-# /v3/memory/brief fetch
+# /memory/brief fetch
 # ============================================================
 
 

@@ -24,20 +24,20 @@ rule adherence ≥95%, brief cache hit rate ≥70%, code-digest staleness
 median ≤2h. Acceptance gate runs via `scripts/v3_acceptance_gate.py`.
 
 The 3.0.0-dev work runs in parallel with the stable 2.x surface; both
-ship from the same checkout. v3 endpoints mount at `/v3/memory/*`,
+ship from the same checkout. v3 endpoints mount at `/memory/*`,
 v3 MCP tools are prefixed `memory_*`, v2 surface keeps working
 unchanged until the week-8 canary flip.
 
 ### Foundation (Phase 1)
 
-- **`migrations/v3/0001_init.sql`** — consolidated DDL replacing
+- **`migrations/canonical/0001_init.sql`** — consolidated DDL replacing
   v2 migrations 0001 + 0020-0032. 35 tables: 12 core kinds
   (decisions, theories, behaviors, skills, concepts, tasks,
   episodes, insights, code_digests, chunks, theory_evidence,
   versions) + audit_log + FTS5 virtual tables + indexes.
   `gist` / `*_one_line` / `*_short` columns persisted on write
   so projections are pre-computed.
-- **`scripts/migrate_v2_to_v3.py`** — idempotent SQLite-to-SQLite
+- **`scripts/migrate_to_canonical.py`** — idempotent SQLite-to-SQLite
   port. Resumable on partial failure. Computes gist columns via
   cheap heuristic during the port; Ollama backfill is a separate
   optional pass.
@@ -81,7 +81,7 @@ unchanged until the week-8 canary flip.
 
 ### Agent surface (Phase 1+2)
 
-- **HTTP `/v3/memory/*`** — 13 endpoints returning uniform
+- **HTTP `/memory/*`** — 13 endpoints returning uniform
   `{ok, data, error}` envelope. Routes are thin wrappers around v3
   storage / cognition.
 - **9 MCP tools** (`memory_*` prefix during transition):

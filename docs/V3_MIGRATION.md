@@ -7,7 +7,7 @@ How to move a v2 workspace to v3 without data loss or downtime.
 * **v2 DB stays untouched for 6 weeks** after cutover. Migration writes to a
   new `.agent_memory.v3-trial/memory.db` first; parity-verify, then promote.
 * **Service can run both v2 and v3 surfaces simultaneously.** The v3 router
-  mounts at `/v3/memory/*`; v2 routes at `/memory/*` keep serving until you
+  mounts at `/memory/*`; v2 routes at `/memory/*` keep serving until you
   flip the workspace's `mode` flag.
 * **MCP tools coexist.** v2 tool names (e.g. `memory_write_decision`) keep
   routing to the v2 backend; v3 tools (`memory_*`) use the v3 backend.
@@ -26,7 +26,7 @@ sqlite3 .agent_memory/memory.db ".backup .agent_memory/memory.db.bak"
 ### 2. Run the v2 → v3 port
 
 ```bash
-python scripts/migrate_v2_to_v3.py \
+python scripts/migrate_to_canonical.py \
   --source .agent_memory/memory.db \
   --target .agent_memory.v3-trial/memory.db \
   --workspace <id>
@@ -46,7 +46,7 @@ where it left off. Output:
 ### 3. Verify parity
 
 ```bash
-python scripts/migrate_v2_to_v3.py \
+python scripts/migrate_to_canonical.py \
   --verify-only \
   --source .agent_memory/memory.db \
   --target .agent_memory.v3-trial/memory.db
@@ -90,7 +90,7 @@ workspace entry:
 
 In shadow mode:
 
-* v3 endpoints (`/v3/memory/*`) and MCP `memory_*` tools route to the new DB.
+* v3 endpoints (`/memory/*`) and MCP `memory_*` tools route to the new DB.
 * v2 endpoints continue routing to the original DB.
 * You can probe v3 via `memory-cli` without touching production memory.
 

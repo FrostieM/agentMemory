@@ -78,24 +78,24 @@ them up:
 * **MCP stdio server**: spawned per chat — new chat = new MCP =
   fresh v3 handler code.
 * **HTTP service** on port 8765: rebuild only needed if you want
-  `/v3/memory/*` routes (mounted via `api/app_routes.py`). The
+  `/memory/*` routes (mounted via `api/app_routes.py`). The
   hook-based brief/discipline stack doesn't go through HTTP.
 
 ### v3-only installer (advanced)
 
-`scripts/install_v3_hooks.py` is the lower-level installer used
+`scripts/install_memory_hooks.py` is the lower-level installer used
 internally by `setup_agent.py`. Useful when you only want to refresh
 hooks without re-running the full `setup_agent.py` flow:
 
 ```bash
 # Dry-run (default):
-python scripts/install_v3_hooks.py --project /path/to/project
+python scripts/install_memory_hooks.py --project /path/to/project
 
 # Apply:
-python scripts/install_v3_hooks.py --project /path/to/project --apply --backup-first
+python scripts/install_memory_hooks.py --project /path/to/project --apply --backup-first
 
 # Hooks only, skip seed:
-python scripts/install_v3_hooks.py --project /path/to/project --apply --no-seed
+python scripts/install_memory_hooks.py --project /path/to/project --apply --no-seed
 ```
 
 ## After upgrading the repo

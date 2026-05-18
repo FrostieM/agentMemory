@@ -44,9 +44,9 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from agent_memory_lite.v3.cognition.brief import fetch_skill_body
-from agent_memory_lite.v3.storage.reader import get_object, list_kind, search
-from agent_memory_lite.v3.storage.writer import archive, pin, write
+from agent_memory_lite.cognition.brief import fetch_skill_body
+from agent_memory_lite.storage.reader import get_object, list_kind, search
+from agent_memory_lite.storage.writer import archive, pin, write
 
 # ============================================================
 # Activation gate
@@ -238,7 +238,7 @@ def _compat_archive(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str,
     if not args.get("archive", True):
         return _err(
             "translation_pending",
-            "v3 archive is one-way; use memory_v3_edit to restore status",
+            "v3 archive is one-way; use memory_edit to restore status",
         )
     out = archive(
         conn,
@@ -269,7 +269,7 @@ def _compat_pin(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any
     )
     if out is None:
         return _err("unsupported_kind", "pin only valid for decision + behavior in v3")
-    return _ok(out, deprecation=_deprecation("memory_pin", "memory_v3_pin"))
+    return _ok(out, deprecation=_deprecation("memory_pin", "memory_pin"))
 
 
 def _compat_search(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -300,7 +300,7 @@ def _compat_list_kind(
         pinned_only=False,
         status=None if include_superseded else "active",
     )
-    return _ok(rows, deprecation=_deprecation(v2_name, "memory_v3_search or HTTP /v3/memory/list"))
+    return _ok(rows, deprecation=_deprecation(v2_name, "memory_search or HTTP /memory/list"))
 
 
 def _compat_invoke_skill(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -315,7 +315,7 @@ def _compat_invoke_skill(conn: sqlite3.Connection, args: dict[str, Any]) -> dict
     )
     if out is None:
         return _err("not_found", f"skill:{skill_id} not found")
-    return _ok(out, deprecation=_deprecation("memory_invoke_skill", "memory_v3_invoke_skill"))
+    return _ok(out, deprecation=_deprecation("memory_invoke_skill", "memory_invoke_skill"))
 
 
 # ============================================================
@@ -443,9 +443,9 @@ def _translation_pending(
     def handler(_conn: sqlite3.Connection, _args: dict[str, Any]) -> dict[str, Any]:
         return _err(
             "translation_pending",
-            f"v2 tool {v2_name!r} has no v3 equivalent yet; call HTTP /v3/memory/*"
+            f"v2 tool {v2_name!r} has no v3 equivalent yet; call HTTP /memory/*"
             " directly or wait for the v3.1 release.",
-            deprecation=_deprecation(v2_name, "memory-cli or /v3/memory/*"),
+            deprecation=_deprecation(v2_name, "memory-cli or /memory/*"),
         )
 
     return handler
@@ -520,5 +520,5 @@ def compat_dispatch(
         return _err(
             "shim_internal_error",
             f"{type(exc).__name__}: {exc}",
-            deprecation=_deprecation(name, "memory-cli or /v3/memory/*"),
+            deprecation=_deprecation(name, "memory-cli or /memory/*"),
         )

@@ -33,7 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from agent_memory_lite.v3.cognition.digest_worker import (  # noqa: E402
+from agent_memory_lite.cognition.digest_worker import (  # noqa: E402
     DEFAULT_QUEUE_PATH,
     drain_queue,
 )

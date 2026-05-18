@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from scripts import post_edit_enqueue as hook
 
-from agent_memory_lite.v3.cognition import digest_worker as dw
+from agent_memory_lite.cognition import digest_worker as dw
 
 # ============================================================
 # _extract_file_path: accept each tool's payload shape

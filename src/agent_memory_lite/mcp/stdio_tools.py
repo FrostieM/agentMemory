@@ -1,12 +1,12 @@
 """All MCP tool schemas, concatenated from per-domain modules.
 
-V3_TOOLS now use canonical names (``memory_*``, no ``_v3_`` infix).
+MEMORY_TOOLS now use canonical names (``memory_*``, no ``_v3_`` infix).
 Where a canonical name collides with a legacy v2 tool of the same
 name (``memory_search``, ``memory_pin``, ``memory_archive``), the
 canonical (v3) implementation wins via the dedup pass below — the
 legacy spec is dropped from the advertised list so the MCP client
 sees ONE tool per name. Dispatch is handled separately in
-``stdio_handlers.py`` where V3_HANDLERS is spread last and overrides
+``stdio_handlers.py`` where MEMORY_HANDLERS is spread last and overrides
 the same legacy keys for the same reason.
 """
 
@@ -23,19 +23,19 @@ from agent_memory_lite.mcp.stdio_tools_coordination import COORDINATION_TOOLS
 from agent_memory_lite.mcp.stdio_tools_decisions import DECISION_TOOLS
 from agent_memory_lite.mcp.stdio_tools_digests import DIGEST_TOOLS
 from agent_memory_lite.mcp.stdio_tools_episodes import EPISODE_TOOLS
+from agent_memory_lite.mcp.stdio_tools_memory import MEMORY_TOOLS
 from agent_memory_lite.mcp.stdio_tools_p1 import P1_TOOLS
 from agent_memory_lite.mcp.stdio_tools_research import RESEARCH_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review import REVIEW_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review_queue import REVIEW_QUEUE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_state_snapshots import STATE_SNAPSHOT_TOOLS
 from agent_memory_lite.mcp.stdio_tools_theories import THEORY_TOOLS
-from agent_memory_lite.mcp.stdio_tools_v3 import V3_TOOLS
 
 
 def _dedup_last_wins(*groups: list[types.Tool]) -> list[types.Tool]:
     """Concat tool groups and keep the LAST spec for any duplicated name.
 
-    Used so the canonical (V3_TOOLS) spec wins when a legacy v2 tool
+    Used so the canonical (MEMORY_TOOLS) spec wins when a legacy v2 tool
     of the same name (``memory_search``, ``memory_pin``, etc.) is
     still in one of the earlier groups.
     """
@@ -63,5 +63,5 @@ ALL_TOOLS: list[types.Tool] = _dedup_last_wins(
     STATE_SNAPSHOT_TOOLS,
     REVIEW_QUEUE_TOOLS,
     # Canonical surface — overrides any legacy entry of the same name.
-    V3_TOOLS,
+    MEMORY_TOOLS,
 )

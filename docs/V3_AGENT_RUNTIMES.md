@@ -4,7 +4,7 @@ How to wire each supported agent against the v3 memory surface.
 
 The v3 architecture exposes three first-class surfaces:
 
-1. **HTTP** at `http://127.0.0.1:8765/v3/memory/*` — language-agnostic.
+1. **HTTP** at `http://127.0.0.1:8765/memory/*` — language-agnostic.
 2. **MCP stdio** with `memory_*` tool names — Claude Code, Cursor, Continue.
 3. **`memory-cli`** shell entrypoint — Aider, Codex CLI, CI scripts.
 
@@ -38,7 +38,7 @@ Writes per-project `MEMORY_DB_PATH` + workspace registry entry.
     "UserPromptSubmit": [{
       "hooks": [{
         "type": "command",
-        "command": "<repo>/.venv/bin/python <repo>/scripts/inject_memory_brief_v3.py"
+        "command": "<repo>/.venv/bin/python <repo>/scripts/inject_memory_brief.py"
       }]
     }],
     "PostToolUse": [{
@@ -143,7 +143,7 @@ memory-cli lint --tool-name=Edit \
 
 ## Brief composition
 
-The brief returned by `memory_brief` (or `GET /v3/memory/brief`) is composed
+The brief returned by `memory_brief` (or `GET /memory/brief`) is composed
 from 5 compact sections summing to ≤500 tokens:
 
 | Section | Budget | Source |
@@ -181,10 +181,10 @@ Cached on workspace fingerprint (hash of pinned-file SHAs + active-task
 
 ### HTTP-only (ops surface)
 
-* `GET /v3/memory/list` (paginated by kind)
-* `GET /v3/memory/count`
-* `GET /v3/memory/versions`
-* `POST /v3/memory/rollback`
+* `GET /memory/list` (paginated by kind)
+* `GET /memory/count`
+* `GET /memory/versions`
+* `POST /memory/rollback`
 
 Reach via `memory-cli list / count / versions / rollback` for shell access.
 
@@ -199,7 +199,7 @@ pip install 'agent-memory-lite[rerank]'
 Then request reranking per call:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8765/v3/memory/search \
+curl -s -X POST http://127.0.0.1:8765/memory/search \
   -H "Content-Type: application/json" \
   -d '{"workspace_id":"ws","query":"kelly sizing","rerank":true}'
 ```
