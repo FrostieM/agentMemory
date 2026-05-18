@@ -72,6 +72,8 @@ _KIND_FTS_COLUMNS = {
 
 
 _OUTCOME_KINDS = {"decision", "theory", "behavior", "skill", "insight", "chunk"}
+# Phase 6: kinds that carry bi-temporal validity columns.
+_BI_TEMPORAL_KINDS = {"decision", "theory", "behavior", "concept", "insight"}
 
 
 def list_kind(
@@ -83,6 +85,7 @@ def list_kind(
     pinned_only: bool = False,
     status: str | None = None,
     min_outcome: float = -1.0,
+    as_of: str | None = None,
 ) -> list[dict[str, Any]]:
     """List rows of ``kind`` as compact projections.
 
@@ -94,6 +97,13 @@ def list_kind(
     so existing callers stay byte-equivalent. Pass ``0.0`` to drop
     failed approaches from the result set. Silently no-op when the
     column does not exist (pre-migration DB).
+
+    ``as_of`` (Phase 6) filters rows by bi-temporal validity:
+    ``valid_from <= as_of AND (valid_to IS NULL OR valid_to > as_of)``.
+    Default ``None`` means "now" -- pass an ISO 8601 string to ask
+    "what did the workspace believe at this point in time". Silently
+    no-op on tables that lack the validity columns (pre-migration DB
+    or kinds outside ``_BI_TEMPORAL_KINDS``).
     """
     if kind not in _KIND_TABLES:
         return []
@@ -108,6 +118,17 @@ def list_kind(
     if min_outcome > -1.0 and kind in _OUTCOME_KINDS:
         where.append("COALESCE(outcome_score, 0.0) >= ?")
         params.append(min_outcome)
+    # Phase 6: bi-temporal filter when the table has the columns.
+    if kind in _BI_TEMPORAL_KINDS:
+        from agent_memory_lite.storage.bi_temporal import (  # noqa: PLC0415
+            has_validity_columns,
+            where_valid,
+        )
+
+        if has_validity_columns(conn, table):
+            clause, vparams = where_valid(as_of=as_of)
+            where.append(clause)
+            params.extend(vparams)
     sql = f"SELECT * FROM {table} WHERE {' AND '.join(where)} ORDER BY updated_at DESC LIMIT ?"
     params.append(limit)
     try:
@@ -123,6 +144,7 @@ def list_kind(
                 pinned_only=pinned_only,
                 status=status,
                 min_outcome=-1.0,
+                as_of=as_of,
             )
         raise
     out: list[dict[str, Any]] = []

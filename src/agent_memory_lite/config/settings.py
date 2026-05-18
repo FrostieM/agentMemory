@@ -197,6 +197,12 @@ class Settings(BaseSettings):
     # the Ollama narrative via MEMORY_SELF_MODEL_OLLAMA=true.
     self_model_enabled: bool = Field(True, validation_alias="MEMORY_SELF_MODEL_ENABLED")
     self_model_ollama: bool = Field(False, validation_alias="MEMORY_SELF_MODEL_OLLAMA")
+    # v3.0.0-final Phase 6: bi-temporal facts. theories/concepts/behaviors/
+    # insights gain valid_from / valid_to columns. Reader.list_kind filters
+    # by validity bracket around an as_of ISO string (default now). Off-path:
+    # all NULL valid_to columns mean "valid forever", so the filter is a
+    # byte-equivalent no-op against the pre-Phase-6 corpus.
+    bi_temporal_enabled: bool = Field(True, validation_alias="MEMORY_BI_TEMPORAL_ENABLED")
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )
