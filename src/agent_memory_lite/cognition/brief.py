@@ -236,6 +236,69 @@ def _build_associates(
     return BriefSection(name="associates", budget=budget, lines=fit_to_budget(lines, budget))
 
 
+def _build_recent_insights(
+    conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
+) -> BriefSection:
+    """Surface top-N recent insight candidates (Phase 3).
+
+    Reads ``status='candidate'`` insights with ``outcome_score >= 0``
+    ordered by ``updated_at DESC``. Stamps ``last_surfaced_at`` and
+    ``surface_count`` on the rows it surfaces -- the
+    ``promote_insight_to_behavior`` job uses ``surface_count >= 2`` as
+    the auto-promotion gate.
+
+    Empty section (no lines) when:
+    - no candidate insights
+    - migration 0004 not yet applied (no last_surfaced_at column)
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, insight_type, summary, gist, confidence
+              FROM insights
+             WHERE workspace_id = ? AND status = 'candidate'
+               AND COALESCE(outcome_score, 0.0) >= 0
+             ORDER BY updated_at DESC
+             LIMIT ?
+            """,
+            (workspace_id, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return BriefSection(name="recent_insights", budget=budget, lines=[])
+    if not rows:
+        return BriefSection(name="recent_insights", budget=budget, lines=[])
+    lines = ["## Recent insights"]
+    surfaced_ids: list[str] = []
+    for row in rows:
+        text = (row["gist"] or row["summary"] or "?")[:120]
+        kind = row["insight_type"] or "insight"
+        confidence = float(row["confidence"] or 0.0)
+        lines.append(f"- {row['id']} [{kind}, conf={confidence:.2f}]: {text}")
+        surfaced_ids.append(row["id"])
+    # Best-effort stamp (failure-soft for pre-migration DBs).
+    if surfaced_ids:
+        now = iso_now_for_brief()
+        try:
+            placeholders = ", ".join("?" * len(surfaced_ids))
+            conn.execute(
+                f"UPDATE insights "
+                f"SET last_surfaced_at = ?, surface_count = surface_count + 1 "
+                f"WHERE workspace_id = ? AND id IN ({placeholders})",
+                (now, workspace_id, *surfaced_ids),
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    return BriefSection(name="recent_insights", budget=budget, lines=fit_to_budget(lines, budget))
+
+
+def iso_now_for_brief() -> str:
+    """Local import-free now() for the brief composer."""
+    from agent_memory_lite.utils.time import iso_now  # noqa: PLC0415
+
+    return iso_now()
+
+
 def _build_watch_outs(
     conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
 ) -> BriefSection:
@@ -417,17 +480,18 @@ def compose_brief(
             cache_hit=True,
         )
     # Per-section budget allocation (target ratios — sum to max_tokens).
-    # ``watch_outs`` (Phase 1) gets ~6% of the budget stolen from code_hubs;
-    # ``associates`` (Phase 2) gets ~6% stolen from code_hubs as well. Both
-    # stay empty when no rows match, so the brief composition for a fresh
-    # workspace is unchanged from the v3.0.0-base baseline.
+    # ``watch_outs`` (Phase 1), ``associates`` (Phase 2), and
+    # ``recent_insights`` (Phase 3) each take ~6-8% and all stay empty on
+    # a fresh workspace, so the brief footprint for an empty DB is byte-
+    # equivalent to the v3.0.0-base baseline.
     weights = {
-        "identity": 0.20,
-        "behaviors": 0.22,
-        "decisions": 0.24,
+        "identity": 0.18,
+        "behaviors": 0.20,
+        "decisions": 0.22,
         "state": 0.12,
         "code_hubs": 0.10,
         "associates": 0.06,
+        "recent_insights": 0.06,
         "watch_outs": 0.06,
     }
     budgets = {name: int(max_tokens * w) for name, w in weights.items()}
@@ -439,6 +503,7 @@ def compose_brief(
         _build_state(conn, workspace_id, budgets["state"]),
         _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
         _build_associates(conn, workspace_id, budgets["associates"]),
+        _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
         _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
     ]
     body_parts: list[str] = []
@@ -455,6 +520,7 @@ def compose_brief(
             "state",
             "code_hubs",
             "associates",
+            "recent_insights",
             "watch_outs",
         ]
         trimmed_sections: list[BriefSection] = []

@@ -1,0 +1,141 @@
+"""Phase 3 of the memory-as-organ evolution: promote durable insights.
+
+A consolidation insight that survives review (high confidence, surfaced
+in the brief multiple times without being archived) is no longer an
+"observation" -- it is an installed operating rule. Promote it into a
+pinned behavior so the agent applies it on every future call.
+
+Promotion gate: ``confidence >= MIN_CONFIDENCE`` AND
+``surface_count >= MIN_SURFACE_EVENTS`` AND status='candidate' (not yet
+promoted nor rejected). Both gates default to the conservative values
+specified in the plan (0.7 + 2), so a single high-confidence run is
+not enough to materialize a rule.
+
+The promotion is **append-only**:
+- A new ``behaviors`` row is inserted with ``pinned=1``,
+  ``priority='project_convention'``, ``source_type='insight'``,
+  ``source_id=<insight_id>``.
+- The insight is marked ``status='promoted'`` so the gate can never
+  re-fire for the same row.
+- No existing behavior is mutated; conflicts are handled by the
+  existing ``conflict_policy`` machinery during brief render.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from dataclasses import dataclass
+
+from agent_memory_lite.utils.ids import IdKind, new_id
+from agent_memory_lite.utils.time import iso_now
+
+MIN_CONFIDENCE = 0.7
+MIN_SURFACE_EVENTS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionStats:
+    """Per-workspace promotion summary."""
+
+    inspected: int
+    promoted: int
+    skipped: int
+
+
+def _eligible_insights(conn: sqlite3.Connection, *, workspace_id: str) -> list[sqlite3.Row]:
+    """Return candidate insights that satisfy the promotion gate.
+
+    Pre-migration-safe: returns empty list when surface_count column
+    doesn't exist yet (operator hasn't run 0004 migration).
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, insight_type, summary, gist, confidence, surface_count,
+                   source_episode_ids_json, tags_json
+              FROM insights
+             WHERE workspace_id = ?
+               AND status = 'candidate'
+               AND confidence >= ?
+               AND surface_count >= ?
+             ORDER BY confidence DESC, surface_count DESC
+            """,
+            (workspace_id, MIN_CONFIDENCE, MIN_SURFACE_EVENTS),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return rows
+
+
+def _behavior_already_exists(
+    conn: sqlite3.Connection, *, workspace_id: str, insight_id: str
+) -> bool:
+    """Idempotency guard -- skip if a behavior already sourced from this insight."""
+    row = conn.execute(
+        "SELECT 1 FROM behaviors "
+        "WHERE workspace_id = ? AND source_type = 'insight' AND source_id = ? LIMIT 1",
+        (workspace_id, insight_id),
+    ).fetchone()
+    return row is not None
+
+
+def _insert_behavior_from_insight(
+    conn: sqlite3.Connection, *, workspace_id: str, insight_row: sqlite3.Row
+) -> str:
+    """Insert one pinned behavior row sourced from an insight. Returns behavior id."""
+    behavior_id = new_id(IdKind.BEHAVIOR_INSTRUCTION)
+    now = iso_now()
+    body = insight_row["summary"] or insight_row["gist"] or "auto-promoted insight"
+    one_line = (insight_row["gist"] or insight_row["summary"] or "")[:160]
+    name = f"insight-{insight_row['id'][-12:]}"
+    conn.execute(
+        """
+        INSERT INTO behaviors (
+            id, workspace_id, name, kind, scope, priority, rule, rule_one_line,
+            rationale, applies_to_json, conflict_policy, source_type, source_id,
+            confidence, importance, pinned, active, created_at, updated_at
+        ) VALUES (?, ?, ?, 'operating_rule', 'workspace', 'project_convention',
+                  ?, ?, 'auto-promoted from consolidation insight', '[]',
+                  'current_user_wins', 'insight', ?, ?, 0.7, 1, 1, ?, ?)
+        """,
+        (
+            behavior_id,
+            workspace_id,
+            name,
+            body,
+            one_line,
+            insight_row["id"],
+            float(insight_row["confidence"] or 0.7),
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        "UPDATE insights SET status = 'promoted', updated_at = ? WHERE id = ?",
+        (now, insight_row["id"]),
+    )
+    return behavior_id
+
+
+def promote_eligible_insights(conn: sqlite3.Connection, *, workspace_id: str) -> PromotionStats:
+    """Scan eligible insights and promote each to a pinned behavior.
+
+    Idempotent: an insight that already produced a behavior is marked
+    ``status='promoted'`` and the gate query never re-selects it. A
+    second call on the same workspace performs no work.
+    """
+    rows = _eligible_insights(conn, workspace_id=workspace_id)
+    promoted = 0
+    skipped = 0
+    for row in rows:
+        if _behavior_already_exists(conn, workspace_id=workspace_id, insight_id=row["id"]):
+            skipped += 1
+            continue
+        try:
+            _insert_behavior_from_insight(conn, workspace_id=workspace_id, insight_row=row)
+            promoted += 1
+        except sqlite3.Error:
+            skipped += 1
+            continue
+    conn.commit()
+    return PromotionStats(inspected=len(rows), promoted=promoted, skipped=skipped)

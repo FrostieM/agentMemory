@@ -170,6 +170,14 @@ class Settings(BaseSettings):
     hebbian_log_retention_days: int = Field(
         14, ge=1, le=90, validation_alias="MEMORY_HEBBIAN_LOG_RETENTION_DAYS"
     )
+    # v3.0.0-final Phase 3: consolidation feedback. Each consolidation
+    # insight surfaces in brief, boosts its evidence-episode usefulness,
+    # and -- when confidence + surface_count cross the gate -- auto-
+    # promotes to a pinned behavior. Off-path: insights are written but
+    # never surfaced or promoted (legacy v3.0.0-base behaviour).
+    consolidation_feedback_enabled: bool = Field(
+        True, validation_alias="MEMORY_CONSOLIDATION_FEEDBACK_ENABLED"
+    )
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )

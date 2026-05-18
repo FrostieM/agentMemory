@@ -72,7 +72,7 @@ def record_usage_feedback(
     notes: str = "",
     source: str = "agent_observed",
 ) -> UsageFeedback:
-    if source_type not in {"chunk", "decision", "theory", "insight", "capability"}:
+    if source_type not in {"chunk", "decision", "theory", "insight", "capability", "episode"}:
         raise ValueError(f"unsupported usage feedback source_type: {source_type!r}")
     usefulness = max(-1.0, min(1.0, float(usefulness)))
     created_at = iso_now()

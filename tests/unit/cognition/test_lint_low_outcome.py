@@ -92,6 +92,39 @@ def test_threshold_minus_zero_three_is_floor(conn: sqlite3.Connection) -> None:
     assert not any(f["id"] == "dec_borderline" for f in failures)
 
 
+def _seed_insight(
+    conn: sqlite3.Connection,
+    *,
+    id_: str,
+    summary: str,
+    insight_type: str = "consolidation",
+    outcome: float = 0.0,
+) -> None:
+    conn.execute(
+        """INSERT INTO insights
+           (id, workspace_id, insight_type, summary, gist, status, confidence,
+            outcome_score, created_at, updated_at)
+           VALUES (?, 'ws', ?, ?, ?, 'candidate', 0.6, ?, ?, ?)""",
+        (id_, insight_type, summary, summary[:60], outcome, iso_now(), iso_now()),
+    )
+    conn.commit()
+
+
+def test_low_outcome_insight_surfaces_as_failure(conn: sqlite3.Connection) -> None:
+    """Phase 3: insights with insight_type contradiction/consolidation and
+    outcome_score below threshold surface as low_outcome_insight failures."""
+    _seed_insight(
+        conn,
+        id_="ins_kelly_bad",
+        summary="kelly sizing pattern contradicted by recent divergence",
+        insight_type="contradiction",
+        outcome=-0.5,
+    )
+    failures = _prior_failures(conn, "ws", "kelly")
+    kinds = [f["kind"] for f in failures]
+    assert "low_outcome_insight" in kinds
+
+
 def test_handles_pre_migration_db_gracefully() -> None:
     """When outcome_score column does not exist, _prior_failures must not raise."""
     c = sqlite3.connect(":memory:")

@@ -211,8 +211,23 @@ def distill_cluster(cluster: Cluster) -> InsightDraft:
     )
 
 
-def _persist_insight(conn: sqlite3.Connection, *, workspace_id: str, draft: InsightDraft) -> str:
-    """INSERT one insight row with status='candidate'."""
+def _persist_insight(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    draft: InsightDraft,
+    insight_type: str = "consolidation",
+) -> str:
+    """INSERT one insight row with status='candidate'.
+
+    Phase 3: after persisting, also record a small implicit-feedback
+    boost for every evidence episode (``source_type='episode'``,
+    ``usefulness=+0.4``). This marks the episodes as
+    "actually contributed to a recurring insight" so the next
+    consolidation run weights them slightly higher in cluster seeding.
+    Failures here never abort the insight write -- feedback is best-
+    effort telemetry.
+    """
     insight_id = f"insight_{uuid.uuid4().hex[:16]}"
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     conn.execute(
@@ -226,7 +241,7 @@ def _persist_insight(conn: sqlite3.Connection, *, workspace_id: str, draft: Insi
         (
             insight_id,
             workspace_id,
-            "consolidation",
+            insight_type,
             draft.summary,
             json.dumps(draft.evidence_episode_ids),
             json.dumps(draft.signal_tokens_csv.split(",") if draft.signal_tokens_csv else []),
@@ -236,7 +251,89 @@ def _persist_insight(conn: sqlite3.Connection, *, workspace_id: str, draft: Insi
         ),
     )
     conn.commit()
+    _record_evidence_episode_feedback(
+        conn,
+        workspace_id=workspace_id,
+        insight_id=insight_id,
+        evidence_episode_ids=draft.evidence_episode_ids,
+        signal_tokens_csv=draft.signal_tokens_csv,
+    )
     return insight_id
+
+
+def _record_evidence_episode_feedback(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    insight_id: str,
+    evidence_episode_ids: list[str],
+    signal_tokens_csv: str,
+) -> None:
+    """Best-effort implicit feedback boost on episodes that fed an insight.
+
+    Uses the Phase 1 ``usage_feedback`` whitelist (extended to include
+    ``episode`` in Phase 3). Wraps the call in try/except so a missing
+    table or stale schema cannot abort the consolidation pass.
+    """
+    try:
+        from agent_memory_lite.maintenance.usage_feedback import (  # noqa: PLC0415
+            record_usage_feedback,
+        )
+    except ImportError:
+        return
+    for ep_id in evidence_episode_ids:
+        try:
+            record_usage_feedback(
+                conn,
+                workspace_id=workspace_id,
+                source_type="episode",
+                source_id=ep_id,
+                query=signal_tokens_csv or "consolidation",
+                usefulness=0.4,
+                notes=f"implicit_consolidation -> {insight_id}",
+                source="implicit_consolidation",
+            )
+        except (sqlite3.Error, ValueError):
+            # Failure-soft: one bad row never blocks the rest.
+            continue
+
+
+def _pinned_behavior_token_sets(
+    conn: sqlite3.Connection, *, workspace_id: str
+) -> list[frozenset[str]]:
+    """Return token sets of all pinned, active behavior rules.
+
+    Used by the behavior_reinforcement detector: a cluster whose
+    signal_tokens overlap >= 0.6 Jaccard with a pinned behavior is
+    almost certainly the SAME rule re-emerging, not a novel insight.
+    Tag it as ``behavior_reinforcement`` instead of generic
+    consolidation so the operator review queue can act on it.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT name, rule, rule_one_line FROM behaviors "
+            "WHERE workspace_id = ? AND active = 1 AND pinned = 1",
+            (workspace_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    sets: list[frozenset[str]] = []
+    for row in rows:
+        text = " ".join(str(row[i] or "") for i in range(3))  # name + rule + rule_one_line
+        sets.append(frozenset(_tokens(text)))
+    return sets
+
+
+def _matches_pinned_behavior(
+    cluster_tokens: set[str], behavior_token_sets: list[frozenset[str]], threshold: float = 0.6
+) -> bool:
+    """Return True if cluster_tokens overlap any behavior_token_set >= threshold."""
+    if not cluster_tokens or not behavior_token_sets:
+        return False
+    for behavior_tokens in behavior_token_sets:
+        if _jaccard(cluster_tokens, set(behavior_tokens)) >= threshold:
+            return True
+    return False
 
 
 # ============================================================
@@ -275,10 +372,23 @@ def consolidate_workspace(
         )
     clusters = cluster_episodes(episodes)
     insights_written = 0
+    # Phase 3: precompute pinned behavior token sets so we can detect
+    # clusters that re-encode an already-installed rule.
+    pinned_behavior_tokens = _pinned_behavior_token_sets(conn, workspace_id=workspace_id)
     for cluster in clusters[:max_insights]:
         try:
             draft = distill_cluster(cluster)
-            _persist_insight(conn, workspace_id=workspace_id, draft=draft)
+            insight_type = (
+                "behavior_reinforcement"
+                if _matches_pinned_behavior(cluster.signal_tokens, pinned_behavior_tokens)
+                else "consolidation"
+            )
+            _persist_insight(
+                conn,
+                workspace_id=workspace_id,
+                draft=draft,
+                insight_type=insight_type,
+            )
             insights_written += 1
         except sqlite3.Error as exc:
             logger.warning(

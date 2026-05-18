@@ -212,6 +212,33 @@ def _prior_failures(
                 "outcome_score": float(row[3] or 0.0),
             }
         )
+    if len(failures) >= limit:
+        return failures
+    # Phase 3: low-outcome consolidation contradiction insights.
+    try:
+        ins_rows = conn.execute(
+            """SELECT id, summary, gist, insight_type, outcome_score FROM insights
+               WHERE workspace_id = ?
+                 AND insight_type IN ('contradiction', 'consolidation')
+                 AND COALESCE(outcome_score, 0.0) < -0.3
+                 AND (LOWER(IFNULL(summary, '')) LIKE ? OR LOWER(IFNULL(gist, '')) LIKE ?)
+               ORDER BY outcome_score ASC
+               LIMIT ?""",
+            (workspace_id, lc, lc, limit - len(failures)),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        ins_rows = []
+    for row in ins_rows:
+        failures.append(
+            {
+                "kind": "low_outcome_insight",
+                "id": row[0],
+                "title": (row[1] or "")[:80],
+                "status": row[3],
+                "gist": (row[2] or row[1] or "")[:120],
+                "outcome_score": float(row[4] or 0.0),
+            }
+        )
     return failures
 
 
