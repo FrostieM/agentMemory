@@ -208,6 +208,43 @@ def test_compose_brief_with_decisions(conn: sqlite3.Connection) -> None:
     assert "dec_1" in brief.body_md
 
 
+def test_compose_brief_excludes_archived_decisions(conn: sqlite3.Connection) -> None:
+    """Regression: archived decisions must not surface under 'Active decisions'.
+
+    Before the 2026-05-18 fix ``_build_top_decisions`` only sorted by
+    status (pinned-active first) but never *filtered* on status. A
+    smoke-test row pinned-then-archived would still appear in the
+    brief's "Active decisions" section, which lied to the agent.
+    """
+    _seed_decision(
+        conn,
+        id="dec_active",
+        title="Real decision",
+        gist="real content",
+        status="active",
+    )
+    _seed_decision(
+        conn,
+        id="dec_archived",
+        title="Stale smoke",
+        gist="check",
+        status="archived",
+        pinned=1,  # archived but still pinned -- the exact failure mode
+    )
+    _seed_decision(
+        conn,
+        id="dec_superseded",
+        title="Older decision",
+        gist="older content",
+        status="superseded",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "dec_active" in brief.body_md
+    assert "dec_archived" not in brief.body_md
+    assert "dec_superseded" not in brief.body_md
+    assert "Stale smoke" not in brief.body_md
+
+
 def test_compose_brief_pinned_decision_marked(conn: sqlite3.Connection) -> None:
     _seed_decision(conn, id="dec_pin", title="Pinned", pinned=1, gist="P")
     _seed_decision(conn, id="dec_norm", title="Normal", pinned=0, gist="N")

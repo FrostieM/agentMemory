@@ -145,14 +145,14 @@ def _build_pinned_behaviors(
 def _build_top_decisions(
     conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 5
 ) -> BriefSection:
-    rows = list_kind(conn, workspace_id=workspace_id, kind="decision", limit=limit * 3)
-    # Prefer pinned + active first, then recency.
-    rows.sort(
-        key=lambda d: (
-            0 if d.get("pinned") else 1,
-            0 if d.get("status") == "active" else 1,
-        )
-    )
+    # Pull a wider window then filter to active rows -- archived /
+    # superseded decisions must not surface in the brief's "Active
+    # decisions" section. Without the filter, an old smoke-test
+    # row pinned then archived would still show up under "Active".
+    rows_raw = list_kind(conn, workspace_id=workspace_id, kind="decision", limit=limit * 6)
+    rows = [d for d in rows_raw if d.get("status") == "active"]
+    # Prefer pinned first, then recency.
+    rows.sort(key=lambda d: 0 if d.get("pinned") else 1)
     lines = ["## Active decisions"]
     for d in rows[:limit]:
         gist = d.get("gist") or d.get("title") or "?"
