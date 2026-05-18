@@ -63,6 +63,19 @@ CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
 V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "canonical" / "0001_init.sql"
+# v3.0.0-final memory-organ migrations. Each is idempotent within a single
+# run (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS), but ALTER
+# TABLE ADD COLUMN is NOT idempotent in SQLite -- _apply_organ_migrations
+# below swallows the "duplicate column" error on re-run.
+V3_ORGAN_MIGRATIONS = (
+    "0002_outcome_loop.sql",
+    "0003_hebbian.sql",
+    "0004_consolidation_feedback.sql",
+    "0005_reflexes.sql",
+    "0006_self_model.sql",
+    "0007_bi_temporal.sql",
+    "0008_causal_links.sql",
+)
 V3_POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
 PRETOOLUSE_HOOK_MATCHER = "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_.*"
@@ -327,7 +340,10 @@ def install_v3_brief_hook(
             and isinstance(entry.get("hooks"), list)
             and any(
                 isinstance(h, dict)
-                and (marker in str(h.get("command", "")) or legacy_marker in str(h.get("command", "")))
+                and (
+                    marker in str(h.get("command", ""))
+                    or legacy_marker in str(h.get("command", ""))
+                )
                 for h in entry["hooks"]
             )
         ),
@@ -368,7 +384,10 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
             and isinstance(entry.get("hooks"), list)
             and any(
                 isinstance(h, dict)
-                and (marker in str(h.get("command", "")) or legacy_marker in str(h.get("command", "")))
+                and (
+                    marker in str(h.get("command", ""))
+                    or legacy_marker in str(h.get("command", ""))
+                )
                 for h in entry["hooks"]
             )
         ),
@@ -412,6 +431,81 @@ def _apply_v3_inplace_columns(conn: Any) -> int:
     return added
 
 
+def _apply_organ_migrations(conn: Any) -> int:
+    """Apply v3.0.0-final migrations 0002-0008. Returns count of statements that ran.
+
+    Each migration is CREATE-TABLE-IF-NOT-EXISTS for new tables and bare
+    ALTER-TABLE-ADD-COLUMN for columns on existing tables. SQLite refuses
+    duplicate ALTERs with ``OperationalError: duplicate column name`` --
+    we split each migration into individual statements and swallow that
+    exact error so the function is safe to re-run on a partially-or-
+    fully-migrated DB.
+    """
+    import sqlite3  # noqa: PLC0415
+
+    migrations_dir = REPO_ROOT / "migrations" / "canonical"
+    applied = 0
+    for filename in V3_ORGAN_MIGRATIONS:
+        path = migrations_dir / filename
+        if not path.exists():
+            warn(f"organ migration missing: {path}")
+            continue
+        sql = path.read_text(encoding="utf-8")
+        # Strip ``-- ...`` comment lines BEFORE splitting on ``;`` so a
+        # semicolon inside a comment (common in our headers) does not
+        # fragment a single CREATE TABLE across two chunks. The v3
+        # migrations don't embed semicolons in literals or triggers, so
+        # this is sufficient.
+        clean_lines = [line for line in sql.splitlines() if not line.lstrip().startswith("--")]
+        clean_sql = "\n".join(clean_lines)
+        for stmt in (s.strip() for s in clean_sql.split(";")):
+            if not stmt:
+                continue
+            try:
+                conn.execute(stmt)
+                applied += 1
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "duplicate column" in msg or "already exists" in msg:
+                    continue
+                warn(f"organ migration {filename} stmt failed: {exc}")
+            except sqlite3.Error as exc:
+                warn(f"organ migration {filename} stmt failed: {exc}")
+        conn.commit()
+    return applied
+
+
+def _seed_reflex_rules_for_setup(conn: Any, *, workspace_id: str) -> int:
+    """Seed the 3 Phase 4 baseline reflex rules (advisory enforcement).
+
+    Operator promotes advisory → block manually via memory_edit once the
+    rule fires reliably without false positives. Returns the number of
+    rows actually inserted (0 if all already present).
+    """
+    repo_root_str = str(REPO_ROOT)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+    try:
+        from src.agent_memory_lite.bootstrap.project_memory_seed_reflexes import (  # noqa: PLC0415
+            seed_reflex_rules,
+        )
+    except ImportError:
+        try:
+            from agent_memory_lite.bootstrap.project_memory_seed_reflexes import (  # noqa: PLC0415
+                seed_reflex_rules,
+            )
+        except ImportError as exc:
+            warn(f"reflex seed import failed: {exc}")
+            return 0
+    try:
+        return seed_reflex_rules(conn, workspace_id=workspace_id)
+    except Exception as exc:
+        # Setup must never abort on a reflex-seed failure -- the rest of
+        # the v3 setup is more important than the 3 baseline rules.
+        warn(f"reflex seed call failed: {exc}")
+        return 0
+
+
 def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
     """Apply the canonical schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
 
@@ -436,6 +530,12 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
         if added:
             conn.commit()
             ok(f"canonical inplace columns added (+{added}: gist on decisions/theories/episodes)")
+        # v3.0.0-final: apply organ-memory migrations 0002-0008. Idempotent.
+        organ_stmts = _apply_organ_migrations(conn)
+        if organ_stmts:
+            ok(
+                f"organ migrations applied ({organ_stmts} statements across {len(V3_ORGAN_MIGRATIONS)} files)"
+            )
         # Defer the seed import: keeps setup_agent's top imports clean,
         # and the script directory is added to sys.path below if needed.
         repo_root_str = str(REPO_ROOT)
@@ -444,6 +544,9 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
         from scripts.seed_memory_discipline import seed_discipline  # noqa: PLC0415
 
         results = seed_discipline(conn, workspace_id=workspace_id)
+        # v3.0.0-final Phase 4: seed the 3 baseline reflex rules. Always
+        # advisory at seed time -- operator promotes to block via memory_edit.
+        reflex_inserted = _seed_reflex_rules_for_setup(conn, workspace_id=workspace_id)
     except sqlite3.Error as exc:
         warn(f"canonical schema/seed failed: {exc}")
         return
@@ -456,6 +559,10 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
         f"(inserted={inserted}, skipped={skipped}, "
         f"total={len(results)})"
     )
+    if reflex_inserted:
+        ok(f"reflex rules seeded (Phase 4 baselines: {reflex_inserted} new advisory rules)")
+    else:
+        ok("reflex rules already present (Phase 4 baselines)")
 
 
 def seed_memory_bootstrap(
