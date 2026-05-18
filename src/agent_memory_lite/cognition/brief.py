@@ -34,6 +34,11 @@ from agent_memory_lite.storage.reader import (
 
 DEFAULT_TOKEN_BUDGET = 500
 
+# Self-model narrative in the DB is 50-150 words; the brief renders an
+# abridged version so workspace overview + discipline reminder still fit
+# in the identity-section budget (~90 tokens at the default 500 budget).
+_SELF_MODEL_BRIEF_WORDS = 40
+
 # In-process brief cache, keyed on (workspace_id, max_tokens, fingerprint).
 # Fingerprint is a hash of cardinal "last write" timestamps for the kinds
 # that contribute to the brief — invalidates automatically on any
@@ -75,13 +80,22 @@ def approx_tokens(text: str) -> int:
 
 
 def fit_to_budget(lines: list[str], budget: int) -> list[str]:
-    """Keep lines from the top until the budget is exhausted. Returns trimmed list."""
+    """Keep lines that fit within ``budget``; skip oversized lines and keep going.
+
+    Earlier semantics broke on the first overflowing line, which meant a
+    single oversized line (e.g. a long self-model narrative) silently
+    nuked every subsequent line in the section. The new semantics:
+    skip the line that doesn't fit and try the next -- shorter trailing
+    lines (e.g. workspace overview + discipline reminder) still render.
+    Lines are kept in input order; the only difference is that overflow
+    no longer terminates the loop.
+    """
     out: list[str] = []
     used = 0
     for line in lines:
         cost = approx_tokens(line)
         if used + cost > budget:
-            break
+            continue
         out.append(line)
         used += cost
     return out
@@ -121,7 +135,17 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
         if get_settings().self_model_enabled:
             sm = load_self_model(conn, workspace_id=workspace_id)
             if sm is not None and sm.identity_text:
-                lines.append(" ".join(sm.identity_text.split()))
+                # Brief budget for identity is tight (~90 tokens for the
+                # whole section). Cap the narrative to _SELF_MODEL_BRIEF_WORDS
+                # so the workspace-overview + discipline lines below still
+                # fit. The full text lives in the DB for callers that
+                # want the unabridged narrative.
+                tokens = sm.identity_text.split()
+                if len(tokens) > _SELF_MODEL_BRIEF_WORDS:
+                    snippet = " ".join(tokens[:_SELF_MODEL_BRIEF_WORDS]).rstrip(".,;:") + "..."
+                else:
+                    snippet = " ".join(tokens)
+                lines.append(snippet)
     except (ImportError, sqlite3.OperationalError):
         pass
     pinned_decisions = count_kind(
