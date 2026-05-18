@@ -149,10 +149,25 @@ def _build_top_decisions(
     # superseded decisions must not surface in the brief's "Active
     # decisions" section. Without the filter, an old smoke-test
     # row pinned then archived would still show up under "Active".
+    #
+    # Phase 1 outcome-loop addition: also drop rows whose outcome_score
+    # has fallen below zero. Pinned rows bypass the filter (operator-
+    # marked invariants survive a temporary negative outcome) but they
+    # still sort beneath neutral / positive peers.
     rows_raw = list_kind(conn, workspace_id=workspace_id, kind="decision", limit=limit * 6)
-    rows = [d for d in rows_raw if d.get("status") == "active"]
-    # Prefer pinned first, then recency.
-    rows.sort(key=lambda d: 0 if d.get("pinned") else 1)
+    rows = [
+        d
+        for d in rows_raw
+        if d.get("status") == "active"
+        and (d.get("pinned") or float(d.get("outcome_score") or 0.0) >= 0.0)
+    ]
+    # Sort: pinned first, then outcome_score, then recency.
+    rows.sort(
+        key=lambda d: (
+            0 if d.get("pinned") else 1,
+            -float(d.get("outcome_score") or 0.0),
+        )
+    )
     lines = ["## Active decisions"]
     for d in rows[:limit]:
         gist = d.get("gist") or d.get("title") or "?"
@@ -160,6 +175,50 @@ def _build_top_decisions(
         sup = f" supersedes {d['supersedes']}" if d.get("supersedes") else ""
         lines.append(f"- {d['id']}{marker}: {gist}{sup}")
     return BriefSection(name="decisions", budget=budget, lines=fit_to_budget(lines, budget))
+
+
+def _build_watch_outs(
+    conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
+) -> BriefSection:
+    """Top-N rows with the lowest outcome_score across watched kinds.
+
+    Surfaces failed approaches so the agent does not propose them again.
+    Phase 1 puts decisions, theories, and behaviors into the same pool;
+    later phases (consolidation feedback, recall) may extend.
+    """
+    # Hand-stitched UNION rather than reader.list_kind because we want a
+    # single cross-kind ORDER BY outcome_score ASC pass.
+    sql = """
+        SELECT id, 'decision' AS kind, COALESCE(gist, title, '') AS gist,
+               outcome_score, status
+          FROM decisions
+         WHERE workspace_id = ? AND outcome_score < 0
+        UNION ALL
+        SELECT id, 'theory' AS kind, COALESCE(gist, title, claim, '') AS gist,
+               outcome_score, status
+          FROM theories
+         WHERE workspace_id = ? AND outcome_score < 0
+        UNION ALL
+        SELECT id, 'behavior' AS kind, COALESCE(rule_one_line, name, '') AS gist,
+               outcome_score, NULL AS status
+          FROM behaviors
+         WHERE workspace_id = ? AND outcome_score < 0
+        ORDER BY outcome_score ASC
+        LIMIT ?
+    """
+    try:
+        rows = conn.execute(
+            sql, (workspace_id, workspace_id, workspace_id, limit)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Pre-migration DB; outcome_score column missing.
+        rows = []
+    lines = ["## Watch-outs"] if rows else []
+    for row in rows:
+        gist = (row["gist"] or "?")[:70]
+        score = float(row["outcome_score"] or 0.0)
+        lines.append(f"- {row['kind']}:{row['id']} (outcome={score:.1f}): {gist}")
+    return BriefSection(name="watch_outs", budget=budget, lines=fit_to_budget(lines, budget))
 
 
 def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
@@ -301,12 +360,16 @@ def compose_brief(
             cache_hit=True,
         )
     # Per-section budget allocation (target ratios — sum to max_tokens).
+    # ``watch_outs`` (Phase 1) gets ~6% of the budget stolen from code_hubs;
+    # it stays empty when no outcome_score < 0 rows exist, so the brief
+    # composition for a fresh workspace is unchanged.
     weights = {
         "identity": 0.20,
         "behaviors": 0.24,
         "decisions": 0.26,
         "state": 0.12,
-        "code_hubs": 0.18,
+        "code_hubs": 0.12,
+        "watch_outs": 0.06,
     }
     budgets = {name: int(max_tokens * w) for name, w in weights.items()}
 
@@ -316,6 +379,7 @@ def compose_brief(
         _build_top_decisions(conn, workspace_id, budgets["decisions"]),
         _build_state(conn, workspace_id, budgets["state"]),
         _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
+        _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
     ]
     body_parts: list[str] = []
     for section in sections:
@@ -324,7 +388,7 @@ def compose_brief(
     # Hard cap: if heuristic budgets overshoot, trim from the tail (least-critical first).
     if approx_tokens(body_md) > max_tokens:
         # Re-fit by progressively dropping later sections.
-        priority_order = ["identity", "behaviors", "decisions", "state", "code_hubs"]
+        priority_order = ["identity", "behaviors", "decisions", "state", "code_hubs", "watch_outs"]
         trimmed_sections: list[BriefSection] = []
         running = 0
         for name in priority_order:

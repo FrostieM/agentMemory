@@ -71,6 +71,9 @@ _KIND_FTS_COLUMNS = {
 # ============================================================
 
 
+_OUTCOME_KINDS = {"decision", "theory", "behavior", "skill", "insight", "chunk"}
+
+
 def list_kind(
     conn: sqlite3.Connection,
     *,
@@ -79,11 +82,18 @@ def list_kind(
     limit: int = 20,
     pinned_only: bool = False,
     status: str | None = None,
+    min_outcome: float = -1.0,
 ) -> list[dict[str, Any]]:
     """List rows of ``kind`` as compact projections.
 
     Equivalent to the v2 ``_index.md`` per-kind listing concept, but
     cheap and indexed.
+
+    ``min_outcome`` (Phase 1) filters rows by the denormalized
+    ``outcome_score`` column. Default ``-1.0`` means "show everything"
+    so existing callers stay byte-equivalent. Pass ``0.0`` to drop
+    failed approaches from the result set. Silently no-op when the
+    column does not exist (pre-migration DB).
     """
     if kind not in _KIND_TABLES:
         return []
@@ -95,9 +105,26 @@ def list_kind(
     if status:
         where.append("status = ?")
         params.append(status)
+    if min_outcome > -1.0 and kind in _OUTCOME_KINDS:
+        where.append("COALESCE(outcome_score, 0.0) >= ?")
+        params.append(min_outcome)
     sql = f"SELECT * FROM {table} WHERE {' AND '.join(where)} ORDER BY updated_at DESC LIMIT ?"
     params.append(limit)
-    rows = conn.execute(sql, params).fetchall()
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        # Pre-migration DB without outcome_score; retry without the filter.
+        if min_outcome > -1.0:
+            return list_kind(
+                conn,
+                workspace_id=workspace_id,
+                kind=kind,
+                limit=limit,
+                pinned_only=pinned_only,
+                status=status,
+                min_outcome=-1.0,
+            )
+        raise
     out: list[dict[str, Any]] = []
     for row in rows:
         projection = project(kind, row)

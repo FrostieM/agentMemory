@@ -147,6 +147,16 @@ class Settings(BaseSettings):
     implicit_feedback_enabled: bool = Field(
         True, validation_alias="MEMORY_IMPLICIT_FEEDBACK_ENABLED"
     )
+    # v3.0.0-final Phase 1: outcome_score denormalization across knowledge
+    # tables. Flag-off path: brief / lint sort & filter as before (pinned,
+    # recency); outcome_score column stays 0.0 and is ignored. Flag-on path:
+    # brief filters Active decisions by outcome >= 0, lint surfaces low-
+    # outcome related items as watch-outs, and the sentinel cron sweeps
+    # every workspace every 6 h to refresh denormalized scores.
+    outcome_loop_enabled: bool = Field(True, validation_alias="MEMORY_OUTCOME_LOOP_ENABLED")
+    outcome_low_threshold: float = Field(
+        -0.3, ge=-1.0, le=0.0, validation_alias="MEMORY_OUTCOME_LOW_THRESHOLD"
+    )
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )

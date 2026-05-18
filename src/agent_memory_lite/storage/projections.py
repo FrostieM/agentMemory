@@ -67,6 +67,8 @@ def project_decision(row: sqlite3.Row) -> dict[str, Any]:
         "supersedes": _row_get(row, "supersedes_decision_id"),
         "pinned": bool(_row_get(row, "pinned", 0)),
         "valid_from": _row_get(row, "valid_from"),
+        # Phase 1 outcome-loop: surfaced so brief / lint can sort by it.
+        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
     }
 
 
@@ -80,6 +82,7 @@ def project_theory(row: sqlite3.Row) -> dict[str, Any]:
         "status": _row_get(row, "status", "proposed"),
         "evidence_count": int(_row_get(row, "evidence_count", 0)),
         "confidence": float(_row_get(row, "confidence", 0.4)),
+        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
     }
 
 
@@ -93,6 +96,7 @@ def project_behavior(row: sqlite3.Row) -> dict[str, Any]:
         "applies_to_csv": _csv(_row_get(row, "applies_to_json"), limit=4),
         "pinned": bool(_row_get(row, "pinned", 0)),
         "behavior_kind": _row_get(row, "kind", "operating_rule"),
+        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
     }
 
 

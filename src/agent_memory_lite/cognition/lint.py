@@ -131,17 +131,26 @@ def _related_decisions(
 def _prior_failures(
     conn: sqlite3.Connection, workspace_id: str, query: str, limit: int = 3
 ) -> list[dict[str, Any]]:
-    """Search for rejected theories or correction episodes touching this payload."""
+    """Search for rejected theories, low-outcome decisions / behaviors, or
+    correction episodes touching this payload.
+
+    Phase 1 outcome-loop extension: items whose ``outcome_score`` has
+    fallen below ``-0.3`` surface as ``low_outcome_<kind>`` failures
+    even when their ``status`` is still nominally active. Lets the lint
+    advisory warn the agent about "we tried this and it failed" without
+    requiring an explicit status flip.
+    """
     if not query:
         return []
     failures: list[dict[str, Any]] = []
-    # Rejected theories.
+    lc = f"%{query.lower()}%"
+    # Rejected theories (status-driven, pre-Phase-1 path).
     rows = conn.execute(
         """SELECT id, title, claim, status, gist FROM theories
            WHERE workspace_id = ? AND status IN ('rejected', 'weakened')
            AND (LOWER(IFNULL(title, '')) LIKE ? OR LOWER(IFNULL(claim, '')) LIKE ?)
            LIMIT ?""",
-        (workspace_id, f"%{query.lower()}%", f"%{query.lower()}%", limit),
+        (workspace_id, lc, lc, limit),
     ).fetchall()
     for row in rows:
         failures.append(
@@ -150,7 +159,57 @@ def _prior_failures(
                 "id": row[0],
                 "title": row[1],
                 "status": row[3],
-                "gist": row[4] or row[2][:120],
+                "gist": row[4] or (row[2] or "")[:120],
+            }
+        )
+    if len(failures) >= limit:
+        return failures
+    # Phase 1: low-outcome decisions matching the payload.
+    try:
+        dec_rows = conn.execute(
+            """SELECT id, title, gist, outcome_score FROM decisions
+               WHERE workspace_id = ? AND outcome_score < -0.3
+                 AND (LOWER(IFNULL(title, '')) LIKE ? OR LOWER(IFNULL(gist, '')) LIKE ?)
+               ORDER BY outcome_score ASC
+               LIMIT ?""",
+            (workspace_id, lc, lc, limit - len(failures)),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        dec_rows = []  # Pre-migration DB without outcome_score column.
+    for row in dec_rows:
+        failures.append(
+            {
+                "kind": "low_outcome_decision",
+                "id": row[0],
+                "title": row[1],
+                "status": "active",
+                "gist": (row[2] or row[1] or "")[:120],
+                "outcome_score": float(row[3] or 0.0),
+            }
+        )
+    if len(failures) >= limit:
+        return failures
+    # Phase 1: low-outcome behaviors matching the payload.
+    try:
+        beh_rows = conn.execute(
+            """SELECT id, name, rule_one_line, outcome_score FROM behaviors
+               WHERE workspace_id = ? AND outcome_score < -0.3
+                 AND (LOWER(IFNULL(name, '')) LIKE ? OR LOWER(IFNULL(rule_one_line, '')) LIKE ?)
+               ORDER BY outcome_score ASC
+               LIMIT ?""",
+            (workspace_id, lc, lc, limit - len(failures)),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        beh_rows = []
+    for row in beh_rows:
+        failures.append(
+            {
+                "kind": "low_outcome_behavior",
+                "id": row[0],
+                "title": row[1],
+                "status": "active",
+                "gist": (row[2] or row[1] or "")[:120],
+                "outcome_score": float(row[3] or 0.0),
             }
         )
     return failures
