@@ -71,12 +71,20 @@ Set-Location -LiteralPath "$RepoRoot"
 "@
     Set-Content -LiteralPath $RunnerPath -Value $Runner -Encoding UTF8
 
-    $ActionArg = "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerPath`""
+    # -WindowStyle Hidden suppresses the visible console window on
+    # the at-logon trigger; -Hidden on the task settings hides it
+    # from the foreground task switcher. Together they keep the
+    # HTTP service auto-start silent. (The proper fix — pythonw.exe —
+    # is used by digest_worker / consolidation; the service task
+    # keeps the PowerShell wrapper because it needs env-var setup
+    # for the long-running uvicorn process.)
+    $ActionArg = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$RunnerPath`""
     $ScheduledAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArg
     $Trigger = New-ScheduledTaskTrigger -AtLogOn
     $Settings = New-ScheduledTaskSettingsSet `
         -RestartCount 3 `
         -RestartInterval (New-TimeSpan -Minutes 1) `
+        -Hidden `
         -ExecutionTimeLimit (New-TimeSpan -Days 0)
 
     Register-ScheduledTask `

@@ -220,22 +220,30 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     Returns the first 12 chars of SHA1 (collision-safe at this cache
     size). On any SQL error returns a unique sentinel so the call
     bypasses the cache instead of returning stale content.
+
+    Implementation note (bug fix 2026-05-18): an earlier revision used
+    five chained ``LEFT JOIN``s on a single placeholder row, which
+    becomes a Cartesian product over decisions x behaviors x tasks x
+    code_digests x episodes. On a moderately busy workspace (copyBot:
+    248 x 3 x 1 x 1355 x 974 ~ 982 million synthetic rows) the
+    fingerprint took ~2 minutes -- long enough that the v3 brief hook
+    timed out before ever rendering. UNION ALL over five small index-
+    seek scans returns the same answer in < 5 ms.
     """
     try:
         rows = conn.execute(
             """
-            SELECT
-              COALESCE(MAX(d.updated_at), '') AS d_ts,
-              COALESCE(MAX(b.updated_at), '') AS b_ts,
-              COALESCE(MAX(t.updated_at), '') AS t_ts,
-              COALESCE(MAX(cd.updated_at), '') AS cd_ts,
-              COALESCE(MAX(e.created_at), '') AS e_ts
-            FROM (SELECT 1) one
-            LEFT JOIN decisions d ON d.workspace_id = ?
-            LEFT JOIN behaviors b ON b.workspace_id = ?
-            LEFT JOIN tasks t ON t.workspace_id = ?
-            LEFT JOIN code_digests cd ON cd.workspace_id = ?
-            LEFT JOIN episodes e ON e.workspace_id = ?
+            SELECT MAX(ts) FROM (
+              SELECT updated_at AS ts FROM decisions     WHERE workspace_id = ?
+              UNION ALL
+              SELECT updated_at        FROM behaviors    WHERE workspace_id = ?
+              UNION ALL
+              SELECT updated_at        FROM tasks        WHERE workspace_id = ?
+              UNION ALL
+              SELECT updated_at        FROM code_digests WHERE workspace_id = ?
+              UNION ALL
+              SELECT created_at        FROM episodes     WHERE workspace_id = ?
+            )
             """,
             (workspace_id, workspace_id, workspace_id, workspace_id, workspace_id),
         ).fetchone()
@@ -243,7 +251,7 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
         return f"err-{workspace_id}-{id(conn)}"
     if rows is None:
         return f"empty-{workspace_id}"
-    raw = "|".join(str(v) for v in rows)
+    raw = str(rows[0] or "")
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 

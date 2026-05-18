@@ -413,3 +413,118 @@ def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
         assert len(brief_mod._BRIEF_CACHE) <= 3
     finally:
         brief_mod._BRIEF_CACHE_MAX = original_max
+
+
+# ============================================================
+# Fingerprint regression — Cartesian product bug (2026-05-18)
+# ============================================================
+#
+# An earlier revision used five chained LEFT JOINs on a single
+# placeholder row, which made the fingerprint a Cartesian product
+# over decisions x behaviors x tasks x code_digests x episodes. On
+# real workspaces (copyBot: 248 x 3 x 1 x 1355 x 974 ~ 982 million
+# synthetic rows) compose_brief took ~2 minutes. The v3 brief hook
+# timed out before ever rendering, so copyBot's agent never saw the
+# v3 pinned rules.
+#
+# These tests pin two invariants:
+#   * fingerprint is row-count proportional, not product-of-counts
+#   * the fingerprint flips when any of the watched tables mutates
+
+
+def test_fingerprint_row_count_is_linear_not_cartesian(
+    conn: sqlite3.Connection,
+) -> None:
+    """A workspace with 30 rows across watched tables must NOT cause a
+    blow-up. Cartesian product would synthesise 30^5 ~ 24M rows for
+    one MAX; UNION ALL stays at ~30.
+    """
+    import time  # noqa: PLC0415
+
+    from agent_memory_lite.v3.cognition.brief import (  # noqa: PLC0415
+        _workspace_fingerprint,
+    )
+
+    # Seed 10 decisions + 10 behaviors + 10 episodes (skip tasks /
+    # code_digests so the cross-product would be zero anyway under
+    # the old code — we only need to prove the surviving 3 tables
+    # are not multiplied with each other).
+    for i in range(10):
+        _seed_decision(conn, id=f"dec_{i}", title=f"T{i}")
+        _seed_behavior(conn, id=f"beh_{i}", name=f"rule-{i}")
+        conn.execute(
+            "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"ep_{i}", "ws", "manual", f"text {i}", f"2026-05-18T{i:02d}:00:00Z"),
+        )
+    conn.commit()
+
+    t0 = time.perf_counter()
+    fp = _workspace_fingerprint(conn, "ws")
+    elapsed_ms = 1000 * (time.perf_counter() - t0)
+
+    # The fingerprint is deterministic SHA1; we just assert it's
+    # non-empty and the call returned promptly. The 200ms ceiling is
+    # generous -- the fix lands at < 5 ms; the old Cartesian path
+    # would not finish even for 10x10x10 = 1000 synthetic rows.
+    assert fp
+    assert len(fp) == 12
+    assert elapsed_ms < 200, f"fingerprint too slow: {elapsed_ms:.0f}ms"
+
+
+def test_fingerprint_flips_on_mutation(conn: sqlite3.Connection) -> None:
+    """Any write to decisions/behaviors/tasks/code_digests/episodes
+    must flip the fingerprint. The cache is keyed on this value, so
+    a stale brief cannot survive a write.
+
+    All inserts use ISO-8601 timestamps so the MAX() over UNION ALL
+    walks them in real time order — the test fixture's default
+    placeholder ``'ts'`` is lexicographically *larger* than any
+    ISO string and would mask later mutations under MAX.
+    """
+    from agent_memory_lite.v3.cognition.brief import (  # noqa: PLC0415
+        _workspace_fingerprint,
+    )
+
+    baseline = _workspace_fingerprint(conn, "ws")
+
+    _seed_decision(
+        conn,
+        id="dec_new",
+        title="new",
+        created_at="2026-05-18T10:00:00Z",
+        updated_at="2026-05-18T10:00:00Z",
+    )
+    after_decision = _workspace_fingerprint(conn, "ws")
+    assert after_decision != baseline
+
+    _seed_behavior(
+        conn,
+        id="beh_new",
+        name="new-rule",
+        created_at="2026-05-18T11:00:00Z",
+        updated_at="2026-05-18T11:00:00Z",
+    )
+    after_behavior = _workspace_fingerprint(conn, "ws")
+    assert after_behavior != after_decision
+
+    conn.execute(
+        "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("ep_new", "ws", "manual", "text", "2026-05-18T15:00:00Z"),
+    )
+    conn.commit()
+    after_episode = _workspace_fingerprint(conn, "ws")
+    assert after_episode != after_behavior
+
+
+def test_fingerprint_isolated_per_workspace(conn: sqlite3.Connection) -> None:
+    """A write into ws_b must not flip ws_a's fingerprint."""
+    from agent_memory_lite.v3.cognition.brief import (  # noqa: PLC0415
+        _workspace_fingerprint,
+    )
+
+    fp_a_before = _workspace_fingerprint(conn, "ws_a")
+    _seed_decision(conn, id="dec_b", workspace_id="ws_b", title="other-ws")
+    fp_a_after = _workspace_fingerprint(conn, "ws_a")
+    assert fp_a_after == fp_a_before

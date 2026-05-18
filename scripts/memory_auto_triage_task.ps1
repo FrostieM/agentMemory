@@ -82,10 +82,12 @@ if ($Action -eq "Install") {
     # in a string literal so the parser does not treat it as the
     # call-operator outside an expression.
     $cmdLine = "& '$Python' $argString *>> '$LogPath'"
+    # -WindowStyle Hidden + -Hidden on settings together suppress the
+    # visible PowerShell console flash on the daily 03:30 trigger.
     $taskAction = New-ScheduledTaskAction -Execute "powershell.exe" `
-        -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"$cmdLine`""
+        -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"$cmdLine`""
     $trigger = New-ScheduledTaskTrigger -Daily -At $Time
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -Hidden -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
     Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $trigger `
         -Settings $settings -Force -RunLevel Limited | Out-Null
     Write-Host "[ok] Installed scheduled task '$TaskName' ($modeLabel mode, daily at $Time)"

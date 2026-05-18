@@ -12,9 +12,11 @@ not dedupe — the operator review queue does).
 Usage::
 
     python scripts/memory_consolidation_runner.py [--workspace ID]
-        [--window-hours 24] [--max-insights 10]
+        [--window-hours 24] [--max-insights 10] [--log-file PATH]
 
 Without ``--workspace`` the runner sweeps every registered workspace.
+The scheduled task invokes this via ``pythonw.exe`` (no-console
+variant) with ``--log-file`` so the console window never flashes.
 """
 
 from __future__ import annotations
@@ -29,6 +31,22 @@ from pathlib import Path
 from agent_memory_lite.v3.cognition.consolidation import consolidate_workspace
 
 logger = logging.getLogger("agent_memory_lite.scripts.consolidation_runner")
+
+
+def _redirect_streams_to_log(log_file_path: str) -> None:
+    """Reopen stdout/stderr to ``log_file_path`` in append mode.
+
+    Required when this runner is invoked via ``pythonw.exe`` from a
+    scheduled task — pythonw has no console, so every stdout/stderr
+    write would otherwise be silently dropped or crash. Switching the
+    scheduled task from ``powershell.exe`` to ``pythonw.exe`` is what
+    stops the briefly-visible console window on each 6h tick.
+    """
+    p = Path(log_file_path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fh = p.open("a", encoding="utf-8", errors="replace", buffering=1)
+    sys.stdout = fh
+    sys.stderr = fh
 
 
 def _load_registry(path: Path) -> list[dict[str, object]]:
@@ -86,7 +104,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--window-hours", type=int, default=24)
     parser.add_argument("--max-insights", type=int, default=10)
     parser.add_argument("--json", action="store_true", help="Emit one JSON line per workspace.")
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help=(
+            "If set, redirect stdout/stderr to this path (append, UTF-8). "
+            "Required when the scheduled task invokes pythonw.exe so the "
+            "console flash never appears."
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.log_file:
+        _redirect_streams_to_log(args.log_file)
 
     registry = _load_registry(_registry_path())
     if not registry:

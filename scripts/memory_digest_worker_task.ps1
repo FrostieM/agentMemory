@@ -5,6 +5,14 @@
 # PostToolUse hook never accumulates more than ~5 min of pending work.
 # Catches up on resume from sleep via -StartWhenAvailable.
 #
+# The scheduled task spawns ``pythonw.exe`` directly (no PowerShell
+# wrapper). ``pythonw.exe`` is the windowless variant of python.exe —
+# it never allocates a console, so the operator does not see a
+# console window flash every 5 min. Earlier revisions used
+# ``powershell.exe -File <wrapper.ps1>`` which always flashed a
+# console window during process creation, even with
+# ``-WindowStyle Hidden``.
+#
 # Examples:
 #
 #   .\memory_digest_worker_task.ps1 -Action Install
@@ -32,27 +40,45 @@ function Resolve-FullPath([string]$PathValue) {
     return [System.IO.Path]::GetFullPath($PathValue)
 }
 
+function Resolve-PythonW([string]$PythonExe) {
+    # Derive pythonw.exe from python.exe. Falls back to "pythonw.exe"
+    # on PATH so the script still works when $Python is the bare name.
+    if ($PythonExe -match '(?i)python\.exe$') {
+        $Candidate = $PythonExe -replace '(?i)python\.exe$', 'pythonw.exe'
+        if (Test-Path -LiteralPath $Candidate) { return $Candidate }
+    }
+    return "pythonw.exe"
+}
+
 $RepoRoot = Resolve-FullPath $RepoRoot
 if ([string]::IsNullOrWhiteSpace($Python)) {
     $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
     $Python = if (Test-Path -LiteralPath $VenvPython) { $VenvPython } else { "python" }
 }
+$PythonW = Resolve-PythonW $Python
 
 $RunnerScript = Join-Path $RepoRoot "scripts\memory_digest_worker_runner.py"
 $LogDir = Join-Path $env:USERPROFILE ".agent_memory\logs"
 $LogPath = Join-Path $LogDir "digest_worker.log"
-$WrapperPath = Join-Path $env:USERPROFILE ".agent_memory\run_digest_worker.ps1"
+# Legacy wrapper from earlier revisions — removed on Install/Uninstall.
+$LegacyWrapperPath = Join-Path $env:USERPROFILE ".agent_memory\run_digest_worker.ps1"
 
 if ($Action -eq "Install") {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-    $Wrapper = @"
-Set-Location -LiteralPath "$RepoRoot"
-& "$Python" "$RunnerScript" --json *>> "$LogPath" 2>&1
-"@
-    Set-Content -LiteralPath $WrapperPath -Value $Wrapper -Encoding UTF8
 
-    $ActionArg = "-NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""
-    $ScheduledAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArg
+    # Clean up the old PowerShell wrapper if present — it caused the flash.
+    if (Test-Path -LiteralPath $LegacyWrapperPath) {
+        Remove-Item -LiteralPath $LegacyWrapperPath -Force
+    }
+
+    # Argument list passed directly to pythonw.exe. No shell quoting
+    # complications because the task scheduler hands the string to
+    # CreateProcess as-is.
+    $ActionArg = "`"$RunnerScript`" --json --log-file `"$LogPath`""
+    $ScheduledAction = New-ScheduledTaskAction `
+        -Execute $PythonW `
+        -Argument $ActionArg `
+        -WorkingDirectory $RepoRoot
 
     # Every N minutes for the next ~10 years (Windows Task Scheduler
     # rejects [TimeSpan]::MaxValue with HRESULT 0x80041318).
@@ -64,6 +90,7 @@ Set-Location -LiteralPath "$RepoRoot"
         -StartWhenAvailable `
         -DontStopIfGoingOnBatteries `
         -AllowStartIfOnBatteries `
+        -Hidden `
         -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -73,14 +100,14 @@ Set-Location -LiteralPath "$RepoRoot"
         -Trigger $Trigger `
         -Settings $Settings `
         -RunLevel Limited | Out-Null
-    Write-Output ("Installed scheduled task `"$TaskName`" (every $IntervalMinutes min).")
+    Write-Output ("Installed scheduled task `"$TaskName`" (pythonw.exe, every $IntervalMinutes min, no console flash).")
     return
 }
 
 if ($Action -eq "Uninstall") {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $WrapperPath) {
-        Remove-Item -LiteralPath $WrapperPath -Force
+    if (Test-Path -LiteralPath $LegacyWrapperPath) {
+        Remove-Item -LiteralPath $LegacyWrapperPath -Force
     }
     Write-Output ("Uninstalled scheduled task `"$TaskName`".")
     return
@@ -106,4 +133,5 @@ $Info = Get-ScheduledTaskInfo -TaskName $TaskName
     next_run_time    = $Info.NextRunTime
     last_task_result = $Info.LastTaskResult
     log_path         = $LogPath
+    pythonw          = $PythonW
 } | ConvertTo-Json -Depth 6

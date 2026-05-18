@@ -83,7 +83,13 @@ class WorkspaceRoutingMiddleware:
         if not self._settings.hub_mode:
             return False
         path = scope.get("path", "")
-        if not path.startswith("/memory/"):
+        # Route both legacy /memory/* and v3 /v3/memory/* — both shape
+        # accept ``workspace_id`` as query/body and need to land on the
+        # right SQLite + LanceDB pair in hub mode. Before this fix the
+        # v3 endpoints silently hit the service's anchor DB regardless
+        # of workspace_id, which made the v3 brief unusable cross-
+        # workspace.
+        if not path.startswith(("/memory/", "/v3/memory/")):
             return False
         # Don't override an explicit caller choice.
         return all(name != _DB_HEADER for name, _ in scope.get("headers", []))
