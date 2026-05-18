@@ -177,6 +177,65 @@ def _build_top_decisions(
     return BriefSection(name="decisions", budget=budget, lines=fit_to_budget(lines, budget))
 
 
+def _build_associates(
+    conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
+) -> BriefSection:
+    """Top-N Hebbian-associated rows of the workspace's active decisions.
+
+    Phase 2 surfaces the strongest cross-kind associations so the agent
+    sees what fires together with current invariants. Seeds = top-3
+    active+positive decisions; the spreading-activation reader walks
+    soft_edges one hop and ranks neighbours by accumulated weight.
+
+    Empty section (no lines) when:
+    - no active decisions to seed from
+    - no soft_edges from those seeds
+    - retrieval/spreading_activation cannot import (pre-migration code)
+    """
+    try:
+        from agent_memory_lite.retrieval.spreading_activation import spread  # noqa: PLC0415
+    except ImportError:
+        return BriefSection(name="associates", budget=budget, lines=[])
+    seed_rows = list_kind(conn, workspace_id=workspace_id, kind="decision", limit=limit * 4)
+    seeds: list[tuple[str, str, float]] = []
+    for d in seed_rows:
+        if d.get("status") != "active":
+            continue
+        if not d.get("pinned") and float(d.get("outcome_score") or 0.0) < 0.0:
+            continue
+        seeds.append(("decision", str(d["id"]), 1.0))
+        if len(seeds) >= 3:
+            break
+    if not seeds:
+        return BriefSection(name="associates", budget=budget, lines=[])
+    activations = spread(
+        conn,
+        workspace_id=workspace_id,
+        seeds=seeds,
+        max_hops=1,
+        max_nodes=limit * 4,
+    )
+    if not activations:
+        return BriefSection(name="associates", budget=budget, lines=[])
+    seed_ids = {(k, i) for k, i, _ in seeds}
+    lines = ["## Associated to current decisions"]
+    seen = 0
+    for node in activations:
+        if (node.kind, node.object_id) in seed_ids:
+            continue
+        proj = get_object(conn, workspace_id=workspace_id, kind=node.kind, object_id=node.object_id)
+        if proj is None:
+            continue
+        gist = proj.get("gist") or proj.get("name") or proj.get("title") or "?"
+        lines.append(f"- {node.kind}:{node.object_id} (assoc={node.activation:.2f}): {gist}")
+        seen += 1
+        if seen >= limit:
+            break
+    if seen == 0:
+        return BriefSection(name="associates", budget=budget, lines=[])
+    return BriefSection(name="associates", budget=budget, lines=fit_to_budget(lines, budget))
+
+
 def _build_watch_outs(
     conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
 ) -> BriefSection:
@@ -207,9 +266,7 @@ def _build_watch_outs(
         LIMIT ?
     """
     try:
-        rows = conn.execute(
-            sql, (workspace_id, workspace_id, workspace_id, limit)
-        ).fetchall()
+        rows = conn.execute(sql, (workspace_id, workspace_id, workspace_id, limit)).fetchall()
     except sqlite3.OperationalError:
         # Pre-migration DB; outcome_score column missing.
         rows = []
@@ -361,14 +418,16 @@ def compose_brief(
         )
     # Per-section budget allocation (target ratios — sum to max_tokens).
     # ``watch_outs`` (Phase 1) gets ~6% of the budget stolen from code_hubs;
-    # it stays empty when no outcome_score < 0 rows exist, so the brief
-    # composition for a fresh workspace is unchanged.
+    # ``associates`` (Phase 2) gets ~6% stolen from code_hubs as well. Both
+    # stay empty when no rows match, so the brief composition for a fresh
+    # workspace is unchanged from the v3.0.0-base baseline.
     weights = {
         "identity": 0.20,
-        "behaviors": 0.24,
-        "decisions": 0.26,
+        "behaviors": 0.22,
+        "decisions": 0.24,
         "state": 0.12,
-        "code_hubs": 0.12,
+        "code_hubs": 0.10,
+        "associates": 0.06,
         "watch_outs": 0.06,
     }
     budgets = {name: int(max_tokens * w) for name, w in weights.items()}
@@ -379,6 +438,7 @@ def compose_brief(
         _build_top_decisions(conn, workspace_id, budgets["decisions"]),
         _build_state(conn, workspace_id, budgets["state"]),
         _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
+        _build_associates(conn, workspace_id, budgets["associates"]),
         _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
     ]
     body_parts: list[str] = []
@@ -388,7 +448,15 @@ def compose_brief(
     # Hard cap: if heuristic budgets overshoot, trim from the tail (least-critical first).
     if approx_tokens(body_md) > max_tokens:
         # Re-fit by progressively dropping later sections.
-        priority_order = ["identity", "behaviors", "decisions", "state", "code_hubs", "watch_outs"]
+        priority_order = [
+            "identity",
+            "behaviors",
+            "decisions",
+            "state",
+            "code_hubs",
+            "associates",
+            "watch_outs",
+        ]
         trimmed_sections: list[BriefSection] = []
         running = 0
         for name in priority_order:

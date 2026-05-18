@@ -14,6 +14,20 @@ HEURISTIC relationships:
 
 Each pair carries a ``weight`` that accumulates with each
 observation; ``last_seen_at`` lets future passes apply EWMA decay.
+
+v3.0.0 Phase 2 (Hebbian): two new kinds extend the table to memory rows
+beyond source symbols. The pair (src, dst) is stored as a synthetic
+qualified-name ``"<kind>:<id>"`` (e.g. ``"decision:dec_kelly"``) so the
+same table holds both the code soft-graph and the cross-kind memory
+soft-graph without DDL drift:
+
+* ``co_retrieved`` — A and B were returned together by ``memory_search``
+                     (the Hebbian "fire together" signal)
+* ``co_mentioned`` — A and B are co-referenced inside the same episode
+                     body (consolidation-time signal, future-phase use)
+
+The reader's spreading_activation pass walks these alongside the symbol
+edges with the same decay law (0.5^hops).
 """
 
 from __future__ import annotations
@@ -22,7 +36,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ALLOWED_SOFT_KINDS: frozenset[str] = frozenset({"co_changed", "co_referenced", "similar_signature"})
+ALLOWED_SOFT_KINDS: frozenset[str] = frozenset(
+    {
+        "co_changed",
+        "co_referenced",
+        "similar_signature",
+        # v3.0.0 Phase 2: cross-kind Hebbian signals over memory rows.
+        "co_retrieved",
+        "co_mentioned",
+    }
+)
 
 
 class SoftEdge(BaseModel):

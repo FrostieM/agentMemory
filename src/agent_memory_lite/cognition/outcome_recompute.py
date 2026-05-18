@@ -177,7 +177,9 @@ _ADAPTERS = {
 # ============================================================
 
 
-def refresh_one(conn: sqlite3.Connection, *, kind: str, object_id: str, now_iso: str) -> float | None:
+def refresh_one(
+    conn: sqlite3.Connection, *, kind: str, object_id: str, now_iso: str
+) -> float | None:
     """Recompute and persist outcome_score for one row. Returns new score."""
     if kind not in _ADAPTERS:
         return None

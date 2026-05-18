@@ -42,7 +42,12 @@ def conn() -> Iterator[sqlite3.Connection]:
 def test_archived_pins_to_negative_one() -> None:
     """An archived row always returns -1.0 regardless of feedback."""
     inp = OutcomeInputs(
-        feedback_ewma=1.0, age_days=0.0, archived=True, superseded=False, rejected=False, usage_count=100
+        feedback_ewma=1.0,
+        age_days=0.0,
+        archived=True,
+        superseded=False,
+        rejected=False,
+        usage_count=100,
     )
     assert compute_outcome(inp) == -1.0
 
@@ -50,7 +55,12 @@ def test_archived_pins_to_negative_one() -> None:
 def test_no_evidence_returns_neutral() -> None:
     """Zero usage_count, zero feedback → score stays at 0.0 (neutral)."""
     inp = OutcomeInputs(
-        feedback_ewma=0.7, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=0
+        feedback_ewma=0.7,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=0,
     )
     # evidence_weight(0) = 0 → adjustment = 0 → score = 0.0
     assert compute_outcome(inp) == pytest.approx(0.0, abs=1e-3)
@@ -59,30 +69,60 @@ def test_no_evidence_returns_neutral() -> None:
 def test_monotonic_in_feedback() -> None:
     """Higher EWMA → higher score, holding evidence + age constant."""
     base = OutcomeInputs(
-        feedback_ewma=0.2, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=10
+        feedback_ewma=0.2,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=10,
     )
     higher = OutcomeInputs(
-        feedback_ewma=0.8, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=10
+        feedback_ewma=0.8,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=10,
     )
     assert compute_outcome(higher) > compute_outcome(base)
 
 
 def test_superseded_pulls_down() -> None:
     inp_active = OutcomeInputs(
-        feedback_ewma=0.3, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=10
+        feedback_ewma=0.3,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=10,
     )
     inp_super = OutcomeInputs(
-        feedback_ewma=0.3, age_days=0.0, archived=False, superseded=True, rejected=False, usage_count=10
+        feedback_ewma=0.3,
+        age_days=0.0,
+        archived=False,
+        superseded=True,
+        rejected=False,
+        usage_count=10,
     )
     assert compute_outcome(inp_super) < compute_outcome(inp_active) - 0.4
 
 
 def test_rejected_pulls_down() -> None:
     inp_proposed = OutcomeInputs(
-        feedback_ewma=0.2, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=5
+        feedback_ewma=0.2,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=5,
     )
     inp_rejected = OutcomeInputs(
-        feedback_ewma=0.2, age_days=0.0, archived=False, superseded=False, rejected=True, usage_count=5
+        feedback_ewma=0.2,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=True,
+        usage_count=5,
     )
     assert compute_outcome(inp_rejected) < compute_outcome(inp_proposed) - 0.4
 
@@ -90,10 +130,20 @@ def test_rejected_pulls_down() -> None:
 def test_staleness_decays_adjustment() -> None:
     """Old positive evidence cannot eclipse fresh neutral state."""
     fresh = OutcomeInputs(
-        feedback_ewma=0.8, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=20
+        feedback_ewma=0.8,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=20,
     )
     stale = OutcomeInputs(
-        feedback_ewma=0.8, age_days=120.0, archived=False, superseded=False, rejected=False, usage_count=20
+        feedback_ewma=0.8,
+        age_days=120.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=20,
     )
     assert compute_outcome(stale) < compute_outcome(fresh) - 0.4
 
@@ -101,10 +151,20 @@ def test_staleness_decays_adjustment() -> None:
 def test_bounded_to_unit_interval() -> None:
     """Even extreme inputs stay in [-1, 1]."""
     extreme_pos = OutcomeInputs(
-        feedback_ewma=1.0, age_days=0.0, archived=False, superseded=False, rejected=False, usage_count=10_000
+        feedback_ewma=1.0,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=10_000,
     )
     extreme_neg = OutcomeInputs(
-        feedback_ewma=-1.0, age_days=0.0, archived=False, superseded=True, rejected=True, usage_count=10_000
+        feedback_ewma=-1.0,
+        age_days=0.0,
+        archived=False,
+        superseded=True,
+        rejected=True,
+        usage_count=10_000,
     )
     pos = compute_outcome(extreme_pos)
     neg = compute_outcome(extreme_neg)

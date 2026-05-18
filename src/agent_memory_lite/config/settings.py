@@ -157,6 +157,19 @@ class Settings(BaseSettings):
     outcome_low_threshold: float = Field(
         -0.3, ge=-1.0, le=0.0, validation_alias="MEMORY_OUTCOME_LOW_THRESHOLD"
     )
+    # v3.0.0-final Phase 2: Hebbian co-retrieval associations. Each search
+    # logs the items returned together; a sentinel-scheduled pass distills
+    # co-occurrence into weighted soft_edges. HeLa-Mem outcome-gate (off-by-
+    # off only) prevents reinforcing pairs both rooted in failure.
+    hebbian_enabled: bool = Field(True, validation_alias="MEMORY_HEBBIAN_ENABLED")
+    hebbian_outcome_gate: bool = Field(True, validation_alias="MEMORY_HEBBIAN_OUTCOME_GATE")
+    # Pruning horizon for the retrieval_coactivation log: rows older than
+    # this are dropped at the end of each Hebbian pass to keep the table
+    # bounded. 14 days matches the brief cache / behavior application
+    # tracking horizon.
+    hebbian_log_retention_days: int = Field(
+        14, ge=1, le=90, validation_alias="MEMORY_HEBBIAN_LOG_RETENTION_DAYS"
+    )
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )

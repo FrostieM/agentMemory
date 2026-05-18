@@ -64,6 +64,7 @@ from agent_memory_lite.mcp.stdio_handlers_p1 import (
     _handle_list_audit,
     _handle_what_references,
 )
+from agent_memory_lite.mcp.stdio_handlers_recall import _handle_recall
 from agent_memory_lite.mcp.stdio_handlers_research import (
     _handle_add_experiment_result,
     _handle_distill_insight,
@@ -137,6 +138,8 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_record_usage_feedback": _handle_record_usage_feedback,
     "memory_what_references": _handle_what_references,
     "memory_list_audit": _handle_list_audit,
+    # v3.0.0 Phase 2: Hebbian recall (skeleton -- Phase 7 expands).
+    "memory_recall": _handle_recall,
     "memory_snapshot_save": _handle_snapshot_save,
     "memory_snapshot_list": _handle_snapshot_list,
     "memory_snapshot_diff": _handle_snapshot_diff,

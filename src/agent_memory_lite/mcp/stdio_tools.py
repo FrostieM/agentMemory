@@ -25,6 +25,7 @@ from agent_memory_lite.mcp.stdio_tools_digests import DIGEST_TOOLS
 from agent_memory_lite.mcp.stdio_tools_episodes import EPISODE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_memory import MEMORY_TOOLS
 from agent_memory_lite.mcp.stdio_tools_p1 import P1_TOOLS
+from agent_memory_lite.mcp.stdio_tools_recall import RECALL_TOOLS
 from agent_memory_lite.mcp.stdio_tools_research import RESEARCH_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review import REVIEW_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review_queue import REVIEW_QUEUE_TOOLS
@@ -60,6 +61,7 @@ ALL_TOOLS: list[types.Tool] = _dedup_last_wins(
     CAPABILITY_TOOLS,
     ARCHIVE_TOOLS,
     P1_TOOLS,
+    RECALL_TOOLS,
     STATE_SNAPSHOT_TOOLS,
     REVIEW_QUEUE_TOOLS,
     # Canonical surface — overrides any legacy entry of the same name.

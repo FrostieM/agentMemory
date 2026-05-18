@@ -247,6 +247,7 @@ def search(
     kinds: list[str] | None = None,
     limit: int = 10,
     rerank: bool = False,
+    log_coactivations: bool = True,
 ) -> list[SearchHit]:
     """Multi-kind search. Returns compact projections sorted by relevance.
 
@@ -257,6 +258,12 @@ def search(
     ``rerank=True`` runs the optional cross-encoder reranker over the
     initial hit set. Requires the ``[rerank]`` extra; falls back to the
     BM25/LIKE order if the model is unavailable.
+
+    ``log_coactivations`` (Phase 2 default ON) records the returned hit
+    set into the ``retrieval_coactivation`` staging table; a sentinel
+    sweep later distills co-occurrence into ``soft_edges``. Set False
+    for internal callers that don't want their reads to feed the
+    Hebbian loop (e.g. ``brief.compose_brief`` resolving associates).
     """
     if not query.strip():
         return []
@@ -276,8 +283,30 @@ def search(
     if rerank and hits:
         from agent_memory_lite.retrieval.rerank import rerank_hits  # noqa: PLC0415
 
-        return rerank_hits(query, hits, top_k=limit)
-    return hits[:limit]
+        ranked = rerank_hits(query, hits, top_k=limit)
+    else:
+        ranked = hits[:limit]
+    if log_coactivations and ranked:
+        _maybe_log_coactivation(conn, workspace_id, query, ranked)
+    return ranked
+
+
+def _maybe_log_coactivation(
+    conn: sqlite3.Connection, workspace_id: str, query: str, hits: list[SearchHit]
+) -> None:
+    """Failure-soft coactivation side-effect. Gated on settings flag."""
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+        from agent_memory_lite.retrieval.coactivation_log import (  # noqa: PLC0415
+            log_coactivation,
+        )
+
+        if not get_settings().hebbian_enabled:
+            return
+        log_coactivation(conn, workspace_id=workspace_id, query=query, hits=hits)
+    except Exception:
+        # Telemetry must never break the search hot path.
+        return
 
 
 # ============================================================

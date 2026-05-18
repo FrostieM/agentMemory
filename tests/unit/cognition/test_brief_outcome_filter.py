@@ -76,7 +76,9 @@ def test_negative_outcome_decision_excluded_from_active(conn: sqlite3.Connection
 def test_pinned_negative_outcome_still_appears_in_active(conn: sqlite3.Connection) -> None:
     """Operator-pinned rules survive a negative outcome; they sort beneath
     positive peers but stay visible (operator override)."""
-    _seed_decision(conn, id="dec_pinned_bad", gist="Pinned but failing", pinned=1, outcome_score=-0.5)
+    _seed_decision(
+        conn, id="dec_pinned_bad", gist="Pinned but failing", pinned=1, outcome_score=-0.5
+    )
     _seed_decision(conn, id="dec_neutral", gist="Neutral active", outcome_score=0.0)
     brief = compose_brief(conn, workspace_id="ws")
     assert "dec_pinned_bad" in brief.body_md
