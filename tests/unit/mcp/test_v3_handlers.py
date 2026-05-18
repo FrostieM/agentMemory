@@ -70,11 +70,25 @@ def _seed_decision(conn: sqlite3.Connection, **kwargs: object) -> str:
 
 
 def test_v3_tools_match_handlers() -> None:
-    tool_names = {t.name for t in ALL_TOOLS if t.name.startswith("memory_v3_")}
-    handler_names = {n for n in _HANDLERS if n.startswith("memory_v3_")}
-    assert tool_names == handler_names
+    # Canonical v3 surface: names are version-free post 2026-05-18 rename.
+    canonical = {
+        "memory_search",
+        "memory_get",
+        "memory_write",
+        "memory_edit",
+        "memory_pin",
+        "memory_archive",
+        "memory_brief",
+        "memory_lint",
+        "memory_invoke_skill",
+        "memory_impact_check",
+    }
+    tool_names = {t.name for t in ALL_TOOLS} & canonical
+    handler_names = set(_HANDLERS) & canonical
+    assert tool_names == canonical, f"missing tools: {canonical - tool_names}"
+    assert handler_names == canonical, f"missing handlers: {canonical - handler_names}"
     # 6 strict + 2 hook + invoke_skill + impact_check (discipline primitive)
-    assert len(tool_names) == 10
+    assert len(canonical) == 10
 
 
 # ============================================================
@@ -277,7 +291,7 @@ def test_invoke_skill_requires_id(db_conn: sqlite3.Connection) -> None:
 
 
 # ============================================================
-# memory_v3_impact_check (discipline primitive)
+# memory_impact_check (discipline primitive)
 # ============================================================
 
 

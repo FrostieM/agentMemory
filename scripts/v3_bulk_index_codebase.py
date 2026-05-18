@@ -1,6 +1,6 @@
 """Bulk-index a project's codebase into the v3 ``code_digests`` table.
 
-Without this, ``memory_v3_impact_check`` returns ``verdict='not_indexed'``
+Without this, ``memory_impact_check`` returns ``verdict='not_indexed'``
 for every file — the discipline primitive can't do its job until there
 is data to query.  The PostToolUse hook populates digests incrementally
 as the agent edits files, but a fresh deployment needs a one-shot
@@ -194,7 +194,7 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
     """Walk ``project_root`` and index each source file via ``index_file``.
 
     With ``with_edges=True`` (default) the indexer populates the full
-    chunks + symbol_edges + code_digests trio so ``memory_v3_impact_check``
+    chunks + symbol_edges + code_digests trio so ``memory_impact_check``
     returns differentiated verdicts.  With ``with_edges=False`` only the
     ``code_digests`` row is upserted (faster, but ``impact_check`` will
     return ``verdict='low'`` for every file).

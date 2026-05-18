@@ -10,7 +10,7 @@ file the agent edits goes through:
   3. For each entry: read the file, compute sha1, run a heuristic
      digest pass (purpose_short = first docstring line; top_symbols
      = AST symbol scan), UPSERT into ``code_digests``.
-  4. The next agent call to ``memory_v3_get(kind="code_digest", id=...)``
+  4. The next agent call to ``memory_get(kind="code_digest", id=...)``
      returns the fresh digest projection without reading source.
 
 Design constraints (per v3 plan):

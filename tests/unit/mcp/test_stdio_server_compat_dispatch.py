@@ -3,12 +3,13 @@
 Covers the *dispatch boundary*, not the translation logic itself
 (``test_v2_compat.py`` already covers per-tool shape adapters):
 
-* ``MEMORY_V2_COMPAT_ENABLED=false`` (default) → shim is a no-op,
-  native v2 handler runs.
-* ``MEMORY_V2_COMPAT_ENABLED=true`` → v2 tool names are routed
-  through the shim instead of the native v2 handler.
-* v3 names (``memory_v3_*``) bypass the shim even when enabled.
-* Shim internal raise → returns None → native handler still runs
+* ``MEMORY_V2_COMPAT_ENABLED=false`` -> shim is a no-op, native v2
+  handler runs.
+* ``MEMORY_V2_COMPAT_ENABLED=true`` (default) -> legacy v2-only tool
+  names are routed through the shim instead of the native v2 handler.
+* Canonical names (``memory_search``, ``memory_write``, etc., served
+  by V3_HANDLERS) bypass the shim even when enabled.
+* Shim internal raise -> returns None -> native handler still runs
   (failure-soft contract).
 """
 
@@ -48,8 +49,8 @@ def v3_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3
 def test_compat_off_returns_none(
     v3_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default: env flag off → dispatch returns None so native handler runs."""
-    monkeypatch.delenv("MEMORY_V2_COMPAT_ENABLED", raising=False)
+    """Env flag explicitly ``false`` -> dispatch returns None so native runs."""
+    monkeypatch.setenv("MEMORY_V2_COMPAT_ENABLED", "false")
     out = stdio_server._maybe_compat_dispatch(
         "memory_write_decision",
         {"workspace_id": "default", "title": "T", "decision_text": "B"},
@@ -76,7 +77,7 @@ def test_compat_on_skips_v3_names(monkeypatch: pytest.MonkeyPatch) -> None:
     """v3-prefixed names bypass the shim even when the env flag is on."""
     monkeypatch.setenv("MEMORY_V2_COMPAT_ENABLED", "true")
     out = stdio_server._maybe_compat_dispatch(
-        "memory_v3_search",
+        "memory_search",
         {"workspace_id": "default", "query": "anything"},
     )
     assert out is None

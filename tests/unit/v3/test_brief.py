@@ -316,7 +316,7 @@ def test_brief_identity_includes_discipline_reminder_when_digests_exist(
     identity = next(s for s in brief.sections if s.name == "identity")
     body = "\n".join(identity.lines)
     assert "DISCIPLINE" in body
-    assert "memory_v3_impact_check" in body
+    assert "memory_impact_check" in body
     assert "before Read/Edit/Grep" in body
 
 
@@ -328,7 +328,7 @@ def test_brief_identity_skips_discipline_line_when_no_digests(
     identity = next(s for s in brief.sections if s.name == "identity")
     body = "\n".join(identity.lines)
     assert "DISCIPLINE" not in body
-    assert "memory_v3_impact_check" not in body
+    assert "memory_impact_check" not in body
 
 
 # ============================================================

@@ -3,7 +3,7 @@
 Parses Claude Code session transcripts (``~/.claude/projects/*/*.jsonl``)
 and tallies how often the agent reaches for cheap-but-blind tools
 (Read, Grep, Glob) vs the v3 graph primitives
-(memory_v3_impact_check, memory_v3_get, memory_v3_search,
+(memory_impact_check, memory_get, memory_search,
 memory_graph_neighbors, memory_find_symbols).
 
 The number that matters:  **graph_share = graph_calls / (graph_calls
@@ -40,10 +40,10 @@ DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
 READ_GREP_TOOLS = frozenset({"Read", "Grep", "Glob"})
 GRAPH_TOOLS = frozenset(
     {
-        "memory_v3_impact_check",
-        "memory_v3_get",
-        "memory_v3_search",
-        "memory_v3_brief",
+        "memory_impact_check",
+        "memory_get",
+        "memory_search",
+        "memory_brief",
         "memory_graph_neighbors",
         "memory_find_symbols",
         "memory_file_digest",

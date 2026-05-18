@@ -17,7 +17,7 @@ Ollama drives local LLM extraction.
 
 > **3.0.0-dev — compact-projection retrieval (in-development).** The v3
 > work ships in parallel with the stable 2.x surface: v3 endpoints mount
-> at `/v3/memory/*`, v3 MCP tools are prefixed `memory_v3_*`, and the
+> at `/v3/memory/*`, v3 MCP tools are prefixed `memory_*`, and the
 > v2 surface keeps working unchanged. The architectural pivot is
 > compact projections (~20-40 tokens per item) returned by every read
 > tool by default; full content is opt-in via `fields=[...]`. Target

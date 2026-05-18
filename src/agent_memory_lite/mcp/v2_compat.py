@@ -9,11 +9,11 @@ removed.
 
 Activation:
 
-* ``MEMORY_V2_COMPAT_ENABLED=true`` (default ``false`` until v3 final)
-  enables interception inside the MCP stdio dispatcher. When false, the
-  native v2 handlers run unchanged.
+* ``MEMORY_V2_COMPAT_ENABLED`` defaults to **true** post-canonical-rename
+  (commit 2026-05-18). Set to ``false`` to restore the native v2
+  handlers for debugging.
 * Every shimmed response carries a ``deprecation_notice`` field pointing
-  at the v3 successor so agents and operators see the migration target.
+  at the canonical successor so callers see the migration target.
 
 Coverage tiers:
 
@@ -54,13 +54,21 @@ from agent_memory_lite.v3.storage.writer import archive, pin, write
 
 
 def is_enabled() -> bool:
-    """Read MEMORY_V2_COMPAT_ENABLED. Defaults off until v3 cutover."""
-    return os.environ.get("MEMORY_V2_COMPAT_ENABLED", "false").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Read MEMORY_V2_COMPAT_ENABLED. Defaults **ON** post-canonical-rename.
+
+    Rationale: with canonical names live (``memory_search``,
+    ``memory_write``, ...), every legacy v2 tool that still has its
+    own native handler runs that handler synchronously -- in the case
+    of ``memory_record_with_evidence`` and ``memory_ingest_episode``
+    that means a synchronous Ollama LLM call that can hang Claude
+    Code for 60-180 s on a multi-KB payload. The compat shim routes
+    those legacy names through the v3 storage layer (no sync LLM, no
+    embedding bottleneck on the hot path), which is the safer and
+    much faster default. Set the env to ``false`` to restore the
+    native v2 path for debugging.
+    """
+    raw = os.environ.get("MEMORY_V2_COMPAT_ENABLED", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # ============================================================
@@ -112,7 +120,7 @@ def _compat_write_decision(conn: sqlite3.Connection, args: dict[str, Any]) -> di
     )
     if out is None:
         return _err("unsupported_kind", "decision write failed via shim")
-    return _ok(out, deprecation=_deprecation("memory_write_decision", "memory_v3_write"))
+    return _ok(out, deprecation=_deprecation("memory_write_decision", "memory_write"))
 
 
 def _compat_write_theory(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -132,7 +140,7 @@ def _compat_write_theory(conn: sqlite3.Connection, args: dict[str, Any]) -> dict
     )
     if out is None:
         return _err("unsupported_kind", "theory write failed via shim")
-    return _ok(out, deprecation=_deprecation("memory_write_theory", "memory_v3_write"))
+    return _ok(out, deprecation=_deprecation("memory_write_theory", "memory_write"))
 
 
 def _compat_get_object(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -152,7 +160,7 @@ def _compat_get_object(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[s
     )
     if out is None:
         return _err("not_found", f"{kind}:{object_id} not found")
-    return _ok(out, deprecation=_deprecation("memory_get_object", "memory_v3_get"))
+    return _ok(out, deprecation=_deprecation("memory_get_object", "memory_get"))
 
 
 def _compat_upsert_concept(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -173,7 +181,7 @@ def _compat_upsert_concept(conn: sqlite3.Connection, args: dict[str, Any]) -> di
     )
     if out is None:
         return _err("unsupported_kind", "concept write failed via shim")
-    return _ok(out, deprecation=_deprecation("memory_upsert_concept", "memory_v3_write"))
+    return _ok(out, deprecation=_deprecation("memory_upsert_concept", "memory_write"))
 
 
 def _compat_upsert_behavior(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -195,9 +203,7 @@ def _compat_upsert_behavior(conn: sqlite3.Connection, args: dict[str, Any]) -> d
     )
     if out is None:
         return _err("unsupported_kind", "behavior write failed via shim")
-    return _ok(
-        out, deprecation=_deprecation("memory_upsert_behavior_instruction", "memory_v3_write")
-    )
+    return _ok(out, deprecation=_deprecation("memory_upsert_behavior_instruction", "memory_write"))
 
 
 def _compat_upsert_capability(
@@ -219,7 +225,7 @@ def _compat_upsert_capability(
     )
     if out is None:
         return _err("unsupported_kind", f"{subtype} write failed via shim")
-    return _ok(out, deprecation=_deprecation(f"memory_upsert_agent_{subtype}", "memory_v3_write"))
+    return _ok(out, deprecation=_deprecation(f"memory_upsert_agent_{subtype}", "memory_write"))
 
 
 def _compat_archive(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -244,7 +250,7 @@ def _compat_archive(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str,
     )
     if out is None:
         return _err("not_found_or_unsupported", f"cannot archive {kind}:{object_id}")
-    return _ok(out, deprecation=_deprecation("memory_archive", "memory_v3_archive"))
+    return _ok(out, deprecation=_deprecation("memory_archive", "memory_archive"))
 
 
 def _compat_pin(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
@@ -278,7 +284,7 @@ def _compat_search(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, 
         limit=int(args.get("limit") or 10),
     )
     data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
-    return _ok(data, deprecation=_deprecation("memory_search", "memory_v3_search"))
+    return _ok(data, deprecation=_deprecation("memory_search", "memory_search"))
 
 
 def _compat_list_kind(
@@ -313,6 +319,120 @@ def _compat_invoke_skill(conn: sqlite3.Connection, args: dict[str, Any]) -> dict
 
 
 # ============================================================
+# Tier 1 cont. -- compound writes that previously dragged Ollama in-process.
+# ============================================================
+
+
+def _compat_ingest_episode(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
+    """Translate ``memory_ingest_episode`` to the canonical episode write.
+
+    The native v2 handler runs the full redaction + embedding + auto-
+    extraction pipeline synchronously, which on multi-KB raw_text can
+    park the tool call for 60-180 s while Ollama chews on candidate
+    extraction. The canonical writer just persists the row (gist
+    computed cheaply, no LLM) and returns immediately.
+    """
+    payload: dict[str, Any] = {
+        "raw_text": args.get("raw_text") or args.get("text") or "",
+        "source_type": args.get("source_type", "manual"),
+        "session_id": args.get("session_id"),
+        "task_id": args.get("task_id"),
+        "trust_level": args.get("trust_level"),
+        "importance": args.get("importance"),
+    }
+    cleaned = {k: v for k, v in payload.items() if v is not None and v != ""}
+    if not cleaned.get("raw_text"):
+        return _err("invalid_args", "raw_text is required")
+    out = write(
+        conn,
+        workspace_id=str(args.get("workspace_id") or "default"),
+        kind="episode",
+        payload=cleaned,
+        agent_id=str(args.get("agent_id") or "compat"),
+    )
+    if out is None:
+        return _err("unsupported_kind", "episode write failed via shim")
+    return _ok(out, deprecation=_deprecation("memory_ingest_episode", "memory_write"))
+
+
+def _compat_record_with_evidence(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any]:
+    """Translate ``memory_record_with_evidence`` -- the v2 atomic write.
+
+    v2 native handler did episode + decision + optional capability link
+    in one transaction, but each step ran Ollama for candidate
+    extraction. Cumulative cost on a 4 KB decision: ~3 minutes,
+    enough to time out Claude Code's MCP channel and abort the
+    session mid-pipe. The canonical writer skips LLM extraction on
+    the hot path, so two ``write()`` calls land in milliseconds.
+
+    Capability link step is preserved when the caller passed the
+    triplet, but it lives in the v2 repository layer (no canonical
+    equivalent yet) so we record the ids and surface them in the
+    envelope without writing the link row from this shim. Operators
+    who need the link can call ``memory_link_capability`` after.
+    """
+    workspace_id = str(args.get("workspace_id") or "default")
+    agent_id = str(args.get("agent_id") or "compat")
+    evidence_text = args.get("evidence_text") or ""
+    if not evidence_text:
+        return _err("invalid_args", "evidence_text is required")
+    decision_title = args.get("decision_title") or ""
+    decision_text = args.get("decision_text") or ""
+    if not decision_title or not decision_text:
+        return _err("invalid_args", "decision_title and decision_text are required")
+
+    episode = write(
+        conn,
+        workspace_id=workspace_id,
+        kind="episode",
+        payload={
+            "raw_text": evidence_text,
+            "source_type": args.get("evidence_source_type", "agent_action"),
+            "trust_level": args.get("evidence_trust_level"),
+            "importance": args.get("evidence_importance"),
+            "session_id": args.get("session_id"),
+            "task_id": args.get("task_id"),
+        },
+        agent_id=agent_id,
+    )
+    if episode is None:
+        return _err("write_failed", "episode write failed")
+    episode_id = (episode.get("id") if isinstance(episode, dict) else None) or ""
+
+    decision_payload: dict[str, Any] = {
+        "title": decision_title,
+        "decision_text": decision_text,
+        "rationale": args.get("decision_rationale"),
+        "confidence": args.get("decision_confidence"),
+        "importance": args.get("decision_importance"),
+    }
+    cleaned = {k: v for k, v in decision_payload.items() if v is not None}
+    decision = write(
+        conn,
+        workspace_id=workspace_id,
+        kind="decision",
+        payload=cleaned,
+        agent_id=agent_id,
+        source_episode_id=episode_id or None,
+    )
+    if decision is None:
+        return _err("write_failed", "decision write failed after episode")
+    decision_id = (decision.get("id") if isinstance(decision, dict) else None) or ""
+
+    data: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "episode_id": episode_id,
+        "decision_id": decision_id,
+        "decision_status": "active",
+        "episode": episode,
+        "decision": decision,
+        "capability_link_id": None,
+        "capability_suggestions": [],
+    }
+    return _ok(data, deprecation=_deprecation("memory_record_with_evidence", "memory_write"))
+
+
+# ============================================================
 # Tier 3: not-yet-translated — explicit placeholder
 # ============================================================
 
@@ -340,7 +460,9 @@ _Handler = Callable[[sqlite3.Connection, dict[str, Any]], dict[str, Any]]
 
 
 COMPAT_HANDLERS: dict[str, _Handler] = {
-    # Tier 1 — primary tools
+    # Tier 1 -- primary tools
+    "memory_ingest_episode": _compat_ingest_episode,
+    "memory_record_with_evidence": _compat_record_with_evidence,
     "memory_write_decision": _compat_write_decision,
     "memory_write_theory": _compat_write_theory,
     "memory_get_object": _compat_get_object,

@@ -1,27 +1,31 @@
-"""MCP tool schemas for the v3 agent surface.
+"""MCP tool schemas for the canonical agent surface.
 
-Prefix ``memory_v3_*`` while v2 names still ship in the same stdio
-server. At v4.0 cutover the v2 tools are removed and v3 tools can
-be renamed to their canonical short names. Until then, the prefix
-makes the surface unambiguous in the agent's tool list.
+Names are version-free (``memory_*``, not ``memory_v3_*``). The
+surface is intentionally minimal:
 
-The v3 surface is intentionally minimal:
-
-  9 MCP tools = 6 strict + 2 hook primitives + 1 invoke
+  10 MCP tools = 6 strict + 2 hook primitives + 2 specialised
 
 Strict 6:
-  memory_v3_search, memory_v3_get, memory_v3_write,
-  memory_v3_edit,   memory_v3_pin, memory_v3_archive
+  memory_search, memory_get, memory_write,
+  memory_edit,   memory_pin, memory_archive
 
 Hook primitives (also exposed as MCP for ease of access):
-  memory_v3_brief, memory_v3_lint
+  memory_brief, memory_lint
 
-Skill body fetch (full body — opt-in via explicit invoke):
-  memory_v3_invoke_skill
+Specialised:
+  memory_invoke_skill — fetch full skill body_md (only surface that
+    returns a full markdown body; all other tools return compact
+    projections)
+  memory_impact_check — pre-edit envelope: digest + callers + verdict
 
 list / count / rollback / versions stay HTTP-only — accessible via
 ``memory-cli`` for ops, but not in the hot MCP path. Keeps the
 agent's tool list small (single-screen).
+
+Legacy v2 tool names (``memory_record_with_evidence``,
+``memory_write_decision``, ``memory_ingest_episode``, etc.) are
+served by ``mcp/v2_compat.py`` which translates them onto this
+canonical backend — they no longer have their own implementation.
 """
 
 from __future__ import annotations
@@ -46,13 +50,12 @@ _KINDS = [
 
 V3_TOOLS: list[types.Tool] = [
     types.Tool(
-        name="memory_v3_search",
+        name="memory_search",
         description=(
-            "v3 search — BM25 + projection. Returns a list of compact "
-            "projections (~30 tokens per hit) with scores. Pass ``kinds`` "
-            "to restrict the search to specific kinds; default = all. "
-            "Set ``rerank=true`` to run the optional cross-encoder "
-            "reranker (requires the [rerank] extra)."
+            "BM25 search with compact projections (~30 tokens per hit) and "
+            "scores. Pass ``kinds`` to restrict to specific kinds; default = all. "
+            "Set ``rerank=true`` to run the optional cross-encoder reranker "
+            "(requires the [rerank] extra)."
         ),
         inputSchema={
             "type": "object",
@@ -70,12 +73,11 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_get",
+        name="memory_get",
         description=(
-            "v3 get — fetch one row by id. Default = compact projection "
-            "(~30 tokens). Pass ``fields`` (CSV string OR list) to "
-            "selectively fetch full columns like decision_text, rationale, "
-            "body_md."
+            "Fetch one row by id. Default = compact projection (~30 tokens). "
+            "Pass ``fields`` (CSV string OR list) to selectively fetch full "
+            "columns like decision_text, rationale, body_md."
         ),
         inputSchema={
             "type": "object",
@@ -95,12 +97,12 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_write",
+        name="memory_write",
         description=(
-            "v3 write — create one row of the given kind. Computes the "
-            "gist column on write (no on-the-fly summarization at read). "
-            "Snapshots prior content to ``versions`` table. Returns "
-            "the compact projection of the new row."
+            "Create one row of the given kind. Computes the gist column on "
+            "write (no on-the-fly summarization at read). Snapshots prior "
+            "content to ``versions`` table. Returns the compact projection "
+            "of the new row."
         ),
         inputSchema={
             "type": "object",
@@ -118,12 +120,12 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_edit",
+        name="memory_edit",
         description=(
-            "v3 edit — partial update on an existing row. Snapshots "
-            "prior content to ``versions`` table before write. "
-            "Re-computes gist columns when source fields change. "
-            "Returns the compact projection of the resulting row."
+            "Partial update on an existing row. Snapshots prior content to "
+            "``versions`` table before write. Re-computes gist columns when "
+            "source fields change. Returns the compact projection of the "
+            "resulting row."
         ),
         inputSchema={
             "type": "object",
@@ -133,7 +135,7 @@ V3_TOOLS: list[types.Tool] = [
                 "id": {"type": "string", "minLength": 1},
                 "fields": {
                     "type": "object",
-                    "description": "Column → new-value map. Only listed columns are updated.",
+                    "description": "Column -> new-value map. Only listed columns are updated.",
                 },
                 "agent_id": {"type": "string", "default": "mcp"},
             },
@@ -141,11 +143,11 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_pin",
+        name="memory_pin",
         description=(
-            "v3 pin — toggle pinned bit on a decision or behavior. "
-            "Pinned rows ride every brief section regardless of recency "
-            "or relevance. Pass ``pinned=false`` to unpin."
+            "Toggle pinned bit on a decision or behavior. Pinned rows ride "
+            "every brief section regardless of recency or relevance. Pass "
+            "``pinned=false`` to unpin."
         ),
         inputSchema={
             "type": "object",
@@ -160,11 +162,11 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_archive",
+        name="memory_archive",
         description=(
-            "v3 archive — mark a row as archived so it stops showing in "
-            "brief / list / search by default but stays retrievable by "
-            "id. Pass ``reason`` to record why."
+            "Mark a row as archived so it stops showing in brief / list / "
+            "search by default but stays retrievable by id. Pass ``reason`` "
+            "to record why."
         ),
         inputSchema={
             "type": "object",
@@ -179,12 +181,12 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_brief",
+        name="memory_brief",
         description=(
-            "v3 brief — ≤max_tokens session-start brief composed from "
-            "compact projections. Sections: identity, behaviors, "
-            "decisions, state, code_hubs. Hook primitive for "
-            "UserPromptSubmit / session-start injection."
+            "Session-start brief, capped at ``max_tokens``, composed from "
+            "compact projections. Sections: identity, behaviors, decisions, "
+            "state, code_hubs. Hook primitive for UserPromptSubmit / "
+            "session-start injection."
         ),
         inputSchema={
             "type": "object",
@@ -202,12 +204,12 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_lint",
+        name="memory_lint",
         description=(
-            "v3 lint — pre-task advisory. Returns {verdict, "
-            "applicable_rules, related_decisions, prior_failures, "
-            "watch_outs}. Hook primitive for PreToolUse wiring; safe "
-            "to call advisory-only when there is no PreToolUse hook."
+            "Pre-task advisory. Returns {verdict, applicable_rules, "
+            "related_decisions, prior_failures, watch_outs}. Hook primitive "
+            "for PreToolUse wiring; safe to call advisory-only when there "
+            "is no PreToolUse hook."
         ),
         inputSchema={
             "type": "object",
@@ -221,12 +223,11 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_invoke_skill",
+        name="memory_invoke_skill",
         description=(
-            "v3 invoke skill — fetch full body_md of a skill and bump "
-            "usage_count + last_invoked_at. The ONLY surface that "
-            "returns full markdown body; every other tool returns "
-            "compact projections."
+            "Fetch full body_md of a skill and bump usage_count + "
+            "last_invoked_at. The ONLY surface that returns full markdown "
+            "body; every other tool returns compact projections."
         ),
         inputSchema={
             "type": "object",
@@ -238,18 +239,17 @@ V3_TOOLS: list[types.Tool] = [
         },
     ),
     types.Tool(
-        name="memory_v3_impact_check",
+        name="memory_impact_check",
         description=(
-            "DISCIPLINE PRIMITIVE — call this BEFORE reading or editing "
-            "source files. Returns the one-shot impact envelope: "
-            "digest (purpose + top symbols), callers (who depends on "
-            "this file), hot symbols (≥3 callers each), verdict "
-            "(low / medium / high / not_indexed), and an advisory "
-            "naming the right follow-up tool. Replaces a 3-call "
-            "sequence (memory_file_digest + memory_graph_neighbors + "
-            "ad-hoc Grep) with one cheap envelope. Use this INSTEAD "
-            "of Read whenever the goal is impact analysis or symbol "
-            "discovery; Read is fallback for understanding unknown "
+            "DISCIPLINE PRIMITIVE -- call this BEFORE reading or editing "
+            "source files. Returns the one-shot impact envelope: digest "
+            "(purpose + top symbols), callers (who depends on this file), "
+            "hot symbols (>=3 callers each), verdict (low / medium / high "
+            "/ not_indexed), and an advisory naming the right follow-up "
+            "tool. Replaces a 3-call sequence (file_digest + "
+            "graph_neighbors + ad-hoc Grep) with one cheap envelope. Use "
+            "this INSTEAD of Read whenever the goal is impact analysis or "
+            "symbol discovery; Read is fallback for understanding unknown "
             "algorithm logic."
         ),
         inputSchema={

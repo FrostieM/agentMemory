@@ -67,7 +67,7 @@ sequence (`memory_file_digest` + `memory_graph_neighbors` + ad-hoc Grep).
 
 Every response wraps in `{"ok": bool, "data": ..., "error": {"code": str, "message": str} | null}`.
 
-The MCP tools that wrap these are named `memory_v3_*` and share the same
+The MCP tools that wrap these are named `memory_*` and share the same
 shapes — see [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) §v3.0.0 for the
 canonical list.
 

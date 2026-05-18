@@ -1,6 +1,6 @@
 """v3 code indexer — one-file integration of chunks + symbol_edges + digest.
 
-The discipline primitive ``memory_v3_impact_check`` is only as useful as
+The discipline primitive ``memory_impact_check`` is only as useful as
 the data in three tables:
 
   * ``code_digests``  — file-level summary (purpose, top symbols)

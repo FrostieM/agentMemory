@@ -25,7 +25,7 @@ median ≤2h. Acceptance gate runs via `scripts/v3_acceptance_gate.py`.
 
 The 3.0.0-dev work runs in parallel with the stable 2.x surface; both
 ship from the same checkout. v3 endpoints mount at `/v3/memory/*`,
-v3 MCP tools are prefixed `memory_v3_*`, v2 surface keeps working
+v3 MCP tools are prefixed `memory_*`, v2 surface keeps working
 unchanged until the week-8 canary flip.
 
 ### Foundation (Phase 1)
@@ -44,20 +44,20 @@ unchanged until the week-8 canary flip.
 - **Compact projections** (`src/agent_memory_lite/v3/storage/projections.py`)
   — per-kind ~20-40-token shapes. Decision projection: `{id, title,
   status, gist, supersedes, valid_from}`. Full content opt-in via
-  `memory_v3_get(kind, id, fields=[...])`.
+  `memory_get(kind, id, fields=[...])`.
 - **Reader + writer** with versioned mutations. Every write
-  snapshots prior content to `versions` table; `memory_v3_rollback`
+  snapshots prior content to `versions` table; `memory_rollback`
   writes historical content as a new version (linear history).
 
 ### Cognition (Phase 2)
 
-- **`memory_v3_brief`** — ≤500-token session-start brief composed
+- **`memory_brief`** — ≤500-token session-start brief composed
   from 5 sections (identity 100 + behaviors 120 + decisions 130 +
   state 60 + code_hubs 90). Replaces v2's verbose `<memory_context>`
   envelope (~1500 tokens). In-process LRU cache keyed on workspace
   fingerprint; cache hit ~sub-millisecond, miss ~30-80ms (pure SQL,
   no LLM).
-- **`memory_v3_lint`** — pre-task advisory wrapping the existing
+- **`memory_lint`** — pre-task advisory wrapping the existing
   `enforcement/dispatch.py` mechanical + semantic stack. Returns
   `{verdict, applicable_rules, related_decisions, prior_failures,
   watch_outs}`. Failure-soft: any error degrades to `allow`.
@@ -74,7 +74,7 @@ unchanged until the week-8 canary flip.
   distills one insight candidate per cluster. Catches up after sleep
   via `-StartWhenAvailable`.
 - **Optional cross-encoder reranker** — opt-in `[rerank]` extra
-  installs `sentence-transformers + torch`. `memory_v3_search`
+  installs `sentence-transformers + torch`. `memory_search`
   accepts `rerank=true` and reorders the top-N hits by
   `jina-reranker-v1-tiny-en` (~33 MB CPU). Failure-soft: extra not
   installed or model load fails → falls back to BM25 order silently.
@@ -84,7 +84,7 @@ unchanged until the week-8 canary flip.
 - **HTTP `/v3/memory/*`** — 13 endpoints returning uniform
   `{ok, data, error}` envelope. Routes are thin wrappers around v3
   storage / cognition.
-- **9 MCP tools** (`memory_v3_*` prefix during transition):
+- **9 MCP tools** (`memory_*` prefix during transition):
   6 strict (search, get, write, edit, pin, archive) + 2 hook
   primitives (brief, lint) + invoke_skill. Registered alongside
   v2 tools without collisions.

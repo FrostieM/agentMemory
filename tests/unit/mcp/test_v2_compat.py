@@ -47,9 +47,16 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 # ============================================================
 
 
-def test_is_enabled_default_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_enabled_default_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default flipped to ON post canonical-rename (2026-05-18).
+
+    The shim now routes legacy v2 names like ``memory_record_with_evidence``
+    to the canonical backend, skipping the slow native v2 pipeline that
+    hung Claude Code on multi-KB writes. Set env to ``false`` to restore
+    the native v2 path for debugging.
+    """
     monkeypatch.delenv("MEMORY_V2_COMPAT_ENABLED", raising=False)
-    assert v2_compat.is_enabled() is False
+    assert v2_compat.is_enabled() is True
 
 
 @pytest.mark.parametrize("value", ["true", "1", "yes", "on", "TRUE", "True"])
@@ -82,7 +89,7 @@ def test_dispatch_carries_deprecation_notice(conn: sqlite3.Connection) -> None:
     assert env is not None
     assert env["ok"] is True
     assert "deprecation_notice" in env
-    assert "memory_v3_write" in env["deprecation_notice"]
+    assert "memory_write" in env["deprecation_notice"]
 
 
 def test_dispatch_never_raises(conn: sqlite3.Connection) -> None:

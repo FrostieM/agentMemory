@@ -233,7 +233,7 @@ def test_lint_payload_query_extraction_for_decisions(conn: sqlite3.Connection) -
 
 
 # ============================================================
-# discipline_hint — redirects Read/Edit/Grep to memory_v3_impact_check
+# discipline_hint — redirects Read/Edit/Grep to memory_impact_check
 # ============================================================
 
 
@@ -271,7 +271,7 @@ def test_lint_discipline_hint_fires_on_read_with_callers(
         tool_name="Read",
         tool_payload={"file_path": "src/hub.py"},
     )
-    assert "memory_v3_impact_check" in result.discipline_hint
+    assert "memory_impact_check" in result.discipline_hint
     assert "verdict='medium'" in result.discipline_hint
     # verdict promoted from allow → allow_with_advisories so the hook
     # surfaces the hint in the system-reminder.
@@ -286,7 +286,7 @@ def test_lint_discipline_hint_fires_on_edit(conn: sqlite3.Connection) -> None:
         tool_name="Edit",
         tool_payload={"file_path": "src/x.py"},
     )
-    assert "memory_v3_impact_check" in result.discipline_hint
+    assert "memory_impact_check" in result.discipline_hint
 
 
 def test_lint_no_discipline_hint_for_unindexed_file(
@@ -316,13 +316,13 @@ def test_lint_no_discipline_hint_for_low_impact_file(
     assert result.discipline_hint == ""
 
 
-def test_lint_no_discipline_hint_for_v3_tools(conn: sqlite3.Connection) -> None:
-    """memory_v3_* tools ARE the right path — no redirect."""
+def test_lint_no_discipline_hint_for_canonical_tools(conn: sqlite3.Connection) -> None:
+    """Canonical memory_* tools ARE the right path -- no redirect."""
     _seed_digest(conn, file_path="src/hub.py", inbound=10)
     result = lint(
         conn,
         workspace_id="ws",
-        tool_name="memory_v3_get",
+        tool_name="memory_get",
         tool_payload={"file_path": "src/hub.py"},
     )
     assert result.discipline_hint == ""

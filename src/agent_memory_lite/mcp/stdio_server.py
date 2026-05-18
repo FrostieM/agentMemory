@@ -36,6 +36,7 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
     _handle_ingest_file,
     _handle_search,
 )
+from agent_memory_lite.mcp.stdio_handlers_v3 import V3_HANDLERS
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
 from agent_memory_lite.mcp.v2_compat import compat_dispatch
@@ -76,20 +77,23 @@ async def _list_tools() -> list[types.Tool]:
 
 
 def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | None:
-    """Route ``name`` through the v2→v3 compat shim when enabled.
+    """Route ``name`` through the v2-to-canonical compat shim when enabled.
 
     Returns an envelope dict when the shim handled the call, ``None``
     otherwise (caller falls through to the native v2 handler).
 
-    Gate: ``MEMORY_V2_COMPAT_ENABLED`` env. Off by default during the
-    v3 transition; flip to ``true`` at the week-8 cutover to route
-    every legacy v2 tool name through the v3 backend.
+    Gate: ``MEMORY_V2_COMPAT_ENABLED`` env, **default ON** post 2026-05-18
+    canonical-rename. The shim translates legacy v2 names
+    (``memory_record_with_evidence``, ``memory_write_decision``, ...) onto
+    the canonical backend (``memory_write``) so they no longer drag the
+    slow Ollama-extraction pipeline into the agent's hot path.
     """
     if not v2_compat_enabled():
         return None
-    # The shim only handles v2 names; v3-prefixed names always use the
-    # native v3 handler.
-    if name.startswith("memory_v3_"):
+    # The shim only handles legacy v2 names that need translation to
+    # the canonical backend. Canonical names (memory_search,
+    # memory_write, memory_get, etc.) always hit V3_HANDLERS directly.
+    if name in V3_HANDLERS:
         return None
     try:
         return compat_dispatch(_runtime.db(), name, args)

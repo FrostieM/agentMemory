@@ -11,12 +11,12 @@ and ride every brief automatically. They override default reflexes.
 
 | Trigger | **v3 call (prefer)** | Legacy fallback |
 |---|---|---|
-| About to `Read` / `Edit` / `Grep` a source file | **`memory_v3_impact_check(file_path=...)`** — digest + callers + verdict in one envelope | `memory_file_digest` + `memory_graph_neighbors` (3 calls) |
-| About to write a decision / theory / behavior / skill | **`memory_v3_search(query=<topic>)`** to surface duplicates | `memory_list_decisions(query=..., include_superseded=true)` |
+| About to `Read` / `Edit` / `Grep` a source file | **`memory_impact_check(file_path=...)`** — digest + callers + verdict in one envelope | `memory_file_digest` + `memory_graph_neighbors` (3 calls) |
+| About to write a decision / theory / behavior / skill | **`memory_search(query=<topic>)`** to surface duplicates | `memory_list_decisions(query=..., include_superseded=true)` |
 | Just wrote a decision/theory | Scan response `capability_suggestions`, **`memory_link_capability(...)`** the best match | (same) |
-| Session start | **`memory_v3_brief()`** — ≤500-token compact brief | `memory_get_context(query=...)` — ~1500-token envelope |
+| Session start | **`memory_brief()`** — ≤500-token compact brief | `memory_get_context(query=...)` — ~1500-token envelope |
 
-`memory_v3_impact_check` returns `{verdict: low|medium|high|not_indexed,
+`memory_impact_check` returns `{verdict: low|medium|high|not_indexed,
 advisory: "<next step>", digest, callers, hot_symbols}`. The advisory
 field tells you exactly which follow-up tool to call next.
 

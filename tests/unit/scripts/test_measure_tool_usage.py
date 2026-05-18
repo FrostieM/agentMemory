@@ -57,9 +57,9 @@ def _write_transcript(path: Path, tool_names: list[str], session_id: str = "s1")
 
 def test_iter_tool_uses_emits_each_block(tmp_path: Path) -> None:
     t = tmp_path / "s.jsonl"
-    _write_transcript(t, ["Read", "Grep", "memory_v3_impact_check"])
+    _write_transcript(t, ["Read", "Grep", "memory_impact_check"])
     names = [tu["name"] for tu in m._iter_tool_uses(t)]
-    assert names == ["Read", "Grep", "memory_v3_impact_check"]
+    assert names == ["Read", "Grep", "memory_impact_check"]
 
 
 def test_iter_tool_uses_skips_malformed_lines(tmp_path: Path) -> None:
@@ -89,7 +89,7 @@ def test_iter_tool_uses_handles_missing_file(tmp_path: Path) -> None:
 
 def test_project_stats_totals_and_share() -> None:
     s = m.ProjectStats(project="x")
-    s.tool_counts = Counter({"Read": 10, "Grep": 5, "memory_v3_impact_check": 3, "Edit": 2})
+    s.tool_counts = Counter({"Read": 10, "Grep": 5, "memory_impact_check": 3, "Edit": 2})
     assert s.read_grep_total == 15
     assert s.graph_total == 3
     assert s.edit_total == 2
@@ -114,7 +114,7 @@ def test_project_stats_totals_and_share() -> None:
 def test_project_stats_verdict_thresholds(graph: int, read_grep: int, expected: str) -> None:
     s = m.ProjectStats(project="x")
     if graph:
-        s.tool_counts["memory_v3_impact_check"] = graph
+        s.tool_counts["memory_impact_check"] = graph
     if read_grep:
         s.tool_counts["Read"] = read_grep
     assert s.verdict() == expected
@@ -122,7 +122,7 @@ def test_project_stats_verdict_thresholds(graph: int, read_grep: int, expected: 
 
 def test_project_stats_to_dict_shape() -> None:
     s = m.ProjectStats(project="x", transcript_count=2)
-    s.tool_counts = Counter({"Read": 3, "memory_v3_impact_check": 1})
+    s.tool_counts = Counter({"Read": 3, "memory_impact_check": 1})
     out = s.to_dict()
     assert set(out.keys()) == {
         "project",
@@ -145,12 +145,12 @@ def test_measure_project_walks_jsonl_files(tmp_path: Path) -> None:
     project = tmp_path / "p"
     project.mkdir()
     _write_transcript(project / "a.jsonl", ["Read", "Read", "Grep"])
-    _write_transcript(project / "b.jsonl", ["memory_v3_impact_check"])
+    _write_transcript(project / "b.jsonl", ["memory_impact_check"])
     stats = m.measure_project(project)
     assert stats.transcript_count == 2
     assert stats.tool_counts["Read"] == 2
     assert stats.tool_counts["Grep"] == 1
-    assert stats.tool_counts["memory_v3_impact_check"] == 1
+    assert stats.tool_counts["memory_impact_check"] == 1
 
 
 def test_measure_project_ignores_non_jsonl(tmp_path: Path) -> None:
@@ -169,14 +169,14 @@ def test_measure_project_ignores_non_jsonl(tmp_path: Path) -> None:
 
 def test_rollup_aggregates_across_projects() -> None:
     a = m.ProjectStats(project="a", transcript_count=2)
-    a.tool_counts = Counter({"Read": 10, "memory_v3_impact_check": 3})
+    a.tool_counts = Counter({"Read": 10, "memory_impact_check": 3})
     b = m.ProjectStats(project="b", transcript_count=1)
     b.tool_counts = Counter({"Read": 5, "Grep": 2})
     total = m.rollup([a, b])
     assert total.transcript_count == 3
     assert total.tool_counts["Read"] == 15
     assert total.tool_counts["Grep"] == 2
-    assert total.tool_counts["memory_v3_impact_check"] == 3
+    assert total.tool_counts["memory_impact_check"] == 3
 
 
 # ============================================================
@@ -186,7 +186,7 @@ def test_rollup_aggregates_across_projects() -> None:
 
 def test_main_transcript_mode_json(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     t = tmp_path / "single.jsonl"
-    _write_transcript(t, ["Read", "Read", "memory_v3_impact_check"])
+    _write_transcript(t, ["Read", "Read", "memory_impact_check"])
     rc = m.main(["--transcript", str(t), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -202,7 +202,7 @@ def test_main_transcript_missing_returns_two(tmp_path: Path, capsys: pytest.Capt
 def test_main_root_mode_human(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     project = tmp_path / "p"
     project.mkdir()
-    _write_transcript(project / "a.jsonl", ["memory_v3_impact_check", "Read"])
+    _write_transcript(project / "a.jsonl", ["memory_impact_check", "Read"])
     rc = m.main(["--root", str(tmp_path)])
     assert rc == 0
     out = capsys.readouterr().out
@@ -262,5 +262,5 @@ def test_tool_buckets_are_disjoint() -> None:
 
 
 def test_graph_bucket_includes_impact_check() -> None:
-    """memory_v3_impact_check must be classified as a graph tool."""
-    assert "memory_v3_impact_check" in m.GRAPH_TOOLS
+    """memory_impact_check must be classified as a graph tool."""
+    assert "memory_impact_check" in m.GRAPH_TOOLS

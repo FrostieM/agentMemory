@@ -63,7 +63,7 @@ After 1-2 days of work in the project, measure adoption:
 python scripts/measure_tool_usage.py --since-days 2
 ```
 
-Target: `graph_share >= 0.30` — agent reaches for `memory_v3_*`
+Target: `graph_share >= 0.30` — agent reaches for `memory_*`
 instead of `Read` / `Grep`. Baseline measured on existing projects:
 `0.00%` (graph tools effectively unused before v3 stack).
 

@@ -102,12 +102,12 @@ _VERDICT_THRESHOLDS = {
 _ADVISORY_BY_VERDICT = {
     "not_indexed": (
         "File not in code_digests yet. Run PostToolUse digest hook or call "
-        "memory_v3_get(kind='code_digest', id='<file_path>') after the next edit. "
+        "memory_get(kind='code_digest', id='<file_path>') after the next edit. "
         "Falling back to Read is acceptable but blind to downstream impact."
     ),
     "low": ("Low impact: no recorded callers. Safe to edit with normal review."),
     "medium": (
-        "Medium impact: 1-5 callers. Use memory_v3_get(kind='code_digest', "
+        "Medium impact: 1-5 callers. Use memory_get(kind='code_digest', "
         "id='<file>', fields=['top_callers_json']) for the full caller list "
         "before changing signatures."
     ),

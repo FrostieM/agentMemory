@@ -88,7 +88,7 @@ def test_seeded_rules_have_graph_first_rule(db_path: Path) -> None:
         conn.close()
     assert row is not None
     rule, one_line = row
-    assert "memory_v3_impact_check" in rule
+    assert "memory_impact_check" in rule
     assert "Read/Edit/Grep" in rule
     assert "impact_check" in one_line
 

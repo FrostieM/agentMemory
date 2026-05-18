@@ -187,14 +187,14 @@ def _build_discipline_hint(
     """Surface the impact_check redirect when a discipline-relevant tool is called.
 
     The point: every Read/Grep/Edit/Write on a known file is an
-    opportunity for the agent to call memory_v3_impact_check FIRST and
+    opportunity for the agent to call memory_impact_check FIRST and
     learn (a) the file's purpose without reading source, (b) who
     depends on it before mutating signatures, (c) whether the digest
     is stale.
 
     Returns an empty string when:
-      * tool is not in the discipline set (e.g. memory_v3_* tools
-        themselves — those ARE the right path)
+      * tool is not in the discipline set (e.g. the canonical memory_*
+        tools themselves -- those ARE the right path)
       * no file_path in payload
       * file is not_indexed AND not stale (no digest signal to leverage)
     """
@@ -220,9 +220,9 @@ def _build_discipline_hint(
         # No leverage — file has no recorded callers. Read is fine here.
         return ""
     return (
-        f"memory_v3_impact_check shows verdict={verdict!r} "
+        f"memory_impact_check shows verdict={verdict!r} "
         f"({callers_count} callers, {hot_count} hot symbol(s)) "
-        f"for {raw_path!r}. CALL memory_v3_impact_check(file_path={raw_path!r}) "
+        f"for {raw_path!r}. CALL memory_impact_check(file_path={raw_path!r}) "
         f"BEFORE {tool_name} for the full digest + callers + advisory."
     )
 

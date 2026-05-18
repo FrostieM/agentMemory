@@ -31,7 +31,7 @@ blind — say so, do not fall back to "internal memory".
 
 The agent now has two coexisting surfaces:
 
-* **`memory_v3_*` tools** (10 of them) — compact projections by default,
+* **`memory_*` tools** (10 of them) — compact projections by default,
   ~20-40 tokens per item, full content opt-in via `fields=`. This is
   the version-current surface. **Prefer these whenever possible.**
 * **Legacy `memory_*` tools** — full-body responses (~500-2000 tokens).
@@ -39,12 +39,12 @@ The agent now has two coexisting surfaces:
 
 ### Discipline rules — call these FIRST (override any reflex)
 
-1. **`memory_v3_impact_check(file_path=<path>)`** before any
+1. **`memory_impact_check(file_path=<path>)`** before any
    `Read` / `Edit` / `Grep` / `Write` on source code. Returns digest +
    callers + hot symbols + verdict + advisory in ONE envelope. `Read`
    is fallback only — for understanding algorithm logic, not for
    impact analysis or symbol discovery.
-2. **`memory_v3_search(query=<topic>)`** before writing a new decision /
+2. **`memory_search(query=<topic>)`** before writing a new decision /
    theory / behavior / skill. Pass `supersedes_id` when replacing an
    existing decision. Create-new only when there is no overlap.
 3. **`memory_link_capability`** after writing a decision or theory —
@@ -59,16 +59,16 @@ These three rules ship as **pinned** workspace behaviors via
 
 | Tool | Returns |
 |---|---|
-| `memory_v3_impact_check(file_path)` | digest + callers + verdict (the cornerstone) |
-| `memory_v3_search(query, kinds?, rerank?)` | list of compact projections w/ scores |
-| `memory_v3_get(kind, id, fields?)` | compact projection; full fields opt-in |
-| `memory_v3_write(kind, payload)` | new row, returns compact projection |
-| `memory_v3_edit(kind, id, fields)` | partial update, returns projection |
-| `memory_v3_pin(kind, id, pinned)` | toggle pin bit on decision/behavior |
-| `memory_v3_archive(kind, id, reason?)` | mark archived |
-| `memory_v3_brief(task?, max_tokens?)` | session-start brief, ≤500 tokens |
-| `memory_v3_lint(tool_name, tool_payload)` | pre-task advisory (PreToolUse path) |
-| `memory_v3_invoke_skill(skill_id)` | full `body_md` of a skill (ONLY surface that returns full markdown) |
+| `memory_impact_check(file_path)` | digest + callers + verdict (the cornerstone) |
+| `memory_search(query, kinds?, rerank?)` | list of compact projections w/ scores |
+| `memory_get(kind, id, fields?)` | compact projection; full fields opt-in |
+| `memory_write(kind, payload)` | new row, returns compact projection |
+| `memory_edit(kind, id, fields)` | partial update, returns projection |
+| `memory_pin(kind, id, pinned)` | toggle pin bit on decision/behavior |
+| `memory_archive(kind, id, reason?)` | mark archived |
+| `memory_brief(task?, max_tokens?)` | session-start brief, ≤500 tokens |
+| `memory_lint(tool_name, tool_payload)` | pre-task advisory (PreToolUse path) |
+| `memory_invoke_skill(skill_id)` | full `body_md` of a skill (ONLY surface that returns full markdown) |
 
 ### Discover-then-fetch pattern (compact projections)
 
@@ -77,9 +77,9 @@ projection looks important, opt into full content:
 
 ```text
 # Discover (cheap)
-hits = memory_v3_search(query="kelly sizing", limit=5)
+hits = memory_search(query="kelly sizing", limit=5)
 # Fetch full content for ONE hit (expensive)
-full = memory_v3_get(kind="decision", id="dec_x",
+full = memory_get(kind="decision", id="dec_x",
                     fields=["decision_text", "rationale"])
 ```
 

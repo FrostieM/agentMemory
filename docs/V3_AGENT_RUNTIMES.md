@@ -5,7 +5,7 @@ How to wire each supported agent against the v3 memory surface.
 The v3 architecture exposes three first-class surfaces:
 
 1. **HTTP** at `http://127.0.0.1:8765/v3/memory/*` — language-agnostic.
-2. **MCP stdio** with `memory_v3_*` tool names — Claude Code, Cursor, Continue.
+2. **MCP stdio** with `memory_*` tool names — Claude Code, Cursor, Continue.
 3. **`memory-cli`** shell entrypoint — Aider, Codex CLI, CI scripts.
 
 All three return the same `{ok, data, error}` envelope.
@@ -14,7 +14,7 @@ All three return the same `{ok, data, error}` envelope.
 
 | Agent | Brief delivery | Tool surface | Lint enforcement |
 |---|---|---|---|
-| **Claude Code** | `UserPromptSubmit` hook → `inject_memory_brief_v3.py` | 9 MCP tools (`memory_v3_*`) | `PreToolUse` hook → `memory_v3_lint` via MCP |
+| **Claude Code** | `UserPromptSubmit` hook → `inject_memory_brief_v3.py` | 9 MCP tools (`memory_*`) | `PreToolUse` hook → `memory_lint` via MCP |
 | **Cursor / Continue** | MCP server returns brief on session init | 9 MCP tools | Advisory only (no `PreToolUse`) |
 | **Codex CLI** | `memory-cli brief` at boot | HTTP + `memory-cli` | Pre-edit shell wrapper calls `memory-cli lint` |
 | **Aider** | `memory-cli brief` at boot | HTTP + `memory-cli` | Pre-edit shell wrapper calls `memory-cli lint` |
@@ -61,7 +61,7 @@ Writes per-project `MEMORY_DB_PATH` + workspace registry entry.
 agent-memory-lite-mcp
 ```
 
-Surface includes both v2 tool names (during transition) and the 9 `memory_v3_*` tools.
+Surface includes both v2 tool names (during transition) and the 9 `memory_*` tools.
 
 ## Cursor / Continue
 
@@ -143,7 +143,7 @@ memory-cli lint --tool-name=Edit \
 
 ## Brief composition
 
-The brief returned by `memory_v3_brief` (or `GET /v3/memory/brief`) is composed
+The brief returned by `memory_brief` (or `GET /v3/memory/brief`) is composed
 from 5 compact sections summing to ≤500 tokens:
 
 | Section | Budget | Source |
@@ -161,22 +161,22 @@ Cached on workspace fingerprint (hash of pinned-file SHAs + active-task
 
 ### 6 strict MCP tools (the agent's main surface)
 
-* `memory_v3_search(query, kinds?, limit?, rerank?)` → list of compact projections
-* `memory_v3_get(kind, id, fields?)` → compact projection or full content opt-in
-* `memory_v3_write(kind, payload)` → compact projection of new row
-* `memory_v3_edit(kind, id, fields)` → compact projection after partial update
-* `memory_v3_pin(kind, id, pinned?)` → toggle pin bit
-* `memory_v3_archive(kind, id, reason?)` → mark archived
+* `memory_search(query, kinds?, limit?, rerank?)` → list of compact projections
+* `memory_get(kind, id, fields?)` → compact projection or full content opt-in
+* `memory_write(kind, payload)` → compact projection of new row
+* `memory_edit(kind, id, fields)` → compact projection after partial update
+* `memory_pin(kind, id, pinned?)` → toggle pin bit
+* `memory_archive(kind, id, reason?)` → mark archived
 
 ### 2 hook primitives
 
-* `memory_v3_brief(task?, max_tokens?)` → `{body_md, token_count, sections}`
-* `memory_v3_lint(tool_name, tool_payload, transcript_path?)` →
+* `memory_brief(task?, max_tokens?)` → `{body_md, token_count, sections}`
+* `memory_lint(tool_name, tool_payload, transcript_path?)` →
   `{verdict, applicable_rules, related_decisions, prior_failures, watch_outs}`
 
 ### 1 skill body fetch
 
-* `memory_v3_invoke_skill(skill_id)` → `{id, name, body_md}` — the ONLY surface
+* `memory_invoke_skill(skill_id)` → `{id, name, body_md}` — the ONLY surface
   that returns full markdown body
 
 ### HTTP-only (ops surface)

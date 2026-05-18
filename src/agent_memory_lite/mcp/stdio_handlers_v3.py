@@ -273,14 +273,14 @@ def _handle_v3_impact_check(args: dict[str, Any]) -> dict[str, Any]:
 
 
 V3_HANDLERS: dict[str, Any] = {
-    "memory_v3_search": _handle_v3_search,
-    "memory_v3_get": _handle_v3_get,
-    "memory_v3_write": _handle_v3_write,
-    "memory_v3_edit": _handle_v3_edit,
-    "memory_v3_pin": _handle_v3_pin,
-    "memory_v3_archive": _handle_v3_archive,
-    "memory_v3_brief": _handle_v3_brief,
-    "memory_v3_lint": _handle_v3_lint,
-    "memory_v3_invoke_skill": _handle_v3_invoke_skill,
-    "memory_v3_impact_check": _handle_v3_impact_check,
+    "memory_search": _handle_v3_search,
+    "memory_get": _handle_v3_get,
+    "memory_write": _handle_v3_write,
+    "memory_edit": _handle_v3_edit,
+    "memory_pin": _handle_v3_pin,
+    "memory_archive": _handle_v3_archive,
+    "memory_brief": _handle_v3_brief,
+    "memory_lint": _handle_v3_lint,
+    "memory_invoke_skill": _handle_v3_invoke_skill,
+    "memory_impact_check": _handle_v3_impact_check,
 }

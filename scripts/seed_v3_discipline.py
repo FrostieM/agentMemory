@@ -3,8 +3,8 @@
 The v3 architecture has three layers that funnel the agent toward
 graph tools instead of Read/Grep:
 
-  1. memory_v3_impact_check primitive — makes the right thing cheap.
-  2. memory_v3_lint discipline_hint — makes the right thing obvious
+  1. memory_impact_check primitive — makes the right thing cheap.
+  2. memory_lint discipline_hint — makes the right thing obvious
      at the point of decision (PreToolUse advisory).
   3. Brief identity discipline line — makes the rule ambient
      (every session sees it).
@@ -45,12 +45,12 @@ V3_DISCIPLINE_RULES: list[dict[str, Any]] = [
         "kind": "operating_rule",
         "rule": (
             "Before Read/Edit/Grep on any source file, call "
-            "memory_v3_impact_check(file_path=<path>) FIRST. It returns "
+            "memory_impact_check(file_path=<path>) FIRST. It returns "
             "purpose + callers + verdict in one envelope. Read is fallback "
             "for understanding algorithm logic only — not for impact analysis "
             "or symbol discovery."
         ),
-        "rule_one_line": ("Call memory_v3_impact_check before Read/Edit/Grep on source files."),
+        "rule_one_line": ("Call memory_impact_check before Read/Edit/Grep on source files."),
         "rationale": (
             "Read+Grep loops are 5-10x more expensive than the impact_check "
             "envelope and miss the caller / hot-symbol signal that prevents "
@@ -63,7 +63,7 @@ V3_DISCIPLINE_RULES: list[dict[str, Any]] = [
         "kind": "operating_rule",
         "rule": (
             "Before writing a new decision / theory / behavior / skill, call "
-            "memory_v3_search(query=<topic>) to surface any prior version "
+            "memory_search(query=<topic>) to surface any prior version "
             "or near-duplicate. Pass supersedes_id when replacing an existing "
             "decision; create-new only when there is no overlap."
         ),

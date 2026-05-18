@@ -10,7 +10,7 @@ How to move a v2 workspace to v3 without data loss or downtime.
   mounts at `/v3/memory/*`; v2 routes at `/memory/*` keep serving until you
   flip the workspace's `mode` flag.
 * **MCP tools coexist.** v2 tool names (e.g. `memory_write_decision`) keep
-  routing to the v2 backend; v3 tools (`memory_v3_*`) use the v3 backend.
+  routing to the v2 backend; v3 tools (`memory_*`) use the v3 backend.
   The v2→v3 compat shim is OFF by default (`MEMORY_V2_COMPAT_ENABLED=false`)
   during the transition.
 
@@ -90,7 +90,7 @@ workspace entry:
 
 In shadow mode:
 
-* v3 endpoints (`/v3/memory/*`) and MCP `memory_v3_*` tools route to the new DB.
+* v3 endpoints (`/v3/memory/*`) and MCP `memory_*` tools route to the new DB.
 * v2 endpoints continue routing to the original DB.
 * You can probe v3 via `memory-cli` without touching production memory.
 

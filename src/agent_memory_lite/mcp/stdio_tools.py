@@ -1,4 +1,14 @@
-"""All MCP tool schemas, concatenated from per-domain modules."""
+"""All MCP tool schemas, concatenated from per-domain modules.
+
+V3_TOOLS now use canonical names (``memory_*``, no ``_v3_`` infix).
+Where a canonical name collides with a legacy v2 tool of the same
+name (``memory_search``, ``memory_pin``, ``memory_archive``), the
+canonical (v3) implementation wins via the dedup pass below — the
+legacy spec is dropped from the advertised list so the MCP client
+sees ONE tool per name. Dispatch is handled separately in
+``stdio_handlers.py`` where V3_HANDLERS is spread last and overrides
+the same legacy keys for the same reason.
+"""
 
 from __future__ import annotations
 
@@ -21,22 +31,37 @@ from agent_memory_lite.mcp.stdio_tools_state_snapshots import STATE_SNAPSHOT_TOO
 from agent_memory_lite.mcp.stdio_tools_theories import THEORY_TOOLS
 from agent_memory_lite.mcp.stdio_tools_v3 import V3_TOOLS
 
-ALL_TOOLS: list[types.Tool] = [
-    *EPISODE_TOOLS,
-    *CODE_TOOLS,
-    *COORDINATION_TOOLS,
-    *DIGEST_TOOLS,
-    *DECISION_TOOLS,
-    *COMPOUND_TOOLS,
-    *REVIEW_TOOLS,
-    *CAPABILITY_LINK_TOOLS,
-    *THEORY_TOOLS,
-    *RESEARCH_TOOLS,
-    *CAPABILITY_TOOLS,
-    *ARCHIVE_TOOLS,
-    *P1_TOOLS,
-    *STATE_SNAPSHOT_TOOLS,
-    *REVIEW_QUEUE_TOOLS,
-    # v3 surface — alongside v2 with `memory_v3_*` prefix to avoid collisions.
-    *V3_TOOLS,
-]
+
+def _dedup_last_wins(*groups: list[types.Tool]) -> list[types.Tool]:
+    """Concat tool groups and keep the LAST spec for any duplicated name.
+
+    Used so the canonical (V3_TOOLS) spec wins when a legacy v2 tool
+    of the same name (``memory_search``, ``memory_pin``, etc.) is
+    still in one of the earlier groups.
+    """
+    seen: dict[str, types.Tool] = {}
+    for group in groups:
+        for tool in group:
+            seen[tool.name] = tool  # last write wins
+    return list(seen.values())
+
+
+ALL_TOOLS: list[types.Tool] = _dedup_last_wins(
+    EPISODE_TOOLS,
+    CODE_TOOLS,
+    COORDINATION_TOOLS,
+    DIGEST_TOOLS,
+    DECISION_TOOLS,
+    COMPOUND_TOOLS,
+    REVIEW_TOOLS,
+    CAPABILITY_LINK_TOOLS,
+    THEORY_TOOLS,
+    RESEARCH_TOOLS,
+    CAPABILITY_TOOLS,
+    ARCHIVE_TOOLS,
+    P1_TOOLS,
+    STATE_SNAPSHOT_TOOLS,
+    REVIEW_QUEUE_TOOLS,
+    # Canonical surface — overrides any legacy entry of the same name.
+    V3_TOOLS,
+)

@@ -120,7 +120,7 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
     if code_count > 0:
         lines.append(
             "DISCIPLINE: before Read/Edit/Grep on any source file, "
-            "call memory_v3_impact_check(file_path=<path>) FIRST. "
+            "call memory_impact_check(file_path=<path>) FIRST. "
             "It returns purpose + callers + verdict in one envelope; "
             "Read is fallback for understanding algorithm logic only."
         )

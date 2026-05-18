@@ -10,7 +10,7 @@ Read this AFTER you've shipped v2.1.5 and have at least one
 project's worth of code ingested. Without ingested code, all the
 endpoints below return empty.
 
-> **v3.0.0 — start with `memory_v3_impact_check`.** The version-
+> **v3.0.0 — start with `memory_impact_check`.** The version-
 > current discipline primitive replaces a 3-call sequence
 > (`memory_file_digest` + `memory_graph_neighbors` + ad-hoc Grep)
 > with one envelope:  digest + callers + hot_symbols + verdict +
