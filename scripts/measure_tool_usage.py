@@ -2,7 +2,7 @@
 
 Parses Claude Code session transcripts (``~/.claude/projects/*/*.jsonl``)
 and tallies how often the agent reaches for cheap-but-blind tools
-(Read, Grep, Glob) vs the v3 graph primitives
+(Read, Grep, Glob) vs the canonical graph primitives
 (memory_impact_check, memory_get, memory_search,
 memory_graph_neighbors, memory_find_symbols).
 
@@ -36,7 +36,7 @@ from typing import Any
 
 DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
 
-# Tool buckets — adjust here when adding new v3 primitives or v2 graph tools.
+# Tool buckets — adjust here when adding new canonical primitives or v2 graph tools.
 READ_GREP_TOOLS = frozenset({"Read", "Grep", "Glob"})
 GRAPH_TOOLS = frozenset(
     {
@@ -57,7 +57,7 @@ EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 # Verdict thresholds on graph_share = graph / (graph + read_grep).
 _VERDICTS = (
-    (0.50, "strong"),  # discipline solid; v3 primitives are first instinct
+    (0.50, "strong"),  # discipline solid; canonical primitives are first instinct
     (0.30, "good"),  # plan target; agent reaches for graph reliably
     (0.15, "fair"),  # discipline lands sometimes; brief / lint may help
     (0.00, "poor"),  # graph tools effectively unused

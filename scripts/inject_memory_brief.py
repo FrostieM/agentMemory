@@ -1,14 +1,14 @@
-"""v3 UserPromptSubmit hook: prepend a ≤500-token brief from /memory/brief.
+"""UserPromptSubmit memory brief hook: prepend a ≤500-token brief from /memory/brief.
 
-The v3 replacement for ``scripts/inject_memory_context.py``. Where the v2 hook
+Memory brief hook -- replacement for ``scripts/inject_memory_context.py``. Where the v2 hook
 emits a verbose ``<memory_context>`` envelope (~1500 tokens) by calling
-``/memory/get_context``, this v3 hook emits a tight pre-task brief composed
+``/memory/get_context``, this hook emits a tight pre-task brief composed
 from compact projections (~500 tokens) by calling ``/memory/brief``.
 
 Architecture:
 
 * The v2 hook keeps shipping for projects still on v2.
-* This v3 hook is opt-in via setup_agent.py ``--v3`` (added at week 5)
+* This hook is opt-in via setup_agent.py (added at week 5)
   or by manually editing ``~/.claude/settings.json``.
 * At week 8 cutover, setup_agent flips new projects to this hook by
   default.
@@ -129,7 +129,7 @@ def _emit_brief(body_md: str) -> None:
 
 
 def _emit_notice(message: str) -> None:
-    sys.stdout.write(f"<agent-memory>\n<!-- v3 brief hook notice: {message} -->\n</agent-memory>\n")
+    sys.stdout.write(f"<agent-memory>\n<!-- memory brief hook notice: {message} -->\n</agent-memory>\n")
 
 
 def _fetch_brief(
@@ -221,14 +221,14 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
     )
     if data is None:
         _emit_notice(
-            f"agent-memory-lite v3 brief unreachable at {DEFAULT_BASE}. "
+            f"agent-memory-lite memory brief unreachable at {DEFAULT_BASE}. "
             "Run `python -m agent_memory_lite` to start the service."
         )
         return 0
 
     body_md = data.get("body_md")
     if not isinstance(body_md, str) or not body_md.strip():
-        _emit_notice("v3 brief returned no body — empty workspace?")
+        _emit_notice("memory brief returned no body — empty workspace?")
         return 0
 
     if used_global_fallback:
@@ -241,7 +241,7 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
         ) or ["<empty>"]
         notice = (
             f'<hook_notice severity="info" code="global_fallback">\n'
-            f"  v3 brief hook resolved no project workspace for cwd; using "
+            f"  memory brief hook resolved no project workspace for cwd; using "
             f"`{workspace}` (registered workspaces: {registered}). "
             f"To get a project-scoped brief, open Claude Code from one of the "
             f"registered project roots, or set "

@@ -1,6 +1,6 @@
-"""Install the v3 hook + seed stack for one project. Operator-facing.
+"""Install the memory hook + seed stack for one project. Operator-facing.
 
-This is the deployment surface for Phase 5 of the v3 plan.  It wires
+This is the deployment surface for Phase 5 of the plan.  It wires
 the four discipline layers (impact_check primitive, lint advisory,
 brief identity line, pinned seed rules) into a project's actual
 Claude Code installation:
@@ -8,7 +8,7 @@ Claude Code installation:
   1. Project-scoped ``.claude/settings.json`` gains a
      ``UserPromptSubmit`` hook → ``inject_memory_brief.py`` and a
      ``PostToolUse`` hook → ``post_edit_enqueue.py``.
-  2. The workspace's SQLite DB has the v3 schema applied (if not
+  2. The workspace's SQLite DB has the canonical schema applied (if not
      already) and the 3 pinned discipline behaviors seeded.
 
 Dry-run by default — emits the settings.json delta and seed plan
@@ -294,14 +294,14 @@ def apply_hooks(plan: InstallPlan, *, backup: bool) -> None:
 
 
 def apply_seed(plan: InstallPlan) -> dict[str, str]:
-    """Apply v3 schema (if missing) + seed discipline rules. Idempotent."""
+    """Apply the canonical schema (if missing) + seed discipline rules. Idempotent."""
     if plan.db_path is None or not plan.workspace_id:
         return {"status": "skipped", "reason": "workspace not registered for this project_root"}
     db_path = plan.db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
-        # Ensure v3 schema is applied. The v3 schema script uses
+        # Ensure canonical schema is applied. The schema script uses
         # CREATE TABLE IF NOT EXISTS, so it's idempotent on an existing DB.
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.commit()
@@ -334,7 +334,7 @@ def render_human(
     seed_result: dict[str, str] | None,
 ) -> str:
     lines = [
-        f"# v3 hooks installer — project: {plan.project_root}",
+        f"# Memory hooks installer — project: {plan.project_root}",
         f"workspace_id = {plan.workspace_id or '<not registered>'}",
         f"db_path      = {plan.db_path or '<none>'}",
         f"settings_path= {plan.settings_path}",
@@ -349,7 +349,7 @@ def render_human(
         lines.append(f"  {marker} {h.event}{matcher_part}")
         lines.append(f"      command: {h.command}")
     lines.append("")
-    lines.append("## Seed (v3 discipline rules)")
+    lines.append("## Seed (discipline rules)")
     if not plan.seed_rules:
         lines.append("  (seed disabled)")
     elif seed_result is None:
@@ -372,7 +372,7 @@ def render_human(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Install v3 hooks + seed discipline rules for one project."
+        description="Install memory hooks + seed discipline rules for one project."
     )
     parser.add_argument("--project", required=True, type=Path, help="Project root path.")
     parser.add_argument(

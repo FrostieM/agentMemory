@@ -1,9 +1,9 @@
-"""End-to-end tests for the v3 HTTP surface mounted at /memory/*.
+"""End-to-end tests for the canonical HTTP surface mounted at /memory/*.
 
-Builds a minimal FastAPI app with just the v3 router — bypasses the
-v2 migration bootstrap (which would conflict with v3 schema in the
+Builds a minimal FastAPI app with just the canonical router — bypasses the
+v2 migration bootstrap (which would conflict with the canonical schema in the
 same DB). Production wiring runs v2 migrations against v2 DBs and
-v3 schema against v3 DBs separately.
+canonical schema against canonical DBs separately.
 """
 
 from __future__ import annotations
@@ -23,10 +23,10 @@ SCHEMA_PATH = Path(__file__).resolve().parents[2] / "migrations" / "canonical" /
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    """FastAPI client with a pure v3-schema DB and only v3 routes mounted."""
-    db_path = tmp_path / "v3.db"
+    """FastAPI client with a pure canonical-schema DB and only canonical routes mounted."""
+    db_path = tmp_path / "canonical.db"
 
-    # Apply v3 schema to a fresh DB.
+    # Apply canonical schema to a fresh DB.
     init_conn = sqlite3.connect(db_path)
     try:
         init_conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -90,7 +90,7 @@ def test_v3_write_decision_returns_envelope(client: TestClient) -> None:
 
 
 def test_v3_get_returns_projection(client: TestClient) -> None:
-    dec_id = _seed_decision(client, title="Hello v3")
+    dec_id = _seed_decision(client, title="Hello canonical")
     r = client.get(
         "/memory/get",
         params={"workspace_id": "default", "kind": "decision", "id": dec_id},
@@ -98,7 +98,7 @@ def test_v3_get_returns_projection(client: TestClient) -> None:
     body = r.json()
     assert body["ok"] is True
     assert body["data"]["id"] == dec_id
-    assert body["data"]["title"] == "Hello v3"
+    assert body["data"]["title"] == "Hello canonical"
     assert "decision_text" not in body["data"]  # full body NOT in projection
 
 

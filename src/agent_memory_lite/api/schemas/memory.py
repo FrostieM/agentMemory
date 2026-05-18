@@ -1,4 +1,4 @@
-"""Pydantic wire schemas for the v3 HTTP + MCP surface.
+"""Pydantic wire schemas for the canonical HTTP + MCP surface.
 
 Kept separate from the domain types in ``models/`` so wire shape can
 evolve without touching SQL row models. Every response is wrapped in

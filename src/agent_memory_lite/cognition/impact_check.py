@@ -1,4 +1,4 @@
-"""v3 impact_check — one-shot pre-edit / pre-read analysis of one file.
+"""Impact_check primitive — one-shot pre-edit / pre-read analysis of one file.
 
 This is a **discipline primitive**. Its job is to make "ask the graph
 before reading the file" cheaper than "Read+Grep until you understand".
@@ -23,7 +23,7 @@ Failure-soft contract:  any SQL or schema mismatch returns a
 ``not_indexed`` verdict with an advisory that points the operator at
 the digest pipeline.  The primitive never raises.
 
-This module knows v3 SQL.  It does NOT depend on FastAPI, MCP, or
+This module knows the canonical SQL.  It does NOT depend on FastAPI, MCP, or
 any agent runtime.  HTTP route and MCP handler are thin wrappers.
 """
 

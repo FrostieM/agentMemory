@@ -1,6 +1,6 @@
-"""v3 acceptance gate — quantitative measurements for the cutover decision.
+"""Acceptance gate — quantitative measurements for the cutover decision.
 
-Runs the v3 plan's Phase-2 acceptance gate against one workspace:
+Runs the Phase-2 acceptance gate against one workspace:
 
   1. Brief token cost:  compose_brief() body_md word count.
   2. Brief cache hit rate: 5 cold + 5 warm calls, measure cache_hit fraction.
@@ -34,7 +34,7 @@ Output (default JSON, --human for a markdown summary)::
       "verdict": "pass"  // pass | warn | fail
     }
 
-Targets (from the v3 plan §Verification):
+Targets (from the plan §Verification):
 
   - Brief token count   ≤ max_tokens (default 500)         → required
   - Brief cache hit rate ≥ 0.70 after the first 5 calls    → warn if lower
@@ -288,7 +288,7 @@ def render_human(report: dict[str, Any]) -> str:
     digests = report["digests"] if isinstance(report.get("digests"), dict) else {}
     verdict = report.get("verdict", "?")
     lines = [
-        f"# v3 acceptance gate — workspace: {report.get('workspace_id', '?')}",
+        f"# Acceptance gate — workspace: {report.get('workspace_id', '?')}",
         f"Verdict: **{verdict}**",
         "",
         "## Brief",
@@ -312,8 +312,8 @@ def render_human(report: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the v3 acceptance gate measurements.")
-    parser.add_argument("--db-path", required=True, help="Path to the v3 SQLite DB.")
+    parser = argparse.ArgumentParser(description="Run the acceptance gate measurements.")
+    parser.add_argument("--db-path", required=True, help="Path to the SQLite DB.")
     parser.add_argument("--workspace", required=True, help="Workspace id.")
     parser.add_argument("--max-tokens", type=int, default=500)
     parser.add_argument(

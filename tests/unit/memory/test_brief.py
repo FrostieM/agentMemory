@@ -423,7 +423,7 @@ def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
 # placeholder row, which made the fingerprint a Cartesian product
 # over decisions x behaviors x tasks x code_digests x episodes. On
 # real workspaces (copyBot: 248 x 3 x 1 x 1355 x 974 ~ 982 million
-# synthetic rows) compose_brief took ~2 minutes. The v3 brief hook
+# synthetic rows) compose_brief took ~2 minutes. The memory brief hook
 # timed out before ever rendering, so copyBot's agent never saw the
 # v3 pinned rules.
 #

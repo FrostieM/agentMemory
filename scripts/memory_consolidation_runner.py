@@ -99,7 +99,7 @@ def _run_one(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run the v3 sleep-time consolidation pass.")
+    parser = argparse.ArgumentParser(description="Run the sleep-time consolidation pass.")
     parser.add_argument("--workspace", help="Only consolidate this workspace (omit = sweep all).")
     parser.add_argument("--window-hours", type=int, default=24)
     parser.add_argument("--max-insights", type=int, default=10)

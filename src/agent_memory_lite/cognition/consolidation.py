@@ -1,10 +1,10 @@
-"""v3 sleep-time consolidation — periodic episode clustering → insight candidates.
+"""Sleep-time consolidation — periodic episode clustering → insight candidates.
 
 Runs every 6 hours (03/09/15/21 local) via OS-level scheduled task.
 The cron itself is a thin wrapper that calls ``consolidate_workspace``
 for each registered workspace, catches up after laptop sleep.
 
-The pipeline (per the v3 plan):
+The pipeline (per the plan):
 
   1. Read last 24h episodes for the workspace.
   2. Cluster by token-overlap similarity (cheap, no embedding required
@@ -20,7 +20,7 @@ doesn't drop the others. The whole consolidate_workspace call is
 idempotent — running it twice on the same window only emits new
 candidates if new episodes appeared.
 
-Why not Ollama on the hot path: the v3 plan explicitly requires the
+Why not Ollama on the hot path: the plan explicitly requires the
 consolidation cron to be fast and offline-safe. The Ollama narrative
 upgrade is a separate enrichment pass that runs once a day, not every
 6 hours.
@@ -45,7 +45,7 @@ JACCARD_THRESHOLD = 0.30
 
 
 # ============================================================
-# Token helpers — same heuristic as v3/cognition/brief
+# Token helpers — same heuristic as cognition/brief
 # ============================================================
 
 

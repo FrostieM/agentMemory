@@ -106,7 +106,7 @@ def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | 
 async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
     args = arguments or {}
     # Compat shim runs FIRST when enabled — translates a v2 tool name
-    # into a v3 backend call before the native v2 handler sees the request.
+    # into a canonical backend call before the native v2 handler sees the request.
     shim_result = await asyncio.to_thread(_maybe_compat_dispatch, name, args)
     if shim_result is not None:
         return [types.TextContent(type="text", text=json.dumps(shim_result, ensure_ascii=False))]

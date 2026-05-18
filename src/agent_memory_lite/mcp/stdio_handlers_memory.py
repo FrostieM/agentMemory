@@ -1,4 +1,4 @@
-"""MCP handlers for the v3 surface — thin wrappers around v3 storage / cognition.
+"""MCP handlers for the canonical surface — thin wrappers around canonical storage / cognition.
 
 Each handler:
 
@@ -30,7 +30,7 @@ from agent_memory_lite.storage.reader import get_object, search
 from agent_memory_lite.storage.writer import archive, edit, pin, write
 
 # ============================================================
-# Envelope helpers (mirror v3/api/routes._ok / _err)
+# Envelope helpers (mirror api/routes/memory._ok / _err)
 # ============================================================
 
 
@@ -122,7 +122,7 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
         source_episode_id=payload.get("source_episode_id"),
     )
     if out is None:
-        return _err("unsupported_kind", f"v3 writer does not support kind={kind}")
+        return _err("unsupported_kind", f"writer does not support kind={kind}")
     return _ok(out)
 
 

@@ -1,4 +1,4 @@
-"""v3 code indexer — one-file integration of chunks + symbol_edges + digest.
+"""Code indexer — one-file integration of chunks + symbol_edges + digest.
 
 The discipline primitive ``memory_impact_check`` is only as useful as
 the data in three tables:
@@ -9,7 +9,7 @@ the data in three tables:
 
 The v2 ingestion pipeline already knows how to populate the last two
 via tree-sitter / Python AST.  This module wires that v2 plumbing into
-the v3 bulk-index flow so ``impact_check`` can finally distinguish a
+the bulk-index flow so ``impact_check`` can finally distinguish a
 hub file from a leaf — hub files get ``verdict='medium'`` or ``'high'``
 with concrete caller lists, leaves stay ``'low'``.
 
@@ -430,4 +430,4 @@ __all__: list[str] = [
 
 def _module_health() -> dict[str, Any]:
     """Diagnostic stub — kept for quick smoke checks."""
-    return {"module": "v3.cognition.code_indexer", "version": 1}
+    return {"module": "cognition.code_indexer", "version": 1}

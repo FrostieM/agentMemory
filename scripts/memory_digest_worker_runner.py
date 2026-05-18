@@ -58,7 +58,7 @@ def _redirect_streams_to_log(log_file_path: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Drain the v3 digest queue once. Used by scheduled task."
+        description="Drain the digest queue once. Used by scheduled task."
     )
     parser.add_argument(
         "--queue-path",

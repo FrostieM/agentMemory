@@ -32,7 +32,7 @@ def db_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3
     strict_workspace_isolation=False so the v3 write guard does not
     block writes to the test workspace ("default").
     """
-    db_path = tmp_path / "v3.db"
+    db_path = tmp_path / "canonical.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))

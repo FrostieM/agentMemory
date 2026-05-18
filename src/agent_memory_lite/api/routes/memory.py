@@ -6,7 +6,7 @@ route is a thin wrapper around the storage / cognition functions; no
 business logic lives here.
 
 Pre-2026-05-18 these lived at ``/memory/*`` with the legacy v2
-routes at ``/memory/*``. After the canonical rename, the v3 surface
+routes at ``/memory/*``. After the canonical rename, the canonical surface
 became the canonical surface and these routes moved to ``/memory/*``
 directly; any colliding v2 routes (search, pin, archive) were
 retired so there is one path per canonical name.
@@ -89,7 +89,7 @@ def get_endpoint(
     conn: DbDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
-    id: str = Query(min_length=1),  # noqa: A002 — v3 wire-shape field name
+    id: str = Query(min_length=1),  # noqa: A002 -- wire-shape field name
     fields: str | None = Query(default=None, description="Comma-separated extra columns"),
 ) -> Envelope:
     """Fetch one row by id. Returns compact projection by default."""
@@ -149,7 +149,7 @@ def write_endpoint(req: WriteRequest, conn: DbDep) -> Envelope:
         source_episode_id=req.source_episode_id,
     )
     if out is None:
-        return _err("unsupported_kind", f"v3 writer does not support kind={req.kind}")
+        return _err("unsupported_kind", f"writer does not support kind={req.kind}")
     return _ok(out)
 
 
@@ -224,7 +224,7 @@ def brief_endpoint(
 
 @router.post("/lint", response_model=Envelope)
 def lint_endpoint(req: LintRequest, conn: DbDep) -> Envelope:
-    """Pre-task advisory. Wraps enforcement/dispatch with v3 retrievals."""
+    """Pre-task advisory. Wraps enforcement/dispatch with canonical retrievals."""
     result = run_lint(
         conn,
         workspace_id=req.workspace_id,
@@ -301,7 +301,7 @@ def versions_endpoint(
     conn: DbDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
-    id: str = Query(min_length=1),  # noqa: A002 — v3 wire-shape field name
+    id: str = Query(min_length=1),  # noqa: A002 -- wire-shape field name
 ) -> Envelope:
     """List version history for a target, newest first."""
     rows = list_versions(conn, workspace_id=workspace_id, kind=kind, object_id=id)

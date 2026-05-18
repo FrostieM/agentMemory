@@ -57,7 +57,7 @@ def test_known_kinds_returns_ten_kinds() -> None:
 def test_project_decision_compact_shape() -> None:
     row = _row(
         id="dec_x",
-        title="Adopt v3",
+        title="Adopt canonical",
         decision_text="full body",
         rationale="full rationale",
         gist="Adopt v3 for speed",
@@ -69,7 +69,7 @@ def test_project_decision_compact_shape() -> None:
     out = project_decision(row)
     assert out["id"] == "dec_x"
     assert out["kind"] == "decision"
-    assert out["title"] == "Adopt v3"
+    assert out["title"] == "Adopt canonical"
     assert out["gist"] == "Adopt v3 for speed"
     assert out["pinned"] is True
     assert "decision_text" not in out

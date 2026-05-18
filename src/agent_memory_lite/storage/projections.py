@@ -1,4 +1,4 @@
-"""Per-kind compact projections — the cornerstone of v3 read economy.
+"""Per-kind compact projections — the cornerstone of the read-economy.
 
 Every retrieval-eligible kind has a projection function that converts
 a sqlite3.Row into the minimum-viable ~20-40 token dict the agent

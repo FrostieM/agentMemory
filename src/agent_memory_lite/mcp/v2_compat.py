@@ -1,8 +1,8 @@
-"""v2-tool → v3-backend compat shim.
+"""v2-tool -> canonical-backend compat shim.
 
 A translation layer that lets legacy v2 tool calls (``memory_write_decision``,
-``memory_list_theories``, …) survive the v3 cutover by routing them through
-the v3 storage / cognition functions with shape adapters on the input and
+``memory_list_theories``, …) survive the canonical cutover by routing them through
+the canonical storage / cognition functions with shape adapters on the input and
 the output. The native v2 handlers stay registered alongside this shim
 until the week-8 cutover; the shim becomes the only path once they are
 removed.
@@ -27,11 +27,11 @@ Coverage tiers:
   list_concepts, list_insights, list_behavior_instructions,
   list_agent_capabilities, list_candidates.
 * **Tier 3 (operational tools).** Returns ``{ok: false, error:
-  translation_pending}`` so the caller knows the v3 surface doesn't
+  translation_pending}`` so the caller knows the canonical surface doesn't
   cover it yet. Examples: snapshot_save/list/diff, list_audit,
   list_maintenance_events.
 
-The shim never raises — every call returns the v3 envelope shape
+The shim never raises — every call returns the canonical envelope shape
 ``{ok, data, error, deprecation_notice?}`` so the dispatcher can
 JSON-serialize it directly.
 """
@@ -62,7 +62,7 @@ def is_enabled() -> bool:
     of ``memory_record_with_evidence`` and ``memory_ingest_episode``
     that means a synchronous Ollama LLM call that can hang Claude
     Code for 60-180 s on a multi-KB payload. The compat shim routes
-    those legacy names through the v3 storage layer (no sync LLM, no
+    those legacy names through the canonical storage layer (no sync LLM, no
     embedding bottleneck on the hot path), which is the safer and
     much faster default. Set the env to ``false`` to restore the
     native v2 path for debugging.
@@ -168,7 +168,7 @@ def _compat_upsert_concept(conn: sqlite3.Connection, args: dict[str, Any]) -> di
         "name": args.get("name", ""),
         "definition": args.get("definition", ""),
         # v2's "kind" field is the concept-kind label (gate, metric, ...) — same
-        # column name in v3 concepts table.
+        # column name in the concepts table.
         "kind": args.get("kind"),
         "aliases_json": json.dumps(args.get("aliases") or []),
     }
@@ -189,7 +189,7 @@ def _compat_upsert_behavior(conn: sqlite3.Connection, args: dict[str, Any]) -> d
         "name": args.get("name", ""),
         "rule": args.get("rule", ""),
         "rationale": args.get("rationale"),
-        # v3 behaviors.kind enum: communication_style | operating_rule | ...
+        # behaviors.kind enum: communication_style | operating_rule | ...
         "kind": args.get("kind", "operating_rule"),
         "applies_to_json": json.dumps(args.get("applies_to") or []),
         "pinned": 1 if args.get("pinned") else 0,
@@ -209,7 +209,7 @@ def _compat_upsert_behavior(conn: sqlite3.Connection, args: dict[str, Any]) -> d
 def _compat_upsert_capability(
     conn: sqlite3.Connection, args: dict[str, Any], subtype: str
 ) -> dict[str, Any]:
-    """role / skill / playbook all collapse into the v3 ``skills`` table with subtype."""
+    """role / skill / playbook all collapse into the canonical ``skills`` table with subtype."""
     payload = {
         "name": args.get("name", ""),
         "summary": args.get("summary") or args.get("purpose") or args.get("goal", ""),
@@ -233,12 +233,12 @@ def _compat_archive(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str,
     object_id = str(args.get("id") or "")
     if not kind or not object_id:
         return _err("invalid_args", "kind and id are required")
-    # v2 archive supports archive=false (restore). v3 archive is one-way;
+    # v2 archive supports archive=false (restore). canonical archive is one-way;
     # restore requires manual edit.
     if not args.get("archive", True):
         return _err(
             "translation_pending",
-            "v3 archive is one-way; use memory_edit to restore status",
+            "archive is one-way; use memory_edit to restore status",
         )
     out = archive(
         conn,
@@ -268,7 +268,7 @@ def _compat_pin(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, Any
         agent_id=str(args.get("agent_id") or "compat"),
     )
     if out is None:
-        return _err("unsupported_kind", "pin only valid for decision + behavior in v3")
+        return _err("unsupported_kind", "pin only valid for decision + behavior")
     return _ok(out, deprecation=_deprecation("memory_pin", "memory_pin"))
 
 
@@ -280,7 +280,7 @@ def _compat_search(conn: sqlite3.Connection, args: dict[str, Any]) -> dict[str, 
         conn,
         workspace_id=str(args.get("workspace_id") or "default"),
         query=query,
-        kinds=None,  # v2 search is all-kinds chunks BM25; v3 search ≈ same shape
+        kinds=None,  # v2 search is all-kinds chunks BM25; canonical search ~ same shape
         limit=int(args.get("limit") or 10),
     )
     data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
@@ -443,8 +443,8 @@ def _translation_pending(
     def handler(_conn: sqlite3.Connection, _args: dict[str, Any]) -> dict[str, Any]:
         return _err(
             "translation_pending",
-            f"v2 tool {v2_name!r} has no v3 equivalent yet; call HTTP /memory/*"
-            " directly or wait for the v3.1 release.",
+            f"v2 tool {v2_name!r} has no canonical equivalent yet; call HTTP /memory/*"
+            " directly or wait for the next release.",
             deprecation=_deprecation(v2_name, "memory-cli or /memory/*"),
         )
 
@@ -505,7 +505,7 @@ COMPAT_HANDLERS: dict[str, _Handler] = {
 def compat_dispatch(
     conn: sqlite3.Connection, name: str, args: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Route a v2 tool call to its v3-backed translator.
+    """Route a v2 tool call to its canonical-backed translator.
 
     Returns ``None`` when there is no shim entry (caller falls through
     to the native v2 handler). Returns an envelope dict when a shim

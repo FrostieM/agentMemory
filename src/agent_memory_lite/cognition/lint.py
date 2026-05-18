@@ -80,7 +80,7 @@ def _payload_query(tool_payload: dict[str, Any]) -> str:
     Returns ONE compact token suitable for a LIKE search. Examples:
       file_path="src/strategy/kelly.py" → "kelly"
       command="deploy step run"        → "deploy"
-      title="Adopt v3"                 → "Adopt v3"
+      title="Adopt canonical"           -> "Adopt canonical"
     """
     file_path = tool_payload.get("file_path")
     if isinstance(file_path, str) and file_path.strip():

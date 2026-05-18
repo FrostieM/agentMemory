@@ -1,6 +1,6 @@
-"""Seed v3 discipline rules — the durable layer of the agent's habits.
+"""Seed canonical discipline rules — the durable layer of the agent's habits.
 
-The v3 architecture has three layers that funnel the agent toward
+The canonical architecture has three layers that funnel the agent toward
 graph tools instead of Read/Grep:
 
   1. memory_impact_check primitive — makes the right thing cheap.
@@ -9,7 +9,7 @@ graph tools instead of Read/Grep:
   3. Brief identity discipline line — makes the rule ambient
      (every session sees it).
   4. **Pinned behavior_instruction (this script)** — makes the rule
-     DURABLE. A pinned row in the v3 behaviors table rides every
+     DURABLE. A pinned row in the behaviors table rides every
      brief regardless of recency / relevance, so the rule survives
      workspace history rewrites, context-clearing, and operator
      opt-outs of brief identity tweaks.
@@ -67,7 +67,7 @@ DISCIPLINE_RULES: list[dict[str, Any]] = [
             "or near-duplicate. Pass supersedes_id when replacing an existing "
             "decision; create-new only when there is no overlap."
         ),
-        "rule_one_line": ("Search v3 memory before writing a decision/theory/behavior/skill."),
+        "rule_one_line": ("Search memory before writing a decision/theory/behavior/skill."),
         "rationale": (
             "Duplicate decisions fragment the canonical record and force "
             "agents to reason from inconsistent state."
@@ -180,13 +180,13 @@ def seed_discipline(conn: sqlite3.Connection, *, workspace_id: str) -> list[Seed
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Seed v3 discipline behavior_instructions for a workspace."
+        description="Seed canonical discipline behavior_instructions for a workspace."
     )
     parser.add_argument("--workspace", required=True)
     parser.add_argument(
         "--db-path",
         required=True,
-        help="Path to the v3 SQLite database (must have v3 schema applied).",
+        help="Path to the canonical SQLite database (must have canonical schema applied).",
     )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable report.")
     args = parser.parse_args(argv)

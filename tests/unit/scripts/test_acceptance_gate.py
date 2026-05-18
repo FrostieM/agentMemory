@@ -30,7 +30,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" /
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
-    path = tmp_path / "v3.db"
+    path = tmp_path / "canonical.db"
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()
@@ -285,7 +285,7 @@ def test_main_human_render(db_path: Path, capsys: pytest.CaptureFixture) -> None
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "v3 acceptance gate" in out
+    assert "Acceptance gate" in out
     assert "Verdict:" in out
 
 

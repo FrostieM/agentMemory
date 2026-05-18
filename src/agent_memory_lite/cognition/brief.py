@@ -96,7 +96,7 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
     """Identity layer: workspace name + counts overview + discipline reminder.
 
     The discipline reminder is the single most important line in the
-    brief — it's how v3 closes the "agent knows about graph tools but
+    brief — it's how this closes the "agent knows about graph tools but
     still uses Read" gap. The line stays foreground in every session,
     so the agent's first instinct on a new file is impact_check, not
     Read.
@@ -226,7 +226,7 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     becomes a Cartesian product over decisions x behaviors x tasks x
     code_digests x episodes. On a moderately busy workspace (copyBot:
     248 x 3 x 1 x 1355 x 974 ~ 982 million synthetic rows) the
-    fingerprint took ~2 minutes -- long enough that the v3 brief hook
+    fingerprint took ~2 minutes -- long enough that the memory brief hook
     timed out before ever rendering. UNION ALL over five small index-
     seek scans returns the same answer in < 5 ms.
     """

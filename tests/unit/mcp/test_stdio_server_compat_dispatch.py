@@ -29,7 +29,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" /
 @pytest.fixture
 def v3_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
     """Fresh v3-schema DB injected as the runtime's working connection."""
-    db_path = tmp_path / "v3.db"
+    db_path = tmp_path / "canonical.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))

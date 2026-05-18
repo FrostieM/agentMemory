@@ -3,7 +3,7 @@
 MEMORY_TOOLS now use canonical names (``memory_*``, no ``_v3_`` infix).
 Where a canonical name collides with a legacy v2 tool of the same
 name (``memory_search``, ``memory_pin``, ``memory_archive``), the
-canonical (v3) implementation wins via the dedup pass below — the
+canonical implementation wins via the dedup pass below — the
 legacy spec is dropped from the advertised list so the MCP client
 sees ONE tool per name. Dispatch is handled separately in
 ``stdio_handlers.py`` where MEMORY_HANDLERS is spread last and overrides

@@ -1,4 +1,4 @@
-"""v3 writer API — memory_write / memory_edit / memory_pin / memory_archive / memory_rollback.
+"""Writer API — memory_write / memory_edit / memory_pin / memory_archive / memory_rollback.
 
 Every mutation:
   1. Snapshots prior content into ``versions`` table (immutable history).
@@ -48,7 +48,7 @@ _STATUS_ARCHIVE_KINDS = {"decision", "theory", "insight"}
 _IS_ARCHIVED_KINDS = {"episode", "chunk", "files"}
 _ACTIVE_FLAG_KINDS = {"behavior", "skill", "concept"}
 
-# Kinds whose underlying tables have an updated_at column. v3 schema
+# Kinds whose underlying tables have an updated_at column. schema
 # omits updated_at on append-only kinds (episodes, chunks).
 _HAS_UPDATED_AT = {
     "decision",
@@ -215,7 +215,7 @@ def _audit(
 def _build_column_payload(
     kind: str, payload: dict[str, Any], workspace_id: str, object_id: str
 ) -> dict[str, Any]:
-    """Ensure required v3 columns are set; fill defaults; compute gist."""
+    """Ensure required columns are set; fill defaults; compute gist."""
     now = _now_iso()
     base: dict[str, Any] = {
         "id": object_id,

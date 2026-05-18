@@ -17,14 +17,14 @@ What it does (idempotent — safe to re-run):
    - An MCP server entry pointing at this venv's `agent_memory_lite.mcp.stdio_server`
    - The agent contract (`docs/AGENT_CONTRACT.md`) into the runtime's "always-loaded"
      instructions file (CLAUDE.md / AGENTS.md / .cursorrules).
-6. (Claude Code only) Optionally installs the v3 discipline hooks:
+6. (Claude Code only) Optionally installs the canonical discipline hooks:
    - `UserPromptSubmit` → `scripts/inject_memory_brief.py` (≤500-token
-     compact brief composed from v3 projections).
+     compact brief composed from canonical projections).
    - `PostToolUse` (Edit|Write|NotebookEdit|MultiEdit) →
      `scripts/post_edit_enqueue.py` (digest worker queue feeder).
    - `PreToolUse` enforcement (unchanged from v2).
    The legacy v2 `inject_memory_context.py` hook is auto-evicted on every
-   run — v3 is the canonical surface. Skip all hook wiring with `--no-hook`.
+   run — this is the canonical surface. Skip all hook wiring with `--no-hook`.
 7. Emits a per-runtime "generic" snippet to stdout for any agent not detected.
 8. Smoke-tests the MCP server (initialize + tools/list) and prints a "verified"
    summary.
@@ -56,7 +56,7 @@ from agent_memory_lite.bootstrap.project_pre_commit_hook import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
-# v3.0.0 discipline stack hooks (see docs/V3_AGENT_RUNTIMES.md).
+# Memory discipline stack hooks (see docs/MEMORY_AGENT_RUNTIMES.md).
 # The legacy v2 ``scripts/inject_memory_context.py`` hook still ships as
 # a backwards-compat surface but is no longer installed by this script;
 # ``_remove_v2_inject_hook`` evicts it from settings.json on every run.
@@ -253,8 +253,8 @@ def bootstrap_db() -> None:
 def _remove_v2_inject_hook(settings: dict[str, object]) -> int:
     """Strip the legacy ``agent-memory-lite-inject`` entry from UserPromptSubmit.
 
-    v2's ``inject_memory_context.py`` hook used to ship alongside the v3
-    brief hook; running both on every prompt doubles token cost.  v3 is
+    v2's ``inject_memory_context.py`` hook used to ship alongside the canonical
+    brief hook; running both on every prompt doubles token cost.  This is
     now the canonical surface, so future setup_agent runs evict the v2
     entry.  Idempotent: returns the count actually removed (0 when the
     hook was never installed or already evicted).
@@ -296,9 +296,9 @@ def install_v3_brief_hook(
     vector_path: Path | None = None,
     workspace_id: str | None = None,
 ) -> None:
-    """Add the v3 UserPromptSubmit brief hook (replaces the v2 inject_memory_context path).
+    """Add the canonical UserPromptSubmit brief hook (replaces the v2 inject_memory_context path).
 
-    Idempotent: identifies prior entries by the ``v3-brief`` marker substring
+    Idempotent: identifies prior entries by the ``memory-brief`` marker (legacy ``v3-brief`` also accepted)
     and overwrites them on re-run.
     """
     hooks = settings.setdefault("hooks", {})
@@ -313,9 +313,12 @@ def install_v3_brief_hook(
     # Project-scoped installs bake the workspace into env via the hook script's
     # registry-walk — no extra args needed. We attach a tag comment so future
     # setup_agent runs can find and refresh this entry.
-    marker = "agent-memory-lite-v3-brief"
+    marker = "agent-memory-lite-memory-brief"
+    legacy_marker = "agent-memory-lite-v3-brief"
     cmd = cmd + f" # {marker}"
     new_hook = {"type": "command", "command": cmd}
+    # Accept either the new or the legacy marker so an existing install
+    # gets *upgraded* in place instead of double-added.
     existing = next(
         (
             entry
@@ -323,7 +326,9 @@ def install_v3_brief_hook(
             if isinstance(entry, dict)
             and isinstance(entry.get("hooks"), list)
             and any(
-                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
+                isinstance(h, dict)
+                and (marker in str(h.get("command", "")) or legacy_marker in str(h.get("command", "")))
+                for h in entry["hooks"]
             )
         ),
         None,
@@ -335,9 +340,9 @@ def install_v3_brief_hook(
 
 
 def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) -> None:
-    """Add the v3 PostToolUse digest-queue hook on Edit/Write/NotebookEdit/MultiEdit.
+    """Add the canonical PostToolUse digest-queue hook on Edit/Write/NotebookEdit/MultiEdit.
 
-    Idempotent: identifies prior entries by the ``v3-postedit`` marker.
+    Idempotent: identifies prior entries by the ``memory-postedit`` marker (legacy ``v3-postedit`` also accepted).
     """
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -347,12 +352,14 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
     if not isinstance(post, list):
         post = []
         hooks["PostToolUse"] = post
-    marker = "agent-memory-lite-v3-postedit"
+    marker = "agent-memory-lite-memory-postedit"
+    legacy_marker = "agent-memory-lite-v3-postedit"
     cmd = f'"{venv_python}" "{V3_POSTEDIT_HOOK_SCRIPT}" # {marker}'
     new_entry = {
         "matcher": V3_POSTTOOLUSE_MATCHER,
         "hooks": [{"type": "command", "command": cmd}],
     }
+    # Accept either marker so an existing install gets upgraded in place.
     existing = next(
         (
             entry
@@ -360,7 +367,9 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
             if isinstance(entry, dict)
             and isinstance(entry.get("hooks"), list)
             and any(
-                isinstance(h, dict) and marker in str(h.get("command", "")) for h in entry["hooks"]
+                isinstance(h, dict)
+                and (marker in str(h.get("command", "")) or legacy_marker in str(h.get("command", "")))
+                for h in entry["hooks"]
             )
         ),
         None,
@@ -372,11 +381,11 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
         existing["matcher"] = V3_POSTTOOLUSE_MATCHER
 
 
-# v3-only columns that ``CREATE TABLE IF NOT EXISTS`` skips for v2-shape
-# tables. We patch them in explicitly via ALTER TABLE. Discovered when v3
+# canonical-only columns that ``CREATE TABLE IF NOT EXISTS`` skips for v2-shape
+# tables. We patch them in explicitly via ALTER TABLE. Discovered when canonical
 # writer crashed on agentLight workspace:
 # ``sqlite3.OperationalError: table decisions has no column named gist``.
-# Add new entries here when v3 grows additional columns on shared kinds.
+# Add new entries here when the canonical schema grows additional columns on shared kinds.
 _V3_INPLACE_COLUMNS = (
     ("decisions", "gist", "TEXT"),
     ("theories", "gist", "TEXT"),
@@ -386,12 +395,12 @@ _V3_INPLACE_COLUMNS = (
 
 
 def _apply_v3_inplace_columns(conn: Any) -> int:
-    """ALTER TABLE add v3-only columns to v2-shape tables. Returns count added."""
+    """ALTER TABLE add canonical-only columns to v2-shape tables. Returns count added."""
     added = 0
     for table, column, sql_type in _V3_INPLACE_COLUMNS:
         try:
             cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-        except Exception:  # table may simply not exist yet (fresh v3 DB)
+        except Exception:  # table may simply not exist yet (fresh canonical DB)
             continue
         if column in cols:
             continue
@@ -404,29 +413,29 @@ def _apply_v3_inplace_columns(conn: Any) -> int:
 
 
 def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
-    """Apply v3 schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
+    """Apply the canonical schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
 
-    Safe to call on a v2 DB: v3 adds new tables alongside v2 tables;
+    Safe to call on a v2 DB: canonical adds new tables alongside v2 tables;
     existing tables are skipped by CREATE TABLE IF NOT EXISTS.  For
-    columns that v3 adds to *existing* v2 tables (gist on decisions /
-    theories / episodes), we patch via ALTER TABLE so the v3 writer
+    columns that the canonical schema adds to *existing* v2 tables (gist on decisions /
+    theories / episodes), we patch via ALTER TABLE so the canonical writer
     can populate them.
     """
     import sqlite3  # noqa: PLC0415 — std-lib local import keeps top imports tidy
 
     if not V3_SCHEMA_PATH.exists():
-        warn(f"v3 schema missing at {V3_SCHEMA_PATH} — skipping v3 deployment")
+        warn(f"canonical schema missing at {V3_SCHEMA_PATH} -- skipping canonical deployment")
         return
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(V3_SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.commit()
-        # Patch v3-only columns onto pre-existing v2-shape tables.
+        # Patch canonical-only columns onto pre-existing v2-shape tables.
         added = _apply_v3_inplace_columns(conn)
         if added:
             conn.commit()
-            ok(f"v3 inplace columns added (+{added}: gist on decisions/theories/episodes)")
+            ok(f"canonical inplace columns added (+{added}: gist on decisions/theories/episodes)")
         # Defer the seed import: keeps setup_agent's top imports clean,
         # and the script directory is added to sys.path below if needed.
         repo_root_str = str(REPO_ROOT)
@@ -436,14 +445,14 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
 
         results = seed_discipline(conn, workspace_id=workspace_id)
     except sqlite3.Error as exc:
-        warn(f"v3 schema/seed failed: {exc}")
+        warn(f"canonical schema/seed failed: {exc}")
         return
     finally:
         conn.close()
     inserted = sum(1 for r in results if r.status == "inserted")
     skipped = sum(1 for r in results if r.status == "skipped")
     ok(
-        f"v3 schema applied + discipline rules seeded "
+        f"canonical schema applied + discipline rules seeded "
         f"(inserted={inserted}, skipped={skipped}, "
         f"total={len(results)})"
     )
@@ -623,7 +632,7 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
     ok("MCP server entry written to ~/.claude/settings.json")
 
     if install_hook:
-        # v3.0.0 is the canonical surface; evict the legacy v2
+        # Canonical surface is now live; evict the legacy v2
         # inject_memory_context hook on every run so we don't double-emit
         # memory context on each UserPromptSubmit.
         evicted = _remove_v2_inject_hook(settings)
@@ -635,11 +644,11 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
         )
         ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
 
-        # v3.0.0 discipline stack — global mode (no per-project DB args; the
-        # v3 brief hook resolves the workspace via the registry walker).
+        # Memory discipline stack -- global mode (no per-project DB args; the
+        # memory brief hook resolves the workspace via the registry walker).
         install_v3_brief_hook(settings, venv_python=diag.venv_python)
         install_v3_postedit_hook(settings, venv_python=diag.venv_python)
-        ok("v3 brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
+        ok("memory brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
     else:
         warn("hook install skipped (--no-hook); agent only sees memory if it asks")
 
@@ -790,13 +799,13 @@ def configure_project(  # noqa: PLR0912, PLR0915
     db_path = project_root / ".agent_memory" / "memory.db"
     vector_path = project_root / ".agent_memory" / "vectors.lance"
 
-    # v3.0.0 is canonical — evict the legacy v2 inject hook if it was
+    # Canonical surface live -- evict the legacy v2 inject hook if it was
     # installed by an older setup_agent run.  Idempotent.
     evicted = _remove_v2_inject_hook(settings)
     if evicted:
         ok(f"removed legacy v2 inject hook from project ({evicted} entries)")
 
-    # v3.0.0 discipline stack — the only UserPromptSubmit + PostToolUse
+    # Memory discipline stack -- the only UserPromptSubmit + PostToolUse
     # surface installed by this version.
     install_v3_brief_hook(
         settings,
@@ -812,7 +821,7 @@ def configure_project(  # noqa: PLR0912, PLR0915
     )
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     ok(f"MCP entry + project-scoped hook written to {settings_path}")
-    ok("v3 brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
+    ok("memory brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
     ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
 
     contract_path = project_root / "CLAUDE.md"
@@ -850,7 +859,7 @@ def configure_project(  # noqa: PLR0912, PLR0915
     if seed_bootstrap:
         seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
 
-    # v3.0.0 — apply v3 schema (idempotent) + seed the 3 pinned discipline
+    # Canonical -- apply schema (idempotent) + seed the 3 pinned discipline
     # rules so every Claude Code session in this project sees the graph-tools-
     # first / search-before-write / capability-link-on-write rules in the
     # brief's behaviors section.

@@ -152,6 +152,6 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_snapshot_diff": _handle_snapshot_diff,
     "memory_review_queue": _handle_review_queue,
     "memory_compact_trigger": _handle_compact_trigger,
-    # v3 surface — agent-facing minimal tool set; envelope shape {ok, data, error}.
+    # Canonical surface — agent-facing minimal tool set; envelope shape {ok, data, error}.
     **MEMORY_HANDLERS,
 }

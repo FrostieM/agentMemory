@@ -1,6 +1,6 @@
 """memory-cli entrypoint.
 
-Mirrors the 8 v3 HTTP endpoints. JSON to stdout; exit 1 on
+Mirrors the 8 HTTP endpoints. JSON to stdout; exit 1 on
 ``envelope.ok == false``. Defaults: ``--base-url
 http://127.0.0.1:8765``, ``--workspace`` from ``AGENT_MEMORY_WORKSPACE``
 env, ``--timeout 30``.
@@ -312,7 +312,7 @@ def _global_args(p: argparse.ArgumentParser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — 13 subcommands, flat by design
-    parser = argparse.ArgumentParser(prog="memory-cli", description="v3 memory CLI client")
+    parser = argparse.ArgumentParser(prog="memory-cli", description="memory CLI client")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("brief", help="Compose ≤500-token session brief")

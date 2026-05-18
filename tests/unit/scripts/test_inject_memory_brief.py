@@ -187,7 +187,7 @@ def test_emit_brief_wraps_in_agent_memory_block(capsys: pytest.CaptureFixture) -
 def test_emit_notice_format(capsys: pytest.CaptureFixture) -> None:
     v3hook._emit_notice("service down")
     out = capsys.readouterr().out
-    assert "<!-- v3 brief hook notice: service down -->" in out
+    assert "<!-- memory brief hook notice: service down -->" in out
 
 
 # ============================================================

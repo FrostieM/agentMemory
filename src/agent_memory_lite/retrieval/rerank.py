@@ -1,6 +1,6 @@
-"""v3 cross-encoder reranker — opt-in refinement after RRF fusion.
+"""Cross-encoder reranker — opt-in refinement after RRF fusion.
 
-Re-orders the top-N hits from v3 search by query-document semantic
+Re-orders the top-N hits from canonical search by query-document semantic
 relevance using ``jina-reranker-v1-tiny-en`` (~33 MB, CPU-friendly).
 The model is *not* a required dep:
 
@@ -21,7 +21,7 @@ Design constraints:
   ``_load_model``.
 
 Plug-in point: ``rerank_hits(query, hits, top_k=10)`` accepts the
-v3 ``SearchHit`` list (or any object with ``.projection`` dict and
+``SearchHit`` list (or any object with ``.projection`` dict and
 ``.kind``) and returns a re-scored, re-ordered list of the same
 length, capped to ``top_k``.
 """

@@ -1,6 +1,6 @@
-"""v3 file digest worker — consume PostToolUse queue → UPSERT into code_digests.
+"""File digest worker — consume PostToolUse queue → UPSERT into code_digests.
 
-The worker is the engine behind the v3 "Code hubs" brief section. Each
+The worker is the engine behind the "Code hubs" brief section. Each
 file the agent edits goes through:
 
   1. PostToolUse hook drops a marker line into the queue file
@@ -13,7 +13,7 @@ file the agent edits goes through:
   4. The next agent call to ``memory_get(kind="code_digest", id=...)``
      returns the fresh digest projection without reading source.
 
-Design constraints (per v3 plan):
+Design constraints (per the plan):
 
 * Failure-soft: any one file's parse error is logged and skipped, never
   aborts the worker loop.

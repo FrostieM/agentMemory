@@ -26,7 +26,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" /
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
-    path = tmp_path / "v3.db"
+    path = tmp_path / "canonical.db"
     conn = sqlite3.connect(path)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()

@@ -1,4 +1,4 @@
-"""v3 reader API — memory_view / memory_get / memory_search.
+"""Reader API — memory_view / memory_get / memory_search.
 
 These are the read-side primitives all agent surfaces (MCP, HTTP, CLI)
 delegate to. They share three invariants:
@@ -9,7 +9,7 @@ delegate to. They share three invariants:
    exactly the requested columns (plus id/kind). Default = projection.
 3. **Read-only.** No mutations. Writer module owns those.
 
-This module knows the v3 schema but does NOT depend on FastAPI, MCP,
+This module knows the schema but does NOT depend on FastAPI, MCP,
 or any agent runtime. It's pure SQL + dict transforms.
 """
 
@@ -161,7 +161,7 @@ def search_kind(
     """LIKE-based search across the kind's free-text columns.
 
     Pragmatic v1 implementation: scans `_KIND_FTS_COLUMNS[kind]` with
-    LIKE patterns. The v3 plan adds FTS5 + LanceDB + jina rerank to
+    LIKE patterns. A future plan adds FTS5 + LanceDB + jina rerank to
     the chunks table; this function handles non-chunk kinds where the
     body lives in the kind's own table.
     """

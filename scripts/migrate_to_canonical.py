@@ -1,13 +1,13 @@
-"""Idempotent, resumable port from v2 SQLite to v3 SQLite.
+"""Idempotent, resumable port from v2 SQLite to canonical SQLite.
 
 Usage:
     python scripts/migrate_to_canonical.py \\
         --workspace agentLight \\
         --source-db .agent_memory/memory.db \\
-        --target-dir .agent_memory.v3-trial/ \\
+        --target-dir .agent_memory.canonical-trial/ \\
         [--batch-size 1000] [--resume]
 
-Reads v2 source READ-ONLY. Writes new v3 SQLite at
+Reads v2 source READ-ONLY. Writes new canonical SQLite at
 ``<target-dir>/memory.db`` after applying ``migrations/schema_v3.sql``.
 
 Resumable: per-workspace ``<target-dir>/migration_progress.json`` tracks
@@ -140,11 +140,11 @@ def _open_v3(target_db: Path) -> sqlite3.Connection:
     return conn
 
 
-def _ensure_v3_schema(v3: sqlite3.Connection) -> None:
+def _ensure_canonical_schema(target: sqlite3.Connection) -> None:
     """Apply schema_v3.sql once; harmless to re-run (all CREATE IF NOT EXISTS)."""
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
-    v3.executescript(sql)
-    v3.commit()
+    target.executescript(sql)
+    target.commit()
 
 
 # ============================================================
@@ -197,18 +197,18 @@ def _batch_rows(
         offset += len(rows)
 
 
-def _exec_many(v3: sqlite3.Connection, sql: str, rows: list[tuple], commit: bool = True) -> None:
+def _exec_many(target: sqlite3.Connection, sql: str, rows: list[tuple], commit: bool = True) -> None:
     """Batched insert with commit per batch."""
-    v3.executemany(sql, rows)
+    target.executemany(sql, rows)
     if commit:
-        v3.commit()
+        target.commit()
 
 
-def port_workspace_manifest(v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str) -> int:
+def port_workspace_manifest(v2: sqlite3.Connection, target: sqlite3.Connection, ws: str) -> int:
     row = v2.execute("SELECT * FROM workspace_manifest WHERE workspace_id = ?", (ws,)).fetchone()
     if row is None:
         return 0
-    v3.execute(
+    target.execute(
         """INSERT OR REPLACE INTO workspace_manifest
            (id, workspace_id, db_uuid, schema_version, created_at, updated_at,
             last_audit_at, last_audit_status, last_repair_at, metadata_json)
@@ -224,27 +224,27 @@ def port_workspace_manifest(v2: sqlite3.Connection, v3: sqlite3.Connection, ws: 
             row["metadata_json"],
         ),
     )
-    v3.commit()
+    target.commit()
     return 1
 
 
-def port_workspace_meta(v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str) -> int:
+def port_workspace_meta(v2: sqlite3.Connection, target: sqlite3.Connection, ws: str) -> int:
     rows = v2.execute(
         "SELECT workspace_id, key, value, updated_at FROM workspace_meta WHERE workspace_id = ?",
         (ws,),
     ).fetchall()
     payload = [(r["workspace_id"], r["key"], r["value"], r["updated_at"]) for r in rows]
     if payload:
-        v3.executemany(
+        target.executemany(
             "INSERT OR REPLACE INTO workspace_meta (workspace_id, key, value, updated_at) VALUES (?,?,?,?)",
             payload,
         )
-        v3.commit()
+        target.commit()
     return len(payload)
 
 
 def port_episodes(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     total = 0
@@ -275,13 +275,13 @@ def port_episodes(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_decisions(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM decisions WHERE workspace_id = ? ORDER BY id"
@@ -317,13 +317,13 @@ def port_decisions(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_theories(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM theories WHERE workspace_id = ? ORDER BY id"
@@ -365,13 +365,13 @@ def port_theories(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_theory_evidence(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM theory_evidence WHERE workspace_id = ? ORDER BY id"
@@ -397,13 +397,13 @@ def port_theory_evidence(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_behaviors(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     """v3 behaviors merges v2 behavior_instructions + core_memory + procedural_rules.
 
@@ -462,8 +462,8 @@ def port_behaviors(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
 
     # 2. core_memory → behaviors (kind='core_memory')
@@ -500,8 +500,8 @@ def port_behaviors(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
 
     # 3. procedural_rules → behaviors (kind='procedural_rule')
@@ -538,14 +538,14 @@ def port_behaviors(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
     return total
 
 
 def port_skills(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     """v3 skills merges v2 agent_roles + agent_skills + agent_playbooks via subtype."""
     offset = min(offset, 0)  # small set; idempotent INSERT OR REPLACE handles repeats
@@ -597,8 +597,8 @@ def port_skills(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
 
     # 2. agent_skills → skills(subtype='skill')
@@ -638,8 +638,8 @@ def port_skills(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
 
     # 3. agent_playbooks → skills(subtype='playbook')
@@ -679,14 +679,14 @@ def port_skills(
         for r in rows
     ]
     if payload:
-        v3.executemany(sql_insert, payload)
-        v3.commit()
+        target.executemany(sql_insert, payload)
+        target.commit()
         total += len(payload)
     return total
 
 
 def port_concepts(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM domain_concepts WHERE workspace_id = ? ORDER BY id"
@@ -716,13 +716,13 @@ def port_concepts(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_tasks(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM task_state WHERE workspace_id = ? ORDER BY id"
@@ -751,13 +751,13 @@ def port_tasks(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_files(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM files WHERE workspace_id = ? ORDER BY id"
@@ -781,13 +781,13 @@ def port_files(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_chunks(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM chunks WHERE workspace_id = ? ORDER BY id"
@@ -828,13 +828,13 @@ def port_chunks(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_code_digests(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     """v2 file_digests → v3 code_digests with structured projection fields.
 
@@ -881,7 +881,7 @@ def port_code_digests(
                     r["updated_at"],
                 )
             )
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
@@ -891,7 +891,7 @@ def _passthrough_porter(
 ) -> callable[[sqlite3.Connection, sqlite3.Connection, str, int, int], int]:
     """Generate a simple passthrough porter for tables with identical schema."""
 
-    def _port(v2, v3, ws, offset, batch_size):
+    def _port(v2, target, ws, offset, batch_size):
         cur = v2.cursor()
         cols_csv = ", ".join(columns)
         placeholders = ",".join(["?"] * len(columns))
@@ -900,7 +900,7 @@ def _passthrough_porter(
         total = 0
         for batch in _batch_rows(cur, sql_select, (ws,), batch_size, offset):
             payload = [tuple(r[c] for c in columns) for r in batch]
-            _exec_many(v3, sql_insert, payload)
+            _exec_many(target, sql_insert, payload)
             total += len(payload)
         return total
 
@@ -1129,7 +1129,7 @@ port_experiment_results = _passthrough_porter(
 
 
 def port_insights(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     cur = v2.cursor()
     sql_select = "SELECT * FROM research_insights WHERE workspace_id = ? ORDER BY id"
@@ -1159,13 +1159,13 @@ def port_insights(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_candidates(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     """v2 memory_candidates → v3 candidates (rename only)."""
     cur = v2.cursor()
@@ -1203,13 +1203,13 @@ def port_candidates(
             )
             for r in batch
         ]
-        _exec_many(v3, sql_insert, payload)
+        _exec_many(target, sql_insert, payload)
         total += len(payload)
     return total
 
 
 def port_decision_candidates(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     if not _table_exists(v2, "decision_candidates"):
         return 0
@@ -1233,11 +1233,11 @@ def port_decision_candidates(
             "decided_at",
             "decided_by",
         ],
-    )(v2, v3, ws, offset, batch_size)
+    )(v2, target, ws, offset, batch_size)
 
 
 def port_insight_candidates(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     if not _table_exists(v2, "insight_candidates"):
         return 0
@@ -1262,11 +1262,11 @@ def port_insight_candidates(
             "decided_at",
             "decided_by",
         ],
-    )(v2, v3, ws, offset, batch_size)
+    )(v2, target, ws, offset, batch_size)
 
 
 def port_retrieval_sentinel_results(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     if not _table_exists(v2, "retrieval_sentinel_results"):
         return 0
@@ -1285,11 +1285,11 @@ def port_retrieval_sentinel_results(
             "run_id",
             "created_at",
         ],
-    )(v2, v3, ws, offset, batch_size)
+    )(v2, target, ws, offset, batch_size)
 
 
 def port_vector_index_metadata(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     rows = v2.execute(
         "SELECT * FROM vector_index_metadata WHERE workspace_id = ?", (ws,)
@@ -1314,13 +1314,13 @@ def port_vector_index_metadata(
         )
         for r in rows
     ]
-    v3.executemany(sql, payload)
-    v3.commit()
+    target.executemany(sql, payload)
+    target.commit()
     return len(payload)
 
 
 def port_entities(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     return _passthrough_porter(
         "entities",
@@ -1336,11 +1336,11 @@ def port_entities(
             "created_at",
             "updated_at",
         ],
-    )(v2, v3, ws, offset, batch_size)
+    )(v2, target, ws, offset, batch_size)
 
 
 def port_facts(
-    v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str, offset: int, batch_size: int
+    v2: sqlite3.Connection, target: sqlite3.Connection, ws: str, offset: int, batch_size: int
 ) -> int:
     return _passthrough_porter(
         "facts",
@@ -1364,7 +1364,7 @@ def port_facts(
             "created_at",
             "metadata_json",
         ],
-    )(v2, v3, ws, offset, batch_size)
+    )(v2, target, ws, offset, batch_size)
 
 
 # ============================================================
@@ -1372,8 +1372,8 @@ def port_facts(
 # ============================================================
 
 PORTERS = {
-    "workspace_manifest": lambda v2, v3, ws, off, bs: port_workspace_manifest(v2, v3, ws),
-    "workspace_meta": lambda v2, v3, ws, off, bs: port_workspace_meta(v2, v3, ws),
+    "workspace_manifest": lambda v2, target, ws, off, bs: port_workspace_manifest(v2, target, ws),
+    "workspace_meta": lambda v2, target, ws, off, bs: port_workspace_meta(v2, target, ws),
     "episodes": port_episodes,
     "files": port_files,
     "chunks": port_chunks,
@@ -1465,7 +1465,7 @@ def _row_count(conn: sqlite3.Connection, table: str, ws: str) -> int:
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
 
-def parity_report(v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str) -> dict:
+def parity_report(v2: sqlite3.Connection, target: sqlite3.Connection, ws: str) -> dict:
     """Build per-kind v2 vs v3 row-count diff. behaviors and skills are special-cased."""
     report = {"workspace_id": ws, "checked_at": _now_iso(), "per_kind": {}, "ok": True}
     for kind in KIND_ORDER:
@@ -1486,7 +1486,7 @@ def parity_report(v2: sqlite3.Connection, v3: sqlite3.Connection, ws: str) -> di
             continue
         else:
             v2_count = _row_count(v2, v2_source, ws)
-        v3_count = _row_count(v3, kind, ws)
+        v3_count = _row_count(target, kind, ws)
         match = v2_count == v3_count
         report["per_kind"][kind] = {
             "v2": v2_count,
@@ -1523,9 +1523,9 @@ def migrate(
         progress.started_at = _now_iso()
 
     v2 = _open_v2_readonly(source_db)
-    v3 = _open_v3(target_db)
+    target = _open_v3(target_db)
     try:
-        _ensure_v3_schema(v3)
+        _ensure_canonical_schema(target)
         for kind in KIND_ORDER:
             if kind in progress.kinds_done:
                 continue
@@ -1533,7 +1533,7 @@ def migrate(
             offset = progress.rows_done.get(kind, 0)
             t0 = time.monotonic()
             try:
-                n = porter(v2, v3, workspace_id, offset, batch_size)
+                n = porter(v2, target, workspace_id, offset, batch_size)
             except sqlite3.OperationalError as exc:
                 log(f"  [SKIP] {kind}: {exc}")
                 progress.kinds_done.append(kind)
@@ -1547,12 +1547,12 @@ def migrate(
 
         progress.completed_at = _now_iso()
         progress.save(progress_path)
-        report = parity_report(v2, v3, workspace_id)
+        report = parity_report(v2, target, workspace_id)
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
         return report
     finally:
         v2.close()
-        v3.close()
+        target.close()
 
 
 def main() -> int:

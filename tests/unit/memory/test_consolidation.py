@@ -28,7 +28,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" /
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    db_path = tmp_path / "v3.db"
+    db_path = tmp_path / "canonical.db"
     c = sqlite3.connect(db_path)
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))

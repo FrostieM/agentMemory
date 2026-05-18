@@ -1,4 +1,4 @@
-"""Bulk-index a project's codebase into the v3 ``code_digests`` table.
+"""Bulk-index a project's codebase into the ``code_digests`` table.
 
 Without this, ``memory_impact_check`` returns ``verdict='not_indexed'``
 for every file — the discipline primitive can't do its job until there
@@ -7,7 +7,7 @@ as the agent edits files, but a fresh deployment needs a one-shot
 bootstrap to cover the rest of the project.
 
 This script walks the project tree, computes a heuristic digest for
-each source file (via ``v3.cognition.digest_worker.compute_digest``),
+each source file (via ``cognition.digest_worker.compute_digest``),
 and UPSERTs into ``code_digests``.  Idempotent — re-running updates
 ``last_indexed_at`` + ``file_sha1`` and skips files whose SHA already
 matches.
@@ -324,7 +324,7 @@ def render_human(report: IndexReport) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Bulk-index a project's codebase into the v3 code_digests table."
+        description="Bulk-index a project's codebase into the code_digests table."
     )
     parser.add_argument("--project", required=True, type=Path)
     parser.add_argument("--workspace", required=True)
