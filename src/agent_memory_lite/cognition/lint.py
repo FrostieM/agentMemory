@@ -26,12 +26,19 @@ from typing import Any
 
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.enforcement.dispatch import decide_with_rules
+from agent_memory_lite.enforcement.reflex_check import (
+    ReflexViolation,
+    check_reflexes,
+    has_block_violation,
+    record_fired,
+)
 from agent_memory_lite.enforcement.rule_loader import (
     EnforcementRule,
     load_enforcement_rules,
 )
 from agent_memory_lite.enforcement.session_trail import read_prior_tool_calls
 from agent_memory_lite.storage.reader import search
+from agent_memory_lite.utils.time import iso_now
 
 # Tools that read or mutate source files. When the agent calls one of
 # these with a ``file_path`` payload, lint surfaces the impact_check
@@ -56,6 +63,7 @@ class LintResult:
     watch_outs: str = ""
     discipline_hint: str = ""
     diagnostic: str = ""
+    reflex_violations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +74,7 @@ class LintResult:
             "watch_outs": self.watch_outs,
             "discipline_hint": self.discipline_hint,
             "diagnostic": self.diagnostic,
+            "reflex_violations": list(self.reflex_violations),
         }
 
 
@@ -242,6 +251,52 @@ def _prior_failures(
     return failures
 
 
+def _evaluate_reflexes(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    tool_name: str,
+    tool_payload: dict[str, Any],
+    trail: list[str],
+) -> list[ReflexViolation]:
+    """Failure-soft wrapper around ``check_reflexes`` honouring the settings flag."""
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+    except Exception:
+        return []
+    if not settings.reflex_enabled:
+        return []
+    violations = check_reflexes(
+        conn,
+        workspace_id=workspace_id,
+        tool_name=tool_name,
+        tool_payload=tool_payload,
+        trail=trail,
+        block_override=settings.reflex_block_override,
+    )
+    if violations:
+        import contextlib  # noqa: PLC0415
+
+        with contextlib.suppress(sqlite3.Error):
+            record_fired(conn, violations=violations, now_iso=iso_now())
+    return violations
+
+
+def _reflex_to_dict(v: ReflexViolation) -> dict[str, Any]:
+    """Surface a reflex violation in the LintResult envelope."""
+    return {
+        "rule_id": v.rule_id,
+        "rule_name": v.rule_name,
+        "trigger_tool": v.trigger_tool,
+        "precondition_kind": v.precondition_kind,
+        "enforcement": v.enforcement,
+        "advisory": v.advisory,
+        "derived_from_insight_id": v.derived_from_insight_id,
+    }
+
+
 def _verdict_from_decision(allow: bool, has_violations: bool) -> str:
     if not allow:
         return "block"
@@ -359,10 +414,23 @@ def lint(
                         "advisory": violation.why,
                     }
                 )
+        # Phase 4: reflex rules layer. Hard preconditions that can lift
+        # the verdict to block even when enforcement dispatch allowed.
+        reflex_violations = _evaluate_reflexes(
+            conn,
+            workspace_id=workspace_id,
+            tool_name=tool_name,
+            tool_payload=tool_payload,
+            trail=trail,
+        )
         query = _payload_query(tool_payload)
         related = _related_decisions(conn, workspace_id, query)
         failures = _prior_failures(conn, workspace_id, query)
+        # Verdict map: any reflex block → block; else allow_with_advisories
+        # when ANY signal fired; else allow.
         verdict = _verdict_from_decision(decision.allow, bool(applicable))
+        if has_block_violation(reflex_violations):
+            verdict = "block"
         watch_outs = _build_watch_outs(applicable, failures)
         discipline_hint = _build_discipline_hint(
             conn,
@@ -370,11 +438,14 @@ def lint(
             tool_name=tool_name,
             tool_payload=tool_payload,
         )
-        # Promote verdict from "allow" → "allow_with_advisories" when
-        # discipline_hint fires, so the hook script knows to surface it.
         if discipline_hint and verdict == "allow":
             verdict = "allow_with_advisories"
+        if reflex_violations and verdict == "allow":
+            verdict = "allow_with_advisories"
         diagnostic = decision.diagnostic if not decision.allow else ""
+        if reflex_violations:
+            reflex_text = "; ".join(f"[reflex] {v.advisory}" for v in reflex_violations)
+            diagnostic = f"{diagnostic} {reflex_text}".strip()
         return LintResult(
             verdict=verdict,
             applicable_rules=applicable,
@@ -383,6 +454,7 @@ def lint(
             watch_outs=watch_outs,
             discipline_hint=discipline_hint,
             diagnostic=diagnostic,
+            reflex_violations=[_reflex_to_dict(v) for v in reflex_violations],
         )
     except (sqlite3.Error, KeyError, ValueError, TypeError) as exc:
         return LintResult(

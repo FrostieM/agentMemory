@@ -94,16 +94,23 @@ def load_enforcement_rules(conn: sqlite3.Connection, workspace_id: str) -> list[
     rides every active envelope. Pinning is the contract that says
     "this rule is load-bearing"; the PreToolUse hook treats every
     pinned rule as enforceable by default.
+
+    Failure-soft on pre-v3 / fresh v3 DBs where ``behavior_instructions``
+    has not been created -- returns empty list so the surrounding lint
+    pipeline can still evaluate reflexes and discipline hints.
     """
-    rows = conn.execute(
-        """
-        SELECT id, name, rule, applies_to_json
-        FROM behavior_instructions
-        WHERE workspace_id = ? AND active = 1 AND pinned = 1
-        ORDER BY updated_at DESC
-        """,
-        (workspace_id,),
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, name, rule, applies_to_json
+            FROM behavior_instructions
+            WHERE workspace_id = ? AND active = 1 AND pinned = 1
+            ORDER BY updated_at DESC
+            """,
+            (workspace_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
     rules: list[EnforcementRule] = []
     for row in rows:
         applies_to = _parse_applies_to(row[3])

@@ -178,6 +178,19 @@ class Settings(BaseSettings):
     consolidation_feedback_enabled: bool = Field(
         True, validation_alias="MEMORY_CONSOLIDATION_FEEDBACK_ENABLED"
     )
+    # v3.0.0-final Phase 4: reflex rules. Hard preconditions evaluated by the
+    # PreToolUse hook; violations short-circuit the tool call. block_override
+    # demotes block-enforcement to advisory for the calling session -- the
+    # operator escape hatch from "the agent really cannot do anything because
+    # the trail is empty after a runtime restart".
+    reflex_enabled: bool = Field(True, validation_alias="MEMORY_REFLEX_ENABLED")
+    reflex_block_override: bool = Field(False, validation_alias="MEMORY_LINT_BLOCK_OVERRIDE")
+    # Reflex distiller: how many low-outcome supporting episodes must a
+    # (tool, missing_precondition) pattern have before the distiller proposes
+    # the rule. Plan-mandated 3 (single-trial trauma guard).
+    reflex_distiller_min_support: int = Field(
+        3, ge=1, le=20, validation_alias="MEMORY_REFLEX_DISTILLER_MIN_SUPPORT"
+    )
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )
