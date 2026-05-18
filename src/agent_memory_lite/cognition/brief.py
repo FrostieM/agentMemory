@@ -93,15 +93,29 @@ def fit_to_budget(lines: list[str], budget: int) -> list[str]:
 
 
 def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
-    """Identity layer: workspace name + counts overview + discipline reminder.
+    """Identity layer: self-model + workspace counts + discipline reminder.
 
     The discipline reminder is the single most important line in the
     brief — it's how this closes the "agent knows about graph tools but
     still uses Read" gap. The line stays foreground in every session,
     so the agent's first instinct on a new file is impact_check, not
     Read.
+
+    Phase 5: when a ``self_model`` row exists, prepend its
+    ``identity_text`` so the agent's self-narrative is the FIRST thing
+    on the page. Empty / missing row degrades gracefully -- the
+    workspace name + counts + discipline line still render.
     """
     lines = [f"# {workspace_id}"]
+    # Phase 5 self-model line goes immediately under the workspace title.
+    try:
+        from agent_memory_lite.cognition.self_model import load_self_model  # noqa: PLC0415
+
+        sm = load_self_model(conn, workspace_id=workspace_id)
+        if sm is not None and sm.identity_text:
+            lines.append(sm.identity_text)
+    except ImportError:
+        pass
     pinned_decisions = count_kind(
         conn, workspace_id=workspace_id, kind="decision", pinned_only=True
     )

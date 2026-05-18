@@ -191,6 +191,12 @@ class Settings(BaseSettings):
     reflex_distiller_min_support: int = Field(
         3, ge=1, le=20, validation_alias="MEMORY_REFLEX_DISTILLER_MIN_SUPPORT"
     )
+    # v3.0.0-final Phase 5: per-workspace identity self-model. The brief
+    # composer surfaces ``self_model.identity_text`` first when present.
+    # Refresh path defaults to offline heuristic; the operator opts into
+    # the Ollama narrative via MEMORY_SELF_MODEL_OLLAMA=true.
+    self_model_enabled: bool = Field(True, validation_alias="MEMORY_SELF_MODEL_ENABLED")
+    self_model_ollama: bool = Field(False, validation_alias="MEMORY_SELF_MODEL_OLLAMA")
     capability_maturity_enabled: bool = Field(
         True, validation_alias="MEMORY_CAPABILITY_MATURITY_ENABLED"
     )
