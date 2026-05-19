@@ -95,7 +95,14 @@ def _decision_inputs(row: sqlite3.Row, now_iso: str) -> OutcomeInputs:
         feedback_ewma=float(row["feedback_ewma"] or 0.0),
         age_days=_age_days(now_iso, row["last_retrieved_at"]),
         archived=status == "archived",
-        superseded=bool(row["supersedes_decision_id"]) or status == "superseded",
+        # ``supersedes_decision_id`` on this row means THIS row replaces
+        # an older one (it is the NEW decision, not the superseded one).
+        # The OLD decision is the one whose status the writer pipeline
+        # flips to ``superseded`` via close_decision(). So the only
+        # correct signal is ``status == 'superseded'`` -- using
+        # supersedes_decision_id here would invert the semantic and drop
+        # every winner's outcome by ~0.5.
+        superseded=status == "superseded",
         rejected=False,
         usage_count=0,  # decisions don't expose a direct usage counter
     )

@@ -206,6 +206,39 @@ def test_refresh_one_archived_returns_minus_one(conn: sqlite3.Connection) -> Non
     assert row[0] == -1.0
 
 
+def test_new_decision_with_supersedes_pointer_is_not_treated_as_superseded(
+    conn: sqlite3.Connection,
+) -> None:
+    """Regression: a decision that SUPERSEDES another (has supersedes_decision_id
+    pointing at some older id) is the NEW row, not the superseded one. Earlier
+    code treated ``bool(supersedes_decision_id)`` as the superseded signal,
+    which inverted the semantic and dropped every winner's outcome by ~0.5.
+    The only correct signal is ``status == 'superseded'``."""
+    # OLD decision -- exists as parent.
+    _seed_decision(conn, id="dec_old", status="superseded", feedback_ewma=0.3)
+    # NEW decision -- supersedes the old; itself active.
+    _seed_decision(
+        conn,
+        id="dec_new",
+        status="active",
+        feedback_ewma=0.0,
+        supersedes_decision_id="dec_old",
+    )
+    score_new = refresh_one(conn, kind="decision", object_id="dec_new", now_iso=iso_now())
+    # The NEW row should NOT carry the SUPERSEDED_PENALTY. With
+    # feedback_ewma=0 and no penalty, the score should hover at 0,
+    # certainly not be pulled deep negative.
+    assert score_new is not None
+    assert score_new >= -0.1, (
+        f"NEW decision wrongly penalised (semantic inversion of supersedes_decision_id); "
+        f"got {score_new}"
+    )
+    # The OLD row -- status='superseded' -- DOES carry the penalty.
+    score_old = refresh_one(conn, kind="decision", object_id="dec_old", now_iso=iso_now())
+    assert score_old is not None
+    assert score_old < 0.0, f"OLD (superseded-status) decision should be negative; got {score_old}"
+
+
 def test_refresh_one_missing_returns_none(conn: sqlite3.Connection) -> None:
     assert refresh_one(conn, kind="decision", object_id="missing", now_iso=iso_now()) is None
 

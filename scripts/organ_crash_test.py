@@ -127,24 +127,36 @@ def test_phase1_archived_drops_to_minus_one(conn: sqlite3.Connection, ws: str) -
 
 
 def test_phase1_superseded_drops_below_zero(conn: sqlite3.Connection, ws: str) -> TestResult:
-    """Set supersedes_decision_id -> recompute -> assert outcome < 0."""
+    """A decision marked status='superseded' (the OLD row whose ID
+    appears in some other row's supersedes_decision_id) should
+    recompute to outcome < 0.
+
+    Earlier crash-test version seeded a row with supersedes_decision_id
+    set on the test row itself -- that's the NEW row pointing AT an
+    older one, which is NOT a superseded signal. The fix in
+    outcome_recompute.py corrected this semantic; we update the test
+    to match: the row that GETS replaced is the one that carries
+    status='superseded' (writer pipeline sets this via close_decision).
+    """
     test_id = "crash_test_superseded"
     parent_id = "crash_test_super_parent"
     conn.execute("DELETE FROM decisions WHERE id IN (?, ?)", (test_id, parent_id))
+    # OLD row: status='superseded' -- the row that GOT replaced.
     conn.execute(
         """INSERT INTO decisions
            (id, workspace_id, title, decision_text, status, valid_from,
             created_at, updated_at, outcome_score, pinned, feedback_ewma)
-           VALUES (?, ?, 'parent', 'body', 'active', ?, ?, ?, 0.0, 0, 0.5)""",
-        (parent_id, ws, iso_now(), iso_now(), iso_now()),
+           VALUES (?, ?, 'old', 'body', 'superseded', ?, ?, ?, 0.0, 0, 0.5)""",
+        (test_id, ws, iso_now(), iso_now(), iso_now()),
     )
+    # NEW row: active, points to OLD via supersedes_decision_id.
     conn.execute(
         """INSERT INTO decisions
            (id, workspace_id, title, decision_text, status, valid_from,
-            created_at, updated_at, outcome_score, pinned,
-            feedback_ewma, supersedes_decision_id)
-           VALUES (?, ?, 'old', 'body', 'active', ?, ?, ?, 0.0, 0, 0.5, ?)""",
-        (test_id, ws, iso_now(), iso_now(), iso_now(), parent_id),
+            created_at, updated_at, outcome_score, pinned, feedback_ewma,
+            supersedes_decision_id)
+           VALUES (?, ?, 'new', 'body', 'active', ?, ?, ?, 0.0, 0, 0.5, ?)""",
+        (parent_id, ws, iso_now(), iso_now(), iso_now(), test_id),
     )
     conn.commit()
     refresh_workspace(conn, workspace_id=ws, now_iso=iso_now())
