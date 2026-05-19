@@ -54,6 +54,25 @@ def _seed_decision(
     conn.commit()
 
 
+def _seed_decision_with_title(
+    conn: sqlite3.Connection,
+    *,
+    id_: str,
+    title: str,
+    supersedes: str | None = None,
+) -> None:
+    """Like _seed_decision but lets the test specify the title text --
+    used by the Jaccard similarity gate tests."""
+    conn.execute(
+        """INSERT INTO decisions
+           (id, workspace_id, title, decision_text, status, valid_from,
+            created_at, updated_at, supersedes_decision_id, pinned)
+           VALUES (?, 'ws', ?, 'B', 'active', ?, ?, ?, ?, 0)""",
+        (id_, title, iso_now(), iso_now(), iso_now(), supersedes),
+    )
+    conn.commit()
+
+
 def _seed_insight(
     conn: sqlite3.Connection,
     *,
@@ -85,6 +104,59 @@ def test_supersedes_yields_invalidated_link(conn: sqlite3.Connection) -> None:
     assert links[0]["relation"] == "invalidated"
     assert links[0]["dst_id"] == "dec_old"
     assert links[0]["evidence_episode_id"] == "ep_x"
+
+
+def test_metadata_refresh_supersedes_does_not_yield_invalidated(
+    conn: sqlite3.Connection,
+) -> None:
+    """A 'Provenance refresh: X' -> 'X' supersedes is metadata bookkeeping,
+    NOT a semantic invalidation. The Jaccard similarity gate must skip it."""
+    _seed_decision_with_title(conn, id_="dec_old", title="Hard reset 2026-05-04")
+    _seed_decision_with_title(
+        conn,
+        id_="dec_new",
+        title="Provenance refresh: Hard reset 2026-05-04",
+        supersedes="dec_old",
+    )
+    report = extract_workspace(conn, workspace_id="ws")
+    assert report.invalidated_links == 0
+    links = list_outgoing(conn, workspace_id="ws", src_kind="decision", src_id="dec_new")
+    assert links == []
+
+
+def test_architectural_pivot_supersedes_yields_invalidated(
+    conn: sqlite3.Connection,
+) -> None:
+    """A real semantic pivot (different vocabulary) MUST surface as
+    invalidated, even if titles share some tokens."""
+    _seed_decision_with_title(
+        conn,
+        id_="dec_old",
+        title="PR1 architectural realignment deployed Layer 1+4+7",
+    )
+    _seed_decision_with_title(
+        conn,
+        id_="dec_new",
+        title="Layer 1.5 deployed: queue trusts v2 (closes selector vs runtime drift)",
+        supersedes="dec_old",
+    )
+    report = extract_workspace(conn, workspace_id="ws")
+    assert report.invalidated_links == 1
+
+
+def test_short_titles_still_yield_invalidated_when_truly_different(
+    conn: sqlite3.Connection,
+) -> None:
+    """Short titles with ZERO real overlap should still produce invalidated."""
+    _seed_decision_with_title(conn, id_="dec_old", title="Kelly bidirectional sizing")
+    _seed_decision_with_title(
+        conn,
+        id_="dec_new",
+        title="Conservative tier scaling replaces aggressive sizing",
+        supersedes="dec_old",
+    )
+    report = extract_workspace(conn, workspace_id="ws")
+    assert report.invalidated_links == 1
 
 
 def test_idempotent_extraction(conn: sqlite3.Connection) -> None:
