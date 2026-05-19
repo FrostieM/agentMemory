@@ -2,7 +2,34 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 2.0.0 (first public release, consolidated baseline)
+## Current state — 3.0.0-final (memory as a brain)
+
+**3.0.0 ships 2026-05-19 as the v3 final release.** Every retrievable
+row carries `outcome_score`; co-retrievals form Hebbian `soft_edges`
+(with HeLa-Mem validation gate); sleep consolidation distills
+`insights` → recurring ones promote to pinned behaviors; PreToolUse
+`reflex_rules` can block tool calls on missing preconditions
+(advisory by default, operator promotes to block); per-workspace
+`self_model` surfaces identity narrative FIRST in every brief;
+bi-temporal `valid_from/valid_to` filtering keeps superseded
+knowledge from active view; `memory_recall(topic, depth,
+outcome_floor)` spreads activation over `soft_edges ∪
+capability_links ∪ causal_links`.
+
+Plus a brain-aware dashboard: `/ui` (Observatory + self-model card +
+watch-outs + recent-insights), `/ui/recall`, `/ui/reflexes`,
+`/ui/metrics`. All shipping as one-shot setup via
+`scripts/setup_agent.py --project /path` (applies 7 brain migrations
+0002-0008, seeds 3 discipline behaviors + 3 baseline reflex rules,
+wires hooks, registers workspace).
+
+Phase 7 completes the v3 plan. Next session — start v3.1 work using
+[`docs/V3_1_BREAKTHROUGH_ROADMAP.md`](docs/V3_1_BREAKTHROUGH_ROADMAP.md)
+(6 vectors: experiment proposal, adaptive retrieval, blindspot
+detection, learned causality, predictive failure detection, inter-
+agent negotiation).
+
+## Historical state — 2.0.0 (first public release, consolidated baseline)
 
 **2.0.0 ships 2026-05-10 as the first public-facing release.** It
 consolidates ~6 months of internal incremental development (the 1.x

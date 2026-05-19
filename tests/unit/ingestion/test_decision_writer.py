@@ -85,3 +85,28 @@ def test_list_active_decisions_can_rank_by_query_and_limit(
     matches = list_active_decisions(applied_conn, "default", query="SQLite durable", limit=1)
 
     assert [item.id for item in matches] == [sqlite_decision.id]
+
+
+def test_write_decision_redacts_secrets_in_text_fields(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """v3.0.0-final invariant: rationale + title + decision_text never
+    persist cleartext secrets. The same RedactionPipeline that protects
+    episode raw_text runs on every writer."""
+    fake_key = "sk-proj-abcd1234efgh5678ijkl9012mnop3456qrst7890uvwx1234yz"
+    decision = write_decision(
+        applied_conn,
+        _decision(
+            title=f"Rotate api key {fake_key}",
+            decision_text=f"Replace {fake_key} with rotated credential.",
+            rationale=f"Old token {fake_key} was leaked in a screenshot.",
+        ),
+    )
+    stored = get_decision(applied_conn, decision.id)
+    assert stored is not None
+    # Secret never appears in any persisted field.
+    assert fake_key not in stored.title
+    assert fake_key not in stored.decision_text
+    assert fake_key not in (stored.rationale or "")
+    # Redaction markers DO appear, proving redact() ran.
+    assert "REDACTED" in stored.title

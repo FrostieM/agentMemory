@@ -9,7 +9,7 @@ from the v2 codebase, ~22% of the source surface.
 
 ## Why these are removed
 
-The v2 codebase grew organically over a year. The audit findings (see
+The v2 codebase grew brainically over a year. The audit findings (see
 `POST_V2_ROADMAP.md`) identified:
 
 * **150-SLOC/file cap forced over-fragmentation.** v3 replaces it with

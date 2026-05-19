@@ -1,13 +1,13 @@
-"""v3.0.0-final: run all 7 memory-organ maintenance loops for one workspace.
+"""v3.0.0-final: run all 7 memory-brain maintenance loops for one workspace.
 
-This module is the single integration point that keeps the organ alive
+This module is the single integration point that keeps the brain alive
 between sessions. It runs from the existing trigger-on-traffic
 sentinel_scheduler -- no separate cron, no Task Scheduler entry, no
 operator-run scripts. Whenever ``/memory/get_context`` fires (or the
 in-process MCP local fallback runs), the scheduler checks
 ``MEMORY_SENTINEL_AUTORUN_HOURS`` and, if overdue, spawns a daemon
 thread that runs both the YAML retrieval-quality sentinels AND this
-organ pass.
+brain pass.
 
 The pass is composed of six idempotent steps, each gated by its
 own settings flag. A failure in one step never blocks the next:
@@ -40,8 +40,8 @@ _log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class OrganPassReport:
-    """Per-workspace organ-maintenance summary."""
+class BrainPassReport:
+    """Per-workspace brain-maintenance summary."""
 
     workspace_id: str
     started_at: str
@@ -82,7 +82,7 @@ def _step_outcome(
     workspace_id: str,
     now_iso: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.outcome_loop_enabled:
         return
@@ -102,7 +102,7 @@ def _step_hebbian(
     workspace_id: str,
     now_iso: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.hebbian_enabled:
         return
@@ -132,7 +132,7 @@ def _step_promote_insights(
     conn: sqlite3.Connection,
     workspace_id: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.consolidation_feedback_enabled:
         return
@@ -152,7 +152,7 @@ def _step_reflex_distill(
     conn: sqlite3.Connection,
     workspace_id: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.reflex_enabled:
         return
@@ -176,7 +176,7 @@ def _step_self_model(
     conn: sqlite3.Connection,
     workspace_id: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.self_model_enabled:
         return
@@ -200,7 +200,7 @@ def _step_causal(
     conn: sqlite3.Connection,
     workspace_id: str,
     settings: Settings,
-    report: OrganPassReport,
+    report: BrainPassReport,
 ) -> None:
     if not settings.recall_enabled:
         return
@@ -214,16 +214,16 @@ def _step_causal(
         report.errors.append(f"causal:{exc}")
 
 
-def run_organ_pass(
+def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
-) -> OrganPassReport:
-    """Run all six organ-maintenance steps against one workspace.
+) -> BrainPassReport:
+    """Run all six brain-maintenance steps against one workspace.
 
     Each step is independent + failure-soft. Returns a report capturing
     per-step row counts so the operator can see whether anything moved.
     """
     started = iso_now()
-    report = OrganPassReport(workspace_id=workspace_id, started_at=started, finished_at=started)
+    report = BrainPassReport(workspace_id=workspace_id, started_at=started, finished_at=started)
     _step_outcome(conn, workspace_id, started, settings, report)
     _step_hebbian(conn, workspace_id, started, settings, report)
     _step_promote_insights(conn, workspace_id, settings, report)
@@ -237,7 +237,7 @@ def run_organ_pass(
     report.finished_at = iso_now()
     if report.errors:
         _log.warning(
-            "organ_pass partial failure workspace=%s errors=%s",
+            "brain_pass partial failure workspace=%s errors=%s",
             workspace_id,
             ";".join(report.errors),
         )

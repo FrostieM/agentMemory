@@ -6,6 +6,7 @@ import sqlite3
 
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.models.behavior import BehaviorInstruction, BehaviorInstructionIn
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.behavior_repo import (
     get_behavior_instruction_by_name,
@@ -21,6 +22,15 @@ def upsert_behavior_instruction(
 ) -> BehaviorInstruction:
     instruction_id = new_id(IdKind.BEHAVIOR_INSTRUCTION)
     timestamp = iso_now()
+    # v3.0.0-final: redaction runs on every text field before it reaches
+    # SQLite (CLAUDE.md invariant: "Secrets never stored"). An untrusted
+    # document or an operator dropping an API key into the rule/rationale
+    # text path would otherwise persist cleartext on disk. The
+    # rationale column is NOT NULL with default "", so an empty input
+    # must round-trip as empty string (not None) — redact() on "" is a
+    # no-op that preserves this.
+    rule_safe = redact(payload.rule).text
+    rationale_safe = redact(payload.rationale or "").text
     with with_tx(conn):
         upsert_behavior_instruction_row(
             conn,
@@ -30,8 +40,8 @@ def upsert_behavior_instruction(
             kind=payload.kind,
             scope=payload.scope,
             priority=payload.priority,
-            rule=payload.rule,
-            rationale=payload.rationale,
+            rule=rule_safe,
+            rationale=rationale_safe,
             applies_to=payload.applies_to,
             conflict_policy=payload.conflict_policy,
             source_episode_id=payload.source_episode_id,

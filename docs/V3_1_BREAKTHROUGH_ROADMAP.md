@@ -4,7 +4,7 @@
 
 ## Context
 
-v3.0.0-final landed an organ-shaped memory: outcome-weighted ranking, Hebbian
+v3.0.0-final landed an brain-shaped memory: outcome-weighted ranking, Hebbian
 co-retrieval, sleep consolidation, PreToolUse reflexes, per-workspace self-
 model, bi-temporal facts, spreading-activation recall. All seven phases ship
 local-first, flag-gated, with empirical validation on copyBot (3 real bugs
@@ -234,6 +234,6 @@ If v3.1 ships only vectors 1+3 (proposes experiments + blindspot detection)
 in 4 weeks, that's already a meaningful step toward "active memory."
 
 We do not need to ship all six. We need each one to **work and not regress
-the v3.0.0-final baseline**. Quality gates from v3.0.0 (organ_pass,
-organ_metrics, organ_crash_test, organ_scenario_test) must stay green
+the v3.0.0-final baseline**. Quality gates from v3.0.0 (brain_pass,
+brain_metrics, brain_crash_test, brain_scenario_test) must stay green
 through every v3.1 commit.

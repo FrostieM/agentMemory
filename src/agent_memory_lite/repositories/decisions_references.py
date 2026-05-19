@@ -42,10 +42,15 @@ def serialize_references(references: list[str] | None) -> str | None:
 
 def row_to_decision(row: sqlite3.Row) -> Decision:
     """Map a sqlite3.Row from ``decisions`` (or compatible SELECT) to
-    a Decision. Tolerates legacy schemas missing the ``pinned`` and
-    ``references_json`` columns.
+    a Decision. Tolerates legacy schemas missing the ``pinned``,
+    ``references_json``, or ``outcome_score`` columns.
     """
-    pinned_value = row["pinned"] if "pinned" in row.keys() else 0  # noqa: SIM118
+    keys = row.keys()
+    pinned_value = row["pinned"] if "pinned" in keys else 0
+    # v3.0.0-final: outcome_score lives in migration 0002_outcome_loop.sql.
+    # Tolerate pre-migration rows so the wire surface stays compatible
+    # for workspaces that haven't run brain_pass yet.
+    outcome_value = row["outcome_score"] if "outcome_score" in keys else 0.0
     return Decision(
         id=row["id"],
         workspace_id=row["workspace_id"],
@@ -63,6 +68,7 @@ def row_to_decision(row: sqlite3.Row) -> Decision:
         updated_at=row["updated_at"],
         pinned=bool(pinned_value),
         references=parse_references(row),
+        outcome_score=float(outcome_value or 0.0),
     )
 
 

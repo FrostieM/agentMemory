@@ -55,7 +55,8 @@ def test_ui_index_and_assets(app_factory) -> None:
     # --- index.html: structural elements + cache-bust + design title ---
     assert index.status_code == 200
     assert "Memory · Live Observatory" in index.text
-    assert "20260501-observatory-rewrite" in index.text
+    # Cache-bust stamp; bumped per UI-major. v3.0.0-final = "20260519-v3-brain".
+    assert "20260519-v3-brain" in index.text
     # Header chips and workspace dropdown.
     assert 'id="healthChip"' in index.text
     assert 'id="chunksChip"' in index.text

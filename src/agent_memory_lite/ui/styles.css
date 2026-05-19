@@ -688,7 +688,11 @@ code, pre, .mono {
 
 .tweaks-panel {
   position: fixed;
-  right: 16px; bottom: 16px;
+  /* Dock to bottom-LEFT so the v3 rail (self-model + watch-outs +
+     recent insights) on the right is fully visible. The graph pane
+     occupies the left half of the viewport, so the panel sits over
+     unused graph empty space rather than over critical rail data. */
+  left: 16px; bottom: 16px;
   width: 240px;
   background: oklch(0.18 0.02 250 / 0.85);
   backdrop-filter: blur(16px) saturate(160%);
@@ -697,9 +701,10 @@ code, pre, .mono {
   padding: 8px 12px 12px;
   font-size: 11.5px;
   color: var(--text-0);
-  z-index: 100;
+  z-index: 50;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
+.tweaks-panel.is-collapsed { padding-bottom: 8px; }
 .tweaks-head {
   display: flex; justify-content: space-between; align-items: center;
   padding: 4px 0 8px; border-bottom: 1px solid var(--line-soft);
@@ -874,3 +879,371 @@ code, pre, .mono {
   .rail { order: 2; }
   .header-pills { display: none; }
 }
+
+/* ============================================================
+   v3.0.0-final brain components
+   ============================================================ */
+
+:root {
+  --outcome-pos: oklch(0.78 0.18 150);
+  --outcome-pos-soft: oklch(0.55 0.16 150);
+  --outcome-neg: oklch(0.7 0.2 25);
+  --outcome-neg-soft: oklch(0.5 0.16 25);
+  --outcome-neu: oklch(0.62 0.04 250);
+}
+
+/* === Self-model card (Observatory + Reflex/Metrics pages) ============== */
+
+.brain-card {
+  background: linear-gradient(155deg,
+    oklch(0.22 0.04 250 / 0.92),
+    oklch(0.18 0.03 250 / 0.92));
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 14px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.brain-card::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: radial-gradient(
+    400px 100px at 0% 0%,
+    oklch(0.6 0.15 var(--accent-hue) / 0.08),
+    transparent 70%);
+  pointer-events: none;
+}
+
+.brain-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.brain-card-kicker {
+  font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-3);
+  font-family: ui-monospace, monospace;
+}
+.brain-card-actions { display: flex; gap: 6px; }
+
+.self-model-card { margin-bottom: 12px; }
+.self-model-narrative {
+  font-size: 12.5px; line-height: 1.55;
+  color: var(--text-1);
+  margin: 4px 0 0;
+  font-style: italic;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+.self-model-narrative::-webkit-scrollbar { width: 4px; }
+.self-model-narrative::-webkit-scrollbar-thumb {
+  background: oklch(0.4 0.04 250); border-radius: 2px;
+}
+.self-model-meta {
+  display: flex; gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-2);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid oklch(0.3 0.02 250 / 0.5);
+}
+.self-model-meta span { display: inline-flex; gap: 4px; }
+.self-model-meta strong { color: var(--text-0); font-weight: 600; }
+.self-model-meta .foot-mute { opacity: 0.6; }
+
+/* === Watch-outs + recent insights tiles =============================== */
+
+.brain-list { display: flex; flex-direction: column; gap: 4px; }
+.brain-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: oklch(0.21 0.02 250 / 0.6);
+  border: 1px solid transparent;
+  transition: background 120ms, border-color 120ms;
+}
+.brain-row:hover {
+  background: oklch(0.25 0.025 250 / 0.8);
+  border-color: var(--line-soft);
+  cursor: pointer;
+}
+.brain-row .row-kind {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em;
+  font-family: ui-monospace, monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: oklch(0.3 0.04 250);
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+.brain-row .row-gist {
+  flex: 1; font-size: 12px;
+  color: var(--text-1);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.brain-row .row-meta {
+  font-size: 10.5px; font-family: ui-monospace, monospace;
+  color: var(--text-2); flex-shrink: 0;
+}
+.brain-row .row-id {
+  font-size: 10px; font-family: ui-monospace, monospace;
+  color: var(--text-3); flex-shrink: 0;
+}
+
+/* Outcome pill: small color-coded chip you can drop anywhere a row
+   has an outcome_score. */
+.outcome-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+}
+.outcome-pill.is-pos { color: var(--outcome-pos); background: oklch(0.78 0.18 150 / 0.08); }
+.outcome-pill.is-neg { color: var(--outcome-neg); background: oklch(0.7 0.2 25 / 0.08); }
+.outcome-pill.is-neu { color: var(--outcome-neu); background: oklch(0.62 0.04 250 / 0.08); }
+
+/* === Outcome bar (donut alternative -- horizontal segmented bar) ====== */
+
+.outcome-bar {
+  display: flex; height: 5px; border-radius: 3px; overflow: hidden;
+  background: oklch(0.25 0.02 250);
+  margin: 4px 0;
+}
+.outcome-bar-seg-pos { background: var(--outcome-pos-soft); }
+.outcome-bar-seg-neu { background: oklch(0.4 0.02 250); }
+.outcome-bar-seg-neg { background: var(--outcome-neg-soft); }
+
+/* === Reflex rules page ============================================== */
+
+.page-shell {
+  padding: 18px 32px 32px;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.page-title {
+  font-size: 22px; font-weight: 600; letter-spacing: -0.01em;
+  margin: 0 0 4px;
+}
+.page-sub {
+  font-size: 12px; color: var(--text-2);
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+
+.reflex-grid {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.reflex-row {
+  display: grid;
+  grid-template-columns: 220px 100px 1fr 100px 90px 110px 170px;
+  gap: 12px;
+  padding: 10px 14px;
+  align-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.reflex-row.is-head {
+  background: var(--bg-2);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: ui-monospace, monospace;
+  color: var(--text-3);
+}
+.reflex-row.is-inactive { opacity: 0.5; }
+.reflex-row .rule-name { font-weight: 600; }
+.reflex-row .rule-precondition { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-2); }
+.reflex-row .rule-fires { font-family: ui-monospace, monospace; font-size: 11px; }
+.reflex-row .rule-actions { display: flex; gap: 4px; justify-content: flex-end; }
+
+.enf-badge {
+  font-size: 10px; padding: 2px 8px; border-radius: 4px;
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  display: inline-block;
+}
+.enf-badge.is-block { background: oklch(0.7 0.2 25 / 0.18); color: var(--outcome-neg); border: 1px solid var(--outcome-neg-soft); }
+.enf-badge.is-advisory { background: oklch(0.78 0.18 90 / 0.12); color: oklch(0.82 0.16 80); border: 1px solid oklch(0.55 0.13 80); }
+
+.btn-tiny {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-1);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
+}
+.btn-tiny:hover { background: var(--bg-2); color: var(--text-0); }
+.btn-tiny.is-danger:hover { background: oklch(0.4 0.12 25 / 0.4); color: var(--outcome-neg); border-color: var(--outcome-neg-soft); }
+.btn-tiny.is-accent:hover { background: oklch(0.4 0.12 var(--accent-hue) / 0.4); color: var(--accent); border-color: var(--accent-soft); }
+
+/* === Recall page ====================================================== */
+
+.recall-controls {
+  display: grid;
+  grid-template-columns: 1fr 110px 110px auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 18px;
+  padding: 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+.recall-controls label { display: flex; flex-direction: column; gap: 4px; }
+.recall-controls .field-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-3);
+  font-family: ui-monospace, monospace;
+}
+.recall-controls input, .recall-controls select {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--text-0);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.recall-result {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: border-color 120ms;
+}
+.recall-result:hover { border-color: var(--accent-soft); }
+.recall-result-head {
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.recall-result-title { font-size: 13px; font-weight: 500; flex: 1; }
+.recall-result-body {
+  font-size: 12px; color: var(--text-2);
+  font-family: ui-monospace, monospace;
+  margin: 4px 0 0;
+}
+.recall-causal {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px;
+}
+.causal-chip {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: oklch(0.3 0.06 280 / 0.4);
+  color: oklch(0.82 0.14 280);
+  border: 1px solid oklch(0.5 0.1 280);
+}
+
+/* === Metrics dashboard ============================================== */
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.metric-tile {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.metric-tile-head {
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--text-3);
+  font-family: ui-monospace, monospace;
+  margin-bottom: 8px;
+}
+.metric-tile-value {
+  font-size: 26px; font-weight: 600;
+  color: var(--text-0);
+  letter-spacing: -0.02em;
+}
+.metric-tile-sub {
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: ui-monospace, monospace;
+  margin-top: 4px;
+}
+
+.bar-chart {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 8px;
+}
+.bar-chart-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 110px;
+  gap: 10px;
+  align-items: center;
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+.bar-chart-label { color: var(--text-1); text-transform: lowercase; }
+.bar-chart-bar { height: 6px; background: oklch(0.25 0.02 250); border-radius: 3px; overflow: hidden; }
+.bar-chart-fill { height: 100%; background: var(--accent-soft); border-radius: 3px; }
+.bar-chart-fill.is-pos { background: var(--outcome-pos-soft); }
+.bar-chart-fill.is-neg { background: var(--outcome-neg-soft); }
+.bar-chart-value { color: var(--text-2); text-align: right; }
+
+/* === Browse page outcome column ====================================== */
+
+.browse-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.browse-controls input[type="range"] { width: 140px; }
+.browse-row-meta-out {
+  display: inline-flex; gap: 4px; align-items: center;
+}
+
+/* === Toast tweaks ==================================================== */
+
+.app-toast {
+  position: fixed;
+  bottom: 28px; right: 28px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  color: var(--text-0);
+  z-index: 9999;
+  box-shadow: 0 8px 24px oklch(0.05 0.02 250 / 0.5);
+  animation: toast-in 200ms ease-out;
+}
+.app-toast.is-success { border-color: var(--outcome-pos-soft); }
+.app-toast.is-error { border-color: var(--outcome-neg-soft); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* === Empty / placeholder states ====================================== */
+
+.brain-empty {
+  text-align: center;
+  padding: 18px 12px;
+  color: var(--text-3);
+  font-style: italic;
+  font-size: 12px;
+}
+

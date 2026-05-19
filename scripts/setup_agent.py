@@ -11,22 +11,31 @@ What it does (idempotent — safe to re-run):
    - Ollama binary + daemon + qwen2.5:7b-instruct model
    - Memory SQLite db + LanceDB store
    - Claude Code, Codex, Cursor configuration directories
-3. Bootstraps the database if missing.
-4. Sets `OLLAMA_PROBE_SKIP` based on Ollama availability.
-5. For every detected agent runtime, writes:
+3. Bootstraps the database if missing AND applies the v3.0.0-final
+   brain migrations (0002_outcome_loop, 0003_hebbian,
+   0004_consolidation_feedback, 0005_reflexes, 0006_self_model,
+   0007_bi_temporal, 0008_causal_links). All idempotent.
+4. Seeds the 3 pinned discipline behaviors (graph-tools-first,
+   search-before-write, capability-link-on-write) AND the 3 Phase-4
+   baseline reflex rules (advisory enforcement — operator promotes to
+   block via memory_edit once they fire reliably).
+5. Sets `OLLAMA_PROBE_SKIP` based on Ollama availability.
+6. For every detected agent runtime, writes:
    - An MCP server entry pointing at this venv's `agent_memory_lite.mcp.stdio_server`
    - The agent contract (`docs/AGENT_CONTRACT.md`) into the runtime's "always-loaded"
      instructions file (CLAUDE.md / AGENTS.md / .cursorrules).
-6. (Claude Code only) Optionally installs the canonical discipline hooks:
+7. (Claude Code only) Optionally installs the canonical discipline hooks:
    - `UserPromptSubmit` → `scripts/inject_memory_brief.py` (≤500-token
      compact brief composed from canonical projections).
    - `PostToolUse` (Edit|Write|NotebookEdit|MultiEdit) →
      `scripts/post_edit_enqueue.py` (digest worker queue feeder).
-   - `PreToolUse` enforcement (unchanged from v2).
+   - `PreToolUse` enforcement via `scripts/pre_tool_use_check.py`
+     (fail-OPEN on any exception — never blocks tool calls on
+     unrelated errors).
    The legacy v2 `inject_memory_context.py` hook is auto-evicted on every
    run — this is the canonical surface. Skip all hook wiring with `--no-hook`.
-7. Emits a per-runtime "generic" snippet to stdout for any agent not detected.
-8. Smoke-tests the MCP server (initialize + tools/list) and prints a "verified"
+8. Emits a per-runtime "generic" snippet to stdout for any agent not detected.
+9. Smoke-tests the MCP server (initialize + tools/list) and prints a "verified"
    summary.
 
 Use `--check-only` to skip every write step and just report status.
@@ -53,6 +62,7 @@ from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (
 from agent_memory_lite.bootstrap.project_pre_commit_hook import (
     install_project_pre_commit_hook,
 )
+from agent_memory_lite.utils.time import iso_now
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
@@ -63,11 +73,11 @@ CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
 V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "canonical" / "0001_init.sql"
-# v3.0.0-final memory-organ migrations. Each is idempotent within a single
+# v3.0.0-final memory-brain migrations. Each is idempotent within a single
 # run (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS), but ALTER
-# TABLE ADD COLUMN is NOT idempotent in SQLite -- _apply_organ_migrations
+# TABLE ADD COLUMN is NOT idempotent in SQLite -- _apply_brain_migrations
 # below swallows the "duplicate column" error on re-run.
-V3_ORGAN_MIGRATIONS = (
+V3_BRAIN_MIGRATIONS = (
     "0002_outcome_loop.sql",
     "0003_hebbian.sql",
     "0004_consolidation_feedback.sql",
@@ -330,6 +340,27 @@ def install_v3_brief_hook(
     legacy_marker = "agent-memory-lite-v3-brief"
     cmd = cmd + f" # {marker}"
     new_hook = {"type": "command", "command": cmd}
+    # Pre-v3.0.0 versions of this script wrote an UNMARKERED command
+    # alongside the markered one. The marker-only dedup below misses those
+    # so the legacy entry hung around as a silent duplicate. Drop any entry
+    # whose command references our brief hook script BEFORE the upsert
+    # so re-runs always converge on exactly one markered entry.
+    script_basename = V3_BRIEF_HOOK_SCRIPT.name
+    ups[:] = [
+        entry
+        for entry in ups
+        if not (
+            isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(
+                isinstance(h, dict)
+                and script_basename in str(h.get("command", ""))
+                and marker not in str(h.get("command", ""))
+                and legacy_marker not in str(h.get("command", ""))
+                for h in entry["hooks"]
+            )
+        )
+    ]
     # Accept either the new or the legacy marker so an existing install
     # gets *upgraded* in place instead of double-added.
     existing = next(
@@ -375,6 +406,25 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
         "matcher": V3_POSTTOOLUSE_MATCHER,
         "hooks": [{"type": "command", "command": cmd}],
     }
+    # Pre-v3.0.0 installs wrote an UNMARKERED command. Purge those before
+    # upsert so re-runs converge on exactly one markered entry (the same
+    # cleanup we now do for the brief hook).
+    script_basename = V3_POSTEDIT_HOOK_SCRIPT.name
+    post[:] = [
+        entry
+        for entry in post
+        if not (
+            isinstance(entry, dict)
+            and isinstance(entry.get("hooks"), list)
+            and any(
+                isinstance(h, dict)
+                and script_basename in str(h.get("command", ""))
+                and marker not in str(h.get("command", ""))
+                and legacy_marker not in str(h.get("command", ""))
+                for h in entry["hooks"]
+            )
+        )
+    ]
     # Accept either marker so an existing install gets upgraded in place.
     existing = next(
         (
@@ -431,7 +481,7 @@ def _apply_v3_inplace_columns(conn: Any) -> int:
     return added
 
 
-def _apply_organ_migrations(conn: Any) -> int:
+def _apply_brain_migrations(conn: Any) -> int:
     """Apply v3.0.0-final migrations 0002-0008. Returns count of statements that ran.
 
     Each migration is CREATE-TABLE-IF-NOT-EXISTS for new tables and bare
@@ -440,15 +490,44 @@ def _apply_organ_migrations(conn: Any) -> int:
     we split each migration into individual statements and swallow that
     exact error so the function is safe to re-run on a partially-or-
     fully-migrated DB.
+
+    Each applied migration is recorded in the ``schema_migrations``
+    ledger (same table used by the canonical runner in
+    ``db/migrations.py``). This makes ``/health.applied_migrations``
+    accurate and lets a fresh-checkout setup skip already-applied
+    migrations cheaply. The version is prefixed with ``canonical/`` to
+    avoid colliding with the root migrations folder which uses bare
+    ``NNNN_slug`` keys.
     """
+    import contextlib  # noqa: PLC0415
     import sqlite3  # noqa: PLC0415
+
+    # Ensure the ledger exists. db/migrations.py creates it lazily, but
+    # if the canonical schema landed via executescript without ever
+    # routing through apply_migrations() the table may be missing.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    already_applied = {
+        row[0]
+        for row in conn.execute(
+            "SELECT version FROM schema_migrations WHERE version LIKE 'canonical/%'"
+        ).fetchall()
+    }
 
     migrations_dir = REPO_ROOT / "migrations" / "canonical"
     applied = 0
-    for filename in V3_ORGAN_MIGRATIONS:
+    for filename in V3_BRAIN_MIGRATIONS:
+        version = f"canonical/{Path(filename).stem}"
         path = migrations_dir / filename
         if not path.exists():
-            warn(f"organ migration missing: {path}")
+            warn(f"brain migration missing: {path}")
+            continue
+        if version in already_applied:
+            # Already in ledger from a prior setup_agent run. The SQL is
+            # idempotent so re-running would still succeed, but skipping
+            # is faster and removes the noise from setup output.
             continue
         sql = path.read_text(encoding="utf-8")
         # Strip ``-- ...`` comment lines BEFORE splitting on ``;`` so a
@@ -458,19 +537,41 @@ def _apply_organ_migrations(conn: Any) -> int:
         # this is sufficient.
         clean_lines = [line for line in sql.splitlines() if not line.lstrip().startswith("--")]
         clean_sql = "\n".join(clean_lines)
+        # Apply ALL statements in this migration inside a single
+        # transaction so a partial failure leaves the DB unchanged. If
+        # every statement succeeds (or is a tolerated duplicate-column
+        # skip), commit + record the version in the ledger.
+        # Already-in-transaction is fine — the outer commit() flushes.
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("BEGIN")
+        stmt_applied = 0
+        rollback = False
         for stmt in (s.strip() for s in clean_sql.split(";")):
             if not stmt:
                 continue
             try:
                 conn.execute(stmt)
-                applied += 1
+                stmt_applied += 1
             except sqlite3.OperationalError as exc:
                 msg = str(exc).lower()
                 if "duplicate column" in msg or "already exists" in msg:
                     continue
-                warn(f"organ migration {filename} stmt failed: {exc}")
+                warn(f"brain migration {filename} stmt failed: {exc}")
+                rollback = True
+                break
             except sqlite3.Error as exc:
-                warn(f"organ migration {filename} stmt failed: {exc}")
+                warn(f"brain migration {filename} stmt failed: {exc}")
+                rollback = True
+                break
+        if rollback:
+            with contextlib.suppress(sqlite3.Error):
+                conn.rollback()
+            continue
+        applied += stmt_applied
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            (version, iso_now()),
+        )
         conn.commit()
     return applied
 
@@ -530,11 +631,11 @@ def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
         if added:
             conn.commit()
             ok(f"canonical inplace columns added (+{added}: gist on decisions/theories/episodes)")
-        # v3.0.0-final: apply organ-memory migrations 0002-0008. Idempotent.
-        organ_stmts = _apply_organ_migrations(conn)
-        if organ_stmts:
+        # v3.0.0-final: apply brain-memory migrations 0002-0008. Idempotent.
+        brain_stmts = _apply_brain_migrations(conn)
+        if brain_stmts:
             ok(
-                f"organ migrations applied ({organ_stmts} statements across {len(V3_ORGAN_MIGRATIONS)} files)"
+                f"brain migrations applied ({brain_stmts} statements across {len(V3_BRAIN_MIGRATIONS)} files)"
             )
         # Defer the seed import: keeps setup_agent's top imports clean,
         # and the script directory is added to sys.path below if needed.

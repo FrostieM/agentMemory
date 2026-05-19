@@ -197,7 +197,9 @@ def _batch_rows(
         offset += len(rows)
 
 
-def _exec_many(target: sqlite3.Connection, sql: str, rows: list[tuple], commit: bool = True) -> None:
+def _exec_many(
+    target: sqlite3.Connection, sql: str, rows: list[tuple], commit: bool = True
+) -> None:
     """Batched insert with commit per batch."""
     target.executemany(sql, rows)
     if commit:

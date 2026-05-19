@@ -151,29 +151,29 @@ def _run_sentinel_pass(
                 for r in report.results
             ]
             record_sentinel_run(conn, workspace_id=workspace_id, results=results)
-        # Path B: v3.0.0-final organ maintenance (Phases 1-7). Runs on
+        # Path B: v3.0.0-final brain maintenance (Phases 1-7). Runs on
         # every overdue tick regardless of YAML presence so newly-
-        # bootstrapped workspaces still grow an organ.
-        _maybe_run_organ_pass(conn, workspace_id=workspace_id)
+        # bootstrapped workspaces still grow an brain.
+        _maybe_run_brain_pass(conn, workspace_id=workspace_id)
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:
         conn.close()
 
 
-def _maybe_run_organ_pass(conn: sqlite3.Connection, *, workspace_id: str) -> None:
-    """Best-effort v3 organ maintenance. Never raises -- single bad
+def _maybe_run_brain_pass(conn: sqlite3.Connection, *, workspace_id: str) -> None:
+    """Best-effort v3 brain maintenance. Never raises -- single bad
     workspace cannot block the sentinel commit."""
     try:
         from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
-        from agent_memory_lite.maintenance.organ_pass import run_organ_pass  # noqa: PLC0415
+        from agent_memory_lite.maintenance.brain_pass import run_brain_pass  # noqa: PLC0415
 
         settings = get_settings()
-        if not getattr(settings, "organ_pass_enabled", True):
+        if not getattr(settings, "brain_pass_enabled", True):
             return
-        run_organ_pass(conn, workspace_id=workspace_id, settings=settings)
+        run_brain_pass(conn, workspace_id=workspace_id, settings=settings)
     except Exception:  # pragma: no cover - defensive
-        _log.exception("organ_pass failed for workspace=%s", workspace_id)
+        _log.exception("brain_pass failed for workspace=%s", workspace_id)
 
 
 def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:

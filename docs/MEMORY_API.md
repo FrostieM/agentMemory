@@ -71,6 +71,43 @@ The MCP tools that wrap these are named `memory_*` and share the same
 shapes — see [`AGENT_CONTRACT.md`](AGENT_CONTRACT.md) §v3.0.0 for the
 canonical list.
 
+### Brain-aware actions (v3.0.0-final)
+
+Phases 1-7 ship dedicated dashboards (`/ui/recall`, `/ui/reflexes`,
+`/ui/metrics`) backed by these endpoints. Every response wraps in
+`{ok, data, error}` and is failure-soft (pre-migration DBs return 200
+with empty results rather than 500).
+
+| Method | Path | Body / params | Returns |
+|---|---|---|---|
+| GET | `/memory/ui/brain_state` | `workspace_id` | `{outcome_distribution, self_model, watch_outs, recent_insights, reflex_summary, causal_summary, hebbian_summary}` — one-shot snapshot for all 7 phases |
+| POST | `/memory/recall` | `{workspace_id, topic, depth (1-3), outcome_floor (-1..1), limit, kinds?, as_of?}` | `{topic, depth, outcome_floor, hits: [{kind, id, activation, hops, outcome_score, score, projection, causal_links}]}` — spreading-activation recall |
+| POST | `/memory/reflex/list` | `{workspace_id}` | `{rules: [{id, rule_name, trigger_tool, trigger_pattern, precondition_kind, precondition_param_json, enforcement, active, block_count, advisory_count, last_fired_at, ...}]}` |
+| POST | `/memory/reflex/upsert` | `{workspace_id, id?, rule_name, trigger_tool, trigger_pattern, precondition_kind, precondition_param_json, enforcement, active}` | `{id}` — create or update |
+| POST | `/memory/reflex/toggle_active` | `{workspace_id, id}` | `{id}` — flip active bit |
+| POST | `/memory/reflex/promote` | `{workspace_id, id}` | `{id, enforcement: "block"}` — advisory → block |
+| POST | `/memory/reflex/demote` | `{workspace_id, id}` | `{id, enforcement: "advisory"}` — block → advisory |
+| POST | `/memory/reflex/delete` | `{workspace_id, id}` | `{id, deleted: true}` |
+| POST | `/memory/self_model/refresh` | `{workspace_id, use_ollama?}` | `{identity_text, word_count, refreshed_via, coverage_score, invariants_count, uncertainties_count}` |
+| POST | `/memory/self_model/get` | `{workspace_id}` | full record or `null` |
+| POST | `/memory/insight/promote_eligible` | `{workspace_id}` | `{inspected, promoted, skipped}` — review-queue path |
+
+**Reflex preconditions** that the PreToolUse hook honors:
+
+* `impact_check_within_seconds` (param: `{"seconds": N}`) — block tool
+  call unless `memory_impact_check` ran within the last N seconds in
+  the same session trail
+* `memory_search_within_seconds` (param: `{"seconds": N}`) — same for
+  search
+* `playbook_fetch` — block unless an agent_playbook was fetched
+
+Operators ship 3 baseline rules (advisory enforcement) via
+`scripts/setup_agent.py` and promote each to `block` once it fires
+reliably without false positives. The PreToolUse hook script
+(`scripts/pre_tool_use_check.py`) is **fail-OPEN**: any unexpected
+exception (sqlite, import, OS) returns allow + empty diagnostic, so a
+crash in the memory layer never blocks the user's tool call.
+
 ---
 
 ## Legacy v2 endpoints — `/memory/*`

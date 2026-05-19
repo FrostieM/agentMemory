@@ -1,4 +1,4 @@
--- Phase 6 of the "memory as organ" evolution: bi-temporal facts.
+-- Phase 6 of the "memory as brain" evolution: bi-temporal facts.
 --
 -- ``created_at`` / ``updated_at`` records WHEN WE LEARNED IT.
 -- ``valid_from`` / ``valid_to``  records WHEN THE FACT WAS / IS TRUE.

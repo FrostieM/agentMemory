@@ -16,9 +16,20 @@ For day-to-day operator workflow, see [`docs/OPERATIONS.md`](OPERATIONS.md).
 ## What you have
 
 A local memory service on `http://127.0.0.1:8765`. All data is local; no
-cloud calls. The service binds to `127.0.0.1` only. A browser UI lives at
-`/ui` (Observatory), `/ui/code` (file/symbol dashboard), `/ui/graph` (D3
-force-directed code graph) — all three share a workspace dropdown.
+cloud calls. The service binds to `127.0.0.1` only. A browser UI exposes
+eight pages (all share a workspace dropdown):
+
+* `/ui` — **Observatory**: live graph + self-model identity card +
+  watch-outs (low-outcome rows) + recent insights candidates
+* `/ui/code` — file/symbol dashboard
+* `/ui/graph` — D3 force-directed code graph
+* `/ui/recall` — interactive spreading-activation explorer (Phase 7)
+* `/ui/reflexes` — reflex-rule CRUD (Phase 4 PreToolUse rules)
+* `/ui/metrics` — **Brain Metrics**: outcome distribution, adoption,
+  Hebbian edges, causal links, recent activity
+* `/ui/review` — candidate review queue (promote / reject)
+* `/ui/browse` — generic browser over decisions / theories / insights /
+  behaviors (with outcome-score pills)
 
 Each project has its own SQLite + LanceDB pair via `MEMORY_DB_PATH` and
 `VECTOR_DB_PATH`. `workspace_id` is the logical namespace inside that
@@ -29,15 +40,27 @@ workspaces are always allowed.
 Memory persists across chat sessions. Without the service you are working
 blind — say so, do not fall back to "internal memory".
 
-## v3.0.0 — compact-projection surface (start here)
+## v3.0.0-final — compact-projection surface
 
-The agent now has two coexisting surfaces:
+The agent has 10 strict tools (compact projections by default,
+~20-40 tokens per item, full content opt-in via `fields=`) plus a
+legacy `memory_get_context` / `memory_list_*` / `memory_write_*` family
+that returns full bodies (~500-2000 tokens). The compact surface is
+the documented path; legacy stays registered for backwards-compat and
+retires at v4.0.
 
-* **`memory_*` tools** (10 of them) — compact projections by default,
-  ~20-40 tokens per item, full content opt-in via `fields=`. This is
-  the version-current surface. **Prefer these whenever possible.**
-* **Legacy `memory_*` tools** — full-body responses (~500-2000 tokens).
-  Still registered for backwards compat; will be retired at v4.0.
+**v3.0.0-final adds 7 background loops that compose on the compact
+surface (every one flag-gated, default ON, byte-equivalent rollback):**
+
+| Phase | What it does | Where it surfaces |
+|---|---|---|
+| 1 — Outcome Loop | every row gets `outcome_score ∈ [-1, +1]` from feedback EWMA + age + supersede | brief filters Active by outcome ≥ 0; lint surfaces low-outcome rows as watch-outs |
+| 2 — Hebbian | retrievals log to `retrieval_coactivation`; pairs that surface together get `soft_edges(co_retrieved)` (HeLa-Mem outcome gate prevents reinforcing failure pairs) | `memory_recall` + brief associates |
+| 3 — Consolidation | recurring episode patterns become `insights`; recurring insights become pinned `behaviors` | brief recent-insights section |
+| 4 — Reflexes | PreToolUse rules with preconditions (`impact_check_within_seconds`, `memory_search_within_seconds`, `playbook_fetch`); advisory by default, operator promotes to block | `memory_lint`, `/ui/reflexes` |
+| 5 — Self-Model | per-workspace 50-150 word identity narrative + invariants + uncertainties; refreshed from top outcome-weighted decisions | brief FIRST section, `/ui` rail card |
+| 6 — Bi-Temporal | `valid_from` / `valid_to` separate from `created_at` / `updated_at`; brief filters by `now()` so expired decisions drop | every read tool accepts `as_of` |
+| 7 — Recall | `memory_recall(topic, depth, outcome_floor)` — spreading activation over `soft_edges ∪ capability_links ∪ causal_links` | MCP tool, `/ui/recall` |
 
 ### Discipline rules — call these FIRST (override any reflex)
 

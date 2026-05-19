@@ -1,7 +1,7 @@
 """Empirical quality probe -- not "did the code run" but "is the OUTPUT useful".
 
 The crash test verifies behavior matches spec. This script asks the
-harder question: when a real agent uses the organ, does it surface the
+harder question: when a real agent uses the brain, does it surface the
 right rows, blocks the right tool calls, and produces narratives that
 help rather than mislead?
 

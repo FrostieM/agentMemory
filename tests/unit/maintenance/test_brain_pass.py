@@ -1,4 +1,4 @@
-"""v3.0.0-final: organ_pass integration test.
+"""v3.0.0-final: brain_pass integration test.
 
 The pass should run all six Phase 1-7 maintenance steps for one workspace
 when invoked from the sentinel_scheduler hook. Each step is independently
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.maintenance.organ_pass import OrganPassReport, run_organ_pass
+from agent_memory_lite.maintenance.brain_pass import BrainPassReport, run_brain_pass
 from agent_memory_lite.utils.time import iso_now
 
 SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
@@ -75,8 +75,8 @@ def test_pass_runs_all_six_steps_with_default_settings(conn: sqlite3.Connection)
     """Empty workspace + default settings -> pass completes without errors,
     returns a structured report with zero counts (no work to do)."""
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
-    assert isinstance(report, OrganPassReport)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
+    assert isinstance(report, BrainPassReport)
     assert report.workspace_id == "ws"
     assert report.errors == []
     # All zero on empty workspace.
@@ -98,7 +98,7 @@ def test_pass_with_seed_decision_refreshes_outcome(conn: sqlite3.Connection) -> 
         outcome_score=0.0,
     )
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert "decision" in report.outcome_updated
     # Decision should have a non-zero score now (even if low, because
     # _decision_inputs uses usage_count=0 which suppresses the EWMA term;
@@ -111,7 +111,7 @@ def test_pass_with_seed_decision_refreshes_outcome(conn: sqlite3.Connection) -> 
 
 def test_pass_writes_self_model_row(conn: sqlite3.Connection) -> None:
     settings = Settings()
-    run_organ_pass(conn, workspace_id="ws", settings=settings)
+    run_brain_pass(conn, workspace_id="ws", settings=settings)
     row = conn.execute(
         "SELECT identity_text, refreshed_via FROM self_model WHERE workspace_id = 'ws'"
     ).fetchone()
@@ -130,7 +130,7 @@ def test_outcome_loop_disabled_skips_outcome_step(
 ) -> None:
     monkeypatch.setenv("MEMORY_OUTCOME_LOOP_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.outcome_updated == {}
 
 
@@ -139,7 +139,7 @@ def test_hebbian_disabled_skips_hebbian_step(
 ) -> None:
     monkeypatch.setenv("MEMORY_HEBBIAN_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.hebbian_edges_upserted == 0
     assert report.hebbian_rows_pruned == 0
 
@@ -149,7 +149,7 @@ def test_self_model_disabled_skips_self_model_step(
 ) -> None:
     monkeypatch.setenv("MEMORY_SELF_MODEL_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.self_model_refreshed is False
     # And the row is NOT written.
     row = conn.execute("SELECT 1 FROM self_model WHERE workspace_id = 'ws'").fetchone()
@@ -161,7 +161,7 @@ def test_recall_disabled_skips_causal_extractor(
 ) -> None:
     monkeypatch.setenv("MEMORY_RECALL_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.causal_invalidated == 0
     assert report.causal_derived == 0
 
@@ -171,7 +171,7 @@ def test_consolidation_feedback_disabled_skips_promote(
 ) -> None:
     monkeypatch.setenv("MEMORY_CONSOLIDATION_FEEDBACK_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.insights_promoted == 0
 
 
@@ -180,7 +180,7 @@ def test_reflex_disabled_skips_distill(
 ) -> None:
     monkeypatch.setenv("MEMORY_REFLEX_ENABLED", "false")
     settings = Settings()
-    report = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
     assert report.reflex_rules_distilled == 0
 
 
@@ -195,7 +195,7 @@ def test_pass_on_pre_migration_db_does_not_raise() -> None:
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     settings = Settings()
-    report = run_organ_pass(c, workspace_id="ws_pre", settings=settings)
+    report = run_brain_pass(c, workspace_id="ws_pre", settings=settings)
     # All steps either succeed (with zero work) or fail-soft.
     # We just verify the function returned a report.
     assert report.workspace_id == "ws_pre"
@@ -209,8 +209,8 @@ def test_pass_on_pre_migration_db_does_not_raise() -> None:
 
 def test_second_pass_is_idempotent(conn: sqlite3.Connection) -> None:
     settings = Settings()
-    first = run_organ_pass(conn, workspace_id="ws", settings=settings)
-    second = run_organ_pass(conn, workspace_id="ws", settings=settings)
+    first = run_brain_pass(conn, workspace_id="ws", settings=settings)
+    second = run_brain_pass(conn, workspace_id="ws", settings=settings)
     # Self-model row is REPLACED each time, but counts stay consistent.
     assert first.self_model_refreshed == second.self_model_refreshed
     # Nothing new to distill / promote / extract.

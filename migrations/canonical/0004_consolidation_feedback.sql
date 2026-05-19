@@ -1,4 +1,4 @@
--- Phase 3 of the "memory as organ" evolution: consolidation feedback loop.
+-- Phase 3 of the "memory as brain" evolution: consolidation feedback loop.
 -- Until now, consolidation.py wrote insights with status='candidate' that
 -- sat unused. Phase 3 wires them into:
 --

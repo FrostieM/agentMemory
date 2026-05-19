@@ -1,4 +1,4 @@
-"""Phase 0: organ_metrics dashboard tests.
+"""Phase 0: brain_metrics dashboard tests.
 
 Smoke tests that exercise every phase's collector against a synthetic
 schema. We do NOT assert specific counts -- only that the collector
@@ -15,14 +15,14 @@ import pytest
 from agent_memory_lite.utils.time import iso_now
 
 # Import the script module by path so we can exercise its functions.
-_SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "organ_metrics.py"
+_SCRIPT_PATH = Path(__file__).resolve().parents[3] / "scripts" / "brain_metrics.py"
 
 
 @pytest.fixture
-def organ_metrics_module(monkeypatch: pytest.MonkeyPatch) -> object:
+def brain_metrics_module(monkeypatch: pytest.MonkeyPatch) -> object:
     import importlib.util  # noqa: PLC0415
 
-    spec = importlib.util.spec_from_file_location("organ_metrics", _SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("brain_metrics", _SCRIPT_PATH)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -44,7 +44,7 @@ ALL_PHASE_MIGRATIONS = [
 
 @pytest.fixture
 def fully_migrated_db(tmp_path: Path) -> Path:
-    db_path = tmp_path / "organ.db"
+    db_path = tmp_path / "brain.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -57,10 +57,10 @@ def fully_migrated_db(tmp_path: Path) -> Path:
 
 
 def test_dashboard_on_empty_workspace_returns_zeros(
-    fully_migrated_db: Path, organ_metrics_module: object
+    fully_migrated_db: Path, brain_metrics_module: object
 ) -> None:
     """Every phase collector must not raise on an empty DB."""
-    report = organ_metrics_module.collect_workspace_report(fully_migrated_db, "ws_empty")
+    report = brain_metrics_module.collect_workspace_report(fully_migrated_db, "ws_empty")
     assert report["workspace_id"] == "ws_empty"
     assert report["phase_1_outcome"]["decision"]["total"] == 0
     assert report["phase_2_hebbian"]["coactivation_rows"] == 0
@@ -72,7 +72,7 @@ def test_dashboard_on_empty_workspace_returns_zeros(
 
 
 def test_dashboard_with_data_returns_counts(
-    fully_migrated_db: Path, organ_metrics_module: object
+    fully_migrated_db: Path, brain_metrics_module: object
 ) -> None:
     """Seed one row per phase, run the dashboard, check the counts come through."""
     conn = sqlite3.connect(fully_migrated_db)
@@ -136,7 +136,7 @@ def test_dashboard_with_data_returns_counts(
     conn.commit()
     conn.close()
 
-    report = organ_metrics_module.collect_workspace_report(fully_migrated_db, "ws")
+    report = brain_metrics_module.collect_workspace_report(fully_migrated_db, "ws")
     assert report["phase_1_outcome"]["decision"]["total"] == 1
     assert report["phase_1_outcome"]["decision"]["positive"] == 1
     assert report["phase_2_hebbian"]["soft_edges_by_kind"]["co_retrieved"]["count"] == 1
@@ -150,21 +150,21 @@ def test_dashboard_with_data_returns_counts(
 
 
 def test_dashboard_human_render_handles_empty(
-    fully_migrated_db: Path, organ_metrics_module: object
+    fully_migrated_db: Path, brain_metrics_module: object
 ) -> None:
-    report = organ_metrics_module.collect_workspace_report(fully_migrated_db, "ws_x")
-    text = organ_metrics_module.render_human(report)
-    assert "# Organ metrics: ws_x" in text
+    report = brain_metrics_module.collect_workspace_report(fully_migrated_db, "ws_x")
+    text = brain_metrics_module.render_human(report)
+    assert "# Brain metrics: ws_x" in text
 
 
-def test_dashboard_on_pre_migration_db_safe(tmp_path: Path, organ_metrics_module: object) -> None:
+def test_dashboard_on_pre_migration_db_safe(tmp_path: Path, brain_metrics_module: object) -> None:
     """Apply ONLY 0001; the dashboard skips missing-table phases gracefully."""
     db_path = tmp_path / "old.db"
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     conn.commit()
     conn.close()
-    report = organ_metrics_module.collect_workspace_report(db_path, "ws_pre")
+    report = brain_metrics_module.collect_workspace_report(db_path, "ws_pre")
     assert report["workspace_id"] == "ws_pre"
     # New tables / columns return empty, not error.
     assert report["phase_4_reflex"]["active_rules"] == 0
@@ -172,6 +172,6 @@ def test_dashboard_on_pre_migration_db_safe(tmp_path: Path, organ_metrics_module
     assert report["phase_7_causal"]["causal_links_by_relation"] == {}
 
 
-def test_collector_handles_missing_db(organ_metrics_module: object) -> None:
-    report = organ_metrics_module.collect_workspace_report(Path("/nonexistent.db"), "ws")
+def test_collector_handles_missing_db(brain_metrics_module: object) -> None:
+    report = brain_metrics_module.collect_workspace_report(Path("/nonexistent.db"), "ws")
     assert report.get("error") == "db_missing"

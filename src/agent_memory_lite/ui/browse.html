@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>agent-memory-lite — browse memory</title>
-<link rel="stylesheet" href="/ui/styles.css?v=20260510-polish" />
+<link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
 <style>
   /* Phase 3.6: generic browse page over decisions / theories /
      insights / behavior_instructions. One layout, kind dropdown
@@ -96,6 +96,9 @@
       <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
       <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
       <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
+      <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
+      <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
       <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
       <a class="app-nav-link is-active" data-nav="browse" href="/ui/browse">Browse</a>
     </nav>
@@ -121,6 +124,7 @@
   </div>
 
 <script src="/ui/app_header.js"></script>
+<script src="/ui/brain.js?v=20260519-v3-brain"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 
@@ -270,13 +274,21 @@ function renderCard(cfg, item) {
     if (type === "archived") return `<span class="badge badge-archived">archived</span>`;
     return "";
   }).join("");
+  // v3.0.0-final: surface outcome_score next to status badges so a
+  // browser at a glance sees which decisions/theories/behaviors have
+  // been validated by usage (green) vs corrected away (red).
+  const score = item.outcome_score;
+  const outcomeHtml = (score != null && window.BrainUI)
+    ? window.BrainUI.outcomePill(score)
+    : "";
   return `
     <div class="browse-card kind-${cfg.cardKind}" data-id="${escape(id)}">
       <div class="card-head">
-        <div>
+        <div style="flex:1">
           <h3 class="card-title">${escape(view.title)}${badgesHtml}</h3>
           <div class="card-meta">${escape(view.meta)} · ${escape(id)}</div>
         </div>
+        <div class="browse-row-meta-out">${outcomeHtml}</div>
       </div>
       <div class="card-body">${escape(view.body)}</div>
     </div>`;

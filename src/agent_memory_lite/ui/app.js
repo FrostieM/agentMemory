@@ -2723,8 +2723,28 @@ els.tweaksToggle.addEventListener("click", () => {
   els.tweaksToggle.textContent = state.tweaks.panelOpen ? "−" : "+";
 });
 
+// v3.0.0 final: honour ?workspace_id=X URL parameter so the Observatory
+// matches /ui/code, /ui/graph, /ui/recall, /ui/reflexes, /ui/metrics —
+// all of which use app_header.js to read the same param. Without this,
+// landing on /ui?workspace_id=copyBot silently switched to whatever
+// workspace the server treated as current.
+(function preselectWorkspaceFromUrl() {
+  const fromUrl = new URLSearchParams(location.search).get("workspace_id") || "";
+  if (fromUrl) state.workspace = fromUrl.trim();
+})();
+
 mountShell();
 applyTweaks();
 fetchState({ manual: true });
 setTimeout(tick, 30);
 setInterval(() => { if (!state.sseReady && !state.paused) fetchState(); }, POLL_MS);
+
+// Keep the URL in sync with the dropdown so links shared between pages
+// (and browser back/forward) preserve the chosen workspace.
+els.workspace.addEventListener("change", () => {
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set("workspace_id", els.workspace.value || "");
+    history.replaceState(null, "", u);
+  } catch (_e) { /* swallow URL errors silently */ }
+});

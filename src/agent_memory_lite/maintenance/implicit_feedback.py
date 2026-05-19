@@ -134,7 +134,7 @@ def _map_link_target_type(target_type: str) -> str | None:
 
 
 # ============================================================
-# Phase 1 (memory-as-organ): supersede + correction implicit feedback.
+# Phase 1 (memory-as-brain): supersede + correction implicit feedback.
 # A superseded decision and a corrected claim are both operator signals
 # that "this was wrong". They feed the outcome_score loop without the
 # agent having to call record_usage_feedback explicitly.

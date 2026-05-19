@@ -343,3 +343,53 @@ def test_explicit_workspace_env_override(
         },
     )
     assert result.returncode == 2
+
+
+def test_hook_never_crashes_on_corrupt_db(
+    fake_workspace: dict[str, str],
+    tmp_path: Path,
+) -> None:
+    """v3.0.0-final invariant: the PreToolUse hook MUST exit 0 even on
+    unexpected errors. A traceback to stderr can be misinterpreted by
+    Claude Code as a tool-call block, breaking the user's workflow.
+
+    Test: point the hook at a registry entry whose db_path is a real
+    file but NOT a valid SQLite database (random bytes). The lazy
+    import of enforcement.dispatch succeeds, but the actual decide()
+    call hits a non-sqlite3.Error (DatabaseError → sqlite3.Error, OK;
+    but corrupt schema may surface other errors). The hook must
+    fail-open and exit 0.
+    """
+    bogus_db = tmp_path / "bogus.db"
+    bogus_db.write_bytes(b"NOT A SQLITE DATABASE \x00\x01\x02\x03" * 10)
+    bogus_registry = tmp_path / "bogus_workspaces.json"
+    bogus_registry.write_text(
+        json.dumps(
+            {
+                "workspaces": [
+                    {
+                        "id": "bogus-ws",
+                        "db_path": str(bogus_db),
+                        "vector_path": str(tmp_path / "noop.lance"),
+                        "project_root": fake_workspace["project_root"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "x.py", "new_string": "y"},
+            "cwd": fake_workspace["project_root"],
+        },
+        env_overrides={
+            "MEMORY_WORKSPACES_FILE": str(bogus_registry),
+            "AGENT_MEMORY_WORKSPACE": "bogus-ws",
+        },
+    )
+    # Hook must allow (exit 0). Anything else suggests a traceback escaped.
+    assert result.returncode == 0, (
+        f"hook crashed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )

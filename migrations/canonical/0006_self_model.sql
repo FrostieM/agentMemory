@@ -1,4 +1,4 @@
--- Phase 5 of the "memory as organ" evolution: per-workspace identity.
+-- Phase 5 of the "memory as brain" evolution: per-workspace identity.
 --
 -- The agent's behaviour right now is shaped by environment (CLAUDE.md +
 -- pinned behaviours + active decisions). Phase 5 adds a third dimension:

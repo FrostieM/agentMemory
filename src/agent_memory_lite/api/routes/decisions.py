@@ -47,6 +47,7 @@ def _decision_item(item: Decision) -> DecisionItem:
         updated_at=item.updated_at,
         pinned=item.pinned,
         references=item.references,
+        outcome_score=item.outcome_score,
     )
 
 

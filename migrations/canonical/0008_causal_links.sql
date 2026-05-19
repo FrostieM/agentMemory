@@ -1,4 +1,4 @@
--- Phase 7 of the "memory as organ" evolution: causal_links + full recall.
+-- Phase 7 of the "memory as brain" evolution: causal_links + full recall.
 --
 -- The Hebbian soft_edges from Phase 2 capture co-occurrence -- two items
 -- show up together in retrievals or episodes. They do NOT capture

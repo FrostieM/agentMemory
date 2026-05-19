@@ -1,4 +1,4 @@
-"""Phase 1 of the memory-as-organ evolution: outcome_score recomputation.
+"""Phase 1 of the memory-as-brain evolution: outcome_score recomputation.
 
 Every knowledge row (decision / theory / behavior / skill / insight / chunk)
 carries a denormalized ``outcome_score`` in ``[-1.0, 1.0]``. Brief and lint

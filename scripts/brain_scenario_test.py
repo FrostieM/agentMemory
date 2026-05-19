@@ -2,7 +2,7 @@
 
 The crash test verifies isolated behaviors. The quality probe inspects
 individual outputs. This script simulates a REAL AGENT SESSION end-to-
-end and verifies that the memory organ reacts coherently across phases:
+end and verifies that the memory brain reacts coherently across phases:
 search -> coactivation -> hebbian distill -> supersede decision ->
 implicit feedback -> outcome drops -> brief reflects -> reflex blocks
 unsafe tool -> recall surfaces causal chain -> consolidation produces
@@ -12,7 +12,7 @@ Five scenarios, each numbered with what it asserts about the system.
 Run on a sandbox copy of a real workspace DB; mutations stay there.
 
 Usage:
-    python scripts/organ_scenario_test.py --db <sandbox.db> --workspace <id>
+    python scripts/brain_scenario_test.py --db <sandbox.db> --workspace <id>
 """
 
 from __future__ import annotations
@@ -648,10 +648,10 @@ def scenario_j_self_model_drift(conn: sqlite3.Connection, ws: str) -> None:
 
 
 def scenario_l_cold_start() -> None:
-    hdr("SCENARIO L -- Cold start: organ_pass on a freshly-migrated empty DB")
+    hdr("SCENARIO L -- Cold start: brain_pass on a freshly-migrated empty DB")
     from agent_memory_lite.cognition.brief import compose_brief as cb  # noqa: PLC0415
     from agent_memory_lite.config.settings import Settings as _Settings  # noqa: PLC0415
-    from agent_memory_lite.maintenance.organ_pass import run_organ_pass as _run  # noqa: PLC0415
+    from agent_memory_lite.maintenance.brain_pass import run_brain_pass as _run  # noqa: PLC0415
 
     # Build an in-memory DB with all 8 migrations applied.
     db = sqlite3.connect(":memory:")
@@ -669,7 +669,7 @@ def scenario_l_cold_start() -> None:
     ):
         db.executescript((migrations_dir / n).read_text(encoding="utf-8"))
     db.commit()
-    step("running organ_pass on completely empty workspace")
+    step("running brain_pass on completely empty workspace")
     report = _run(db, workspace_id="cold_start_ws", settings=_Settings())
     info(f"errors={report.errors}")
     check("no errors on cold start", report.errors == [])
@@ -688,12 +688,12 @@ def scenario_l_cold_start() -> None:
 
 
 def scenario_m_performance(conn: sqlite3.Connection, ws: str) -> None:
-    hdr("SCENARIO M -- Performance: organ_pass + brief + recall under real-scale data")
+    hdr("SCENARIO M -- Performance: brain_pass + brief + recall under real-scale data")
     import time  # noqa: PLC0415
 
     settings = Settings()
     from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
-    from agent_memory_lite.maintenance.organ_pass import run_organ_pass  # noqa: PLC0415
+    from agent_memory_lite.maintenance.brain_pass import run_brain_pass  # noqa: PLC0415
 
     # Tally workspace data scale.
     rows_count = {}
@@ -702,13 +702,13 @@ def scenario_m_performance(conn: sqlite3.Connection, ws: str) -> None:
             f"SELECT COUNT(*) FROM {table} WHERE workspace_id=?", (ws,)
         ).fetchone()[0]
     info(f"workspace scale: {rows_count}")
-    step("timing run_organ_pass")
+    step("timing run_brain_pass")
     t0 = time.perf_counter()
-    run_organ_pass(conn, workspace_id=ws, settings=settings)
+    run_brain_pass(conn, workspace_id=ws, settings=settings)
     conn.commit()
-    organ_ms = (time.perf_counter() - t0) * 1000
-    info(f"organ_pass: {organ_ms:.0f} ms")
-    check("organ_pass under 5000 ms", organ_ms < 5000)
+    brain_ms = (time.perf_counter() - t0) * 1000
+    info(f"brain_pass: {brain_ms:.0f} ms")
+    check("brain_pass under 5000 ms", brain_ms < 5000)
     step("timing compose_brief (cache miss)")
     brief_mod._BRIEF_CACHE.clear()
     t0 = time.perf_counter()

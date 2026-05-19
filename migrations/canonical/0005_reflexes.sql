@@ -1,4 +1,4 @@
--- Phase 4 of the "memory as organ" evolution: reflex rules.
+-- Phase 4 of the "memory as brain" evolution: reflex rules.
 --
 -- A reflex is a hard pre-check evaluated by the PreToolUse hook BEFORE a
 -- tool call executes. Where ``behaviors`` are advisory ("the agent SHOULD

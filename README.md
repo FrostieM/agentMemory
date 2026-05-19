@@ -15,29 +15,39 @@ providers. SQLite (WAL + FTS5) is the source of record; LanceDB powers
 embedded vector search; sentence-transformers handles embeddings on CPU;
 Ollama drives local LLM extraction.
 
-> **3.0.0-dev — compact-projection retrieval (in-development).** The v3
-> work ships in parallel with the stable 2.x surface: v3 endpoints mount
-> at `/memory/*`, v3 MCP tools are prefixed `memory_*`, and the
-> v2 surface keeps working unchanged. The architectural pivot is
-> compact projections (~20-40 tokens per item) returned by every read
-> tool by default; full content is opt-in via `fields=[...]`. Target
-> metrics: token cost per session ≤50% of v2, rule adherence ≥95%,
-> 10 MCP tools down from 30+, 14 SQL migrations → 1 DDL.
+> **3.0.0-final — memory as a brain, not a library.** Every retrievable
+> row carries `outcome_score ∈ [-1, +1]` derived from feedback; co-
+> retrievals form Hebbian `soft_edges` (with HeLa-Mem outcome gate);
+> sleep consolidation distills `insights` and promotes recurring ones
+> to pinned behaviors; PreToolUse `reflex_rules` can block tool calls
+> on missing preconditions; a per-workspace `self_model` surfaces
+> identity narrative first in every brief; bi-temporal `valid_from/
+> valid_to` filtering keeps superseded knowledge from the active view;
+> `memory_recall(topic, depth, outcome_floor)` does spreading
+> activation over `soft_edges ∪ capability_links ∪ causal_links`.
+>
+> Plus the v3 compact-projection surface (10 strict tools, ~20-40
+> tokens per item, full content via `fields=`) and a brain-aware
+> dashboard at `/ui` (Observatory) + `/ui/recall` + `/ui/reflexes` +
+> `/ui/metrics`. Every phase is flag-gated for byte-equivalent
+> rollback.
 >
 > **One-line deploy** (canonical path):
 >
 >     python scripts/setup_agent.py --project /path/to/your/project
 >
-> This applies the v3 schema, seeds the 3 pinned discipline rules
-> (graph-tools-first / search-before-write / capability-link-on-write),
-> wires the `UserPromptSubmit` brief hook + `PostToolUse` digest hook
-> into `.claude/settings.json`, and registers the workspace in
+> This applies the canonical schema + the 7 brain migrations
+> (0002-0008), seeds the 3 pinned discipline rules (graph-tools-first
+> / search-before-write / capability-link-on-write) + the 3 baseline
+> reflex rules (advisory enforcement), wires the `UserPromptSubmit`
+> brief hook + `PostToolUse` digest hook + `PreToolUse` enforcement
+> hook into `.claude/settings.json`, and registers the workspace in
 > `~/.agent_memory/workspaces.json`. Idempotent — safe to re-run.
 >
-> See [`docs/V3_AGENT_RUNTIMES.md`](docs/V3_AGENT_RUNTIMES.md),
-> [`docs/V3_SCHEMA.md`](docs/V3_SCHEMA.md), and
-> [`docs/V3_MIGRATION.md`](docs/V3_MIGRATION.md) for wiring + cutover
-> playbook.
+> See [`docs/MEMORY_AGENT_RUNTIMES.md`](docs/MEMORY_AGENT_RUNTIMES.md),
+> [`docs/MEMORY_SCHEMA.md`](docs/MEMORY_SCHEMA.md), and
+> [`docs/MEMORY_MIGRATION.md`](docs/MEMORY_MIGRATION.md) for wiring +
+> cutover playbook.
 
 > **2.0.0 — first public-facing release.** Local-first memory
 > substrate (SQLite + LanceDB + sentence-transformers + Ollama, no
@@ -164,7 +174,11 @@ request flow as it happens. Layout:
 
 ## Status — 2.0.0
 
-Latest tag: **v2.0.0** (2026-05-10) — first public-facing release.
+Latest tag: **v3.0.0** (2026-05-19) — memory as a brain. Outcome-aware
+retrieval, Hebbian associations, PreToolUse reflexes, identity self-
+model, bi-temporal facts, spreading-activation recall. See
+[`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) for the 7-phase
+breakdown.
 Every memory feature is on by default;
 flag-off parity invariants in `tests/invariants/` lock the legacy
 byte-equivalent path for any operator who wants to peel a layer

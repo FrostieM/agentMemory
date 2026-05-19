@@ -1,7 +1,7 @@
 """Phase 7: associative recall API -- the unified spreading-activation read.
 
 ``memory_recall(topic)`` is the single entrypoint the agent uses to ask
-"what is associated with X across the whole memory organ". The path:
+"what is associated with X across the whole memory brain". The path:
 
   1. BM25-seed: ``storage.reader.search(topic, kinds=None)`` -> top-N hits.
   2. Spread: ``retrieval.spreading_activation`` over ``soft_edges``

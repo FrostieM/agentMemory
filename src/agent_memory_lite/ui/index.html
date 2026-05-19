@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Memory · Live Observatory</title>
-    <link rel="stylesheet" href="/ui/styles.css?v=20260510-polish" />
+    <link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
   </head>
   <body>
     <div class="app">
@@ -52,22 +52,34 @@
         <a class="app-nav-link is-active" href="/ui" data-nav="ui">Observatory</a>
         <a class="app-nav-link" href="/ui/code" data-nav="code">Code</a>
         <a class="app-nav-link" href="/ui/graph" data-nav="graph">Graph</a>
+        <a class="app-nav-link" href="/ui/recall" data-nav="recall">Recall</a>
+        <a class="app-nav-link" href="/ui/reflexes" data-nav="reflexes">Reflexes</a>
+        <a class="app-nav-link" href="/ui/metrics" data-nav="metrics">Metrics</a>
         <a class="app-nav-link" href="/ui/review" data-nav="review">Review</a>
         <a class="app-nav-link" href="/ui/browse" data-nav="browse">Browse</a>
       </nav>
       <script>
         // Propagate active workspace_id into nav hrefs so navigating between
-        // /ui /ui/code /ui/graph keeps the same workspace. Re-runs on
-        // dropdown change and on initial load.
+        // all UI pages keeps the same workspace. Re-runs on dropdown change
+        // and on initial load. v3.0.0 final: full nav (recall, reflexes,
+        // metrics, review, browse) instead of the old ui/code/graph trio.
         (function () {
+          const NAV_BASES = {
+            ui: "/ui",
+            code: "/ui/code",
+            graph: "/ui/graph",
+            recall: "/ui/recall",
+            reflexes: "/ui/reflexes",
+            metrics: "/ui/metrics",
+            review: "/ui/review",
+            browse: "/ui/browse",
+          };
           const wsSelect = document.getElementById("workspaceInput");
           const navLinks = document.querySelectorAll(".app-nav-link[data-nav]");
           function syncNav() {
             const ws = wsSelect && wsSelect.value;
             navLinks.forEach((a) => {
-              const base = a.dataset.nav === "ui" ? "/ui"
-                : a.dataset.nav === "code" ? "/ui/code"
-                : "/ui/graph";
+              const base = NAV_BASES[a.dataset.nav] || "/ui";
               a.href = ws ? `${base}?workspace_id=${encodeURIComponent(ws)}` : base;
             });
           }
@@ -123,6 +135,28 @@
         </section>
 
         <aside class="rail">
+          <div class="rail-card brain-card self-model-card" id="selfModelCard">
+            <div class="brain-empty">loading self-model…</div>
+          </div>
+
+          <div class="rail-card brain-card" id="watchOutsCard">
+            <div class="brain-card-head">
+              <span class="brain-card-kicker">watch-outs · outcome ≤ -0.3</span>
+              <span class="brain-card-actions"><span class="row-id" id="watchOutsCount">0</span></span>
+            </div>
+            <div id="watchOutsBody"><div class="brain-empty">loading…</div></div>
+          </div>
+
+          <div class="rail-card brain-card" id="recentInsightsCard">
+            <div class="brain-card-head">
+              <span class="brain-card-kicker">recent insights · candidate</span>
+              <div class="brain-card-actions">
+                <button class="btn-tiny is-accent" data-action="promote-insights">promote eligible</button>
+              </div>
+            </div>
+            <div id="recentInsightsBody"><div class="brain-empty">loading…</div></div>
+          </div>
+
           <div class="rail-card live-intent-card" id="liveIntent">
             <div class="inspector-kicker">live · <span id="liveIntentKind">idle</span></div>
             <div class="inspector-title" id="liveIntentPrompt">Awaiting next request…</div>
@@ -217,6 +251,110 @@
       </div>
     </aside>
 
-    <script src="/ui/app.js?v=20260501-observatory-rewrite"></script>
+    <script src="/ui/brain.js?v=20260519-v3-brain"></script>
+    <script src="/ui/app.js?v=20260519-v3-brain"></script>
+    <script>
+      // v3 brain data renderer -- polls /memory/ui/brain_state every
+      // 8s plus on workspace change. Self-model "refresh" + insight
+      // "promote eligible" actions wired here so the host app.js can
+      // stay focused on the live graph.
+      (function () {
+        function $(id) { return document.getElementById(id); }
+        let lastWorkspace = null;
+        let pollTimer = null;
+
+        function resolveWorkspace() {
+          // Priority: dropdown value (populated by app.js fetchState) ->
+          // URL ?workspace_id=X -> previous successful poll's workspace.
+          const sel = $("workspaceInput");
+          if (sel && sel.value) return sel.value;
+          const fromUrl = new URLSearchParams(location.search).get("workspace_id");
+          if (fromUrl) return fromUrl;
+          return lastWorkspace;
+        }
+
+        async function loadBrain() {
+          const ws = resolveWorkspace();
+          if (!ws) return;
+          lastWorkspace = ws;
+          const data = await window.BrainUI.fetchState(ws);
+          if (!data) return;
+          window.BrainUI.renderSelfModel($("selfModelCard"), data.self_model);
+          window.BrainUI.renderWatchOuts($("watchOutsBody"), data.watch_outs);
+          $("watchOutsCount").textContent = (data.watch_outs || []).length;
+          window.BrainUI.renderRecentInsights($("recentInsightsBody"), data.recent_insights);
+        }
+
+        function wireActions() {
+          document.addEventListener("click", async (e) => {
+            const t = e.target.closest("[data-action]");
+            if (!t) return;
+            const action = t.dataset.action;
+            const ws = ($("workspaceInput") && $("workspaceInput").value) || lastWorkspace;
+            if (!ws) return;
+            if (action === "refresh-self-model") {
+              t.disabled = true;
+              t.textContent = "refreshing…";
+              await window.BrainUI.refreshSelfModel(ws);
+              await loadBrain();
+              t.disabled = false;
+            } else if (action === "promote-insights") {
+              t.disabled = true;
+              try {
+                const r = await fetch("/memory/insight/promote_eligible", {
+                  method: "POST",
+                  headers: window.AppHeader.jsonHeaders(ws),
+                  body: JSON.stringify({ workspace_id: ws }),
+                });
+                const j = await r.json();
+                if (j.ok) {
+                  window.AppHeader.toast(
+                    `promoted ${j.data.promoted}, skipped ${j.data.skipped}`,
+                    j.data.promoted > 0 ? "success" : ""
+                  );
+                  await loadBrain();
+                } else {
+                  window.AppHeader.toast("promote failed", "error");
+                }
+              } catch (err) {
+                window.AppHeader.toast("error: " + err.message, "error");
+              }
+              t.disabled = false;
+            }
+          });
+        }
+
+        function start() {
+          wireActions();
+          loadBrain();
+          if (pollTimer) clearInterval(pollTimer);
+          pollTimer = setInterval(loadBrain, 8000);
+          const sel = $("workspaceInput");
+          if (sel) {
+            // Two reload triggers:
+            //   1) User picks a different workspace from the dropdown.
+            //   2) app.js finishes its first /memory/ui/state fetch and
+            //      populates the dropdown — fires once and only then.
+            sel.addEventListener("change", () => {
+              lastWorkspace = sel.value;
+              loadBrain();
+            });
+            const obs = new MutationObserver(() => {
+              if (sel.value && sel.value !== lastWorkspace) {
+                lastWorkspace = sel.value;
+                loadBrain();
+              }
+            });
+            obs.observe(sel, { childList: true });
+          }
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", start);
+        } else {
+          start();
+        }
+      })();
+    </script>
   </body>
 </html>

@@ -1,6 +1,6 @@
 """Research-lab domain models.
 
-These objects organize the scientific workflow around memory:
+These objects brainize the scientific workflow around memory:
 snapshots provide immutable datasets, experiments test theories against those
 snapshots, results update theory confidence, concepts keep vocabulary explicit,
 and insights distill episodes into actionable research items.

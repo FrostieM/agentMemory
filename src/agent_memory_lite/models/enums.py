@@ -42,6 +42,10 @@ class DecisionStatus(StrEnum):
     ACTIVE = "active"
     SUPERSEDED = "superseded"
     REJECTED = "rejected"
+    # v3.0.0-final: legacy data path. Pre-v3 workspaces wrote
+    # status='archived' from auto-promote → behavior pipeline.
+    # Enum stays tolerant rather than 500ing on browse.
+    ARCHIVED = "archived"
 
 
 class TheoryStatus(StrEnum):

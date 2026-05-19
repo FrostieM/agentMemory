@@ -1,4 +1,4 @@
--- Phase 1 of the "memory as organ" evolution: every retrievable row carries
+-- Phase 1 of the "memory as brain" evolution: every retrievable row carries
 -- a derived outcome_score in [-1.0, 1.0] so brief and lint can filter / rank
 -- by demonstrated success vs failure rather than treating all knowledge as
 -- equally trustworthy.

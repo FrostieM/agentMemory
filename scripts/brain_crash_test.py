@@ -1,18 +1,18 @@
-"""End-to-end crash test for the v3.0.0-final memory-organ on real data.
+"""End-to-end crash test for the v3.0.0-final memory-brain on real data.
 
 Operator workflow:
   1. Copy a real workspace DB to a sandbox path.
   2. Point this script at the sandbox + the source workspace_id.
   3. Read the JSON / text report; non-zero exit = at least one test failed.
 
-The script runs 13 named tests across all 7 organ phases plus integration
+The script runs 13 named tests across all 7 brain phases plus integration
 glue. Every test is read-only on the SOURCE DB; mutations land only in the
 sandbox copy. Tests are independent: each manages its own seeded fixtures,
 so one failure does not cascade.
 
 Usage:
-    python scripts/organ_crash_test.py --db <sandbox.db> --workspace <id>
-    python scripts/organ_crash_test.py --db <sandbox.db> --workspace <id> --json
+    python scripts/brain_crash_test.py --db <sandbox.db> --workspace <id>
+    python scripts/brain_crash_test.py --db <sandbox.db> --workspace <id> --json
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ from agent_memory_lite.compaction.promote_insight_to_behavior import (  # noqa: 
 )
 from agent_memory_lite.config.settings import Settings  # noqa: E402
 from agent_memory_lite.enforcement.reflex_check import check_reflexes  # noqa: E402
+from agent_memory_lite.maintenance.brain_pass import run_brain_pass  # noqa: E402
 from agent_memory_lite.maintenance.hebbian_pass import distill_workspace  # noqa: E402
-from agent_memory_lite.maintenance.organ_pass import run_organ_pass  # noqa: E402
 from agent_memory_lite.retrieval.causal_extractor import _upsert_causal_link  # noqa: E402
 from agent_memory_lite.retrieval.recall import recall  # noqa: E402
 from agent_memory_lite.storage.reader import list_kind  # noqa: E402
@@ -666,16 +666,16 @@ def test_phase7_causal_links_surface_in_recall(conn: sqlite3.Connection, ws: str
 
 
 # ============================================================
-# Cross-cutting -- organ_pass integration + idempotency + brief
+# Cross-cutting -- brain_pass integration + idempotency + brief
 # ============================================================
 
 
-def test_organ_pass_idempotent(conn: sqlite3.Connection, ws: str) -> TestResult:
-    """Two back-to-back organ_pass calls — second should write zero new edges."""
+def test_brain_pass_idempotent(conn: sqlite3.Connection, ws: str) -> TestResult:
+    """Two back-to-back brain_pass calls — second should write zero new edges."""
     settings = Settings()
-    first = run_organ_pass(conn, workspace_id=ws, settings=settings)
+    first = run_brain_pass(conn, workspace_id=ws, settings=settings)
     conn.commit()
-    second = run_organ_pass(conn, workspace_id=ws, settings=settings)
+    second = run_brain_pass(conn, workspace_id=ws, settings=settings)
     conn.commit()
     first_errors = list(first.errors)
     second_errors = list(second.errors)
@@ -688,7 +688,7 @@ def test_organ_pass_idempotent(conn: sqlite3.Connection, ws: str) -> TestResult:
     )
     if not first_errors and not second_errors and second_new_work == 0:
         return TestResult(
-            "organ_pass_idempotent",
+            "brain_pass_idempotent",
             "Integration",
             "pass",
             "second pass = 0 new edges/promotes/links/distills",
@@ -698,7 +698,7 @@ def test_organ_pass_idempotent(conn: sqlite3.Connection, ws: str) -> TestResult:
             },
         )
     return TestResult(
-        "organ_pass_idempotent",
+        "brain_pass_idempotent",
         "Integration",
         "fail",
         f"errors first={first_errors} second={second_errors} second_new={second_new_work}",
@@ -766,7 +766,7 @@ _TESTS: list[tuple[str, Callable[[sqlite3.Connection, str], TestResult]]] = [
     ("Phase 6 / bi-temporal as_of", test_phase6_expired_concept_excluded_today),
     ("Phase 7 / outcome_floor filter", test_phase7_recall_respects_outcome_floor),
     ("Phase 7 / causal_links in recall", test_phase7_causal_links_surface_in_recall),
-    ("Integration / organ_pass idempotent", test_organ_pass_idempotent),
+    ("Integration / brain_pass idempotent", test_brain_pass_idempotent),
     ("Integration / brief 8 sections", test_brief_has_all_eight_sections),
 ]
 

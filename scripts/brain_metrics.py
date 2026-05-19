@@ -1,9 +1,9 @@
-"""Phase 0 (continuous): organ-era telemetry across all 7 v3.0.0-final phases.
+"""Phase 0 (continuous): brain-era telemetry across all 7 v3.0.0-final phases.
 
-Read-only health/effectiveness dashboard for the "memory as organ"
+Read-only health/effectiveness dashboard for the "memory as brain"
 features. Pair-reads with ``scripts/memory_adoption_report.py`` (which
 covers the v2/v3 discipline ratios) -- this one focuses on whether the
-new organ-level loops are actually accruing signal:
+new brain-level loops are actually accruing signal:
 
 * Phase 1: outcome_score distribution + percent of rows with non-zero score
 * Phase 2: soft_edges count by edge_kind, retrieval_coactivation lag
@@ -15,9 +15,9 @@ new organ-level loops are actually accruing signal:
 
 Usage::
 
-    python scripts/organ_metrics.py --workspace copyBot
-    python scripts/organ_metrics.py --workspace copyBot --json
-    python scripts/organ_metrics.py --all-workspaces --json
+    python scripts/brain_metrics.py --workspace copyBot
+    python scripts/brain_metrics.py --workspace copyBot --json
+    python scripts/brain_metrics.py --all-workspaces --json
 
 The script is local-only, never mutates, and uses the same workspace
 registry as the rest of the toolchain.
@@ -363,7 +363,7 @@ def _render_phase7(p7: dict[str, Any]) -> list[str]:
 
 def render_human(report: dict[str, Any]) -> str:
     """Compact text rendering. Hides empty phase blocks."""
-    lines = [f"# Organ metrics: {report['workspace_id']}"]
+    lines = [f"# Brain metrics: {report['workspace_id']}"]
     if "error" in report:
         lines.append(f"  ERROR: {report['error']} (db={report['db_path']})")
         return "\n".join(lines)

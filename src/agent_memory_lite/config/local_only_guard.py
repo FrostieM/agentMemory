@@ -27,6 +27,19 @@ CLOUD_DENYLIST: frozenset[str] = frozenset(
         "api.x.ai",
         "generativelanguage.googleapis.com",
         "openai.azure.com",
+        # v3.0.0-final: cover the next tier of inference endpoints that
+        # have become common since v1.x. The guard runs on every
+        # outbound URL, so adding here costs nothing but prevents a
+        # misconfigured Settings.llm_base_url from leaking work
+        # off-machine.
+        "api.perplexity.ai",
+        "api.replicate.com",
+        "api-inference.huggingface.co",
+        "huggingface.co",
+        "router.huggingface.co",
+        "api.cerebras.ai",
+        "api.lepton.ai",
+        "api.runpod.io",
     }
 )
 
@@ -36,6 +49,10 @@ CLOUD_DENYLIST_SUFFIXES: tuple[str, ...] = (
     ".pinecone.io",
     ".weaviate.cloud",
     ".zep.us",
+    # Additional vector-DB hosts surfaced since v1.x.
+    ".qdrant.io",
+    ".chromadb.cloud",
+    ".turbopuffer.com",
 )
 
 TELEMETRY_KILL_LIST: tuple[str, ...] = (

@@ -1,4 +1,4 @@
--- Phase 2 of the "memory as organ" evolution: Hebbian co-retrieval associations.
+-- Phase 2 of the "memory as brain" evolution: Hebbian co-retrieval associations.
 -- Every memory_search call logs the items it returned together; a sentinel-
 -- scheduled pass distills co-occurrence into weighted soft_edges. With the
 -- HeLa-Mem outcome gate, we skip strengthening pairs both rooted in failure.

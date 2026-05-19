@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — reflex rules</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <line x1="5" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="14" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="5" x2="12" y2="10" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="14" x2="12" y2="19" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Reflexes · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
+      <a class="app-nav-link is-active" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
+      <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
+      <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
+      <a class="app-nav-link" data-nav="browse" href="/ui/browse">Browse</a>
+    </nav>
+
+    <main class="page-shell">
+      <h1 class="page-title">Reflexes</h1>
+      <div class="page-sub">precondition rules · PreToolUse · v3.0.0-final</div>
+
+      <section class="metrics-grid" id="reflexSummary" style="margin-bottom:18px">
+        <div class="metric-tile">
+          <div class="metric-tile-head">active rules</div>
+          <div class="metric-tile-value" id="sumActive">—</div>
+          <div class="metric-tile-sub" id="sumByEnf">block 0 · advisory 0</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">block fires (lifetime)</div>
+          <div class="metric-tile-value" id="sumBlockFires">—</div>
+          <div class="metric-tile-sub">refusals issued by PreToolUse hook</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">advisory fires (lifetime)</div>
+          <div class="metric-tile-value" id="sumAdvisoryFires">—</div>
+          <div class="metric-tile-sub">soft warnings surfaced in advisory</div>
+        </div>
+      </section>
+
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <button class="btn-tiny is-accent" id="btnNew">+ new rule</button>
+        <button class="btn-tiny" id="btnRefresh">↻ refresh</button>
+        <span class="page-sub" style="margin:0 0 0 auto; padding:0; text-transform:none; letter-spacing:0;">click a row to edit</span>
+      </div>
+
+      <div class="reflex-grid" id="reflexGrid">
+        <div class="reflex-row is-head">
+          <span>name</span>
+          <span>trigger</span>
+          <span>precondition</span>
+          <span>enforcement</span>
+          <span>fires</span>
+          <span>last fired</span>
+          <span style="text-align:right">actions</span>
+        </div>
+        <div id="reflexBody"></div>
+      </div>
+
+      <!-- ====== modal for create/edit ====== -->
+      <div id="modalBack" class="modal-back" hidden>
+        <div class="modal">
+          <h3 id="modalTitle">new reflex rule</h3>
+          <label>name</label>
+          <input id="fName" type="text" placeholder="edit_requires_impact_check" />
+          <label>trigger tool</label>
+          <select id="fTriggerTool">
+            <option>Edit</option><option>Write</option>
+            <option>Bash</option><option>Read</option><option>Grep</option>
+            <option>memory_write_decision</option>
+            <option>memory_write_theory</option>
+            <option>memory_write_behavior</option>
+          </select>
+          <label>trigger pattern (regex over tool payload — optional)</label>
+          <input id="fTriggerPattern" type="text" placeholder=".*kelly.*" />
+          <label>precondition kind</label>
+          <select id="fPrecondKind">
+            <option value="impact_check_within_seconds">impact_check_within_seconds</option>
+            <option value="memory_search_within_seconds">memory_search_within_seconds</option>
+            <option value="playbook_fetch">playbook_fetch</option>
+          </select>
+          <label>precondition param (json)</label>
+          <input id="fPrecondParam" type="text" value='{"seconds": 60}' />
+          <label>enforcement</label>
+          <select id="fEnforcement">
+            <option value="advisory">advisory (warn only)</option>
+            <option value="block">block (PreToolUse refuses tool call)</option>
+          </select>
+          <label>
+            <input id="fActive" type="checkbox" checked /> active
+          </label>
+          <div class="modal-actions">
+            <button class="btn-tiny" id="btnCancel">cancel</button>
+            <button class="btn-tiny is-accent" id="btnSave">save</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script src="/ui/brain.js?v=20260519-v3-brain"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let editingId = null;
+
+function escHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function ws() { return $("#workspaceInput").value; }
+function dbHeaders() {
+  return window.AppHeader.jsonHeaders(ws());
+}
+
+async function loadRules() {
+  const r = await fetch("/memory/reflex/list", {
+    method: "POST", headers: dbHeaders(),
+    body: JSON.stringify({ workspace_id: ws() }),
+  });
+  const j = await r.json();
+  if (!j.ok) {
+    window.AppHeader.toast("load failed: " + (j.error?.message || "?"), "error");
+    return;
+  }
+  renderRules(j.data.rules || []);
+}
+
+async function loadSummary() {
+  const r = await fetch(`/memory/ui/brain_state?workspace_id=${encodeURIComponent(ws())}`, {
+    headers: window.AppHeader.dbHeaders(ws()),
+  });
+  if (!r.ok) return;
+  const j = await r.json();
+  const sm = j.reflex_summary || {};
+  $("#sumActive").textContent = sm.active || 0;
+  const enf = sm.by_enforcement || {};
+  $("#sumByEnf").textContent =
+    `block ${enf.block || 0} · advisory ${enf.advisory || 0}`;
+  $("#sumBlockFires").textContent = sm.total_block_fires || 0;
+  $("#sumAdvisoryFires").textContent = sm.total_advisory_fires || 0;
+}
+
+function shortTime(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString("sv-SE").slice(5, 16); }
+  catch { return iso.slice(5, 16); }
+}
+
+function renderRules(rules) {
+  const body = $("#reflexBody");
+  if (!rules.length) {
+    body.innerHTML = `<div class="brain-empty">no reflex rules yet — click <strong>+ new rule</strong> to add one, or run the seed script:<br>
+      <code style="font-size:11px;color:var(--text-2)">python scripts/seed_memory_discipline.py --workspace ${escHtml(ws())}</code>
+    </div>`;
+    return;
+  }
+  body.innerHTML = rules.map(r => {
+    const enfBadge = r.enforcement === "block"
+      ? `<span class="enf-badge is-block">block</span>`
+      : `<span class="enf-badge is-advisory">advisory</span>`;
+    const fires = `<span class="rule-fires">${r.block_count} blk · ${r.advisory_count} adv</span>`;
+    const lastFired = `<span class="rule-fires" title="${escHtml(r.last_fired_at || "")}">${shortTime(r.last_fired_at)}</span>`;
+    const promoteBtn = r.enforcement === "advisory"
+      ? `<button class="btn-tiny is-accent" data-action="promote" data-id="${escHtml(r.id)}" title="advisory → block">↑</button>`
+      : `<button class="btn-tiny" data-action="demote" data-id="${escHtml(r.id)}" title="block → advisory">↓</button>`;
+    const toggleBtn = `<button class="btn-tiny" data-action="toggle" data-id="${escHtml(r.id)}" title="${r.active ? "deactivate" : "activate"}">${r.active ? "⏸" : "▶"}</button>`;
+    const editBtn = `<button class="btn-tiny" data-action="edit" data-id="${escHtml(r.id)}" title="edit">✎</button>`;
+    const delBtn = `<button class="btn-tiny is-danger" data-action="delete" data-id="${escHtml(r.id)}" title="delete">✕</button>`;
+    return `<div class="reflex-row ${r.active ? "" : "is-inactive"}" data-row="${escHtml(r.id)}">
+      <span class="rule-name">${escHtml(r.rule_name)}</span>
+      <span class="rule-precondition">${escHtml(r.trigger_tool)}</span>
+      <span class="rule-precondition" title="${escHtml(r.precondition_param_json || "")}">${escHtml(r.precondition_kind)}</span>
+      <span>${enfBadge}</span>
+      ${fires}
+      ${lastFired}
+      <span class="rule-actions">${promoteBtn}${toggleBtn}${editBtn}${delBtn}</span>
+    </div>`;
+  }).join("") + cacheRowsForEdit(rules);
+}
+
+let _ruleCache = {};
+function cacheRowsForEdit(rules) {
+  _ruleCache = Object.fromEntries(rules.map(r => [r.id, r]));
+  return "";
+}
+
+function openModal(rule) {
+  editingId = rule ? rule.id : null;
+  $("#modalTitle").textContent = rule ? `edit · ${rule.rule_name}` : "new reflex rule";
+  $("#fName").value = rule?.rule_name || "";
+  $("#fTriggerTool").value = rule?.trigger_tool || "Edit";
+  $("#fTriggerPattern").value = rule?.trigger_pattern || "";
+  $("#fPrecondKind").value = rule?.precondition_kind || "impact_check_within_seconds";
+  $("#fPrecondParam").value = rule?.precondition_param_json || '{"seconds": 60}';
+  $("#fEnforcement").value = rule?.enforcement || "advisory";
+  $("#fActive").checked = rule ? rule.active : true;
+  $("#modalBack").hidden = false;
+}
+function closeModal() { $("#modalBack").hidden = true; editingId = null; }
+
+async function saveRule() {
+  const body = {
+    workspace_id: ws(),
+    id: editingId || undefined,
+    rule_name: $("#fName").value.trim(),
+    trigger_tool: $("#fTriggerTool").value,
+    trigger_pattern: $("#fTriggerPattern").value.trim(),
+    precondition_kind: $("#fPrecondKind").value,
+    precondition_param_json: $("#fPrecondParam").value.trim() || "{}",
+    enforcement: $("#fEnforcement").value,
+    active: $("#fActive").checked,
+  };
+  if (!body.rule_name) { window.AppHeader.toast("name required", "error"); return; }
+  try { JSON.parse(body.precondition_param_json); }
+  catch { window.AppHeader.toast("precondition_param must be valid JSON", "error"); return; }
+  const r = await fetch("/memory/reflex/upsert", {
+    method: "POST", headers: dbHeaders(), body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (!j.ok) { window.AppHeader.toast("save failed: " + (j.error?.message || "?"), "error"); return; }
+  window.AppHeader.toast("saved", "success");
+  closeModal();
+  await loadAll();
+}
+
+async function actOnRule(action, id) {
+  const map = {
+    toggle: "/memory/reflex/toggle_active",
+    promote: "/memory/reflex/promote",
+    demote: "/memory/reflex/demote",
+    delete: "/memory/reflex/delete",
+  };
+  const url = map[action];
+  if (!url) return;
+  if (action === "delete" && !confirm("delete this reflex rule?")) return;
+  const r = await fetch(url, {
+    method: "POST", headers: dbHeaders(),
+    body: JSON.stringify({ workspace_id: ws(), id }),
+  });
+  const j = await r.json();
+  if (!j.ok) { window.AppHeader.toast("action failed: " + (j.error?.message || "?"), "error"); return; }
+  window.AppHeader.toast(action + " ok", "success");
+  await loadAll();
+}
+
+async function loadAll() {
+  await Promise.all([loadRules(), loadSummary()]);
+}
+
+$("#btnNew").addEventListener("click", () => openModal(null));
+$("#btnRefresh").addEventListener("click", loadAll);
+$("#btnCancel").addEventListener("click", closeModal);
+$("#btnSave").addEventListener("click", saveRule);
+$("#modalBack").addEventListener("click", (ev) => {
+  if (ev.target === $("#modalBack")) closeModal();
+});
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-action]");
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const a = btn.dataset.action;
+  if (a === "edit") { openModal(_ruleCache[id]); return; }
+  actOnRule(a, id);
+});
+
+window.AppHeader.init({ active: "reflexes", onWorkspaceChange: loadAll });
+</script>
+</body>
+</html>

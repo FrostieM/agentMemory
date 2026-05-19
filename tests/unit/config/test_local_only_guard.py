@@ -55,3 +55,27 @@ def test_disabled_when_local_only_false(settings_factory) -> None:
         LLM_BASE_URL="https://api.openai.com",
     )
     assert_local_only(s, env={"OPENAI_API_KEY": "sk-demo"})
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "https://api.perplexity.ai/chat/completions",
+        "https://api.replicate.com/v1/predictions",
+        "https://api-inference.huggingface.co/models/foo",
+        "https://router.huggingface.co/v1/chat",
+        "https://api.cerebras.ai/v1",
+        "https://api.lepton.ai/api/v1/chat",
+        "https://abc.qdrant.io/collections",
+        "https://abc.chromadb.cloud",
+        "https://workspace.turbopuffer.com",
+    ],
+)
+def test_rejects_v3_denylist_additions(settings_factory, host: str) -> None:
+    """v3.0.0-final: the cloud denylist gained perplexity / replicate /
+    huggingface / cerebras / lepton / qdrant / chromadb / turbopuffer
+    entries to cover the next tier of inference + vector hosts that
+    have surfaced since v1.x."""
+    s = settings_factory(LLM_BASE_URL=host)
+    with pytest.raises(LocalOnlyError):
+        assert_local_only(s, env={})

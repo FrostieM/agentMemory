@@ -27,12 +27,19 @@ This:
    search-before-write / capability-link-on-write) into the v3
    `behaviors` table.
 5. Writes hooks to `<project>/.claude/settings.json`:
-   * `UserPromptSubmit` → `inject_memory_brief_v3.py`
+   * `UserPromptSubmit` → `scripts/inject_memory_brief.py`
      (≤500-token brief)
    * `PostToolUse` (`Edit|Write|NotebookEdit|MultiEdit`) →
-     `post_edit_enqueue.py` (digest queue)
-   * `PreToolUse` enforcement (existing v2 path, unchanged)
-6. Updates project `CLAUDE.md` + `AGENTS.md` with the agent contract.
+     `scripts/post_edit_enqueue.py` (digest queue)
+   * `PreToolUse` → `scripts/pre_tool_use_check.py`
+     (fail-OPEN — never blocks tool calls on unrelated errors)
+6. Applies v3.0.0-final brain migrations (0002_outcome_loop,
+   0003_hebbian, 0004_consolidation_feedback, 0005_reflexes,
+   0006_self_model, 0007_bi_temporal, 0008_causal_links). All idempotent.
+7. Seeds the 3 Phase-4 baseline reflex rules (advisory enforcement).
+   Operator promotes advisory → block via `memory_edit` once a rule
+   fires reliably without false positives.
+8. Updates project `CLAUDE.md` + `AGENTS.md` with the agent contract.
 
 Idempotent — re-running is safe. New rules / hooks insert; existing
 ones are detected by marker substring and refreshed.
@@ -42,10 +49,12 @@ ones are detected by marker substring and refreshed.
 After `setup_agent.py` finishes:
 
 ```bash
-# 1. Settings.json has both v3 hooks
+# 1. Settings.json has both hooks (current marker = "memory-brief" /
+#    "memory-postedit"; the legacy "v3-brief" / "v3-postedit" markers
+#    are also accepted for older installs).
 python -c "import json; d = json.load(open('<project>/.claude/settings.json')); \
-  print('UserPromptSubmit:', any('v3-brief' in str(h) for h in d.get('hooks', {}).get('UserPromptSubmit', []))); \
-  print('PostToolUse:',     any('v3-postedit' in str(h) for h in d.get('hooks', {}).get('PostToolUse', [])))"
+  print('UserPromptSubmit:', any('memory-brief' in str(h) or 'v3-brief' in str(h) for h in d.get('hooks', {}).get('UserPromptSubmit', []))); \
+  print('PostToolUse:',     any('memory-postedit' in str(h) or 'v3-postedit' in str(h) for h in d.get('hooks', {}).get('PostToolUse', [])))"
 
 # 2. Pinned rules in DB
 sqlite3 <project>/.agent_memory/memory.db \

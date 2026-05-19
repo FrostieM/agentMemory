@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — recall</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <line x1="5" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="14" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="5" x2="12" y2="10" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="14" x2="12" y2="19" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Recall · spreading activation · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link is-active" data-nav="recall" href="/ui/recall">Recall</a>
+      <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
+      <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
+      <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
+      <a class="app-nav-link" data-nav="browse" href="/ui/browse">Browse</a>
+    </nav>
+
+    <main class="page-shell">
+      <h1 class="page-title">Recall</h1>
+      <div class="page-sub">spreading activation · soft edges + capability + causal · v3.0.0-final</div>
+
+      <form class="recall-controls" id="recallForm" onsubmit="return false;">
+        <label>
+          <span class="field-label">topic</span>
+          <input id="fTopic" type="text" placeholder="kelly sizing, hot reload, calibrator volatility, …" autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label">depth</span>
+          <select id="fDepth">
+            <option value="1">1 hop</option>
+            <option value="2" selected>2 hops</option>
+            <option value="3">3 hops</option>
+          </select>
+        </label>
+        <label>
+          <span class="field-label">outcome floor</span>
+          <select id="fFloor">
+            <option value="-1">any (-1)</option>
+            <option value="-0.3">≥ -0.3 (no failure)</option>
+            <option value="0" selected>≥ 0 (neutral+)</option>
+            <option value="0.3">≥ 0.3 (positive)</option>
+            <option value="0.7">≥ 0.7 (strong)</option>
+          </select>
+        </label>
+        <button class="btn-tiny is-accent" id="btnRun" type="submit">recall →</button>
+      </form>
+
+      <div id="recallMeta" class="page-sub" style="margin-bottom:8px"></div>
+      <div id="recallList"></div>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script src="/ui/brain.js?v=20260519-v3-brain"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+function ws() { return $("#workspaceInput").value; }
+function escHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function outcomePill(score) {
+  return window.BrainUI.outcomePill(score);
+}
+
+function projectionLine(kind, p) {
+  // Pick the most descriptive single line per kind.
+  if (!p) return "";
+  if (kind === "decision") return p.title || p.gist || p.decision_text || "(no title)";
+  if (kind === "theory") return p.title || p.gist || p.claim || "(no title)";
+  if (kind === "behavior") return p.name || p.rule_one_line || p.gist || "(unnamed)";
+  if (kind === "insight") return p.summary || p.gist || "(no summary)";
+  if (kind === "skill") return p.name || p.summary || "(unnamed skill)";
+  if (kind === "concept") return p.term || p.summary || "(unnamed concept)";
+  if (kind === "chunk") {
+    const q = p.qualified_name || p.symbol_kind || "";
+    const g = p.gist || "";
+    if (q && g) return `${q} · ${g}`;
+    return q || g || `chunk @ ${p.line_start ?? "?"}`;
+  }
+  return p.title || p.gist || p.summary || p.name || JSON.stringify(p).slice(0, 100);
+}
+
+function projectionBody(kind, p) {
+  if (!p) return "";
+  if (kind === "decision") return p.rationale || "";
+  if (kind === "theory") return p.mechanism || "";
+  if (kind === "behavior") return p.rationale || "";
+  if (kind === "insight") return p.proposed_action || "";
+  if (kind === "chunk") return `${p.chunk_kind || "chunk"} · ${p.file_path || ""}:${p.line_start || "?"}`;
+  return "";
+}
+
+function renderCausalChips(links) {
+  if (!links || !links.length) return "";
+  return `<div class="recall-causal">${links.map(l =>
+    `<span class="causal-chip" title="${escHtml(l.relation)} → ${escHtml(l.dst_kind)}:${escHtml(l.dst_id)}">${escHtml(l.relation)} · ${escHtml(l.dst_kind)}</span>`
+  ).join("")}</div>`;
+}
+
+async function runRecall() {
+  const topic = $("#fTopic").value.trim();
+  if (!topic) { window.AppHeader.toast("topic required", "error"); return; }
+  $("#recallList").innerHTML = `<div class="brain-empty">searching…</div>`;
+  $("#recallMeta").textContent = "";
+  // Sync URL so refresh + sharing keep the query.
+  try {
+    const u = new URL(location.href);
+    u.searchParams.set("topic", topic);
+    u.searchParams.set("depth", $("#fDepth").value);
+    u.searchParams.set("floor", $("#fFloor").value);
+    history.replaceState(null, "", u);
+  } catch (_e) { /* swallow */ }
+  const body = {
+    workspace_id: ws(),
+    topic,
+    depth: Number($("#fDepth").value),
+    outcome_floor: Number($("#fFloor").value),
+    limit: 15,
+  };
+  const t0 = performance.now();
+  const r = await fetch("/memory/recall", {
+    method: "POST", headers: window.AppHeader.jsonHeaders(ws()),
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  const dt = (performance.now() - t0).toFixed(0);
+  if (!j.ok) {
+    $("#recallList").innerHTML = `<div class="brain-empty">recall failed: ${escHtml(j.error?.message || "?")}</div>`;
+    return;
+  }
+  const hits = j.data.hits || [];
+  $("#recallMeta").textContent =
+    `${hits.length} hit${hits.length === 1 ? "" : "s"} · depth ${j.data.depth} · floor ${j.data.outcome_floor} · ${dt}ms`;
+  if (!hits.length) {
+    $("#recallList").innerHTML = `<div class="brain-empty">no hits.<br>try a different topic, lower the outcome floor, or seed more activity in this workspace.</div>`;
+    return;
+  }
+  $("#recallList").innerHTML = hits.map(h => {
+    const title = projectionLine(h.kind, h.projection);
+    const body = projectionBody(h.kind, h.projection);
+    return `
+      <div class="recall-result">
+        <div class="recall-result-head">
+          <span class="row-kind">${escHtml(h.kind)}</span>
+          <span class="recall-result-title">${escHtml(title)}</span>
+          ${outcomePill(h.outcome_score)}
+          <span class="row-meta">act ${h.activation.toFixed(3)}</span>
+          <span class="row-meta">hop ${h.hops}</span>
+          <span class="row-id">${escHtml(h.id.slice(0, 18))}</span>
+        </div>
+        ${body ? `<div class="recall-result-body">${escHtml(body.slice(0, 240))}</div>` : ""}
+        ${renderCausalChips(h.causal_links)}
+      </div>`;
+  }).join("");
+}
+
+function loadFromUrl() {
+  const u = new URLSearchParams(location.search);
+  const t = u.get("topic"); const d = u.get("depth"); const f = u.get("floor");
+  if (t) $("#fTopic").value = t;
+  if (d) $("#fDepth").value = d;
+  if (f) $("#fFloor").value = f;
+  if (t) runRecall();
+}
+
+$("#btnRun").addEventListener("click", runRecall);
+$("#fTopic").addEventListener("keydown", (ev) => { if (ev.key === "Enter") runRecall(); });
+
+window.AppHeader.init({
+  active: "recall",
+  onWorkspaceChange: () => { /* don't auto-run on switch */ },
+});
+
+// Try URL-bound query after AppHeader init (workspace dropdown populated).
+setTimeout(loadFromUrl, 200);
+</script>
+</body>
+</html>

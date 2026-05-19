@@ -13,6 +13,7 @@ from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.ingestion.conflict_detect import detect_conflicts
 from agent_memory_lite.ingestion.theory_evidence_writer import add_theory_evidence
 from agent_memory_lite.models.theories import Theory, TheoryIn
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.decisions_repo import get_decision
 from agent_memory_lite.repositories.theories_repo import (
@@ -50,6 +51,15 @@ def write_theory(
         if decision.workspace_id != payload.workspace_id:
             raise ValidationError("dependent_decision_ids must belong to the same workspace")
 
+    # v3.0.0-final: redaction runs on every text field before it reaches
+    # SQLite (CLAUDE.md invariant: "Secrets never stored").
+    title_safe = redact(payload.title).text
+    claim_safe = redact(payload.claim).text
+    mechanism_safe = redact(payload.mechanism).text if payload.mechanism else None
+    experiment_plan_safe = redact(payload.experiment_plan).text if payload.experiment_plan else None
+    predictions_safe = [redact(p).text for p in payload.predictions]
+    validation_criteria_safe = [redact(v).text for v in payload.validation_criteria]
+
     with with_tx(conn):
         if payload.supersedes_theory_id is not None:
             archive_theory(
@@ -61,13 +71,13 @@ def write_theory(
             conn,
             theory_id=theory_id,
             workspace_id=payload.workspace_id,
-            title=payload.title,
+            title=title_safe,
             domain=payload.domain,
-            claim=payload.claim,
-            mechanism=payload.mechanism,
-            predictions=payload.predictions,
-            validation_criteria=payload.validation_criteria,
-            experiment_plan=payload.experiment_plan,
+            claim=claim_safe,
+            mechanism=mechanism_safe,
+            predictions=predictions_safe,
+            validation_criteria=validation_criteria_safe,
+            experiment_plan=experiment_plan_safe,
             dependent_decision_ids=payload.dependent_decision_ids,
             tags=payload.tags,
             status=payload.status,
@@ -85,7 +95,7 @@ def write_theory(
             target_id=theory_id,
             source_episode_id=payload.source_episode_id,
             after={
-                "title": payload.title,
+                "title": title_safe,
                 "domain": payload.domain,
                 "status": payload.status.value,
                 "supersedes": payload.supersedes_theory_id,
@@ -103,7 +113,7 @@ def write_theory(
         workspace_id=payload.workspace_id,
         target_type="theory",
         target_id=theory_id,
-        target_text=" ".join(filter(None, [payload.title, payload.claim])),
+        target_text=" ".join(filter(None, [title_safe, claim_safe])),
     )
     # v1.7: a theory created with status='validated' (rare but legal) gets
     # the bridge check immediately. The far more common path is post-evidence

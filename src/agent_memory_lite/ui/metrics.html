@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — brain metrics</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <line x1="5" y1="12" x2="10" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="14" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="5" x2="12" y2="10" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+            <line x1="12" y1="14" x2="12" y2="19" stroke="currentColor" stroke-width="0.8" opacity="0.5"></line>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Brain Metrics · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="chunksChip" class="chip"><span class="chip-label">chunks</span><span class="chip-value">0</span></span>
+        <span id="vectorsChip" class="chip"><span class="chip-label">vectors</span><span class="chip-value">0</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">maintenance</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
+      <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
+      <a class="app-nav-link is-active" data-nav="metrics" href="/ui/metrics">Metrics</a>
+      <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
+      <a class="app-nav-link" data-nav="browse" href="/ui/browse">Browse</a>
+    </nav>
+
+    <main class="page-shell">
+      <h1 class="page-title">Brain Metrics</h1>
+      <div class="page-sub">outcome · reflex · hebbian · causal · adoption · v3.0.0-final</div>
+
+      <!-- ====== Hero: 4 large tiles ====== -->
+      <section class="metrics-grid" style="margin-bottom:24px">
+        <div class="metric-tile">
+          <div class="metric-tile-head">memory rows</div>
+          <div class="metric-tile-value" id="heroRows">—</div>
+          <div class="metric-tile-sub" id="heroRowsBreakdown">…</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">self-model</div>
+          <div class="metric-tile-value" id="heroSelfModel">—</div>
+          <div class="metric-tile-sub" id="heroSelfModelSub">—</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">reflexes active</div>
+          <div class="metric-tile-value" id="heroReflexes">—</div>
+          <div class="metric-tile-sub" id="heroReflexesSub">—</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">last activity</div>
+          <div class="metric-tile-value" id="heroLast" style="font-size:18px">—</div>
+          <div class="metric-tile-sub" id="heroLastSub">—</div>
+        </div>
+      </section>
+
+      <!-- ====== Outcome distribution per kind ====== -->
+      <h2 class="page-sub" style="margin:24px 0 8px">outcome distribution</h2>
+      <section class="metrics-grid" id="outcomeGrid"></section>
+
+      <!-- ====== Adoption + Reflex effectiveness ====== -->
+      <h2 class="page-sub" style="margin:24px 0 8px">adoption · discipline · effectiveness</h2>
+      <section class="metrics-grid">
+        <div class="metric-tile">
+          <div class="metric-tile-head">decisions with source episode</div>
+          <div class="metric-tile-value" id="adopSrc">—</div>
+          <div class="metric-tile-sub">orphan rate &lt; 0.1 is healthy</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">capability links per decision</div>
+          <div class="metric-tile-value" id="adopCap">—</div>
+          <div class="metric-tile-sub" id="adopCapSub">unlinked decisions force agents to re-derive playbooks</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">behavior_instructions fired (last 30d)</div>
+          <div class="metric-tile-value" id="adopBeh">—</div>
+          <div class="metric-tile-sub">cold instructions never reach the agent's brief</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">reflex blocks lifetime</div>
+          <div class="metric-tile-value" id="reflexBlocks">—</div>
+          <div class="metric-tile-sub" id="reflexBlocksSub">refusals at PreToolUse</div>
+        </div>
+      </section>
+
+      <!-- ====== Hebbian + Causal ====== -->
+      <h2 class="page-sub" style="margin:24px 0 8px">associative graph</h2>
+      <section class="metrics-grid">
+        <div class="metric-tile">
+          <div class="metric-tile-head">soft edges by kind</div>
+          <div id="hebbianEdges" class="bar-chart"></div>
+          <div class="metric-tile-sub" id="hebbianMeta">—</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">causal links by relation</div>
+          <div id="causalRels" class="bar-chart"></div>
+          <div class="metric-tile-sub" id="causalMeta">—</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-head">coactivation log</div>
+          <div class="metric-tile-value" id="coactRows">—</div>
+          <div class="metric-tile-sub">rolling 14-day retrieval window · raw signal for hebbian pass</div>
+        </div>
+      </section>
+
+      <!-- ====== Recent actions (7d) ====== -->
+      <h2 class="page-sub" style="margin:24px 0 8px">recent actions · last 7 days</h2>
+      <section class="metric-tile">
+        <div id="actionsChart" class="bar-chart"></div>
+      </section>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script src="/ui/brain.js?v=20260519-v3-brain"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+function ws() { return $("#workspaceInput").value; }
+function escHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return "—";
+  return (n * 100).toFixed(1) + "%";
+}
+function fmtInt(n) {
+  if (n == null || isNaN(n)) return "—";
+  return Intl.NumberFormat("en-US").format(n);
+}
+function relTime(iso) {
+  if (!iso) return "never";
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return iso;
+  const dt = (Date.now() - t) / 1000;
+  if (dt < 60) return Math.floor(dt) + "s ago";
+  if (dt < 3600) return Math.floor(dt / 60) + "m ago";
+  if (dt < 86400) return Math.floor(dt / 3600) + "h ago";
+  return Math.floor(dt / 86400) + "d ago";
+}
+
+function barRow(label, value, fraction, klass = "") {
+  const pct = Math.max(0, Math.min(100, fraction * 100));
+  return `<div class="bar-chart-row">
+    <span class="bar-chart-label">${escHtml(label)}</span>
+    <span class="bar-chart-bar"><span class="bar-chart-fill ${klass}" style="width:${pct.toFixed(1)}%"></span></span>
+    <span class="bar-chart-value">${escHtml(value)}</span>
+  </div>`;
+}
+
+function renderOutcomeKinds(dist) {
+  const out = $("#outcomeGrid");
+  const entries = Object.entries(dist || {});
+  if (!entries.length) {
+    out.innerHTML = `<div class="metric-tile"><div class="brain-empty">no outcome data — run brain pass first.</div></div>`;
+    return;
+  }
+  out.innerHTML = entries.map(([kind, d]) => {
+    const t = d.total || 0;
+    const p = t > 0 ? d.positive / t : 0;
+    const n = t > 0 ? d.negative / t : 0;
+    const meanCls = d.mean > 0 ? "is-pos" : d.mean < 0 ? "is-neg" : "";
+    const meanStr = (d.mean >= 0 ? "+" : "") + (d.mean || 0).toFixed(3);
+    return `
+      <div class="metric-tile">
+        <div class="metric-tile-head">${escHtml(kind)}</div>
+        <div class="metric-tile-value">${fmtInt(t)} <span class="outcome-pill ${meanCls}" style="font-size:11px;font-weight:600;vertical-align:middle;margin-left:6px">mean ${meanStr}</span></div>
+        <div class="outcome-bar" style="margin-top:10px" title="pos ${d.positive} · neu ${d.neutral} · neg ${d.negative}">
+          <div class="outcome-bar-seg-pos" style="width:${(p * 100).toFixed(1)}%"></div>
+          <div class="outcome-bar-seg-neu" style="width:${(100 - p * 100 - n * 100).toFixed(1)}%"></div>
+          <div class="outcome-bar-seg-neg" style="width:${(n * 100).toFixed(1)}%"></div>
+        </div>
+        <div class="metric-tile-sub">
+          <strong>${d.positive}</strong>+ · ${d.neutral}· · <strong>${d.negative}</strong>−
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function renderHebbian(h) {
+  const edges = h?.edges_by_kind || {};
+  const entries = Object.entries(edges);
+  if (!entries.length) {
+    $("#hebbianEdges").innerHTML = `<div class="brain-empty">no soft edges yet</div>`;
+  } else {
+    const max = Math.max(1, ...entries.map(([, v]) => v.count));
+    $("#hebbianEdges").innerHTML = entries
+      .sort((a, b) => b[1].count - a[1].count)
+      .map(([k, v]) => barRow(k, `${v.count} · w̄ ${v.avg_weight}`, v.count / max))
+      .join("");
+  }
+  const total = entries.reduce((s, [, v]) => s + v.count, 0);
+  $("#hebbianMeta").textContent = `${entries.length} edge kind${entries.length === 1 ? "" : "s"} · ${total} total edges`;
+  $("#coactRows").textContent = fmtInt(h?.coactivation_rows || 0);
+}
+
+function renderCausal(c) {
+  const entries = Object.entries(c || {});
+  if (!entries.length) {
+    $("#causalRels").innerHTML = `<div class="brain-empty">no causal links yet</div>`;
+    $("#causalMeta").textContent = "0 total";
+    return;
+  }
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  $("#causalRels").innerHTML = entries
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => barRow(k, fmtInt(v), v / max))
+    .join("");
+  $("#causalMeta").textContent = `${entries.length} relation kind${entries.length === 1 ? "" : "s"} · ${entries.reduce((s, [, v]) => s + v, 0)} total`;
+}
+
+function renderActions(actions) {
+  const entries = Object.entries(actions || {});
+  if (!entries.length) {
+    $("#actionsChart").innerHTML = `<div class="brain-empty">no recent actions</div>`;
+    return;
+  }
+  const max = Math.max(1, ...entries.map(([, v]) => v));
+  $("#actionsChart").innerHTML = entries
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([k, v]) => barRow(k, fmtInt(v), v / max))
+    .join("");
+}
+
+async function loadAll() {
+  // brain_state
+  const r1 = await fetch(`/memory/ui/brain_state?workspace_id=${encodeURIComponent(ws())}`, {
+    headers: window.AppHeader.dbHeaders(ws()),
+  });
+  if (!r1.ok) { window.AppHeader.toast("brain_state fetch failed", "error"); return; }
+  const brain = await r1.json();
+
+  // memory_status (adoption, recent actions, last timestamps)
+  const r2 = await fetch(`/memory/status?workspace_id=${encodeURIComponent(ws())}`, {
+    headers: window.AppHeader.dbHeaders(ws()),
+  });
+  const status = r2.ok ? await r2.json() : {};
+
+  // ===== hero =====
+  const mem = status.memory || {};
+  const totalRows = (mem.decisions_total || 0) + (mem.theories_total || 0)
+    + (mem.behavior_instructions_total || 0) + (mem.capabilities_active_total || 0)
+    + (mem.episodes_total || 0);
+  $("#heroRows").textContent = fmtInt(totalRows);
+  $("#heroRowsBreakdown").textContent =
+    `${mem.decisions_active || 0} dec · ${mem.theories_active || 0} theory · ${mem.behavior_instructions_active || 0} beh · ${mem.episodes_total || 0} ep`;
+  const sm = brain.self_model;
+  if (sm) {
+    $("#heroSelfModel").textContent = sm.word_count + " words";
+    $("#heroSelfModelSub").textContent =
+      `via ${sm.refreshed_via || "—"} · ${sm.invariants_count} invariants · ${sm.uncertainties_count} uncertainties`;
+  } else {
+    $("#heroSelfModel").textContent = "not yet";
+    $("#heroSelfModelSub").textContent = "POST /memory/self_model/refresh to generate";
+  }
+  const ref = brain.reflex_summary || {};
+  $("#heroReflexes").textContent = ref.active || 0;
+  $("#heroReflexesSub").textContent =
+    `block ${ref.by_enforcement?.block || 0} · advisory ${ref.by_enforcement?.advisory || 0}`;
+  $("#heroLast").textContent = relTime(status.last_episode_at || status.last_decision_at);
+  $("#heroLastSub").textContent =
+    `episode ${relTime(status.last_episode_at)} · decision ${relTime(status.last_decision_at)}`;
+
+  // ===== outcome distribution =====
+  renderOutcomeKinds(brain.outcome_distribution || {});
+
+  // ===== adoption =====
+  const ad = status.adoption || {};
+  $("#adopSrc").textContent = fmtPct(ad.decisions_with_source_episode_ratio);
+  // capability links can exceed 1 per decision (multiple roles/skills/playbooks),
+  // so show as a ratio rather than a percentage to avoid >100% confusion.
+  const capRatio = ad.decisions_linked_to_capability_ratio;
+  if (capRatio == null || isNaN(capRatio)) {
+    $("#adopCap").textContent = "—";
+  } else {
+    $("#adopCap").textContent = capRatio.toFixed(2) + "×";
+    const cls = capRatio >= 0.9 ? "is-pos" : capRatio < 0.5 ? "is-neg" : "";
+    if (cls) $("#adopCapSub").innerHTML =
+      `<span class="outcome-pill ${cls}" style="font-size:9px">${capRatio >= 0.9 ? "healthy" : "low"}</span> unlinked decisions force agents to re-derive playbooks`;
+  }
+  $("#adopBeh").textContent = fmtPct(ad.behavior_instructions_fired_ratio);
+  $("#reflexBlocks").textContent = fmtInt(ref.total_block_fires || 0);
+  $("#reflexBlocksSub").textContent =
+    `${ref.total_advisory_fires || 0} advisory fires · ${ref.active || 0} rules`;
+
+  // ===== hebbian + causal =====
+  renderHebbian(brain.hebbian_summary || {});
+  renderCausal(brain.causal_summary || {});
+
+  // ===== recent actions =====
+  renderActions(status.recent_actions_7d || {});
+}
+
+window.AppHeader.init({ active: "metrics", onWorkspaceChange: loadAll });
+</script>
+</body>
+</html>

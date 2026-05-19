@@ -1,4 +1,4 @@
-"""Phase 3 of the memory-as-organ evolution: promote durable insights.
+"""Phase 3 of the memory-as-brain evolution: promote durable insights.
 
 A consolidation insight that survives review (high confidence, surfaced
 in the brief multiple times without being archived) is no longer an

@@ -97,6 +97,9 @@ class DecisionItem(BaseModel):
     updated_at: str
     pinned: bool = False
     references: list[str] = Field(default_factory=list)
+    # v3.0.0-final: feedback-derived outcome in [-1.0, 1.0]. UI surfaces
+    # this via colored pills; brief filter drops <0 from Active.
+    outcome_score: float = 0.0
 
 
 class ListDecisionsResponse(BaseModel):

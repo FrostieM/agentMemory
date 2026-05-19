@@ -129,7 +129,9 @@ def _emit_brief(body_md: str) -> None:
 
 
 def _emit_notice(message: str) -> None:
-    sys.stdout.write(f"<agent-memory>\n<!-- memory brief hook notice: {message} -->\n</agent-memory>\n")
+    sys.stdout.write(
+        f"<agent-memory>\n<!-- memory brief hook notice: {message} -->\n</agent-memory>\n"
+    )
 
 
 def _fetch_brief(

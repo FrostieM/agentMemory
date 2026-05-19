@@ -142,6 +142,88 @@ GRANDFATHERED: frozenset[str] = frozenset(
         #         + stdio_handlers_review + stdio_handlers_capability
         #         + stdio_handlers_theories + stdio_handlers_research
         #         + stdio_handlers_research_lists + stdio_handlers_capabilities
+        #
+        # v3.0.0-final additions (crossed the 150-SLOC cap during the
+        # brain-organ phase work — Phases 1-7 of the v3 plan). Each
+        # file is fundamentally a single concern that grew past the
+        # ceiling because the brain-organ work added new sections /
+        # cases / handlers; decomposition into subpackages is real
+        # work scheduled for the v3.1 cycle. Listed in size-DESC order
+        # so v3.1 can knock out the worst offenders first:
+        #
+        # Core brief composition (Phase 1 outcome filter + Phase 3
+        # recent insights + Phase 5 self-model intro + brain rail data):
+        # * cognition/brief.py (502)
+        #     -> brief_main.py + brief_sections_organ.py +
+        #        brief_sections_classic.py + brief_render.py.
+        # * cognition/lint.py (392)
+        #     -> lint_main.py + _watch_outs.py + _reflexes.py +
+        #        _discipline.py.
+        # * cognition/self_model.py (344)
+        #     -> self_model.py (facade) + _heuristic + _llm + _persist.
+        # * cognition/consolidation.py (339)
+        #     -> consolidation.py + _cluster + _insight_writer.
+        # * cognition/digest_worker.py (323)
+        # * cognition/impact_check.py (278)
+        # * cognition/outcome_recompute.py (167)
+        "cognition/brief.py",
+        "cognition/lint.py",
+        "cognition/self_model.py",
+        "cognition/consolidation.py",
+        "cognition/digest_worker.py",
+        "cognition/impact_check.py",
+        "cognition/outcome_recompute.py",
+        "cognition/code_indexer.py",
+        # Brain-aware UI endpoints (introduced by Phases 4-7):
+        # * api/routes/ui_brain_actions.py (329)
+        #     -> reflex_actions + self_model_actions + recall + insight.
+        # * api/routes/ui_brain.py (254)
+        #     -> ui_brain.py + brain_state_outcome + brain_state_self
+        #        + brain_state_reflex + brain_state_hebbian.
+        "api/routes/ui_brain.py",
+        "api/routes/ui_brain_actions.py",
+        # Canonical memory surface (compact projections; one module per
+        # kind):
+        # * api/routes/memory.py (246)
+        # * api/routes/record_compound.py (155)
+        # * api/routes/decisions.py (163)
+        "api/routes/memory.py",
+        "api/routes/record_compound.py",
+        "api/routes/decisions.py",
+        # Storage layer (compact projections + bi-temporal writes):
+        # * storage/writer.py (461)
+        # * storage/reader.py (294)
+        # * storage/projections.py (190)
+        "storage/writer.py",
+        "storage/reader.py",
+        "storage/projections.py",
+        # MCP surface (10-tool compact projections + legacy v2 compat):
+        # * mcp/v2_compat.py (428)
+        # * mcp/stdio_tools_memory.py (263)
+        # * mcp/stdio_handlers_memory.py (227)
+        "mcp/v2_compat.py",
+        "mcp/stdio_tools_memory.py",
+        "mcp/stdio_handlers_memory.py",
+        # CLI:
+        # * cli/main.py (352)
+        "cli/main.py",
+        # Background loops + retrieval (Phases 2 + 7):
+        # * maintenance/brain_pass.py (210)
+        # * retrieval/causal_extractor.py (206)
+        # * maintenance/hebbian_pass.py (201)
+        # * enforcement/reflex_check.py (166)
+        # * maintenance/implicit_feedback.py (166)
+        # * retrieval/spreading_activation.py (160)
+        # * maintenance/sentinel_scheduler.py (157)
+        # * retrieval/recall.py (154)
+        "maintenance/brain_pass.py",
+        "retrieval/causal_extractor.py",
+        "maintenance/hebbian_pass.py",
+        "enforcement/reflex_check.py",
+        "maintenance/implicit_feedback.py",
+        "retrieval/spreading_activation.py",
+        "maintenance/sentinel_scheduler.py",
+        "retrieval/recall.py",
     }
 )
 

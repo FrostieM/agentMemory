@@ -179,7 +179,13 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str]:  # noqa: 
             ollama_base_url=os.environ.get("OLLAMA_BASE_URL"),
             ollama_model=os.environ.get("OLLAMA_MODEL"),
         )
-    except (sqlite3.Error, ValueError, KeyError, TypeError):
+    except Exception:
+        # Any decision-path failure is fail-OPEN. The hook protects
+        # against memory-mismatches, not safety boundaries; crashing on
+        # ImportError/OSError/AttributeError would block the user's
+        # tool call with a stderr traceback that Claude Code may or
+        # may not handle gracefully. Better to allow the call and let
+        # the agent / operator notice memory is degraded.
         return True, "", workspace_id
     finally:
         conn.close()
@@ -204,5 +210,24 @@ def main() -> int:
     return 2
 
 
+def _safe_main() -> int:
+    """v3.0.0-final: the hook MUST NOT crash with a traceback.
+
+    Claude Code runs this script on every PreToolUse. A bare exception
+    here propagates a non-zero exit + stderr traceback to the user,
+    which the runtime may treat as a tool-call block. The hook's only
+    job is to advise; a degraded memory layer should never break the
+    operator's workflow. Catch every unexpected exception, log it
+    quietly to the debug log if AGENT_MEMORY_HOOK_DEBUG=1, and exit 0
+    so the tool call proceeds.
+    """
+    try:
+        return main()
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            _debug_log(tool_name="-", workspace_id="-", decision=f"crash:{type(exc).__name__}")
+        return 0
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_safe_main())

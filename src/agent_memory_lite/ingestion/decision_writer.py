@@ -14,6 +14,7 @@ from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.ingestion.conflict_detect import detect_conflicts
 from agent_memory_lite.models.decisions import Decision, DecisionIn
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.decisions_repo import (
     close_decision,
@@ -42,6 +43,15 @@ def write_decision(
         if prior.workspace_id != payload.workspace_id:
             raise ValidationError("supersedes_decision_id must belong to the same workspace")
 
+    # v3.0.0-final: redaction runs on every text field before it reaches
+    # SQLite (CLAUDE.md invariant: "Secrets never stored"). Operator-
+    # pasted API keys / tokens / credentials in title / decision_text /
+    # rationale are replaced with <<REDACTED:KIND>> markers BEFORE the
+    # INSERT so the cleartext never lands on disk.
+    title_safe = redact(payload.title).text
+    decision_text_safe = redact(payload.decision_text).text
+    rationale_safe = redact(payload.rationale).text if payload.rationale else None
+
     with with_tx(conn):
         if payload.supersedes_decision_id is not None:
             close_decision(
@@ -53,9 +63,9 @@ def write_decision(
             conn,
             decision_id=decision_id,
             workspace_id=payload.workspace_id,
-            title=payload.title,
-            decision_text=payload.decision_text,
-            rationale=payload.rationale,
+            title=title_safe,
+            decision_text=decision_text_safe,
+            rationale=rationale_safe,
             supersedes_decision_id=payload.supersedes_decision_id,
             source_episode_id=payload.source_episode_id,
             confidence=payload.confidence,
@@ -72,7 +82,7 @@ def write_decision(
             target_id=decision_id,
             source_episode_id=payload.source_episode_id,
             after={
-                "title": payload.title,
+                "title": title_safe,
                 "supersedes": payload.supersedes_decision_id,
             },
         )
@@ -90,6 +100,6 @@ def write_decision(
         workspace_id=payload.workspace_id,
         target_type="decision",
         target_id=decision_id,
-        target_text=" ".join(filter(None, [payload.title, payload.decision_text])),
+        target_text=" ".join(filter(None, [title_safe, decision_text_safe])),
     )
     return decision

@@ -52,27 +52,51 @@ fi
 
 echo "[memory-ingest] indexing ${#STAGED[@]} staged file(s) into workspace=$WORKSPACE_ID"
 
-INGESTED=0
-SKIPPED=0
-FAILED=0
-for path in "${STAGED[@]}"; do
-    if [[ ! -f "$path" ]]; then
-        continue  # might have been deleted between staging and now
-    fi
-    # Detect language by extension for the API hint.
-    ext="${path##*.}"
-    case "$ext" in
-        py)        lang="python" ;;
-        ts|tsx)    lang="typescript" ;;
-        js|jsx)    lang="javascript" ;;
-        md)        lang="markdown" ;;
-        yaml|yml)  lang="yaml" ;;
-        sql)       lang="sql" ;;
-        sh)        lang="bash" ;;
-        *)         lang="text" ;;
-    esac
+# Total wall-clock ceiling. The hook must never block a commit for more
+# than a couple of minutes — if it does, the operator's workflow is
+# meaningfully degraded. Files that don't get indexed in time stay
+# stale until the next normal commit (they'll be picked up there since
+# the hook is content-hash idempotent).
+MAX_TOTAL_SECONDS="${MEMORY_PRECOMMIT_TIMEOUT:-120}"
+# Per-file curl timeout. Cold-path embedding of a 30 KB markdown takes
+# 20-40 s; warm-path is sub-100 ms. 45 s is a safe single-file ceiling
+# when running in parallel.
+PER_FILE_TIMEOUT="${MEMORY_PRECOMMIT_PER_FILE_TIMEOUT:-45}"
+# Concurrency. The HTTP service holds a single SQLite write lock, but
+# embedding is CPU-bound and parallelizes well — 6 simultaneous curls
+# saturate the embedding worker pool without thrashing.
+PARALLEL="${MEMORY_PRECOMMIT_PARALLEL:-6}"
 
-    # jq encodes the payload safely. Fall back to python if jq is missing.
+LANG_FOR_EXT() {
+    case "$1" in
+        py)        echo "python" ;;
+        ts|tsx)    echo "typescript" ;;
+        js|jsx)    echo "javascript" ;;
+        md)        echo "markdown" ;;
+        yaml|yml)  echo "yaml" ;;
+        sql)       echo "sql" ;;
+        sh)        echo "bash" ;;
+        *)         echo "text" ;;
+    esac
+}
+
+# Workspace for the worker subshell. Exported so child bash inherits.
+export WORKSPACE_ID
+export SERVICE_URL
+export PER_FILE_TIMEOUT
+
+# Worker: ingest ONE file. Prints "indexed" / "skipped" / "failed" on
+# stdout so the parent can count outcomes.
+ingest_one() {
+    local path="$1"
+    if [[ ! -f "$path" ]]; then
+        echo failed
+        return
+    fi
+    local ext="${path##*.}"
+    local lang
+    lang=$(LANG_FOR_EXT "$ext")
+    local payload
     if command -v jq > /dev/null 2>&1; then
         payload=$(jq -n --arg ws "$WORKSPACE_ID" --arg p "$path" --arg lang "$lang" \
             --rawfile c "$path" \
@@ -80,35 +104,47 @@ for path in "${STAGED[@]}"; do
     else
         payload=$(python -c "import json,sys,pathlib; print(json.dumps({'workspace_id':'$WORKSPACE_ID','path':'$path','content':pathlib.Path('$path').read_text(encoding='utf-8'),'language':'$lang'}))" 2>/dev/null || true)
     fi
-
     if [[ -z "$payload" ]]; then
-        FAILED=$((FAILED + 1))
-        continue
+        echo failed
+        return
     fi
-
-    # Pipe payload via stdin to bypass the Windows / Git-Bash command-line
-    # length limit (~32 KB). Inlining the JSON with `curl -d "$payload"`
-    # silently fails for any file > ~32 KB (CLAUDE.md, AGENT_CONTRACT.md,
-    # V1_*.md and similar) with "Argument list too long" -- those files
-    # then show up under `failed=N` in the hook summary. The 60 s curl
-    # ceiling covers first-time ingest of ~30 KB markdown through
-    # sentence-transformers embedding (cold path takes 20-40 s; warm
-    # path is a sub-100 ms skip).
-    response=$(printf '%s' "$payload" | curl -sfm 60 -X POST "$SERVICE_URL/memory/ingest_file" \
+    local response
+    response=$(printf '%s' "$payload" | curl -sfm "$PER_FILE_TIMEOUT" -X POST \
+        "$SERVICE_URL/memory/ingest_file" \
         -H "Content-Type: application/json" \
         --data-binary @- 2>/dev/null || true)
-
     if [[ -z "$response" ]]; then
-        FAILED=$((FAILED + 1))
-        continue
+        echo failed
+        return
     fi
-
     if echo "$response" | grep -q '"skipped":true'; then
-        SKIPPED=$((SKIPPED + 1))
+        echo skipped
     else
-        INGESTED=$((INGESTED + 1))
+        echo indexed
     fi
-done
+}
+export -f ingest_one LANG_FOR_EXT
 
-echo "[memory-ingest] indexed=$INGESTED skipped=$SKIPPED failed=$FAILED"
+# Parallel fan-out via xargs -P. Each worker prints exactly one line:
+# "indexed" / "skipped" / "failed". The whole pipeline is wrapped in
+# `timeout` so the hook can never exceed $MAX_TOTAL_SECONDS regardless
+# of how many cold-path embeddings stack up.
+results_file=$(mktemp)
+trap 'rm -f "$results_file"' EXIT
+
+printf '%s\n' "${STAGED[@]}" | \
+    timeout --preserve-status "$MAX_TOTAL_SECONDS" \
+    xargs -P "$PARALLEL" -I {} bash -c 'ingest_one "{}"' > "$results_file" 2>/dev/null || true
+
+INGESTED=$(grep -c '^indexed$' "$results_file" 2>/dev/null || echo 0)
+SKIPPED=$(grep -c '^skipped$' "$results_file" 2>/dev/null || echo 0)
+FAILED=$(grep -c '^failed$' "$results_file" 2>/dev/null || echo 0)
+COUNTED=$((INGESTED + SKIPPED + FAILED))
+TIMED_OUT=$((${#STAGED[@]} - COUNTED))
+
+if [[ $TIMED_OUT -gt 0 ]]; then
+    echo "[memory-ingest] indexed=$INGESTED skipped=$SKIPPED failed=$FAILED timed_out=$TIMED_OUT (hook ceiling=${MAX_TOTAL_SECONDS}s)"
+else
+    echo "[memory-ingest] indexed=$INGESTED skipped=$SKIPPED failed=$FAILED"
+fi
 exit 0

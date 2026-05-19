@@ -118,8 +118,13 @@ def test_compat_dispatch_swallows_exceptions(
 
 def test_compat_off_does_not_invoke_shim(monkeypatch: pytest.MonkeyPatch) -> None:
     """Confirms the early-return path: compat_dispatch must not be called
-    when MEMORY_V2_COMPAT_ENABLED is unset / falsy."""
-    monkeypatch.delenv("MEMORY_V2_COMPAT_ENABLED", raising=False)
+    when MEMORY_V2_COMPAT_ENABLED is explicitly false.
+
+    Note: post 2026-05-18 the env var defaults to ``true``, so we must
+    set it explicitly here rather than rely on delenv. (Previous test
+    coupled on _runtime.db() raising — non-portable across Python
+    versions and CI / local environments.)"""
+    monkeypatch.setenv("MEMORY_V2_COMPAT_ENABLED", "false")
     invocations: list[tuple[str, dict[str, object]]] = []
 
     def tracker(_conn: object, name: str, args: dict[str, object]) -> None:

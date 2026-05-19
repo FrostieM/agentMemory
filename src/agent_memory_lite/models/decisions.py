@@ -54,3 +54,7 @@ class Decision(BaseModel):
     pinned: bool = False
     # 1.3.0: file/symbol references — see DecisionIn.references.
     references: list[str] = Field(default_factory=list)
+    # v3.0.0-final: outcome_score in [-1.0, 1.0] derived from feedback
+    # EWMA + age + supersede/archive. Surfaced in browse + recall + brief
+    # filtering. Defaults to 0.0 for rows that pre-date the brain pass.
+    outcome_score: float = 0.0
