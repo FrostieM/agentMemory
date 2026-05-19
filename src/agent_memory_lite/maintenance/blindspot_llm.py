@@ -38,7 +38,12 @@ def _float_env(name: str, default: float) -> float:
 
 
 def is_llm_enabled() -> bool:
-    return _bool_env("MEMORY_BLINDSPOT_LLM_ENABLED", False)
+    # Live-validation-2026-05-20: flipped default to True. Same
+    # rationale as Vector 1 — Ollama is mandatory per README,
+    # llm_describe_blindspot is failure-soft, and the heuristic
+    # surface (token + count only) is noticeably less useful than
+    # the LLM-augmented "why this matters" sentence.
+    return _bool_env("MEMORY_BLINDSPOT_LLM_ENABLED", True)
 
 
 def timeout_sec() -> float:

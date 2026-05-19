@@ -21,15 +21,17 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_TIMEOUT_SEC", raising=False)
 
 
-def test_llm_disabled_by_default() -> None:
-    """Default ``MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED`` is False so
-    upgrading the package doesn't silently start talking to Ollama."""
-    assert is_llm_enabled() is False
-
-
-def test_llm_env_flag_enables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", "true")
+def test_llm_enabled_by_default() -> None:
+    """Updated 2026-05-20: default flipped to True after live audit
+    proved the heuristic body is noisy. Ollama is part of the
+    mandatory stack (README); llm_body_for_insight is failure-soft."""
     assert is_llm_enabled() is True
+
+
+def test_llm_env_flag_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator can opt out per workspace."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", "false")
+    assert is_llm_enabled() is False
 
 
 def test_timeout_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,8 +72,12 @@ def test_split_two_paragraphs_tolerates_extra_whitespace() -> None:
 
 
 def test_llm_body_returns_none_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No env flag → no Ollama call attempted."""
-    monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", raising=False)
+    """Explicit ``MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED=false`` opts
+    the workspace out → no Ollama call attempted.
+
+    Updated 2026-05-20: default flipped to True, so the disabled-path
+    test sets the flag false explicitly."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", "false")
     out = llm_body_for_insight(
         insight_id="ins_x",
         summary="topic",

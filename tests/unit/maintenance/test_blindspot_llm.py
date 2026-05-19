@@ -20,13 +20,15 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_BLINDSPOT_LLM_TIMEOUT_SEC", raising=False)
 
 
-def test_llm_disabled_by_default() -> None:
-    assert is_llm_enabled() is False
-
-
-def test_llm_env_flag_enables(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "true")
+def test_llm_enabled_by_default() -> None:
+    """Updated 2026-05-20: default flipped to True (same rationale
+    as Vector 1 LLM gate)."""
     assert is_llm_enabled() is True
+
+
+def test_llm_env_flag_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "false")
+    assert is_llm_enabled() is False
 
 
 def test_timeout_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -44,7 +46,8 @@ def test_prompt_includes_token_and_excerpts() -> None:
 
 
 def test_returns_none_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMORY_BLINDSPOT_LLM_ENABLED", raising=False)
+    """Operator opt-out: explicit ``=false`` blocks the Ollama call."""
+    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "false")
     out = llm_describe_blindspot(
         token="x",
         episode_count=5,

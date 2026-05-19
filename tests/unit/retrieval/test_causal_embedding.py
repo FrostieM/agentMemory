@@ -79,10 +79,23 @@ def _patch_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fac, "get_embedding_provider", lambda _s: _FakeProvider())
 
 
-def test_disabled_by_default(conn: sqlite3.Connection) -> None:
-    assert ce.is_enabled() is False
+def test_enabled_by_default_returns_zero_on_empty_workspace(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Updated 2026-05-20: default flipped to True. Empty workspace
+    has no decisions to derive from → returns 0 anyway."""
+    assert ce.is_enabled() is True
+    # Need to stub the embedding provider so the derive call doesn't
+    # try to load real sentence_transformers on an empty workspace.
+    _patch_provider(monkeypatch)
     out = ce.derive_workspace(conn, workspace_id="ws")
     assert out == 0
+
+
+def test_env_flag_disables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator can opt out per workspace."""
+    monkeypatch.setenv("MEMORY_CAUSAL_EMBEDDING_ENABLED", "false")
+    assert ce.is_enabled() is False
 
 
 def test_env_helpers_defaults() -> None:

@@ -14,7 +14,6 @@ from agent_memory_lite.maintenance.inter_agent import InterAgentBelief
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMORY_INTER_AGENT_ENABLED", raising=False)
     monkeypatch.delenv("MEMORY_INTER_AGENT_MIN_TITLE_LEN", raising=False)
 
 
@@ -67,16 +66,20 @@ def _seed_decision(
     conn.commit()
 
 
-def test_disabled_by_default(conn: sqlite3.Connection) -> None:
-    """Feature gate off → both export and import return empty."""
-    assert ia.is_enabled() is False
+def test_export_empty_on_fresh_workspace(conn: sqlite3.Connection) -> None:
+    """Fresh workspace with no decisions → empty list.
+
+    Updated 2026-05-20: the master ``is_enabled()`` gate was removed
+    because inter-agent functions are only invoked by an explicit
+    operator/route — the toggle on a function-call-only feature was
+    dead weight. Operator gates by choosing whether to call.
+    """
     assert ia.export_workspace(conn, workspace_id="ws") == []
 
 
 def test_export_returns_active_decisions(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     _seed_decision(conn, "dec_a", "Use kelly sizing", "quarter kelly")
     out = ia.export_workspace(conn, workspace_id="ws")
     assert len(out) == 1
@@ -89,7 +92,6 @@ def test_import_skips_when_no_conflict(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same title + identical body → no conflict, no candidate."""
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     _seed_episode(conn, "ep_neg")
     _seed_decision(conn, "dec_local", "Use kelly sizing", "quarter kelly")
     beliefs = [
@@ -110,7 +112,6 @@ def test_import_emits_candidate_on_conflict(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same title + different body → 1 candidate landed."""
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     _seed_episode(conn, "ep_conflict")
     _seed_decision(conn, "dec_local", "Use kelly sizing", "quarter kelly")
     beliefs = [
@@ -137,7 +138,6 @@ def test_import_emits_candidate_on_conflict(
 
 def test_import_idempotent(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-running the same import is a no-op (updates in place)."""
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     _seed_episode(conn, "ep_idem")
     _seed_decision(conn, "dec_local", "Use kelly sizing", "quarter kelly")
     beliefs = [
@@ -169,7 +169,6 @@ def test_import_skips_short_titles(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Titles shorter than min_title_len are ignored."""
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     monkeypatch.setenv("MEMORY_INTER_AGENT_MIN_TITLE_LEN", "20")
     _seed_episode(conn, "ep_short")
     _seed_decision(conn, "dec_local", "short", "body one")
@@ -193,7 +192,6 @@ def test_import_returns_zero_when_no_episode(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Empty source_episode_id → no writes (FK protection)."""
-    monkeypatch.setenv("MEMORY_INTER_AGENT_ENABLED", "true")
     _seed_decision(conn, "dec_local", "Use kelly sizing", "quarter kelly")
     beliefs = [
         InterAgentBelief(

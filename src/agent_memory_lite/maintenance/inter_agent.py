@@ -38,11 +38,6 @@ from dataclasses import dataclass
 from agent_memory_lite.maintenance.inter_agent_writer import persist_conflict
 
 
-def _bool_env(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "true" if default else "false").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
-
-
 def _int_env(name: str, default: int, *, floor: int = 1) -> int:
     raw = os.environ.get(name, str(default)).strip()
     try:
@@ -51,10 +46,11 @@ def _int_env(name: str, default: int, *, floor: int = 1) -> int:
         return default
 
 
-def is_enabled() -> bool:
-    return _bool_env("MEMORY_INTER_AGENT_ENABLED", False)
-
-
+# Live-validation-2026-05-20: removed the is_enabled() master gate.
+# Inter-agent functions are NEVER auto-invoked (no brain_pass step,
+# no implicit caller) — they only run when an explicit operator or
+# tool calls them. A toggle on a function-call-only feature is dead
+# weight: the operator already gates by choosing whether to call.
 def min_title_len() -> int:
     return _int_env("MEMORY_INTER_AGENT_MIN_TITLE_LEN", 8, floor=1)
 
@@ -90,8 +86,6 @@ def export_workspace(
     conn: sqlite3.Connection, *, workspace_id: str, limit: int = 100
 ) -> list[InterAgentBelief]:
     """Return active decisions as portable beliefs. Read-only."""
-    if not is_enabled():
-        return []
     try:
         rows = conn.execute(
             "SELECT id, COALESCE(title, '') AS title, "
@@ -151,7 +145,7 @@ def import_beliefs(
     Returns the count of candidate rows landed. Idempotent via
     deterministic candidate id.
     """
-    if not is_enabled() or not beliefs or not source_episode_id:
+    if not beliefs or not source_episode_id:
         return 0
     floor = min_title_len()
     landed = 0

@@ -62,7 +62,15 @@ def _int_env(name: str, default: int, *, floor: int = 2) -> int:
 
 
 def is_enabled() -> bool:
-    return _bool_env("MEMORY_CAUSAL_EMBEDDING_ENABLED", False)
+    # Live-validation-2026-05-20: flipped default to True. The
+    # embedding provider is part of the mandatory project stack
+    # (sentence_transformers per README), derive_workspace is
+    # failure-soft (returns 0 on any provider error), and the
+    # idempotent UNIQUE constraint on causal_links prevents drift on
+    # re-runs. Cost: 1 batch embedding call per brain_pass over the
+    # ``MEMORY_CAUSAL_EMBEDDING_WINDOW`` most-recent decisions (default
+    # 20) — negligible on a CPU-friendly model.
+    return _bool_env("MEMORY_CAUSAL_EMBEDDING_ENABLED", True)
 
 
 def similarity_threshold() -> float:

@@ -114,8 +114,15 @@ def test_returns_empty_when_no_insights(conn: sqlite3.Connection) -> None:
     assert ep.find_proposal_candidates(conn, workspace_id="ws") == []
 
 
-def test_uncertain_insight_proposes(conn: sqlite3.Connection) -> None:
-    """Insight in (0.4, 0.7) confidence window → emits a proposal."""
+def test_uncertain_insight_proposes(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Insight in (0.4, 0.7) confidence window → emits a proposal.
+
+    Force-disable LLM augmentation so this test runs against the
+    deterministic heuristic body even when Ollama is reachable
+    (default LLM_ENABLED=True after 2026-05-20)."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", "false")
     _seed_insight(
         conn,
         insight_id="ins_kelly",

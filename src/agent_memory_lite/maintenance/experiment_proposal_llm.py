@@ -42,7 +42,13 @@ def _float_env(name: str, default: float) -> float:
 
 
 def is_llm_enabled() -> bool:
-    return _bool_env("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", False)
+    # Live-validation-2026-05-20: flipped default to True after the
+    # heuristic body proved noisy on real workspaces. Ollama is part
+    # of the project's mandatory local-only stack (README) and the
+    # llm_body_for_insight contract is failure-soft — any failure
+    # returns None and the caller falls back to heuristic. Operator
+    # can set MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED=false to opt out.
+    return _bool_env("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", True)
 
 
 def timeout_sec() -> float:
