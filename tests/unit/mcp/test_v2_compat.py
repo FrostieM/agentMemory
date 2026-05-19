@@ -438,6 +438,55 @@ def test_suppress_flag_falsy_values(monkeypatch: pytest.MonkeyPatch, value: str)
 def test_deprecation_dedup_resets_between_processes() -> None:
     """The reset helper exists so tests get a clean slate. Verify it works."""
     assert v2_compat._deprecation("X", "Y") is not None  # first call emits
-    assert v2_compat._deprecation("X", "Y") is None  # second call deduped
+    assert v2_compat._deprecation("X", "Y") is None  # second call deduped (within TTL)
     v2_compat.reset_seen_deprecations()
     assert v2_compat._deprecation("X", "Y") is not None  # post-reset emits again
+
+
+# ============================================================
+# Audit 3 #3: TTL — long-lived processes re-emit the notice periodically
+# ============================================================
+
+
+def test_deprecation_ttl_default_one_hour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The TTL reader defaults to 3600 seconds (one hour)."""
+    monkeypatch.delenv("MEMORY_DEPRECATION_TTL_SECONDS", raising=False)
+    assert v2_compat._deprecation_ttl_seconds() == 3600
+
+
+def test_deprecation_ttl_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator can tune the TTL via env."""
+    monkeypatch.setenv("MEMORY_DEPRECATION_TTL_SECONDS", "120")
+    assert v2_compat._deprecation_ttl_seconds() == 120
+
+
+def test_deprecation_ttl_invalid_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_DEPRECATION_TTL_SECONDS", "garbage")
+    assert v2_compat._deprecation_ttl_seconds() == 3600
+
+
+def test_deprecation_ttl_clamps_below_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero / negative values clamp to 1s so the TTL never disables dedup."""
+    monkeypatch.setenv("MEMORY_DEPRECATION_TTL_SECONDS", "0")
+    assert v2_compat._deprecation_ttl_seconds() == 1
+
+
+def test_deprecation_reemits_after_ttl_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the recorded last-emit timestamp is older than the TTL,
+    the next call re-emits the banner (long-running server reminder)."""
+    monkeypatch.setenv("MEMORY_DEPRECATION_TTL_SECONDS", "60")
+    v2_compat.reset_seen_deprecations()
+    assert v2_compat._deprecation("memory_X", "memory_write") is not None
+    # Forcibly age the entry beyond the TTL by rewriting the timestamp.
+    v2_compat._seen_deprecations["memory_X"] -= 120  # 2 minutes old
+    assert v2_compat._deprecation("memory_X", "memory_write") is not None
+
+
+def test_deprecation_stays_silent_within_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Calls within the TTL window stay silent."""
+    monkeypatch.setenv("MEMORY_DEPRECATION_TTL_SECONDS", "3600")
+    v2_compat.reset_seen_deprecations()
+    assert v2_compat._deprecation("memory_Y", "memory_write") is not None
+    # Age the entry by a small amount well below TTL.
+    v2_compat._seen_deprecations["memory_Y"] -= 30
+    assert v2_compat._deprecation("memory_Y", "memory_write") is None

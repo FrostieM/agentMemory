@@ -3,13 +3,40 @@
 Reads to any registered workspace are allowed; writes outside the
 anchor workspace are blocked under
 ``MEMORY_STRICT_WORKSPACE_ISOLATION`` (asymmetric isolation).
+
+Hub-mode bypass (Audit 1 #2): when ``hub_mode=True`` the write guard
+intentionally allows cross-workspace writes (operator chose a shared
+service). Pre-3.0.1 this happened SILENTLY — no signal in either DB
+that the anchor process had reached into another workspace. The fix
+logs a warning + an ``audit_log`` row into the anchor DB whenever a
+cross-workspace write is permitted, so a misconfigured client doesn't
+quietly mutate the wrong project's data. Opt-out via
+``MEMORY_HUB_WRITE_AUDIT_ENABLED=false``.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any
 
 from agent_memory_lite.mcp.stdio_runtime import _runtime
+
+_log = logging.getLogger(__name__)
+
+# Per-process set tracking which foreign workspaces we've already warned
+# about — keeps the log signal-to-noise high on long-lived stdio servers.
+_hub_write_warned: set[tuple[str, str]] = set()
+
+
+def reset_hub_write_warned() -> None:
+    """Test hook: clear the per-process hub-write warn-once set."""
+    _hub_write_warned.clear()
+
+
+def _hub_write_audit_enabled() -> bool:
+    raw = os.environ.get("MEMORY_HUB_WRITE_AUDIT_ENABLED", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _drop_none(payload: dict[str, Any]) -> dict[str, Any]:
@@ -23,9 +50,46 @@ def _ensure_workspace_readable(workspace_id: str) -> None:
         raise ValueError("workspace_id='default' is disabled by MEMORY_FORBID_DEFAULT_WORKSPACE")
 
 
+def _audit_hub_cross_workspace_write(target_workspace_id: str) -> None:
+    """In hub mode a write to ``target_workspace_id != anchor`` is allowed
+    BUT not silent: warn-once per (anchor, target) + best-effort audit row
+    into the anchor DB. Failure-soft — audit is informational, never blocks.
+    """
+    if not _hub_write_audit_enabled():
+        return
+    anchor = _runtime.settings.workspace_id
+    if target_workspace_id == anchor:
+        return
+    key = (anchor, target_workspace_id)
+    if key in _hub_write_warned:
+        return
+    _hub_write_warned.add(key)
+    _log.warning(
+        "hub-mode cross-workspace write: anchor=%r target=%r. Allowed by "
+        "MEMORY_HUB_MODE=true; set MEMORY_STRICT_WORKSPACE_ISOLATION=true to "
+        "block instead. This warning is emitted once per (anchor, target) pair.",
+        anchor,
+        target_workspace_id,
+    )
+    try:
+        from agent_memory_lite.repositories.audit_repo import insert_audit  # noqa: PLC0415
+
+        insert_audit(
+            _runtime.db(),
+            workspace_id=anchor,
+            action="hub_cross_workspace_write",
+            target_type="workspace",
+            target_id=target_workspace_id,
+            after={"anchor": anchor, "target": target_workspace_id},
+        )
+    except Exception:  # pragma: no cover - audit is informational
+        pass
+
+
 def _ensure_workspace_writable(workspace_id: str) -> None:
     """Write guard: blocks writes to any non-anchor workspace under strict
-    isolation. Hub mode opts out (operator chose a shared service)."""
+    isolation. Hub mode opts out (operator chose a shared service) but
+    logs the cross-workspace write so it's never silent."""
     _ensure_workspace_readable(workspace_id)
     if (
         _runtime.settings.strict_workspace_isolation
@@ -37,6 +101,9 @@ def _ensure_workspace_writable(workspace_id: str) -> None:
             f"MEMORY_STRICT_WORKSPACE_ISOLATION; expected "
             f"{_runtime.settings.workspace_id!r}. Reads remain allowed."
         )
+    # Hub-mode + cross-workspace: NOT blocked, but audited.
+    if _runtime.settings.hub_mode and workspace_id != _runtime.settings.workspace_id:
+        _audit_hub_cross_workspace_write(workspace_id)
 
 
 # Backwards-compatible alias for the write guard.

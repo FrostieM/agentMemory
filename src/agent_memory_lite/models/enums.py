@@ -113,6 +113,15 @@ class MemoryCandidateKind(StrEnum):
     CORRECTION = "correction"
     BUG = "bug"
     FIX = "fix"
+    # v3.1 Vector 1: proto-theory proposal emitted by the heuristic
+    # experiment-proposal scanner (find_proposal_candidates). Operator
+    # promotes via the existing review queue to a real ``theory`` row.
+    THEORY_PROPOSAL = "theory_proposal"
+    # v3.1 Vector 5: predictive-failure warning. The scanner surfaces a
+    # new candidate decision that token-overlaps a known low-outcome
+    # decision; operator reviews to either pin the warning as a
+    # behavior instruction or reject the false positive.
+    PREDICTIVE_WARNING = "predictive_warning"
 
 
 class MemoryCandidateStatus(StrEnum):
