@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -94,7 +95,13 @@ def _err(code: str, message: str, *, deprecation: str | None = None) -> dict[str
     return env
 
 
-_seen_deprecations: set[str] = set()
+# Per-name last-emit timestamp (monotonic seconds). After TTL expires
+# the deprecation notice re-emits — long-lived MCP stdio processes
+# (days/weeks) get a periodic reminder instead of a one-shot that the
+# agent forgot about hours ago. Tests reset via reset_seen_deprecations.
+_seen_deprecations: dict[str, float] = {}
+
+_DEFAULT_TTL_SECONDS = 3600  # 1 hour
 
 
 def _suppress_deprecation_notices() -> bool:
@@ -103,14 +110,29 @@ def _suppress_deprecation_notices() -> bool:
     Set ``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true`` to drop the
     ``deprecation_notice`` field from every shim response. Default is
     off so callers still see the migration path on at least their first
-    encounter (see once-per-session dedup below).
+    encounter (see dedup-with-TTL below).
     """
     raw = os.environ.get("MEMORY_SUPPRESS_DEPRECATION_NOTICES", "false").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
+def _deprecation_ttl_seconds() -> int:
+    """How long a per-name dedup entry survives before re-emitting.
+
+    Read fresh each call so operators can flip the value live via env.
+    Negative / zero / non-numeric values fall back to default 1h. Set
+    very large (e.g. 86400000) for once-per-process semantics.
+    """
+    raw = os.environ.get("MEMORY_DEPRECATION_TTL_SECONDS", str(_DEFAULT_TTL_SECONDS)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_TTL_SECONDS
+    return max(1, value)
+
+
 def reset_seen_deprecations() -> None:
-    """Test hook: clear once-per-session dedup state.
+    """Test hook: clear dedup state.
 
     Module-level state survives across calls inside one process — that
     is the intent for long-lived MCP stdio servers. Tests need a clean
@@ -125,16 +147,18 @@ def _deprecation(v2_name: str, v3_successor: str) -> str | None:
     Suppression rules (any one fires):
 
     * ``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true`` — full silence.
-    * ``v2_name`` already emitted in this process — one banner per name
-      per session is enough for the agent to act on; repeating the same
-      bytes on every call accumulates ~70 tokens per shim call in long
-      sessions for no new information.
+    * ``v2_name`` was emitted within the last ``ttl_seconds`` (default
+      3600 = 1h via ``MEMORY_DEPRECATION_TTL_SECONDS``). Beyond the
+      TTL the banner re-emits so a long-lived MCP server reminds the
+      agent periodically instead of just once at startup.
     """
     if _suppress_deprecation_notices():
         return None
-    if v2_name in _seen_deprecations:
+    now = time.monotonic()
+    last_emit = _seen_deprecations.get(v2_name)
+    if last_emit is not None and (now - last_emit) < _deprecation_ttl_seconds():
         return None
-    _seen_deprecations.add(v2_name)
+    _seen_deprecations[v2_name] = now
     return f"{v2_name} is deprecated; use {v3_successor}. This shim will be removed at v4.0."
 
 

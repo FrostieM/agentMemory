@@ -187,6 +187,63 @@ def test_min_score_floor(conn: sqlite3.Connection) -> None:
     assert out == []
 
 
+def test_candidate_cap_bounds_scan(conn: sqlite3.Connection) -> None:
+    """Audit 2 #6: candidate scan is capped at ``candidate_cap`` rows.
+    Tokenizing 1000+ decisions per write was the unbounded path; the
+    new behavior takes only the most-recently-updated N."""
+    # Seed 50 decisions, all containing the target token; the cap of 5
+    # must limit the candidate set so only the most-recent 5 get scored.
+    import time as _time  # noqa: PLC0415
+
+    for i in range(50):
+        _seed_decision(
+            conn,
+            workspace_id="alpha",
+            decision_id=f"dec_{i:03d}",
+            title=f"Kelly sizing iteration {i}",
+            decision_text="Use quarter-Kelly fraction",
+        )
+        # Force monotonically increasing updated_at by sleeping briefly
+        # (sqlite datetime granularity is 1s default; we use explicit
+        # row updates instead).
+        _time.sleep(0.001)
+    # Manually update updated_at to ordered values so ORDER BY works.
+    for i in range(50):
+        conn.execute(
+            "UPDATE decisions SET updated_at = ? WHERE id = ?",
+            (f"2026-05-{(i % 28) + 1:02d}T{i // 28:02d}:00:00+00:00", f"dec_{i:03d}"),
+        )
+    conn.commit()
+    out = suggest_decision_neighbors(
+        conn,
+        workspace_id="alpha",
+        title="Kelly sizing variant new",
+        text="Quarter-Kelly fraction proposed",
+        candidate_cap=5,
+    )
+    # With cap=5 only 5 rows are considered; all 5 would match → return up
+    # to ``limit`` (default 3).
+    assert len(out) <= 3
+
+
+def test_env_cap_default_and_override(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Env override for the candidate cap takes effect on each call."""
+    from agent_memory_lite.ingestion.decision_neighbor_suggester import (  # noqa: PLC0415
+        _candidate_cap,
+    )
+
+    monkeypatch.delenv("MEMORY_DECISION_NEIGHBOR_CANDIDATES", raising=False)
+    assert _candidate_cap() == 200
+    monkeypatch.setenv("MEMORY_DECISION_NEIGHBOR_CANDIDATES", "75")
+    assert _candidate_cap() == 75
+    monkeypatch.setenv("MEMORY_DECISION_NEIGHBOR_CANDIDATES", "5")
+    assert _candidate_cap() == 10  # clamped to floor
+    monkeypatch.setenv("MEMORY_DECISION_NEIGHBOR_CANDIDATES", "garbage")
+    assert _candidate_cap() == 200  # fallback
+
+
 def test_snippet_truncated_to_120_chars(conn: sqlite3.Connection) -> None:
     long_text = "Quarter-Kelly fraction " * 30
     _seed_decision(

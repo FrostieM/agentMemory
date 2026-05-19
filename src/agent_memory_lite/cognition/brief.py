@@ -34,6 +34,12 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_memory_lite.cognition.brief_v3_1 import (
+    build_open_proposals as _build_open_proposals,
+)
+from agent_memory_lite.cognition.brief_v3_1 import (
+    build_predictive_warnings as _build_predictive_warnings,
+)
 from agent_memory_lite.storage.reader import (
     count_kind,
     get_object,
@@ -98,6 +104,81 @@ class Brief:
     token_count: int
     sections: list[BriefSection]
     cache_hit: bool = False
+
+
+# ============================================================
+# Section assembly + workspace-aware budget redistribution
+# ============================================================
+
+# Sections that receive freed budget when other sections come back empty.
+# Identity stays first (discipline reminder must render); behaviors /
+# decisions / aging_decisions absorb the rest in priority order.
+_REDISTRIBUTE_RECIPIENTS: tuple[str, ...] = (
+    "identity",
+    "behaviors",
+    "decisions",
+    "aging_decisions",
+)
+
+
+def _build_all_sections(
+    conn: sqlite3.Connection, workspace_id: str, budgets: dict[str, int]
+) -> list[BriefSection]:
+    """Single-pass build with the supplied per-name budgets."""
+    return [
+        _build_identity(conn, workspace_id, budgets["identity"]),
+        _build_pinned_behaviors(conn, workspace_id, budgets["behaviors"]),
+        _build_top_decisions(conn, workspace_id, budgets["decisions"]),
+        _build_state(conn, workspace_id, budgets["state"]),
+        _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
+        _build_associates(conn, workspace_id, budgets["associates"]),
+        _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
+        _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
+        _build_aging_decisions(conn, workspace_id, budgets["aging_decisions"]),
+        _build_blindspots(conn, workspace_id, budgets["blindspots"]),
+        # v3.1 active-memory vectors — surface heuristic outputs so the
+        # agent sees them at session start without an explicit MCP call.
+        _build_open_proposals(conn, workspace_id, budgets["open_proposals"]),
+        _build_predictive_warnings(conn, workspace_id, budgets["predictive_warnings"]),
+    ]
+
+
+def _redistribute_and_rebuild(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    budgets: dict[str, int],
+    sections: list[BriefSection],
+    empty_names: set[str],
+) -> list[BriefSection]:
+    """Pull budget from sections that returned empty + rebuild the
+    priority recipients with the extra room.
+
+    Only rebuilds the recipients (identity / behaviors / decisions /
+    aging_decisions) so the second pass costs at most 4 SQL queries.
+    """
+    freed = sum(budgets[name] for name in empty_names)
+    if freed <= 0:
+        return sections
+    new_budgets = dict(budgets)
+    for name in empty_names:
+        new_budgets[name] = 0
+    # Proportional split based on initial recipient budgets so the
+    # densest section gets the biggest slice.
+    recipient_total = sum(budgets[name] for name in _REDISTRIBUTE_RECIPIENTS)
+    if recipient_total <= 0:
+        return sections
+    by_name = {s.name: s for s in sections}
+    for name in _REDISTRIBUTE_RECIPIENTS:
+        share = int(freed * budgets[name] / recipient_total)
+        new_budgets[name] = budgets[name] + share
+    # Rebuild only the recipients; leave other sections as-is.
+    by_name["identity"] = _build_identity(conn, workspace_id, new_budgets["identity"])
+    by_name["behaviors"] = _build_pinned_behaviors(conn, workspace_id, new_budgets["behaviors"])
+    by_name["decisions"] = _build_top_decisions(conn, workspace_id, new_budgets["decisions"])
+    by_name["aging_decisions"] = _build_aging_decisions(
+        conn, workspace_id, new_budgets["aging_decisions"]
+    )
+    return [by_name[s.name] for s in sections]
 
 
 # ============================================================
@@ -386,6 +467,33 @@ def iso_now_for_brief() -> str:
     return iso_now()
 
 
+def _build_blindspots(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
+    """Surface tokens present in ≥N episodes but in ZERO active decisions.
+
+    v3.1 Vector 3: structural asymmetry detection. The agent sees
+    "discussed-but-not-decided" topics on session start so it can
+    propose a decision (or, if the asymmetry is by design, a concept).
+    Failure-soft — missing module or pre-migration DB renders empty.
+    """
+    try:
+        from agent_memory_lite.maintenance.blindspot_detection import (  # noqa: PLC0415
+            find_blindspots,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return BriefSection(name="blindspots", budget=budget, lines=[])
+        rows = find_blindspots(conn, workspace_id=workspace_id)
+    except Exception:  # pragma: no cover - defensive
+        return BriefSection(name="blindspots", budget=budget, lines=[])
+    if not rows:
+        return BriefSection(name="blindspots", budget=budget, lines=[])
+    lines = ["## Blindspots (discussed but no decision)"]
+    for row in rows:
+        lines.append(f"- {row.token!r}: {row.episode_count} episodes, 0 decisions")
+    return BriefSection(name="blindspots", budget=budget, lines=fit_to_budget(lines, budget))
+
+
 def _build_aging_decisions(
     conn: sqlite3.Connection, workspace_id: str, budget: int
 ) -> BriefSection:
@@ -458,7 +566,17 @@ def _build_watch_outs(
 
 
 def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
+    """Workspace-aware (P2): emit nothing on a workspace with no active
+    tasks. The ``- no active tasks`` placeholder was useful onboarding
+    text on fresh workspaces but noise after the first session. The
+    freed budget is actually reallocated by ``_redistribute_and_rebuild``
+    in ``compose_brief``: when this section returns empty, denser
+    sections (identity / behaviors / decisions / aging_decisions) get a
+    proportional bonus + re-render with bigger caps.
+    """
     rows = list_kind(conn, workspace_id=workspace_id, kind="task", limit=3)
+    if not rows:
+        return BriefSection(name="state", budget=budget, lines=[])
     lines = ["## State"]
     for t in rows:
         goal = t.get("goal_one_line") or "?"
@@ -469,15 +587,16 @@ def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> Br
             f"- task {t.get('task_id', '?')} [{status}]: {goal} "
             f"→ next: {next_action} (blockers: {blockers})"
         )
-    if len(lines) == 1:
-        lines.append("- no active tasks")
     return BriefSection(name="state", budget=budget, lines=fit_to_budget(lines, budget))
 
 
 def _build_code_hubs(
     conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 10
 ) -> BriefSection:
-    """Top-N code digests by pagerank (or inbound_edge_count fallback)."""
+    """Workspace-aware (P2): emit nothing when the code-memory substrate
+    is empty. Saves ~10 tokens on workspaces that don't use code-memory
+    (non-software projects); the freed budget is rerouted by
+    ``_redistribute_and_rebuild`` into the dense priority sections."""
     sql = (
         "SELECT * FROM code_digests WHERE workspace_id = ? "
         "ORDER BY COALESCE(NULLIF(pagerank, 0), inbound_edge_count) DESC, "
@@ -488,20 +607,61 @@ def _build_code_hubs(
         rows = conn.execute(sql, (workspace_id, limit)).fetchall()
     except sqlite3.OperationalError:
         rows = []
+    if not rows:
+        return BriefSection(name="code_hubs", budget=budget, lines=[])
     lines = ["## Code hubs"]
     for row in rows:
         path = row["file_path"]
         purpose = row["purpose_short"] or "(no digest)"
         callers = row["inbound_edge_count"]
         lines.append(f"- {path}: {purpose} ({callers} callers)")
-    if len(lines) == 1:
-        lines.append("- no code digests indexed yet")
     return BriefSection(name="code_hubs", budget=budget, lines=fit_to_budget(lines, budget))
 
 
 # ============================================================
 # Top-level composer
 # ============================================================
+
+
+# Env vars whose state contributes to brief composition (which sections
+# render, with what thresholds). Folded into the cache fingerprint so
+# flipping them does not require a process restart (audit 3 #2 fix).
+_BRIEF_ENV_KEYS: tuple[str, ...] = (
+    "MEMORY_AGING_DECISIONS_ENABLED",
+    "MEMORY_AGING_DECISIONS_DAYS",
+    "MEMORY_AGING_DECISIONS_LIMIT",
+    "MEMORY_BLINDSPOT_DETECT_ENABLED",
+    "MEMORY_BLINDSPOT_LOOKBACK_DAYS",
+    "MEMORY_BLINDSPOT_MIN_EPISODES",
+    "MEMORY_BLINDSPOT_LIMIT",
+    "MEMORY_STICKY_BRIEF_ENABLED",
+    "MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS",
+    # v3.1 brief integration: open_proposals + predictive_warnings
+    # sections respond to these flags. Without them in the fingerprint,
+    # toggling the flag mid-session would silently render a stale brief.
+    "MEMORY_EXPERIMENT_PROPOSAL_ENABLED",
+    "MEMORY_EXPERIMENT_PROPOSAL_CONF_MIN",
+    "MEMORY_EXPERIMENT_PROPOSAL_CONF_MAX",
+    "MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED",
+    "MEMORY_PREDICTIVE_FAILURE_ENABLED",
+    "MEMORY_PREDICTIVE_FAILURE_OUTCOME_THRESHOLD",
+    "MEMORY_PREDICTIVE_FAILURE_JACCARD_MIN",
+)
+
+
+def _brief_env_signature() -> str:
+    """Stable hash of env vars that affect brief composition.
+
+    Read each var fresh (so live changes invalidate the cache on the
+    next call). Output goes into the cache key alongside the workspace
+    fingerprint — toggling a flag is enough to evict the cached body.
+
+    12-hex chars matches the workspace-fingerprint width (audit-round-2
+    B#3) — visual symmetry + bigger collision margin than the original
+    8-hex.
+    """
+    parts = [f"{k}={os.environ.get(k, '')}" for k in _BRIEF_ENV_KEYS]
+    return hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
@@ -525,9 +685,40 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     timed out before ever rendering. UNION ALL over five small index-
     seek scans returns the same answer in < 5 ms.
     """
+    # Audit-5 H2 fix: include the candidates table (legacy
+    # ``memory_candidates`` OR canonical ``candidates``) so a Vector 1
+    # ``persist=true`` write invalidates the cached brief immediately.
+    # Detect which table is present so canonical-only deploys (where
+    # the legacy name is absent) don't fail the whole query.
+    cand_table = ""
+    try:
+        for name in ("memory_candidates", "candidates"):
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (name,),
+            ).fetchone()
+            if row:
+                cand_table = name
+                break
+    except sqlite3.Error:
+        cand_table = ""
+    extra_clause = (
+        f"  UNION ALL SELECT updated_at FROM {cand_table} WHERE workspace_id = ?"
+        if cand_table
+        else ""
+    )
+    params: list[str] = [
+        workspace_id,
+        workspace_id,
+        workspace_id,
+        workspace_id,
+        workspace_id,
+    ]
+    if cand_table:
+        params.append(workspace_id)
     try:
         rows = conn.execute(
-            """
+            f"""
             SELECT MAX(ts) FROM (
               SELECT updated_at AS ts FROM decisions     WHERE workspace_id = ?
               UNION ALL
@@ -538,9 +729,10 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
               SELECT updated_at        FROM code_digests WHERE workspace_id = ?
               UNION ALL
               SELECT created_at        FROM episodes     WHERE workspace_id = ?
+            {extra_clause}
             )
             """,
-            (workspace_id, workspace_id, workspace_id, workspace_id, workspace_id),
+            tuple(params),
         ).fetchone()
     except sqlite3.Error:
         return f"err-{workspace_id}-{id(conn)}"
@@ -596,7 +788,7 @@ def compose_brief(
             effective_max = min(max_tokens, _sticky_followup_tokens())
         else:
             _session_seen.add(session_key)
-    fingerprint = _workspace_fingerprint(conn, workspace_id)
+    fingerprint = _workspace_fingerprint(conn, workspace_id) + ":" + _brief_env_signature()
     cache_key = (workspace_id, effective_max, fingerprint)
     cached = _BRIEF_CACHE.get(cache_key)
     if cached is not None:
@@ -616,37 +808,39 @@ def compose_brief(
     # ``recent_insights`` (Phase 3) each take ~6-8% and all stay empty on
     # a fresh workspace, so the brief footprint for an empty DB is byte-
     # equivalent to the v3.0.0-base baseline.
-    # Audit-driven rebalance 2026-05-19: aging-decisions was 0.02 (=10
-    # tokens at the default 500 budget) which couldn't fit even its header
-    # plus one row line (~20 tokens). Bumped to 0.04 (~20 tokens) so the
-    # section actually renders when rows exist. Trimmed ``associates``
-    # 0.06 → 0.05 and ``recent_insights`` 0.06 → 0.04 to absorb the
-    # increase and the new aging slot while keeping the sum at exactly
-    # 1.00.
+    # Audit-driven rebalance 2026-05-19 + v3.1 blindspot slot:
+    # aging-decisions was 0.02 → 0.04 so the section actually fits.
+    # Added 0.03 for ``blindspots`` (v3.1 Vector 3 — structural
+    # episode-vs-decision asymmetry). Trimmed ``identity`` 0.18 → 0.15
+    # to absorb the new slot while keeping the sum at exactly 1.00.
+    # v3.1 brief integration: open_proposals + predictive_warnings each
+    # take 0.03 of the budget. Trimmed identity (-0.02), decisions
+    # (-0.02), state (-0.02) to absorb 0.06 while keeping sum at 1.00.
     weights = {
-        "identity": 0.18,
+        "identity": 0.13,
         "behaviors": 0.20,
-        "decisions": 0.22,
-        "state": 0.12,
+        "decisions": 0.20,
+        "state": 0.10,
         "code_hubs": 0.10,
         "associates": 0.05,
         "recent_insights": 0.04,
         "watch_outs": 0.05,
         "aging_decisions": 0.04,
+        "blindspots": 0.03,
+        "open_proposals": 0.03,
+        "predictive_warnings": 0.03,
     }
     budgets = {name: int(effective_max * w) for name, w in weights.items()}
 
-    sections = [
-        _build_identity(conn, workspace_id, budgets["identity"]),
-        _build_pinned_behaviors(conn, workspace_id, budgets["behaviors"]),
-        _build_top_decisions(conn, workspace_id, budgets["decisions"]),
-        _build_state(conn, workspace_id, budgets["state"]),
-        _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
-        _build_associates(conn, workspace_id, budgets["associates"]),
-        _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
-        _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
-        _build_aging_decisions(conn, workspace_id, budgets["aging_decisions"]),
-    ]
+    sections = _build_all_sections(conn, workspace_id, budgets)
+    # Audit-round-P2 #1 fix: workspace-aware redistribution. Sections
+    # that returned empty (no lines) on the first pass free their
+    # budget to the dense priority sections (identity / behaviors /
+    # decisions / aging_decisions). On a fresh workspace with no tasks
+    # / no code_digests this gives the active content meaningful room.
+    empty_names = {s.name for s in sections if not s.lines}
+    if empty_names:
+        sections = _redistribute_and_rebuild(conn, workspace_id, budgets, sections, empty_names)
     body_parts: list[str] = []
     for section in sections:
         body_parts.extend(section.lines)
@@ -654,6 +848,9 @@ def compose_brief(
     # Hard cap: if heuristic budgets overshoot, trim from the tail (least-critical first).
     if approx_tokens(body_md) > effective_max:
         # Re-fit by progressively dropping later sections.
+        # v3.1 audit-5 H4 fix: include the new sections so an overshoot
+        # doesn't silently drop them — exactly the moment the operator
+        # most needs to see Vector 1/5 warnings.
         priority_order = [
             "identity",
             "behaviors",
@@ -664,6 +861,9 @@ def compose_brief(
             "recent_insights",
             "watch_outs",
             "aging_decisions",
+            "blindspots",
+            "open_proposals",
+            "predictive_warnings",
         ]
         trimmed_sections: list[BriefSection] = []
         running = 0

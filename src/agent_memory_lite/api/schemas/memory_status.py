@@ -46,6 +46,68 @@ class AdoptionRatios(BaseModel):
     behavior_instructions_fired_ratio: float
 
 
+class EnvironmentInfo(BaseModel):
+    """Server / anchor / registry / providers introspection.
+
+    Lets the agent answer "am I on the right workspace?" + "what
+    workspaces does this server know about?" + "what providers are
+    actually wired?" without stitching ``/health`` +
+    ``/memory/workspaces``. Closes the silent-misconfig footgun
+    audit-driven by 2026-05-19 routing bug.
+
+    P2 extension (audit-round-1 A#6): added embedding/vector/llm
+    backend names + the HTTP base URL so an agent that finds search
+    empty can correlate immediately ("is the embedding provider even
+    wired?") instead of guessing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hub_mode: bool
+    anchor_workspace_id: str
+    anchor_db_path: str
+    anchor_vector_db_path: str
+    forbid_default_workspace: bool
+    strict_workspace_isolation: bool
+    registry_path: str
+    registry_workspaces: list[str]
+    applied_migrations: list[str]
+    # P2 additions — runtime stack visibility.
+    embedding_backend: str = ""
+    embedding_model: str = ""
+    vector_backend: str = ""
+    llm_backend: str = ""
+    llm_model: str = ""
+    http_base_url: str = ""
+
+
+class ActiveMemoryCounts(BaseModel):
+    """v3.1 active-memory dashboard — one snapshot of every vector's
+    current state so the operator can see "is the brain actually
+    thinking right now?" without 4 separate route calls.
+
+    Each ``..._available`` flag mirrors the per-route ``available``
+    semantics: ``False`` when the scanner's required schema is missing
+    (e.g. legacy-only DB w/o canonical insights / outcome_score).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Vector 1 — experiment proposal.
+    open_proposals: int = 0
+    proposals_available: bool = True
+    proposals_enabled: bool = True
+    # Vector 3 — blindspot detection.
+    blindspots: int = 0
+    blindspots_enabled: bool = True
+    # Vector 5 — predictive failure.
+    predictive_warnings: int = 0
+    predictive_warnings_available: bool = True
+    predictive_warnings_enabled: bool = True
+    # Vector 5 — persisted warnings in 'new' state (review-queue ready).
+    persisted_warnings_new: int = 0
+
+
 class MemoryStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,3 +120,12 @@ class MemoryStatusResponse(BaseModel):
     last_decision_at: str | None
     last_ingest_file_at: str | None
     recent_actions_7d: dict[str, int] = Field(default_factory=dict)
+    # Optional environment block — populated when the agent passes
+    # ``include_environment=true`` so existing callers see no payload
+    # bloat. The block answers "where am I running and what
+    # workspaces does this server route to?".
+    environment: EnvironmentInfo | None = None
+    # v3.1: active-memory vector snapshot. Optional so legacy clients
+    # parsing the response don't break on unknown fields (pydantic v2
+    # would forbid extras only if the client also uses forbid).
+    active_memory: ActiveMemoryCounts | None = None

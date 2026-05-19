@@ -82,13 +82,14 @@ def test_v3_tools_match_handlers() -> None:
         "memory_lint",
         "memory_invoke_skill",
         "memory_impact_check",
+        "memory_status",
     }
     tool_names = {t.name for t in ALL_TOOLS} & canonical
     handler_names = set(_HANDLERS) & canonical
     assert tool_names == canonical, f"missing tools: {canonical - tool_names}"
     assert handler_names == canonical, f"missing handlers: {canonical - handler_names}"
-    # 6 strict + 2 hook + invoke_skill + impact_check (discipline primitive)
-    assert len(canonical) == 10
+    # 6 strict + 2 hook + invoke_skill + impact_check + status (diagnostic)
+    assert len(canonical) == 11
 
 
 # ============================================================
@@ -320,6 +321,47 @@ def test_impact_check_returns_full_envelope_shape(db_conn: sqlite3.Connection) -
         "verdict",
         "advisory",
     }
+
+
+# ============================================================
+# memory_status (diagnostic / self-introspection)
+# ============================================================
+
+
+def test_status_includes_environment_by_default(db_conn: sqlite3.Connection) -> None:
+    """``memory_status`` defaults to ``include_environment=True`` — that is
+    the whole point of the tool (closes the 'agent guesses env' footgun)."""
+    env = v3._handle_v3_status({"workspace_id": "default"})
+    assert env["ok"] is True
+    data = env["data"]
+    assert "memory" in data
+    assert "code_memory" in data
+    assert "adoption" in data
+    assert "environment" in data
+    env_block = data["environment"]
+    assert env_block["anchor_workspace_id"]
+    assert env_block["anchor_db_path"]
+    assert isinstance(env_block["hub_mode"], bool)
+    assert isinstance(env_block["registry_workspaces"], list)
+    # applied_migrations is a list. In this fixture the schema is
+    # ``executescript``-applied (not via apply_migrations) so the
+    # schema_migrations table stays empty — we just assert the shape.
+    assert isinstance(env_block["applied_migrations"], list)
+
+
+def test_status_environment_can_be_disabled(db_conn: sqlite3.Connection) -> None:
+    """``include_environment=False`` returns counts/adoption only."""
+    env = v3._handle_v3_status({"workspace_id": "default", "include_environment": False})
+    assert env["ok"] is True
+    assert env["data"].get("environment") is None
+
+
+def test_status_counts_reflect_writes(db_conn: sqlite3.Connection) -> None:
+    """After seeding a decision the memory.decisions_active count is non-zero."""
+    _seed_decision(db_conn, title="status-smoke")
+    env = v3._handle_v3_status({"workspace_id": "default"})
+    assert env["ok"] is True
+    assert env["data"]["memory"]["decisions_active"] >= 1
 
 
 # ============================================================

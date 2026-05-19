@@ -311,12 +311,16 @@ def search(
                 search_kind(conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind)
             )
     hits.sort(key=lambda h: h.score, reverse=True)
-    if rerank and hits:
-        from agent_memory_lite.retrieval.rerank import rerank_hits  # noqa: PLC0415
+    # v3.1: env-gated auto-rerank lets the operator turn on the cross-
+    # encoder for every search without changing call sites. Explicit
+    # ``rerank=True`` still wins; ``False`` + auto-flag-on → True.
+    from agent_memory_lite.retrieval.rerank import (  # noqa: PLC0415
+        auto_rerank_enabled,
+        rerank_hits,
+    )
 
-        ranked = rerank_hits(query, hits, top_k=limit)
-    else:
-        ranked = hits[:limit]
+    effective_rerank = rerank or auto_rerank_enabled()
+    ranked = rerank_hits(query, hits, top_k=limit) if effective_rerank and hits else hits[:limit]
     if log_coactivations and ranked:
         _maybe_log_coactivation(conn, workspace_id, query, ranked)
     return ranked

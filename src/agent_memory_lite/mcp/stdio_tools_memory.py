@@ -276,4 +276,27 @@ MEMORY_TOOLS: list[types.Tool] = [
             "required": ["file_path"],
         },
     ),
+    types.Tool(
+        name="memory_status",
+        description=(
+            "Self-introspection: one-call diagnostic returning anchor / "
+            "hub_mode / registry / current-workspace counts / adoption / "
+            "applied_migrations. Closes the 'agent guesses its environment' "
+            "footgun — call this on session start to verify which workspace "
+            "the MCP server is bound to and how much data is in it. "
+            "Set ``include_environment=false`` to drop the anchor/registry "
+            "block (counts + adoption only). Set ``include_active_memory=true`` "
+            "to add the v3.1 dashboard (open proposals + predictive warnings + "
+            "blindspots + persisted-warnings counts)."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "include_environment": {"type": "boolean", "default": True},
+                "include_active_memory": {"type": "boolean", "default": False},
+            },
+            "required": [],
+        },
+    ),
 ]

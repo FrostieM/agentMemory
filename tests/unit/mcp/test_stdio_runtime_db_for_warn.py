@@ -18,6 +18,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 
 import pytest
@@ -27,10 +28,19 @@ from agent_memory_lite.mcp.stdio_runtime import _runtime, reset_unresolved_warne
 
 
 @pytest.fixture(autouse=True)
-def _reset_state() -> Iterator[None]:
+def _reset_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Reset the warn-once set AND stub out the anchor DB opener so the
+    fallback path in ``db_for`` doesn't try to open the real anchor DB
+    (which would fail on workspace_manifest mismatch in this fresh fixture).
+    """
     reset_unresolved_warned()
-    yield
-    reset_unresolved_warned()
+    stub_conn = sqlite3.connect(":memory:")
+    monkeypatch.setattr(_runtime, "db", lambda: stub_conn)
+    try:
+        yield
+    finally:
+        reset_unresolved_warned()
+        stub_conn.close()
 
 
 def test_unknown_workspace_logs_warning_once(
@@ -39,7 +49,7 @@ def test_unknown_workspace_logs_warning_once(
     """First lookup of an unknown id warns; second is silent."""
     # Force registry lookup to return None so we hit the warn path.
     monkeypatch.setattr(stdio_runtime, "_registry_paths_for", lambda *a, **k: None)
-    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_runtime"):
+    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_unresolved_warn"):
         _runtime.db_for("nonexistent-workspace")
         first_count = sum(1 for r in caplog.records if "db_for" in r.getMessage())
         _runtime.db_for("nonexistent-workspace")
@@ -53,7 +63,7 @@ def test_distinct_unknown_workspaces_each_warn(
 ) -> None:
     """Different unresolved ids each get their first emit."""
     monkeypatch.setattr(stdio_runtime, "_registry_paths_for", lambda *a, **k: None)
-    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_runtime"):
+    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_unresolved_warn"):
         _runtime.db_for("alpha-missing")
         _runtime.db_for("beta-missing")
     warnings = [r for r in caplog.records if "db_for" in r.getMessage()]
@@ -65,7 +75,7 @@ def test_anchor_workspace_does_not_warn(
 ) -> None:
     """Passing the anchor workspace_id back to db_for is normal, not misconfig."""
     monkeypatch.setattr(stdio_runtime, "_registry_paths_for", lambda *a, **k: None)
-    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_runtime"):
+    with caplog.at_level("WARNING", logger="agent_memory_lite.mcp.stdio_unresolved_warn"):
         _runtime.db_for(_runtime.settings.workspace_id)
     warnings = [r for r in caplog.records if "db_for" in r.getMessage()]
     assert warnings == []

@@ -96,6 +96,10 @@ from agent_memory_lite.mcp.stdio_handlers_symbols import _handle_find_symbols
 from agent_memory_lite.mcp.stdio_handlers_theories import (
     _handle_add_theory_evidence,
 )
+from agent_memory_lite.mcp.stdio_handlers_v3_1 import (
+    _handle_predictive_warnings,
+    _handle_propose_experiments,
+)
 from agent_memory_lite.mcp.stdio_handlers_versions import (
     _handle_breaking_changes,
     _handle_symbol_history,
@@ -145,6 +149,9 @@ _HANDLERS: dict[str, _Handler] = {
     "memory_snapshot_diff": _handle_snapshot_diff,
     "memory_review_queue": _handle_review_queue,
     "memory_compact_trigger": _handle_compact_trigger,
+    # v3.1 active-memory vectors: agent surfaces for Vector 1 + Vector 5.
+    "memory_propose_experiments": _handle_propose_experiments,
+    "memory_predictive_warnings": _handle_predictive_warnings,
     # Canonical surface -- agent-facing minimal tool set, ``{ok, data, error}`` envelope.
     # Legacy v2 names like ``memory_write_decision`` / ``memory_ingest_episode`` are routed
     # here via ``v2_compat.compat_dispatch`` (default ON) and never hit a native handler.

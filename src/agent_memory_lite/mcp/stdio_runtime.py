@@ -7,18 +7,18 @@ the path-resolution rules that decide which DB the server anchors to.
 from __future__ import annotations
 
 import contextlib
-import os
 import sqlite3
+import threading
 from pathlib import Path
-from typing import Any
 
-from agent_memory_lite.config.settings import Settings, get_settings
+from agent_memory_lite.config.settings import get_settings
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.mcp.stdio_env import _env_flag, _env_float, _memory_http_base_url
+from agent_memory_lite.mcp.stdio_path_resolver import resolve_paths_from_cwd
 from agent_memory_lite.mcp.stdio_unresolved_warn import (
     _unresolved_warned,
     reset_unresolved_warned,
@@ -46,44 +46,11 @@ __all__ = [
 ]
 
 
-def _resolve_paths_from_cwd(settings: Settings) -> Settings:
-    """Override settings.db_path / settings.vector_db_path from the cwd."""
-    if os.environ.get("MEMORY_DB_PATH"):
-        return settings
-    cwd = Path.cwd()
-    candidate_db = cwd / ".agent_memory" / "memory.db"
-    candidate_vec = cwd / ".agent_memory" / "vectors.lance"
-    try:
-        registry = WorkspaceRegistry(settings.workspaces_file)
-        entries = registry.list()
-    except Exception:
-        entries = []
-    auto_hub = len(entries) > 1 and not settings.strict_workspace_isolation
-    if candidate_db.parent.exists():
-        update: dict[str, Any] = {"db_path": candidate_db, "vector_db_path": candidate_vec}
-        if auto_hub:
-            update["hub_mode"] = True
-        return settings.model_copy(update=update)
-    if len(entries) == 1:
-        only = entries[0]
-        return settings.model_copy(
-            update={
-                "db_path": Path(only.db_path),
-                "vector_db_path": Path(only.vector_path),
-                "workspace_id": only.id,
-            }
-        )
-    if auto_hub:
-        first = entries[0]
-        return settings.model_copy(
-            update={
-                "db_path": Path(first.db_path),
-                "vector_db_path": Path(first.vector_path),
-                "workspace_id": first.id,
-                "hub_mode": True,
-            }
-        )
-    return settings
+# Backwards-compat alias: callers (tests, downstream code) historically
+# imported ``_resolve_paths_from_cwd`` from this module. The function
+# now lives in ``stdio_path_resolver`` to keep this file under the
+# 150-SLOC ceiling.
+_resolve_paths_from_cwd = resolve_paths_from_cwd
 
 
 class _Runtime:
@@ -95,22 +62,36 @@ class _Runtime:
         self._conns_by_path: dict[str, sqlite3.Connection] = {}
         self._provider: EmbeddingProvider | None = None
         self._store: VectorStore | None = None
+        # Audit 1 #3: with N workspaces sharing one ``_Runtime`` (hub
+        # mode), concurrent ``db_for`` calls can race on the cache. The
+        # GIL makes single dict operations atomic, but the check-then-
+        # open sequence is not — two threads can both miss the cache,
+        # both open a connection, and both write. The second open leaks.
+        # SQLite-level cross-thread is fine (open_connection sets
+        # check_same_thread=False); this lock just guards the cache.
+        self._open_lock = threading.Lock()
 
     def _open(self, db_path: Path | str, *, workspace_id: str) -> sqlite3.Connection:
         key = str(Path(db_path))
         cached = self._conns_by_path.get(key)
         if cached is not None:
             return cached
-        conn = open_connection(Path(db_path))
-        apply_migrations(conn)
-        if self.settings.enforce_workspace_manifest:
-            ensure_workspace_manifest(
-                conn,
-                workspace_id=workspace_id,
-                allow_default_workspace=not self.settings.forbid_default_workspace,
-            )
-        self._conns_by_path[key] = conn
-        return conn
+        with self._open_lock:
+            # Re-check inside the lock: another thread may have opened
+            # the same path while we were waiting.
+            cached = self._conns_by_path.get(key)
+            if cached is not None:
+                return cached
+            conn = open_connection(Path(db_path))
+            apply_migrations(conn)
+            if self.settings.enforce_workspace_manifest:
+                ensure_workspace_manifest(
+                    conn,
+                    workspace_id=workspace_id,
+                    allow_default_workspace=not self.settings.forbid_default_workspace,
+                )
+            self._conns_by_path[key] = conn
+            return conn
 
     def db(self) -> sqlite3.Connection:
         if self.conn is None:
