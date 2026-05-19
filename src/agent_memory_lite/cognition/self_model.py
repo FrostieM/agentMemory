@@ -96,6 +96,71 @@ def _top_rejected_theories(
         return []
 
 
+_SNIPPET_CHARS = 90
+# Scaffolding prefixes that mark a behavior rule's metadata, not its
+# actual instruction body. When ``rule_one_line`` starts with one of
+# these, we prefer ``name`` (which is already the human-readable
+# statement of the rule) over the verbose trigger/action template.
+_RULE_SCAFFOLDING_PREFIXES = ("TRIGGER:", "ACTION:", "WHEN ", "IF ")
+
+
+def _trim_to_words(text: str, max_chars: int) -> str:
+    """Cut at the last whitespace before ``max_chars`` so we never
+    truncate mid-word. Returns the cleaned phrase without trailing
+    punctuation noise (``;:,`` are stripped) and with ``...`` appended
+    only when the input actually had to be cut.
+    """
+    text = " ".join(text.split())  # collapse runs of whitespace
+    if len(text) <= max_chars:
+        return text.rstrip(";:, ")
+    cut = text[:max_chars]
+    last_space = cut.rfind(" ")
+    if last_space > max_chars * 0.5:
+        cut = cut[:last_space]
+    return cut.rstrip(";:, ") + "..."
+
+
+def _decision_snippet(row: sqlite3.Row) -> str:
+    """Pick the cleanest one-line summary of a decision."""
+    # title is operator-authored; gist is auto-truncated. Prefer title.
+    text = (row["title"] or row["gist"] or "").strip()
+    return _trim_to_words(text, _SNIPPET_CHARS)
+
+
+def _behavior_snippet(row: sqlite3.Row) -> str:
+    """Pick the human-readable rule statement.
+
+    ``name`` is short and operator-authored ("Drive the project ...").
+    ``rule_one_line`` often starts with ``TRIGGER:`` scaffolding -- we
+    fall back to it only when name is empty AND it doesn't begin with
+    a template prefix.
+    """
+    name = (row["name"] or "").strip()
+    if name:
+        return _trim_to_words(name, _SNIPPET_CHARS)
+    rule = (row["rule_one_line"] or "").strip()
+    if rule and not any(rule.upper().startswith(p) for p in _RULE_SCAFFOLDING_PREFIXES):
+        return _trim_to_words(rule, _SNIPPET_CHARS)
+    return ""
+
+
+def _uncertainty_snippet(row: sqlite3.Row) -> str:
+    text = (row["claim"] or row["title"] or row["gist"] or "").strip()
+    return _trim_to_words(text, _SNIPPET_CHARS)
+
+
+def _join_human(phrases: list[str]) -> str:
+    """Join phrases in natural English: 'X', 'X and Y', or 'X, Y, and Z'."""
+    cleaned = [p for p in (s.strip() for s in phrases) if p]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return ", ".join(cleaned[:-1]) + f", and {cleaned[-1]}"
+
+
 def _heuristic_narrative(
     *,
     workspace_id: str,
@@ -103,30 +168,34 @@ def _heuristic_narrative(
     behaviors: list[sqlite3.Row],
     rejected: list[sqlite3.Row],
 ) -> str:
-    """Assemble a 50-150 word narrative from the inputs. Deterministic."""
-    invariant_phrases: list[str] = []
-    for row in decisions[:3]:
-        text = (row["gist"] or row["title"] or "").strip()
-        if text:
-            invariant_phrases.append(text[:80])
-    behavior_phrases: list[str] = []
-    for row in behaviors[:3]:
-        text = (row["rule_one_line"] or row["name"] or "").strip()
-        if text:
-            behavior_phrases.append(text[:80])
-    uncertainty_phrases: list[str] = []
-    for row in rejected[:3]:
-        text = (row["gist"] or row["claim"] or row["title"] or "").strip()
-        if text:
-            uncertainty_phrases.append(text[:80])
+    """Assemble a 50-150 word narrative from the inputs. Deterministic.
+
+    Improvements over the v1 template:
+    * word-boundary truncation (no more "(early-loss-preven")
+    * ``TRIGGER:`` scaffolding stripped from behavior phrases
+    * natural English joins ("X, Y, and Z" not "X; Y; Z")
+    * graceful singular/plural agreement
+    """
+    invariants = [_decision_snippet(row) for row in decisions[:3]]
+    invariants = [p for p in invariants if p]
+    behaviors_short = [_behavior_snippet(row) for row in behaviors[:3]]
+    behaviors_short = [p for p in behaviors_short if p]
+    uncertainties = [_uncertainty_snippet(row) for row in rejected[:3]]
+    uncertainties = [p for p in uncertainties if p]
+
     lines = [f"I work on {workspace_id}."]
-    if invariant_phrases:
-        lines.append("Invariants I hold: " + "; ".join(invariant_phrases) + ".")
-    if behavior_phrases:
-        lines.append("Operating rules: " + "; ".join(behavior_phrases) + ".")
-    if uncertainty_phrases:
-        lines.append("Known to be wrong about: " + "; ".join(uncertainty_phrases) + ".")
-    if not invariant_phrases and not behavior_phrases and not uncertainty_phrases:
+    if invariants:
+        lead = "My invariant is" if len(invariants) == 1 else "My invariants are"
+        lines.append(f"{lead} {_join_human(invariants)}.")
+    if behaviors_short:
+        lead = (
+            "I follow one operating rule:" if len(behaviors_short) == 1 else "My operating rules:"
+        )
+        lines.append(f"{lead} {_join_human(behaviors_short)}.")
+    if uncertainties:
+        lead = "I was wrong about" if len(uncertainties) == 1 else "Theories I've found incorrect:"
+        lines.append(f"{lead} {_join_human(uncertainties)}.")
+    if not invariants and not behaviors_short and not uncertainties:
         lines.append(
             "No durable invariants accumulated yet; treat all current decisions as provisional."
         )
