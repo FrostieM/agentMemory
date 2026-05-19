@@ -126,7 +126,17 @@ def distill_workspace(
                 if outcome_gate:
                     score_a = _outcome_score(conn, a["item_kind"], a["item_id"])
                     score_b = _outcome_score(conn, b["item_kind"], b["item_id"])
-                    if score_a <= 0.0 and score_b <= 0.0:
+                    # HeLa-Mem gate: skip ONLY when BOTH sides are strictly
+                    # negative. Earlier version used ``<= 0`` which also
+                    # banned neutral [0, 0] pairs and effectively froze the
+                    # graph on fresh workspaces (every decision starts at
+                    # outcome_score=0 until feedback propagates). Empirical
+                    # probe on copyBot (250 decisions, all outcome=0)
+                    # surfaced this regression: 4 pairs, all gated, zero
+                    # edges. The new gate only blocks pairs rooted in
+                    # demonstrated failure -- neutral pairs accumulate
+                    # normally so the Hebbian graph can bootstrap.
+                    if score_a < 0.0 and score_b < 0.0:
                         gated += 1
                         continue
                 rank_a = max(1, int(a["rank"] or 1))

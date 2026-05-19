@@ -178,7 +178,13 @@ def test_phase1_superseded_drops_below_zero(conn: sqlite3.Connection, ws: str) -
 
 
 def test_phase2_hela_mem_gate_blocks_double_zero(conn: sqlite3.Connection, ws: str) -> TestResult:
-    """Two outcome=0 items should NOT be linked (HeLa-Mem gate)."""
+    """Two STRICTLY negative-outcome items should NOT be linked (HeLa-Mem gate).
+
+    Earlier semantics used ``<= 0`` which also banned neutral [0, 0] pairs.
+    Empirical probe on copyBot showed that froze the Hebbian graph on
+    fresh workspaces. New gate only blocks pairs rooted in demonstrated
+    failure (both strictly < 0).
+    """
     a, b = "crash_hela_a", "crash_hela_b"
     qh = "crash_hela_query_hash"
     conn.execute("DELETE FROM decisions WHERE id IN (?, ?)", (a, b))
@@ -187,14 +193,14 @@ def test_phase2_hela_mem_gate_blocks_double_zero(conn: sqlite3.Connection, ws: s
         """INSERT INTO decisions
            (id, workspace_id, title, decision_text, status, valid_from,
             created_at, updated_at, outcome_score, pinned)
-           VALUES (?, ?, 'A', 'b', 'active', ?, ?, ?, 0.0, 0)""",
+           VALUES (?, ?, 'A', 'b', 'active', ?, ?, ?, -0.5, 0)""",
         (a, ws, iso_now(), iso_now(), iso_now()),
     )
     conn.execute(
         """INSERT INTO decisions
            (id, workspace_id, title, decision_text, status, valid_from,
             created_at, updated_at, outcome_score, pinned)
-           VALUES (?, ?, 'B', 'b', 'active', ?, ?, ?, 0.0, 0)""",
+           VALUES (?, ?, 'B', 'b', 'active', ?, ?, ?, -0.3, 0)""",
         (b, ws, iso_now(), iso_now(), iso_now()),
     )
     for rank, item in enumerate((a, b), start=1):

@@ -117,10 +117,16 @@ def test_pair_weight_lower_for_deeper_ranks(conn: sqlite3.Connection) -> None:
 # ============================================================
 
 
-def test_gate_blocks_pair_with_both_outcomes_zero(conn: sqlite3.Connection) -> None:
-    """Two outcome_score=0.0 items must NOT be linked."""
-    _seed_decision(conn, id_="dec_x", outcome=0.0)
-    _seed_decision(conn, id_="dec_y", outcome=0.0)
+def test_gate_blocks_pair_with_both_outcomes_negative(conn: sqlite3.Connection) -> None:
+    """Two STRICTLY negative-outcome items must NOT be linked.
+
+    Earlier semantics used ``<= 0`` which also banned neutral pairs,
+    which froze the Hebbian graph on every fresh workspace (all
+    decisions start at outcome_score=0). New semantics: only pairs
+    rooted in demonstrated failure are blocked.
+    """
+    _seed_decision(conn, id_="dec_x", outcome=-0.5)
+    _seed_decision(conn, id_="dec_y", outcome=-0.3)
     log_coactivation(
         conn,
         workspace_id="ws",
@@ -130,6 +136,24 @@ def test_gate_blocks_pair_with_both_outcomes_zero(conn: sqlite3.Connection) -> N
     upserted, gated = distill_workspace(conn, workspace_id="ws", outcome_gate=True)
     assert upserted == 0
     assert gated == 1
+
+
+def test_gate_allows_neutral_pair(conn: sqlite3.Connection) -> None:
+    """Two outcome=0 items SHOULD be linked -- the gate must not freeze the
+    Hebbian graph on fresh workspaces where nothing has accumulated feedback
+    yet. Tightening from ``<= 0`` to ``< 0`` makes this case pass through.
+    """
+    _seed_decision(conn, id_="dec_x", outcome=0.0)
+    _seed_decision(conn, id_="dec_y", outcome=0.0)
+    log_coactivation(
+        conn,
+        workspace_id="ws",
+        query="q",
+        hits=[_hit("decision", "dec_x"), _hit("decision", "dec_y")],
+    )
+    upserted, gated = distill_workspace(conn, workspace_id="ws", outcome_gate=True)
+    assert upserted == 1
+    assert gated == 0
 
 
 def test_gate_allows_pair_with_one_positive(conn: sqlite3.Connection) -> None:
