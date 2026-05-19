@@ -31,6 +31,7 @@ from agent_memory_lite.mcp.stdio_tools_review import REVIEW_TOOLS
 from agent_memory_lite.mcp.stdio_tools_review_queue import REVIEW_QUEUE_TOOLS
 from agent_memory_lite.mcp.stdio_tools_state_snapshots import STATE_SNAPSHOT_TOOLS
 from agent_memory_lite.mcp.stdio_tools_theories import THEORY_TOOLS
+from agent_memory_lite.mcp.stdio_tools_v3_1 import V3_1_TOOLS
 
 
 def _dedup_last_wins(*groups: list[types.Tool]) -> list[types.Tool]:
@@ -64,6 +65,7 @@ ALL_TOOLS: list[types.Tool] = _dedup_last_wins(
     RECALL_TOOLS,
     STATE_SNAPSHOT_TOOLS,
     REVIEW_QUEUE_TOOLS,
+    V3_1_TOOLS,
     # Canonical surface — overrides any legacy entry of the same name.
     MEMORY_TOOLS,
 )

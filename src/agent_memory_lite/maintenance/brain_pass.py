@@ -56,6 +56,13 @@ class BrainPassReport:
     self_model_refreshed: bool = False
     causal_invalidated: int = 0
     causal_derived: int = 0
+    wal_checkpoint_pages: int = 0
+    vacuum_ran: bool = False
+    experiment_proposals: int = 0
+    predictive_warnings: int = 0
+    # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
+    # legacy-only deploy looks different from "feature ran clean".
+    predictive_warnings_available: bool = True
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -73,6 +80,11 @@ class BrainPassReport:
             "self_model_refreshed": self.self_model_refreshed,
             "causal_invalidated": self.causal_invalidated,
             "causal_derived": self.causal_derived,
+            "wal_checkpoint_pages": self.wal_checkpoint_pages,
+            "vacuum_ran": self.vacuum_ran,
+            "experiment_proposals": self.experiment_proposals,
+            "predictive_warnings": self.predictive_warnings,
+            "predictive_warnings_available": self.predictive_warnings_available,
             "errors": list(self.errors),
         }
 
@@ -212,6 +224,131 @@ def _step_causal(
         report.causal_derived = cr.derived_links
     except (sqlite3.Error, ImportError) as exc:
         report.errors.append(f"causal:{exc}")
+    # v3.1 Vector 4: derive embedding-based semantic causal links. Gated
+    # by its own env flag (default off); failure-soft on any provider /
+    # schema issue.
+    try:
+        from agent_memory_lite.retrieval.causal_embedding import derive_workspace  # noqa: PLC0415
+
+        derived_n = derive_workspace(conn, workspace_id=workspace_id)
+        report.causal_derived += derived_n
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"causal_embedding:{exc}")
+
+
+def _step_db_hygiene(conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport) -> None:
+    """WAL checkpoint every tick + periodic VACUUM. Failure-soft."""
+    try:
+        from agent_memory_lite.maintenance.db_hygiene import run_db_hygiene  # noqa: PLC0415
+
+        hygiene = run_db_hygiene(conn, workspace_id=workspace_id)
+        report.wal_checkpoint_pages = hygiene.wal_checkpoint_pages
+        report.vacuum_ran = hygiene.vacuum_ran
+        if hygiene.errors:
+            report.errors.extend(f"db_hygiene:{e}" for e in hygiene.errors)
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"db_hygiene:{exc}")
+
+
+def _step_experiment_proposal(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.1 Vector 1 MVP. Scan uncertain insights and persist each
+    proposal as a ``memory_candidate(kind=theory_proposal)`` row so it
+    surfaces in the existing pending-review queue. Idempotent via
+    deterministic candidate id derived from the source insight id.
+
+    Final-audit H2 fix: wrap the persist loop in ``BEGIN IMMEDIATE`` /
+    ``COMMIT`` to match the HTTP route + MCP handler — without this,
+    a concurrent ``persist=true`` call's ``BEGIN IMMEDIATE`` would
+    hit "database is locked" against brain_pass's row-by-row writes.
+    """
+    try:
+        from agent_memory_lite.maintenance.experiment_proposal import (  # noqa: PLC0415
+            find_proposal_candidates,
+            is_enabled,
+            persist_proposal,
+        )
+
+        if not is_enabled():
+            return
+        proposals = find_proposal_candidates(conn, workspace_id=workspace_id)
+        report.experiment_proposals = len(proposals)
+        if not proposals:
+            return
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for proposal in proposals:
+                persist_proposal(conn, workspace_id=workspace_id, proposal=proposal)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"experiment_proposal:{exc}")
+
+
+def _latest_episode_id(conn: sqlite3.Connection, workspace_id: str) -> str:
+    """Most-recent episode in the workspace, for warning attribution."""
+    row = conn.execute(
+        "SELECT id FROM episodes WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1",
+        (workspace_id,),
+    ).fetchone()
+    if not row:
+        return ""
+    return str(row[0] if not isinstance(row, sqlite3.Row) else row["id"])
+
+
+def _step_predictive_failure(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.1 Vector 5 MVP. Scan active decisions for failure-pattern
+    lookalikes, tally how many warnings the heuristic surfaces, and
+    persist each warning as a ``memory_candidate(kind=predictive_warning)``
+    row so it appears in ``/ui/review`` automatically.
+
+    Vector5-audit-2 H4: schema-missing (legacy-only DB w/o
+    ``outcome_score`` column) sets ``predictive_warnings_available``
+    to ``False`` so dashboards distinguish it from a clean zero.
+    """
+    try:
+        from agent_memory_lite.maintenance.predictive_failure import (  # noqa: PLC0415
+            find_predictive_warnings,
+            is_enabled,
+        )
+        from agent_memory_lite.maintenance.predictive_failure_writer import (  # noqa: PLC0415
+            persist_warning,
+        )
+
+        if not is_enabled():
+            return
+        warnings = find_predictive_warnings(conn, workspace_id=workspace_id)
+        report.predictive_warnings = len(warnings)
+        if warnings:
+            ep_id = _latest_episode_id(conn, workspace_id)
+            if ep_id:
+                # Final-audit H2 fix: BEGIN IMMEDIATE / COMMIT around
+                # the persist loop to match HTTP/MCP semantics and
+                # avoid "database is locked" against concurrent
+                # MCP persist calls.
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for warning in warnings:
+                        persist_warning(
+                            conn,
+                            workspace_id=workspace_id,
+                            warning=warning,
+                            source_episode_id=ep_id,
+                        )
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
+    except sqlite3.OperationalError as exc:
+        report.predictive_warnings_available = False
+        report.errors.append(f"predictive_failure:{exc}")
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"predictive_failure:{exc}")
 
 
 def run_brain_pass(
@@ -230,6 +367,9 @@ def run_brain_pass(
     _step_reflex_distill(conn, workspace_id, settings, report)
     _step_self_model(conn, workspace_id, settings, report)
     _step_causal(conn, workspace_id, settings, report)
+    _step_db_hygiene(conn, workspace_id, report)
+    _step_experiment_proposal(conn, workspace_id, report)
+    _step_predictive_failure(conn, workspace_id, report)
     try:
         conn.commit()
     except sqlite3.Error as exc:

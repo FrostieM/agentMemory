@@ -29,12 +29,25 @@ length, capped to ``top_k``.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 logger = logging.getLogger("agent_memory_lite.rerank")
 
 DEFAULT_MODEL = "jinaai/jina-reranker-v1-tiny-en"
+
+
+def auto_rerank_enabled() -> bool:
+    """Operator opt-in: when ``MEMORY_RERANKER_AUTO=true``, every
+    ``memory_search`` call gets reranked by default (caller no longer
+    has to pass ``rerank=True`` explicitly).
+
+    Default is ``false`` so the upgrade path is byte-equivalent — the
+    reranker only fires when the caller asks for it.
+    """
+    raw = os.environ.get("MEMORY_RERANKER_AUTO", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 # ============================================================

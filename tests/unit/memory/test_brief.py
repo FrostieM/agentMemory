@@ -292,9 +292,14 @@ def test_compose_brief_section_order(conn: sqlite3.Connection) -> None:
         assert names.index("state") < names.index("code_hubs")
 
 
-def test_compose_brief_no_active_tasks_marker(conn: sqlite3.Connection) -> None:
+def test_compose_brief_state_section_skipped_when_empty(conn: sqlite3.Connection) -> None:
+    """Workspace-aware budget (P2): no active tasks → ``## State``
+    section is dropped entirely instead of emitting a placeholder line.
+    Saves ~6 tokens on every empty workspace + lets the dense sections
+    use the freed budget."""
     brief = compose_brief(conn, workspace_id="ws")
-    assert "no active tasks" in brief.body_md
+    assert "no active tasks" not in brief.body_md
+    assert "## State" not in brief.body_md
 
 
 def test_fetch_skill_body_returns_body_md(conn: sqlite3.Connection) -> None:

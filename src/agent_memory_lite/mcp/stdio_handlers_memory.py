@@ -274,6 +274,68 @@ def _handle_v3_impact_check(args: dict[str, Any]) -> dict[str, Any]:
     return _ok(report.to_dict())
 
 
+def _handle_v3_status(args: dict[str, Any]) -> dict[str, Any]:
+    """Diagnostic: anchor / hub_mode / registry / counts / migrations.
+
+    Closes the "agent guesses its environment" footgun. Lazy imports
+    keep the cold-start cost of stdio_handlers_memory minimal (status
+    is a low-frequency call; routes-layer imports drag fastapi).
+    """
+    payload = _with_workspace(args, intent="read")
+    workspace_id = str(payload["workspace_id"])
+    include_env = bool(payload.get("include_environment", True))
+    # v3.1: opt-in to active-memory dashboard (defaults False to keep
+    # the legacy payload shape for existing callers).
+    include_active_memory = bool(payload.get("include_active_memory", False))
+    from agent_memory_lite.api.routes.active_memory_status import (  # noqa: PLC0415
+        build_active_memory,
+    )
+    from agent_memory_lite.api.routes.memory_status import (  # noqa: PLC0415
+        build_environment,
+    )
+    from agent_memory_lite.api.routes.memory_status_queries import (  # noqa: PLC0415
+        gather_adoption,
+        gather_code_counts,
+        gather_memory_counts,
+        max_ts,
+        recent_actions_7d,
+    )
+
+    conn = _runtime.db_for(workspace_id)
+    data: dict[str, Any] = {
+        "version": _runtime_version(),
+        "workspace_id": workspace_id,
+        "memory": gather_memory_counts(conn, workspace_id).model_dump(),
+        "code_memory": gather_code_counts(conn, workspace_id).model_dump(),
+        "adoption": gather_adoption(conn, workspace_id).model_dump(),
+        "last_episode_at": max_ts(
+            conn, "SELECT MAX(created_at) FROM episodes WHERE workspace_id=?", workspace_id
+        ),
+        "last_decision_at": max_ts(
+            conn, "SELECT MAX(updated_at) FROM decisions WHERE workspace_id=?", workspace_id
+        ),
+        "last_ingest_file_at": max_ts(
+            conn,
+            "SELECT MAX(created_at) FROM audit_log WHERE workspace_id=? AND action='ingest_file'",
+            workspace_id,
+        ),
+        "recent_actions_7d": recent_actions_7d(conn, workspace_id),
+    }
+    data["environment"] = (
+        build_environment(conn, _runtime.settings).model_dump() if include_env else None
+    )
+    data["active_memory"] = (
+        build_active_memory(conn, workspace_id).model_dump() if include_active_memory else None
+    )
+    return _ok(data)
+
+
+def _runtime_version() -> str:
+    from agent_memory_lite.version import __version__  # noqa: PLC0415
+
+    return __version__
+
+
 # ============================================================
 # Dispatch table — name → handler
 # ============================================================
@@ -290,4 +352,5 @@ MEMORY_HANDLERS: dict[str, Any] = {
     "memory_lint": _handle_v3_lint,
     "memory_invoke_skill": _handle_v3_invoke_skill,
     "memory_impact_check": _handle_v3_impact_check,
+    "memory_status": _handle_v3_status,
 }

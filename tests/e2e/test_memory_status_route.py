@@ -73,3 +73,68 @@ def test_memory_status_reflects_writes(client: TestClient) -> None:
     assert body["adoption"]["decisions_with_source_episode_ratio"] == 1.0
     assert body["last_episode_at"] is not None
     assert body["last_decision_at"] is not None
+
+
+def test_memory_status_environment_off_by_default(client: TestClient) -> None:
+    """``include_environment`` defaults to false — payload backward-compat."""
+    r = client.get("/memory/status", params={"workspace_id": "default"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["environment"] is None
+
+
+def test_memory_status_environment_block_opt_in(client: TestClient) -> None:
+    """``include_environment=true`` surfaces anchor / hub_mode / registry."""
+    r = client.get(
+        "/memory/status",
+        params={"workspace_id": "default", "include_environment": True},
+    )
+    assert r.status_code == 200, r.text
+    env = r.json()["environment"]
+    assert env is not None
+    # Anchor fields populated even on an unregistered fresh workspace.
+    assert env["anchor_workspace_id"]
+    assert env["anchor_db_path"]
+    assert env["anchor_vector_db_path"]
+    assert isinstance(env["hub_mode"], bool)
+    assert isinstance(env["forbid_default_workspace"], bool)
+    assert isinstance(env["strict_workspace_isolation"], bool)
+    # Registry payload is a list of ids and a path (may be empty list).
+    assert isinstance(env["registry_workspaces"], list)
+    assert env["registry_path"]
+    # Migrations: at minimum 0001_init must have been applied.
+    assert "0001_init" in env["applied_migrations"]
+    # P2 runtime-stack fields populated.
+    assert env["embedding_backend"]
+    assert env["vector_backend"]
+    assert env["http_base_url"].startswith("http://127.0.0.1:")
+
+
+def test_memory_status_active_memory_default_omitted(client: TestClient) -> None:
+    """``active_memory`` is opt-in — default payload has it null."""
+    r = client.get("/memory/status", params={"workspace_id": "default"})
+    assert r.status_code == 200, r.text
+    assert r.json()["active_memory"] is None
+
+
+def test_memory_status_active_memory_opt_in(client: TestClient) -> None:
+    """``include_active_memory=true`` populates the v3.1 dashboard.
+
+    The e2e fixture is legacy-only so the canonical scanners (insights,
+    outcome_score) are absent — but the dashboard still renders with
+    ``..._available=False`` rather than crashing the route."""
+    r = client.get(
+        "/memory/status",
+        params={"workspace_id": "default", "include_active_memory": True},
+    )
+    assert r.status_code == 200, r.text
+    am = r.json()["active_memory"]
+    assert am is not None
+    # Legacy-only fixture: insights table missing → proposals unavailable.
+    assert am["proposals_available"] is False
+    assert am["open_proposals"] == 0
+    # Legacy-only: outcome_score column missing → predictive warnings unavailable.
+    assert am["predictive_warnings_available"] is False
+    assert am["predictive_warnings"] == 0
+    # Persisted-warnings counter works on legacy memory_candidates table.
+    assert am["persisted_warnings_new"] == 0
