@@ -29,6 +29,9 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     brief_mod.reset_session_seen()
     monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_ENABLED", raising=False)
     monkeypatch.delenv("MEMORY_PREDICTIVE_FAILURE_ENABLED", raising=False)
+    # Disable LLM augmentations for deterministic format assertions.
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", "false")
+    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "false")
     yield
     brief_mod._BRIEF_CACHE.clear()
     brief_mod.reset_session_seen()

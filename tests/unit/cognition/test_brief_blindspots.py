@@ -23,6 +23,12 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("MEMORY_BLINDSPOT_DETECT_ENABLED", raising=False)
     monkeypatch.delenv("MEMORY_BLINDSPOT_MIN_EPISODES", raising=False)
     monkeypatch.setenv("MEMORY_BLINDSPOT_MIN_EPISODES", "3")
+    # Live-validation-2026-05-20: LLM augmentation flipped to ON by
+    # default. Unit tests that assert heuristic line format must
+    # disable LLM to stay deterministic — otherwise Ollama (if
+    # reachable) generates ~120-char descriptions that bust the 0.03
+    # budget slot and the rendered line gets fit_to_budget'd away.
+    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "false")
     yield
     brief_mod._BRIEF_CACHE.clear()
     brief_mod.reset_session_seen()

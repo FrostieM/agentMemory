@@ -20,6 +20,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_BLINDSPOT_LOOKBACK_DAYS", raising=False)
     monkeypatch.delenv("MEMORY_BLINDSPOT_MIN_EPISODES", raising=False)
     monkeypatch.delenv("MEMORY_BLINDSPOT_LIMIT", raising=False)
+    # LLM augmentation flipped to ON by default — disable for
+    # deterministic format assertions in unit tests.
+    monkeypatch.setenv("MEMORY_BLINDSPOT_LLM_ENABLED", "false")
 
 
 @pytest.fixture

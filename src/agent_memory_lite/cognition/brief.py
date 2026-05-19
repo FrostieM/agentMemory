@@ -490,7 +490,18 @@ def _build_blindspots(conn: sqlite3.Connection, workspace_id: str, budget: int) 
         return BriefSection(name="blindspots", budget=budget, lines=[])
     lines = ["## Blindspots (discussed but no decision)"]
     for row in rows:
-        lines.append(f"- {row.token!r}: {row.episode_count} episodes, 0 decisions")
+        # Live-validation-2026-05-20: surface the LLM-augmented
+        # description when v3.1 Vector 3 LLM is enabled. Trimmed to
+        # ~120 chars so the section stays inside its budget — the
+        # full description remains accessible via the underlying
+        # ``find_blindspots`` API for callers that have more room.
+        if row.description:
+            desc = row.description[:120].rstrip()
+            if len(row.description) > 120:
+                desc = desc + "..."
+            lines.append(f"- {row.token!r} ({row.episode_count} ep): {desc}")
+        else:
+            lines.append(f"- {row.token!r}: {row.episode_count} episodes, 0 decisions")
     return BriefSection(name="blindspots", budget=budget, lines=fit_to_budget(lines, budget))
 
 

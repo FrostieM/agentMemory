@@ -92,6 +92,27 @@ def _proposal_from_insight(
 _MIN_SUMMARY_LEN = 8  # Vector1-audit M3: drop whitespace-only / trivial summaries.
 
 
+def _is_auto_event_noise(summary: str) -> bool:
+    """Live-validation-2026-05-20: skip insights dominated by auto-event
+    tokens (e.g. ``file_indexed`` from pre-commit ingest). The
+    consolidation pass distills recurring themes from EVERY episode,
+    so workspaces with active code-memory ingestion get insights like
+    "Recurring theme (N episodes): file_indexed, src, ..." which V1
+    then dresses up as falsifiable hypotheses — polished noise.
+
+    Filter mirrors the V3 blindspot fix: reuse the same exclusion list
+    so operator config is consistent. An insight is "auto-event noise"
+    iff one of the excluded source_types appears as a literal token
+    in the summary.
+    """
+    from agent_memory_lite.maintenance.blindspot_filters import (  # noqa: PLC0415
+        excluded_source_types,
+    )
+
+    haystack = summary.lower()
+    return any(name.lower() in haystack for name in excluded_source_types())
+
+
 def _first_source_episode(raw_json: str | None) -> str:
     """Parse ``insights.source_episode_ids_json`` and return the first
     id (or "" if list is empty / malformed / non-string element).
@@ -157,6 +178,11 @@ def find_proposal_candidates(
         # Vector1-audit M3: strip + min-length gate to keep
         # whitespace-only summaries out of memory_candidates.
         if len(summary.strip()) < _MIN_SUMMARY_LEN:
+            continue
+        # Live-validation-2026-05-20: skip auto-event-noise insights.
+        # See _is_auto_event_noise — operator config (env-tunable) is
+        # shared with the V3 blindspot filter so both vectors agree.
+        if _is_auto_event_noise(summary):
             continue
         out.append(
             _proposal_from_insight(
