@@ -49,6 +49,25 @@ class CapabilitySuggestionPayload(BaseModel):
     snippet: str
 
 
+class DecisionNeighborPayload(BaseModel):
+    """Server-ranked existing-decision suggestion (Move 5).
+
+    Returned alongside ``capability_suggestions`` when the workspace
+    already has active decisions whose title + text + rationale tokens
+    overlap the new write. Read-only hint — the agent decides whether
+    to supersede an existing decision instead of writing a fresh one,
+    or to leave them parallel because they actually describe different
+    things despite lexical overlap.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    decision_id: str
+    title: str
+    snippet: str
+    score: float
+    status: str
+
+
 class WriteDecisionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -63,6 +82,10 @@ class WriteDecisionResponse(BaseModel):
     # this agent in the workspace's window.
     source_episode_id: str | None = None
     capability_suggestions: list[CapabilitySuggestionPayload] = Field(default_factory=list)
+    # Move 5: top-3 existing active decisions whose tokens overlap this
+    # write. Excludes the just-written id. Empty when no candidate
+    # clears the suggester's min_score (0.15).
+    decision_neighbors: list[DecisionNeighborPayload] = Field(default_factory=list)
 
 
 class ListDecisionsRequest(BaseModel):

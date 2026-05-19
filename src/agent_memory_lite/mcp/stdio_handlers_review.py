@@ -45,15 +45,20 @@ def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_promote_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    # When workspace_id is provided, route through the registry so a
+    # misconfigured anchor does not silently mutate the wrong DB. Anchor
+    # remains the fallback for callers that omit the field.
+    ws = args.get("workspace_id")
+    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
     return _candidate_payload(
-        promote_memory_candidate(_runtime.db(), candidate_id=str(args["candidate_id"]))
+        promote_memory_candidate(conn, candidate_id=str(args["candidate_id"]))
     )
 
 
 def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
-    return _candidate_payload(
-        reject_memory_candidate(_runtime.db(), candidate_id=str(args["candidate_id"]))
-    )
+    ws = args.get("workspace_id")
+    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
+    return _candidate_payload(reject_memory_candidate(conn, candidate_id=str(args["candidate_id"])))
 
 
 def _handle_promote_candidate_to_behavior(args: dict[str, Any]) -> dict[str, Any]:
@@ -131,8 +136,10 @@ def _handle_resolve_maintenance_event(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
 
     status = MaintenanceEventStatus(args.get("status", "resolved"))
+    ws = args.get("workspace_id")
+    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
     event = resolve_maintenance_event(
-        _runtime.db(),
+        conn,
         event_id=str(args["event_id"]),
         status=status,
         resolved_at=iso_now(),

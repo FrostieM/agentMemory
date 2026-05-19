@@ -17,11 +17,19 @@ Total target ≤500 tokens. Tokens counted by a cheap whitespace split
 
 Cached on workspace fingerprint (hash of pinned-file shas + active
 task updated_at). Cache hit ~5ms, miss ~80ms (pure SQL).
+
+Sticky-brief: when the caller passes ``session_id``, the FIRST brief for
+that (workspace, session) pair renders at the requested budget. Every
+subsequent emit in the same session shrinks the cap to
+``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS`` (default 200) so a long chat
+session doesn't keep paying the full ~500-token tax on every prompt.
+Set ``MEMORY_STICKY_BRIEF_ENABLED=false`` to disable.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
@@ -33,6 +41,31 @@ from agent_memory_lite.storage.reader import (
 )
 
 DEFAULT_TOKEN_BUDGET = 500
+
+# Sticky-brief: per-process record of which (workspace, session) pairs
+# have already received a full brief. Used to decide whether to cap
+# ``max_tokens`` on subsequent emits within the same session.
+_session_seen: set[tuple[str, str]] = set()
+
+
+def _sticky_brief_enabled() -> bool:
+    raw = os.environ.get("MEMORY_STICKY_BRIEF_ENABLED", "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _sticky_followup_tokens(default: int = 200) -> int:
+    raw = os.environ.get("MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS", str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(100, value)  # floor matches the HTTP brief endpoint min
+
+
+def reset_session_seen() -> None:
+    """Test hook: clear the sticky-brief seen-sessions set."""
+    _session_seen.clear()
+
 
 # Self-model narrative in the DB is 50-150 words; the brief renders an
 # abridged version so workspace overview + discipline reminder still fit
@@ -353,6 +386,35 @@ def iso_now_for_brief() -> str:
     return iso_now()
 
 
+def _build_aging_decisions(
+    conn: sqlite3.Connection, workspace_id: str, budget: int
+) -> BriefSection:
+    """Surface decisions older than the aging threshold with zero feedback.
+
+    Failure-soft: when the aging module is disabled, or the DB lacks the
+    ``outcome_score`` column (pre-Phase-1), the section renders empty
+    and adds no bytes to the brief.
+    """
+    try:
+        from agent_memory_lite.maintenance.aging_decisions import (  # noqa: PLC0415
+            find_aging_decisions,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return BriefSection(name="aging_decisions", budget=budget, lines=[])
+        rows = find_aging_decisions(conn, workspace_id=workspace_id)
+    except Exception:  # pragma: no cover - defensive
+        return BriefSection(name="aging_decisions", budget=budget, lines=[])
+    if not rows:
+        return BriefSection(name="aging_decisions", budget=budget, lines=[])
+    lines = ["## Aging decisions (no feedback yet)"]
+    for row in rows:
+        title = row.title[:60] or "?"
+        lines.append(f"- {row.decision_id} ({row.age_days}d, conf={row.confidence:.2f}): {title}")
+    return BriefSection(name="aging_decisions", budget=budget, lines=fit_to_budget(lines, budget))
+
+
 def _build_watch_outs(
     conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 3
 ) -> BriefSection:
@@ -504,6 +566,7 @@ def compose_brief(
     workspace_id: str,
     task: str | None = None,
     max_tokens: int = DEFAULT_TOKEN_BUDGET,
+    session_id: str | None = None,
 ) -> Brief:
     """Build the brief for a workspace at session start.
 
@@ -512,14 +575,29 @@ def compose_brief(
     overlap with task tokens). v1 ignores it and returns the static
     brief.
 
-    Cached on (workspace_id, max_tokens, workspace_fingerprint). Cache
-    hits return ``Brief(cache_hit=True)`` in ~sub-millisecond. The
+    ``session_id`` (optional) enables the sticky-brief tax cut. When
+    supplied, the FIRST call for (workspace_id, session_id) renders at
+    the requested ``max_tokens``; subsequent calls in the same session
+    shrink the cap to ``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS`` (default
+    200). Disabled by ``MEMORY_STICKY_BRIEF_ENABLED=false``. Callers
+    that pass no ``session_id`` (legacy) keep full-budget behavior.
+
+    Cached on (workspace_id, effective_max_tokens, workspace_fingerprint).
+    Cache hits return ``Brief(cache_hit=True)`` in ~sub-millisecond. The
     fingerprint flips on any decision / behavior / task / code_digest /
     episode mutation, so a stale cache cannot survive a write.
     """
     del task  # reserved; future task-biased ranking
+    effective_max = max_tokens
+    if session_id and _sticky_brief_enabled():
+        session_key = (workspace_id, session_id)
+        if session_key in _session_seen:
+            # Follow-up call in the same session — shrink the cap.
+            effective_max = min(max_tokens, _sticky_followup_tokens())
+        else:
+            _session_seen.add(session_key)
     fingerprint = _workspace_fingerprint(conn, workspace_id)
-    cache_key = (workspace_id, max_tokens, fingerprint)
+    cache_key = (workspace_id, effective_max, fingerprint)
     cached = _BRIEF_CACHE.get(cache_key)
     if cached is not None:
         # Refresh LRU position so frequently-used briefs stay hot.
@@ -538,17 +616,25 @@ def compose_brief(
     # ``recent_insights`` (Phase 3) each take ~6-8% and all stay empty on
     # a fresh workspace, so the brief footprint for an empty DB is byte-
     # equivalent to the v3.0.0-base baseline.
+    # Audit-driven rebalance 2026-05-19: aging-decisions was 0.02 (=10
+    # tokens at the default 500 budget) which couldn't fit even its header
+    # plus one row line (~20 tokens). Bumped to 0.04 (~20 tokens) so the
+    # section actually renders when rows exist. Trimmed ``associates``
+    # 0.06 → 0.05 and ``recent_insights`` 0.06 → 0.04 to absorb the
+    # increase and the new aging slot while keeping the sum at exactly
+    # 1.00.
     weights = {
         "identity": 0.18,
         "behaviors": 0.20,
         "decisions": 0.22,
         "state": 0.12,
         "code_hubs": 0.10,
-        "associates": 0.06,
-        "recent_insights": 0.06,
-        "watch_outs": 0.06,
+        "associates": 0.05,
+        "recent_insights": 0.04,
+        "watch_outs": 0.05,
+        "aging_decisions": 0.04,
     }
-    budgets = {name: int(max_tokens * w) for name, w in weights.items()}
+    budgets = {name: int(effective_max * w) for name, w in weights.items()}
 
     sections = [
         _build_identity(conn, workspace_id, budgets["identity"]),
@@ -559,13 +645,14 @@ def compose_brief(
         _build_associates(conn, workspace_id, budgets["associates"]),
         _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
         _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
+        _build_aging_decisions(conn, workspace_id, budgets["aging_decisions"]),
     ]
     body_parts: list[str] = []
     for section in sections:
         body_parts.extend(section.lines)
     body_md = "\n".join(body_parts)
     # Hard cap: if heuristic budgets overshoot, trim from the tail (least-critical first).
-    if approx_tokens(body_md) > max_tokens:
+    if approx_tokens(body_md) > effective_max:
         # Re-fit by progressively dropping later sections.
         priority_order = [
             "identity",
@@ -576,13 +663,14 @@ def compose_brief(
             "associates",
             "recent_insights",
             "watch_outs",
+            "aging_decisions",
         ]
         trimmed_sections: list[BriefSection] = []
         running = 0
         for name in priority_order:
             sec = next(s for s in sections if s.name == name)
             cost = sum(approx_tokens(line) for line in sec.lines)
-            if running + cost > max_tokens and trimmed_sections:
+            if running + cost > effective_max and trimmed_sections:
                 continue
             trimmed_sections.append(sec)
             running += cost

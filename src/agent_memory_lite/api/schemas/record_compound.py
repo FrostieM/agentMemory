@@ -89,3 +89,11 @@ class RecordWithEvidenceResponse(BaseModel):
     # capability_name / score / snippet (see ``CapabilitySuggestionPayload``
     # for the typed equivalent on the decision route).
     capability_suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    # Move 5: server-ranked decision-neighbor suggestions, always
+    # populated (independent of the capability-link triplet) because
+    # they point to OTHER decisions the agent may want to supersede
+    # rather than fragment. Empty list when no active decision clears
+    # the suggester's min_score. Element shape: dict with keys
+    # decision_id / title / snippet / score / status (see
+    # ``DecisionNeighborPayload`` for the typed equivalent).
+    decision_neighbors: list[dict[str, Any]] = Field(default_factory=list)

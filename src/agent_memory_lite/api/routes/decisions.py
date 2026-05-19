@@ -13,6 +13,9 @@ from agent_memory_lite.api.deps import (
 from agent_memory_lite.api.routes._capability_suggest_payload import (
     capability_suggestion_payloads,
 )
+from agent_memory_lite.api.routes._decision_neighbor_payload import (
+    decision_neighbor_payloads,
+)
 from agent_memory_lite.api.schemas.decisions import (
     DecisionItem,
     ListDecisionsRequest,
@@ -144,6 +147,17 @@ def write_decision_route(
             text=body.decision_text,
             rationale=body.rationale,
         )
+        # Move 5: top-3 active decisions whose tokens overlap the new
+        # write, self-excluded. Tells the agent "you may want to
+        # supersede dec_X rather than fragment". Read-only hint.
+        neighbors = decision_neighbor_payloads(
+            conn,
+            workspace_id=body.workspace_id,
+            title=body.title,
+            text=body.decision_text,
+            rationale=body.rationale,
+            exclude_id=decision.id,
+        )
         response = WriteDecisionResponse(
             decision_id=decision.id,
             status=decision.status.value,
@@ -151,8 +165,13 @@ def write_decision_route(
             superseded_decision_id=decision.supersedes_decision_id,
             source_episode_id=decision.source_episode_id,
             capability_suggestions=suggestions,
+            decision_neighbors=neighbors,
         )
-        trace.stage_done("response", "Decision response ready", counts={"n": len(suggestions)})
+        trace.stage_done(
+            "response",
+            "Decision response ready",
+            counts={"capabilities": len(suggestions), "neighbors": len(neighbors)},
+        )
         return response
 
 

@@ -17,6 +17,10 @@ import sqlite3
 from typing import Any
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.ingestion._write_helpers import (
+    capability_suggestion_dicts,
+    decision_neighbor_dicts,
+)
 from agent_memory_lite.ingestion.capability_link_writer import link_capability
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
@@ -100,6 +104,28 @@ def memory_record_with_evidence(
         )
         link_id = link.id
 
+    # Move 3 + Move 5: surface capability suggestions (when no link was
+    # made) and decision neighbors (always) so MCP local-fallback callers
+    # get the same hints they'd see via the HTTP route.
+    suggestions = (
+        capability_suggestion_dicts(
+            conn,
+            workspace_id=workspace_id,
+            title=str(payload["decision_title"]),
+            text=str(payload["decision_text"]),
+            rationale=payload.get("decision_rationale"),
+        )
+        if link_id is None
+        else []
+    )
+    neighbors = decision_neighbor_dicts(
+        conn,
+        workspace_id=workspace_id,
+        title=str(payload["decision_title"]),
+        text=str(payload["decision_text"]),
+        rationale=payload.get("decision_rationale"),
+        exclude_id=decision.id,
+    )
     return {
         "workspace_id": workspace_id,
         "episode_id": episode_id,
@@ -109,4 +135,6 @@ def memory_record_with_evidence(
         "superseded_decision_id": decision.supersedes_decision_id,
         "capability_link_id": link_id,
         "chunk_id": ingest_result.chunk.id,
+        "capability_suggestions": suggestions,
+        "decision_neighbors": neighbors,
     }

@@ -135,13 +135,27 @@ def _emit_notice(message: str) -> None:
 
 
 def _fetch_brief(
-    *, base_url: str, workspace_id: str, max_tokens: int, headers: dict[str, str]
+    *,
+    base_url: str,
+    workspace_id: str,
+    max_tokens: int,
+    headers: dict[str, str],
+    session_id: str | None = None,
 ) -> dict[str, object] | None:
-    """Call /memory/brief. Returns the envelope ``data`` payload or None on error."""
+    """Call /memory/brief. Returns the envelope ``data`` payload or None on error.
+
+    Passes ``session_id`` when present so the service can apply sticky-
+    brief (shrink ``max_tokens`` on follow-up calls in the same session).
+    Service ignores the param when unknown, so this stays compatible
+    with older HTTP versions.
+    """
+    params: dict[str, str | int] = {"workspace_id": workspace_id, "max_tokens": max_tokens}
+    if session_id:
+        params["session_id"] = session_id
     try:
         response = httpx.get(
             f"{base_url.rstrip('/')}/memory/brief",
-            params={"workspace_id": workspace_id, "max_tokens": max_tokens},
+            params=params,
             headers=headers,
             timeout=DEFAULT_TIMEOUT,
         )
@@ -215,11 +229,14 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
     if vector_path:
         headers["X-Memory-Vector-Path"] = vector_path
 
+    raw_session = event.get("session_id") or event.get("transcript_path") or ""
+    session_id = str(raw_session) if raw_session else None
     data = _fetch_brief(
         base_url=DEFAULT_BASE,
         workspace_id=workspace,
         max_tokens=DEFAULT_MAX_TOKENS,
         headers=headers,
+        session_id=session_id,
     )
     if data is None:
         _emit_notice(

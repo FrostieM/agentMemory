@@ -9,6 +9,149 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.0.0 — 2026-05-19 (agent UX follow-ups)
+
+Version-files alignment with the existing ``v3.0.0`` git tag
+(``ad7f37d release(v3.0.0): memory as a brain — final``). The tag
+landed without bumping ``pyproject.toml`` / ``src/agent_memory_lite/
+version.py`` (both stuck at ``2.0.0``); this release closes the gap
+and consolidates the post-tag agent-UX hardening into one shipped
+3.0.0 baseline. Six new env-flags (``MEMORY_SUPPRESS_DEPRECATION_NOTICES``,
+``MEMORY_STICKY_BRIEF_ENABLED``,
+``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS``,
+``MEMORY_AGING_DECISIONS_ENABLED``,
+``MEMORY_AGING_DECISIONS_DAYS``,
+``MEMORY_AGING_DECISIONS_LIMIT``) documented in ``.env.example``.
+
+### Agent UX follow-ups (5 fixes)
+
+Five operator-friction items surfaced by a peer-agent audit on
+2026-05-19; landed together because they share test infrastructure
+and have no inter-feature coupling.
+
+**1. Routing bug — MCP search returned empty for valid workspaces.**
+
+All ten v3-strict handlers in
+``src/agent_memory_lite/mcp/stdio_handlers_memory.py`` called
+``_runtime.db()`` (anchor connection) instead of
+``_runtime.db_for(workspace_id)`` (registry-routed). When the MCP
+server's anchor was misconfigured (e.g. bound to ``copyBot`` while
+the operator asked for ``agent-memory-lite``), every
+``memory_search`` / ``memory_get`` / etc. silently routed to the
+wrong DB and returned empty results. Replaced all ten sites with the
+registry-routed accessor; regression tests
+``test_search_routes_via_db_for_not_db`` +
+``test_get_routes_via_db_for_not_db`` lock the contract.
+
+**2. Deprecation-notice spam.**
+
+The v2-to-v3 compat shim
+(``src/agent_memory_lite/mcp/v2_compat.py``) attached a 70-token
+``deprecation_notice`` to every legacy tool response. In long
+sessions, hundreds of identical notices accumulated for no extra
+information value. New behavior: emit the notice ONCE per legacy
+tool name per process, plus a global suppress switch via
+``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true``. Module-level
+``_seen_deprecations`` set tracks seen names;
+``reset_seen_deprecations()`` is the test hook for clean slates.
+
+**3. Move 5 — ``decision_neighbors`` in write_decision response.**
+
+Mirrors the Move 3 ``capability_suggestions`` pattern. Every
+``memory_write_decision`` and ``memory_record_with_evidence``
+response now includes top-3 active decisions in the same workspace
+whose tokens overlap the new write. Read-only hint — the agent can
+choose to supersede an existing decision instead of fragmenting.
+New module ``ingestion/decision_neighbor_suggester.py`` shares the
+overlap-coefficient math with the capability suggester. Wired into
+HTTP routes, MCP stdio handlers, in-process MCP tools, and the
+local-fallback compound writer.
+
+**4. Sticky-brief — adaptive ``max_tokens`` for long chats.**
+
+``compose_brief`` now accepts ``session_id``. First call for
+``(workspace_id, session_id)`` renders at the requested budget;
+subsequent calls shrink to ``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS``
+(default 200). Cuts the per-prompt token tax in extended chat
+sessions where the same brief auto-injects on every UserPromptSubmit.
+Hook forwards ``session_id`` from the Claude Code event. Legacy
+callers without ``session_id`` keep full-budget behavior.
+
+**5. Aging-decisions sentinel — proactive "still active?" ping.**
+
+New brief section ``## Aging decisions`` surfaces active, unpinned
+decisions older than ``MEMORY_AGING_DECISIONS_DAYS`` (default 30)
+with ``outcome_score == 0.0`` (no implicit/explicit feedback ever
+landed). The agent sees them on session start and can revisit/
+confirm/supersede rather than letting silent decisions accumulate.
+Read-only — never degrades outcome or archives. New module
+``maintenance/aging_decisions.py``; brief composer adds a 2% budget
+slot for the section.
+
+**Env-flag additions:** ``MEMORY_SUPPRESS_DEPRECATION_NOTICES``,
+``MEMORY_STICKY_BRIEF_ENABLED``,
+``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS``,
+``MEMORY_AGING_DECISIONS_ENABLED``,
+``MEMORY_AGING_DECISIONS_DAYS``,
+``MEMORY_AGING_DECISIONS_LIMIT``. All documented in ``.env.example``.
+
+**Quality gates green:** ruff check + format clean; mypy strict
+clean across 602 source files; full pytest (excluding ollama-
+dependent + crash tests) — 1900+ passing. SLOC check: new files all
+under the 150-line cap.
+
+**Operator note.** After ``git pull``, restart Claude Desktop /
+Cursor / VS Code (MCP stdio servers don't auto-reload) AND restart
+the HTTP service so all five fixes take effect.
+
+**Audit-driven hardening (peer review by separate AI agents).**
+
+After the five fixes above landed, two parallel audit agents reviewed
+the diff and surfaced critical findings I missed:
+
+* **Legacy MCP handler routing.** The v3-strict routing fix only
+  covered 10/40 handler sites. Every legacy v2 MCP handler
+  (``stdio_handlers_episodes.py``, ``_decisions.py``, ``_theories.py``,
+  ``_capabilities.py``, ``_capability.py``, ``_research.py``,
+  ``_review.py``, ``_archive.py``, ``_p1.py``, ``_state_snapshots.py``,
+  plus the ``compat_dispatch`` entry in ``stdio_server.py``) was still
+  calling ``_runtime.db()`` directly — same silent-wrong-DB bug class.
+  Applied the same ``db_for(workspace_id)`` pattern to all 30+
+  remaining sites. Handlers that operate on globally-unique ids
+  (promote_candidate, reject_candidate, resolve_maintenance_event)
+  accept an OPTIONAL ``workspace_id`` and route via registry when
+  provided; fall back to anchor when not.
+
+* **Silent fallback warning.** ``_runtime.db_for`` previously fell
+  back to the anchor connection without any signal when the requested
+  workspace_id was unknown to the registry. That hid exactly the
+  misconfiguration the routing fix addresses. Added warn-once
+  logging keyed on the unresolved id; tests
+  ``test_stdio_runtime_db_for_warn.py`` lock the once-per-id +
+  per-process semantics + the anchor-self short-circuit.
+
+* **Aging-decisions section budget bumped.** Audit caught that the
+  initial weight (0.02 = 10 tokens at the default 500 budget)
+  couldn't fit even the section header plus one row. Rebalanced to
+  0.04 (~20 tokens), trimming ``associates`` and ``recent_insights``
+  by 0.01 each to preserve the 1.00 sum invariant.
+
+* **``age_days`` cosmetics.** Switched from
+  ``int(timedelta.total_seconds() / 86400.0)`` to ``timedelta.days``
+  for clearer intent; unparseable ``valid_from`` now returns the
+  ``-1`` sentinel instead of falsely reporting ``age_days==threshold``.
+
+* **Test coverage expanded.** Added
+  ``test_decision_local_fallback_surfaces_decision_neighbors``
+  (Move 5 contract on the in-process MCP path),
+  ``test_limit_env_override`` /
+  ``test_age_days_uses_native_timedelta_days`` /
+  ``test_age_days_sentinel_on_unparseable_timestamp`` for the aging
+  module, and the entire ``test_stdio_runtime_db_for_warn.py`` file.
+
+After hardening: full pytest still passes (1900+ tests), ruff +
+mypy strict still clean across 602 source files.
+
 ## 3.0.0-dev — Unreleased (v3 development branch)
 
 **Architectural pivot.** The audit findings in [`docs/POST_V2_ROADMAP.md`](docs/POST_V2_ROADMAP.md)

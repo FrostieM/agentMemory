@@ -136,9 +136,18 @@ printf '%s\n' "${STAGED[@]}" | \
     timeout --preserve-status "$MAX_TOTAL_SECONDS" \
     xargs -P "$PARALLEL" -I {} bash -c 'ingest_one "{}"' > "$results_file" 2>/dev/null || true
 
-INGESTED=$(grep -c '^indexed$' "$results_file" 2>/dev/null || echo 0)
-SKIPPED=$(grep -c '^skipped$' "$results_file" 2>/dev/null || echo 0)
-FAILED=$(grep -c '^failed$' "$results_file" 2>/dev/null || echo 0)
+# grep -c prints "0" with exit code 1 on zero matches; the previous
+# ``|| echo 0`` then appended a SECOND "0" → variable held "0\n0" and
+# the arithmetic below failed with "syntax error in expression". Use
+# `true` to swallow the exit code without appending output, then
+# default-empty to 0 so a missing results_file (timeout = no writes)
+# still arithmetics cleanly.
+INGESTED=$(grep -c '^indexed$' "$results_file" 2>/dev/null || true)
+SKIPPED=$(grep -c '^skipped$' "$results_file" 2>/dev/null || true)
+FAILED=$(grep -c '^failed$' "$results_file" 2>/dev/null || true)
+INGESTED=${INGESTED:-0}
+SKIPPED=${SKIPPED:-0}
+FAILED=${FAILED:-0}
 COUNTED=$((INGESTED + SKIPPED + FAILED))
 TIMED_OUT=$((${#STAGED[@]} - COUNTED))
 

@@ -110,6 +110,63 @@ def test_decision_local_fallback_returns_source_episode_id_and_suggestions(
     assert len(suggestions) == 1
     assert suggestions[0]["capability_name"] == "JWT migration"
     assert suggestions[0]["capability_type"] == "skill"
+    # Move 5 contract: decision_neighbors present (empty when workspace
+    # has no token-overlapping decisions, list of dicts otherwise).
+    assert isinstance(response["decision_neighbors"], list)
+
+
+def _seed_decision(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    decision_id: str,
+    title: str,
+    decision_text: str,
+) -> None:
+    now = "2026-05-19T00:00:00+00:00"
+    conn.execute(
+        """INSERT INTO decisions
+           (id, workspace_id, title, decision_text, rationale, status,
+            supersedes_decision_id, source_episode_id, confidence,
+            importance, valid_from, valid_to, created_at, updated_at,
+            pinned)
+           VALUES (?, ?, ?, ?, NULL, 'active', NULL, NULL, 0.9, 0.8,
+                   ?, NULL, ?, ?, 0)""",
+        (decision_id, workspace_id, title, decision_text, now, now, now),
+    )
+    conn.commit()
+
+
+def test_decision_local_fallback_surfaces_decision_neighbors(
+    db: sqlite3.Connection,
+) -> None:
+    """Move 5 (in-process MCP): existing token-overlapping decisions are
+    surfaced via the ``decision_neighbors`` field on the write response,
+    and the just-written decision excludes itself."""
+    set_current_agent_id("claude-test")
+    _seed_decision(
+        db,
+        workspace_id="alpha",
+        decision_id="dec_existing",
+        title="Kelly sizing for prediction markets",
+        decision_text="Use quarter-Kelly fraction; multi-leg discount handled separately.",
+    )
+    response = memory_write_decision(
+        conn=db,
+        payload={
+            "workspace_id": "alpha",
+            "title": "Kelly bet-sizing variant",
+            "decision_text": "Adopt quarter-Kelly fraction tweak for sizing.",
+            "allow_orphan": True,
+        },
+    )
+    neighbors = response["decision_neighbors"]
+    assert isinstance(neighbors, list)
+    assert len(neighbors) >= 1
+    ids = {n["decision_id"] for n in neighbors}
+    assert "dec_existing" in ids
+    # Self-exclusion: the freshly-written id must NOT appear.
+    assert response["decision_id"] not in ids
 
 
 def test_decision_local_fallback_respects_allow_orphan(db: sqlite3.Connection) -> None:

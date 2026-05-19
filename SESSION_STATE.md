@@ -2,10 +2,13 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 3.0.0-final (memory as a brain)
+## Current state — 3.0.0 (memory as a brain + agent UX follow-ups)
 
-**3.0.0 ships 2026-05-19 as the v3 final release.** Every retrievable
-row carries `outcome_score`; co-retrievals form Hebbian `soft_edges`
+**3.0.0 ships 2026-05-19 as the v3 final release** with the
+agent-UX follow-ups consolidated on top of the same version line
+(pyproject.toml + version.py finally bumped from 2.0.0 → 3.0.0 to
+match the existing ``v3.0.0`` git tag). Every retrievable row
+carries `outcome_score`; co-retrievals form Hebbian `soft_edges`
 (with HeLa-Mem validation gate); sleep consolidation distills
 `insights` → recurring ones promote to pinned behaviors; PreToolUse
 `reflex_rules` can block tool calls on missing preconditions
@@ -15,6 +18,29 @@ bi-temporal `valid_from/valid_to` filtering keeps superseded
 knowledge from active view; `memory_recall(topic, depth,
 outcome_floor)` spreads activation over `soft_edges ∪
 capability_links ∪ causal_links`.
+
+**Agent UX follow-ups (2026-05-19):**
+
+- MCP routing bug — every v3-strict AND legacy handler now routes
+  through ``_runtime.db_for(workspace_id)`` instead of bare
+  ``_runtime.db()`` so a misconfigured anchor stops silently
+  targeting the wrong DB. Warn-once log fires on registry-miss
+  fallback. 40+ handler sites fixed across ``stdio_handlers_*.py``.
+- Move 5 — ``decision_neighbors`` field on every
+  ``write_decision`` / ``record_with_evidence`` response (top-3
+  active decisions with token overlap on the new write, self-
+  excluded). Read-only hint so the agent supersedes instead of
+  fragmenting.
+- Sticky-brief — ``compose_brief`` accepts ``session_id``; first
+  call renders at the requested budget, subsequent calls in the
+  same session shrink to
+  ``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS`` (default 200).
+- Aging-decisions brief section — active decisions older than
+  ``MEMORY_AGING_DECISIONS_DAYS`` (default 30) with
+  ``outcome_score == 0.0`` surface as a "still active?" hint.
+- Deprecation-notice dedup — the v2-compat shim emits each
+  ``deprecation_notice`` once per process; suppressible globally
+  via ``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true``.
 
 Plus a brain-aware dashboard: `/ui` (Observatory + self-model card +
 watch-outs + recent-insights), `/ui/recall`, `/ui/reflexes`,

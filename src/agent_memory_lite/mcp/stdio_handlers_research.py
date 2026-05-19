@@ -32,7 +32,9 @@ def _handle_register_snapshot(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    snapshot = register_snapshot(_runtime.db(), MemorySnapshotIn(**payload))
+    snapshot = register_snapshot(
+        _runtime.db_for(str(payload["workspace_id"])), MemorySnapshotIn(**payload)
+    )
     return {
         "snapshot_id": snapshot.id,
         "snapshot_key": snapshot.snapshot_key,
@@ -48,7 +50,9 @@ def _handle_write_experiment(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    experiment = write_experiment(_runtime.db(), ExperimentIn(**payload))
+    experiment = write_experiment(
+        _runtime.db_for(str(payload["workspace_id"])), ExperimentIn(**payload)
+    )
     return {
         "experiment_id": experiment.id,
         "theory_id": experiment.theory_id,
@@ -68,7 +72,9 @@ def _handle_add_experiment_result(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    result = add_experiment_result(_runtime.db(), ExperimentResultIn(**payload))
+    result = add_experiment_result(
+        _runtime.db_for(str(payload["workspace_id"])), ExperimentResultIn(**payload)
+    )
     return {
         "result_id": result.id,
         "experiment_id": result.experiment_id,
@@ -84,7 +90,9 @@ def _handle_upsert_concept(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    concept = upsert_domain_concept(_runtime.db(), DomainConceptIn(**payload))
+    concept = upsert_domain_concept(
+        _runtime.db_for(str(payload["workspace_id"])), DomainConceptIn(**payload)
+    )
     return {
         "concept_id": concept.id,
         "name": concept.name,
@@ -100,7 +108,9 @@ def _handle_distill_insight(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    insight = distill_insight(_runtime.db(), ResearchInsightIn(**payload))
+    insight = distill_insight(
+        _runtime.db_for(str(payload["workspace_id"])), ResearchInsightIn(**payload)
+    )
     return {
         "insight_id": insight.id,
         "insight_type": insight.insight_type.value,
@@ -116,7 +126,9 @@ def _handle_update_insight(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    insight = update_insight(_runtime.db(), ResearchInsightUpdateIn(**payload))
+    insight = update_insight(
+        _runtime.db_for(str(payload["workspace_id"])), ResearchInsightUpdateIn(**payload)
+    )
     return {
         "insight_id": insight.id,
         "insight_type": insight.insight_type.value,

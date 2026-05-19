@@ -34,7 +34,10 @@ from agent_memory_lite.api.schemas.record_compound import (
     RecordWithEvidenceResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.ingestion._write_helpers import capability_suggestion_dicts
+from agent_memory_lite.ingestion._write_helpers import (
+    capability_suggestion_dicts,
+    decision_neighbor_dicts,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.models.decisions import DecisionIn
@@ -163,6 +166,18 @@ def record_with_evidence_route(
             if link_id is None
             else []
         )
+        # Move 5: top-3 active decisions whose tokens overlap the new
+        # write. Always surfaced (independent of capability-link
+        # triplet) so the agent sees nearby decisions in case the new
+        # write should have been a supersede.
+        neighbors = decision_neighbor_dicts(
+            conn,
+            workspace_id=body.workspace_id,
+            title=body.decision_title,
+            text=body.decision_text,
+            rationale=body.decision_rationale,
+            exclude_id=decision.id,
+        )
         response = RecordWithEvidenceResponse(
             workspace_id=body.workspace_id,
             episode_id=episode_id,
@@ -173,6 +188,7 @@ def record_with_evidence_route(
             capability_link_id=link_id,
             chunk_id=ingest_result.chunk.id,
             capability_suggestions=suggestions,
+            decision_neighbors=neighbors,
         )
         trace.stage_done(
             "response",

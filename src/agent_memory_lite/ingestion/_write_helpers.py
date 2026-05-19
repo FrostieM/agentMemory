@@ -25,6 +25,9 @@ from agent_memory_lite.ingestion.auto_thread_provenance import (
 from agent_memory_lite.ingestion.capability_suggester import (
     suggest_capabilities_for_decision,
 )
+from agent_memory_lite.ingestion.decision_neighbor_suggester import (
+    suggest_decision_neighbors,
+)
 
 
 def resolve_source_episode_id(
@@ -80,6 +83,35 @@ def capability_suggestion_dicts(
             title=title,
             text=text,
             rationale=rationale,
+            limit=limit,
+        )
+    ]
+
+
+def decision_neighbor_dicts(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    title: str,
+    text: str,
+    rationale: str | None = None,
+    exclude_id: str | None = None,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Move 5: top-N decision-neighbor suggestions as plain wire dicts.
+
+    Same shape contract as ``capability_suggestion_dicts``: HTTP wraps
+    in ``DecisionNeighborPayload``, MCP returns the dicts verbatim.
+    """
+    return [
+        dataclasses.asdict(n)
+        for n in suggest_decision_neighbors(
+            conn,
+            workspace_id=workspace_id,
+            title=title,
+            text=text,
+            rationale=rationale,
+            exclude_id=exclude_id,
             limit=limit,
         )
     ]

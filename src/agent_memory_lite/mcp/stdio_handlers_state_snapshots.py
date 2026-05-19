@@ -34,7 +34,7 @@ def _handle_snapshot_save(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
     snapshot = capture_state_snapshot(
-        _runtime.db(),
+        _runtime.db_for(str(payload["workspace_id"])),
         workspace_id=str(payload["workspace_id"]),
         name=payload.get("name"),
         metadata=payload.get("metadata") or {},

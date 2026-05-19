@@ -186,7 +186,9 @@ MEMORY_TOOLS: list[types.Tool] = [
             "Session-start brief, capped at ``max_tokens``, composed from "
             "compact projections. Sections: identity, behaviors, decisions, "
             "state, code_hubs. Hook primitive for UserPromptSubmit / "
-            "session-start injection."
+            "session-start injection. Pass ``session_id`` to opt into "
+            "sticky-brief: subsequent calls in the same session shrink to "
+            "``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS`` (default 200)."
         ),
         inputSchema={
             "type": "object",
@@ -199,6 +201,7 @@ MEMORY_TOOLS: list[types.Tool] = [
                     "minimum": 100,
                     "maximum": 2000,
                 },
+                "session_id": {"type": "string"},
             },
             "required": [],
         },
