@@ -23,7 +23,7 @@ def _handle_upsert_agent_role(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    role = upsert_agent_role(_runtime.db(), AgentRoleIn(**payload))
+    role = upsert_agent_role(_runtime.db_for(str(payload["workspace_id"])), AgentRoleIn(**payload))
     return {
         "role_id": role.id,
         "name": role.name,
@@ -39,7 +39,9 @@ def _handle_upsert_agent_skill(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    skill = upsert_agent_skill(_runtime.db(), AgentSkillIn(**payload))
+    skill = upsert_agent_skill(
+        _runtime.db_for(str(payload["workspace_id"])), AgentSkillIn(**payload)
+    )
     return {
         "skill_id": skill.id,
         "name": skill.name,
@@ -59,7 +61,9 @@ def _handle_upsert_agent_playbook(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    playbook = upsert_agent_playbook(_runtime.db(), AgentPlaybookIn(**payload))
+    playbook = upsert_agent_playbook(
+        _runtime.db_for(str(payload["workspace_id"])), AgentPlaybookIn(**payload)
+    )
     return {
         "playbook_id": playbook.id,
         "name": playbook.name,

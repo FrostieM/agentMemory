@@ -218,9 +218,15 @@ def test_main_falls_back_to_global_when_cwd_unregistered(
     captured: dict[str, Any] = {}
 
     def fake_fetch(
-        *, base_url: str, workspace_id: str, max_tokens: int, headers: Any
+        *,
+        base_url: str,
+        workspace_id: str,
+        max_tokens: int,
+        headers: Any,
+        session_id: str | None = None,
     ) -> dict[str, Any] | None:
         captured["workspace_id"] = workspace_id
+        captured["session_id"] = session_id
         return {"body_md": "# fallback body\nrules ...", "token_count": 8}
 
     monkeypatch.setattr(v3hook, "_fetch_brief", fake_fetch)

@@ -28,14 +28,15 @@ def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
     # building TheoryIn (domain model has no such field).
     workspace_id = str(payload.get("workspace_id") or _runtime.settings.workspace_id)
     allow_orphan = bool(payload.pop("allow_orphan", False))
+    conn = _runtime.db_for(workspace_id)
     payload["source_episode_id"] = resolve_source_episode_id(
-        _runtime.db(),
+        conn,
         workspace_id=workspace_id,
         explicit=payload.get("source_episode_id"),
         allow_orphan=allow_orphan,
         settings=_runtime.settings,
     )
-    theory = write_theory(_runtime.db(), TheoryIn(**payload))
+    theory = write_theory(conn, TheoryIn(**payload))
     return {
         "theory_id": theory.id,
         "status": theory.status.value,
@@ -45,7 +46,7 @@ def _handle_write_theory(args: dict[str, Any]) -> dict[str, Any]:
         "evidence_strength": theory.evidence_strength,
         "source_episode_id": theory.source_episode_id,
         "capability_suggestions": capability_suggestion_dicts(
-            _runtime.db(),
+            conn,
             workspace_id=workspace_id,
             title=str(payload.get("title") or ""),
             text=str(payload.get("claim") or ""),
@@ -64,7 +65,9 @@ def _handle_add_theory_evidence(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    evidence = add_theory_evidence(_runtime.db(), TheoryEvidenceIn(**payload))
+    evidence = add_theory_evidence(
+        _runtime.db_for(str(payload["workspace_id"])), TheoryEvidenceIn(**payload)
+    )
     return {
         "evidence_id": evidence.id,
         "theory_id": evidence.theory_id,

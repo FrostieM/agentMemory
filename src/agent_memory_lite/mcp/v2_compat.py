@@ -94,7 +94,47 @@ def _err(code: str, message: str, *, deprecation: str | None = None) -> dict[str
     return env
 
 
-def _deprecation(v2_name: str, v3_successor: str) -> str:
+_seen_deprecations: set[str] = set()
+
+
+def _suppress_deprecation_notices() -> bool:
+    """Operator opt-out for noisy v2 deprecation banners.
+
+    Set ``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true`` to drop the
+    ``deprecation_notice`` field from every shim response. Default is
+    off so callers still see the migration path on at least their first
+    encounter (see once-per-session dedup below).
+    """
+    raw = os.environ.get("MEMORY_SUPPRESS_DEPRECATION_NOTICES", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def reset_seen_deprecations() -> None:
+    """Test hook: clear once-per-session dedup state.
+
+    Module-level state survives across calls inside one process — that
+    is the intent for long-lived MCP stdio servers. Tests need a clean
+    slate between cases, hence this explicit reset.
+    """
+    _seen_deprecations.clear()
+
+
+def _deprecation(v2_name: str, v3_successor: str) -> str | None:
+    """Return the deprecation banner, or None when suppressed.
+
+    Suppression rules (any one fires):
+
+    * ``MEMORY_SUPPRESS_DEPRECATION_NOTICES=true`` — full silence.
+    * ``v2_name`` already emitted in this process — one banner per name
+      per session is enough for the agent to act on; repeating the same
+      bytes on every call accumulates ~70 tokens per shim call in long
+      sessions for no new information.
+    """
+    if _suppress_deprecation_notices():
+        return None
+    if v2_name in _seen_deprecations:
+        return None
+    _seen_deprecations.add(v2_name)
     return f"{v2_name} is deprecated; use {v3_successor}. This shim will be removed at v4.0."
 
 

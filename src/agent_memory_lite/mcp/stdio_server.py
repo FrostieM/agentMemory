@@ -96,7 +96,12 @@ def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | 
     if name in MEMORY_HANDLERS:
         return None
     try:
-        return compat_dispatch(_runtime.db(), name, args)
+        # Route via registry when the caller passed an explicit workspace_id
+        # so a misconfigured anchor doesn't silently target the wrong DB.
+        # Anchor remains the fallback for legacy callers that omit it.
+        ws = args.get("workspace_id") if isinstance(args, dict) else None
+        conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
+        return compat_dispatch(conn, name, args)
     except Exception as exc:  # shim must never raise into the dispatcher
         _log.warning("v2_compat_dispatch_failed", tool=name, error=str(exc))
         return None

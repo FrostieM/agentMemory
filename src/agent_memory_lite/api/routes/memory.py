@@ -209,9 +209,23 @@ def brief_endpoint(
     workspace_id: str = Query(min_length=1),
     task: str | None = Query(default=None),
     max_tokens: int = Query(default=500, ge=100, le=2000),
+    session_id: str | None = Query(default=None, max_length=200),
 ) -> Envelope:
-    """Compose ≤max_tokens session-start brief from compact projections."""
-    b = compose_brief(conn, workspace_id=workspace_id, task=task, max_tokens=max_tokens)
+    """Compose ≤max_tokens session-start brief from compact projections.
+
+    Pass ``session_id`` to opt into sticky-brief: the first call in a
+    (workspace, session) pair gets the full budget; subsequent calls in
+    the same session shrink to ``MEMORY_STICKY_BRIEF_FOLLOWUP_TOKENS``
+    (default 200) so long chats stop paying the full token tax on every
+    prompt.
+    """
+    b = compose_brief(
+        conn,
+        workspace_id=workspace_id,
+        task=task,
+        max_tokens=max_tokens,
+        session_id=session_id,
+    )
     return _ok(
         {
             "body_md": b.body_md,

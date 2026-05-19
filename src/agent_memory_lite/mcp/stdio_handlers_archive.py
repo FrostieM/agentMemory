@@ -19,7 +19,7 @@ def _handle_archive(args: dict[str, Any]) -> dict[str, Any]:
     archive_flag = payload.get("archive")
     archive = True if archive_flag is None else bool(archive_flag)
     return archive_memory_object(
-        _runtime.db(),
+        _runtime.db_for(str(payload["workspace_id"])),
         workspace_id=str(payload["workspace_id"]),
         kind=str(payload["kind"]),
         object_id=str(payload["id"]),

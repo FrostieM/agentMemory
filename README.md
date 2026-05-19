@@ -172,13 +172,15 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 2.0.0
+## Status — 3.0.0
 
 Latest tag: **v3.0.0** (2026-05-19) — memory as a brain. Outcome-aware
 retrieval, Hebbian associations, PreToolUse reflexes, identity self-
 model, bi-temporal facts, spreading-activation recall. See
 [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) for the 7-phase
-breakdown.
+breakdown. The 2026-05-19 agent-UX follow-ups (registry-routed MCP
+handlers, sticky-brief, Move 5 ``decision_neighbors``, aging-decision
+ping, deprecation-notice dedup) land on top of the 3.0.0 line.
 Every memory feature is on by default;
 flag-off parity invariants in `tests/invariants/` lock the legacy
 byte-equivalent path for any operator who wants to peel a layer

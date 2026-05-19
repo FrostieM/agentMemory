@@ -20,7 +20,7 @@ def _handle_pin(args: dict[str, Any]) -> dict[str, Any]:
         return delegated
     pinned = bool(payload.get("pinned", True))
     return pin_memory_object(
-        _runtime.db(),
+        _runtime.db_for(str(payload["workspace_id"])),
         workspace_id=str(payload["workspace_id"]),
         kind=str(payload["kind"]),
         object_id=str(payload["id"]),

@@ -42,6 +42,20 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         c.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_deprecation_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Once-per-session dedup is module-level state. Reset between tests so
+    each case starts with a clean slate.
+
+    Also ensure the suppress flag is OFF by default; individual tests can
+    override via ``monkeypatch.setenv``.
+    """
+    monkeypatch.delenv("MEMORY_SUPPRESS_DEPRECATION_NOTICES", raising=False)
+    v2_compat.reset_seen_deprecations()
+    yield
+    v2_compat.reset_seen_deprecations()
+
+
 # ============================================================
 # Activation gate
 # ============================================================
@@ -349,3 +363,81 @@ def test_compat_handlers_count_meets_plan_target() -> None:
     filled in later iterations without breaking the shim contract.
     """
     assert len(v2_compat.COMPAT_HANDLERS) >= 25
+
+
+# ============================================================
+# Deprecation-notice suppression — env flag + once-per-session dedup
+# ============================================================
+
+
+def test_deprecation_notice_dedup_within_session(conn: sqlite3.Connection) -> None:
+    """First call to a v2 name emits the notice; subsequent calls drop it.
+
+    Long-lived stdio servers see the same v2 name many times per session.
+    The agent only needs the migration hint once.
+    """
+    args = {"workspace_id": "default", "title": "T1", "decision_text": "B"}
+    env1 = v2_compat.compat_dispatch(conn, "memory_write_decision", args)
+    assert env1 is not None
+    assert env1["ok"] is True
+    assert "deprecation_notice" in env1
+
+    env2 = v2_compat.compat_dispatch(conn, "memory_write_decision", {**args, "title": "T2"})
+    assert env2 is not None
+    assert env2["ok"] is True
+    assert "deprecation_notice" not in env2
+
+
+def test_deprecation_notice_distinct_names_each_get_first_emit(
+    conn: sqlite3.Connection,
+) -> None:
+    """Dedup is per v2 name — a different shim tool still emits its first notice."""
+    env_a = v2_compat.compat_dispatch(
+        conn,
+        "memory_write_decision",
+        {"workspace_id": "default", "title": "A", "decision_text": "B"},
+    )
+    env_b = v2_compat.compat_dispatch(
+        conn,
+        "memory_write_theory",
+        {"workspace_id": "default", "title": "C", "claim": "D"},
+    )
+    assert env_a is not None
+    assert "deprecation_notice" in env_a
+    assert env_b is not None
+    assert "deprecation_notice" in env_b
+
+
+def test_deprecation_notice_env_flag_suppresses_all(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MEMORY_SUPPRESS_DEPRECATION_NOTICES=true drops the field entirely."""
+    monkeypatch.setenv("MEMORY_SUPPRESS_DEPRECATION_NOTICES", "true")
+    env = v2_compat.compat_dispatch(
+        conn,
+        "memory_write_decision",
+        {"workspace_id": "default", "title": "T", "decision_text": "B"},
+    )
+    assert env is not None
+    assert env["ok"] is True
+    assert "deprecation_notice" not in env
+
+
+@pytest.mark.parametrize("value", ["true", "1", "yes", "on", "TRUE"])
+def test_suppress_flag_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("MEMORY_SUPPRESS_DEPRECATION_NOTICES", value)
+    assert v2_compat._suppress_deprecation_notices() is True
+
+
+@pytest.mark.parametrize("value", ["false", "0", "no", "off", "", "random"])
+def test_suppress_flag_falsy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("MEMORY_SUPPRESS_DEPRECATION_NOTICES", value)
+    assert v2_compat._suppress_deprecation_notices() is False
+
+
+def test_deprecation_dedup_resets_between_processes() -> None:
+    """The reset helper exists so tests get a clean slate. Verify it works."""
+    assert v2_compat._deprecation("X", "Y") is not None  # first call emits
+    assert v2_compat._deprecation("X", "Y") is None  # second call deduped
+    v2_compat.reset_seen_deprecations()
+    assert v2_compat._deprecation("X", "Y") is not None  # post-reset emits again

@@ -127,7 +127,7 @@ def _handle_ingest_episode(args: dict[str, Any]) -> dict[str, Any]:
         return delegated
 
     result = ingest_episode(
-        _runtime.db(),
+        _runtime.db_for(str(payload["workspace_id"])),
         EpisodeIn(**payload),
         embedding_provider=_runtime.provider(),
         vector_store=_runtime.store(),
@@ -156,7 +156,7 @@ def _handle_ingest_file(args: dict[str, Any]) -> dict[str, Any]:
         return delegated
 
     result = ingest_file(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         embedding_provider=_runtime.provider(),
         vector_store=_runtime.store(),

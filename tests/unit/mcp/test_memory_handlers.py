@@ -320,3 +320,125 @@ def test_impact_check_returns_full_envelope_shape(db_conn: sqlite3.Connection) -
         "verdict",
         "advisory",
     }
+
+
+# ============================================================
+# Registry routing — handlers must use db_for(workspace_id), not db()
+# ============================================================
+#
+# Regression for the 2026-05-19 search-empty bug: when the MCP server's
+# anchor is misconfigured (e.g. bound to copyBot while the operator asks
+# for agent-memory-lite), `_runtime.db()` returns the anchor DB and every
+# read is filtered against rows that live in another DB — search returns
+# empty even though the data exists. The fix routes through
+# `_runtime.db_for(workspace_id)` so an explicit, registered workspace
+# resolves to the right DB. The anchor remains the fallback.
+
+
+def test_search_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Search for workspace_id='foreign' must hit the foreign DB.
+
+    If the handler still calls ``_runtime.db()``, the search filter against
+    the anchor DB (which has no foreign-workspace rows) returns []. The
+    fix makes the handler call ``_runtime.db_for(workspace_id)`` which
+    consults the registry first.
+    """
+    anchor_path = tmp_path / "anchor.db"
+    foreign_path = tmp_path / "foreign.db"
+    anchor = sqlite3.connect(anchor_path)
+    foreign = sqlite3.connect(foreign_path)
+    for conn in (anchor, foreign):
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.commit()
+
+    relaxed = v3._runtime.settings.model_copy(
+        update={
+            "workspace_id": "anchor",
+            "strict_workspace_isolation": False,
+            "forbid_default_workspace": False,
+            "hub_mode": True,
+        }
+    )
+    monkeypatch.setattr(v3._runtime, "settings", relaxed)
+    monkeypatch.setattr(v3._runtime, "db", lambda: anchor)
+    seen: dict[str, str] = {}
+
+    def fake_db_for(workspace_id: str | None) -> sqlite3.Connection:
+        seen["workspace_id"] = workspace_id or ""
+        if workspace_id == "foreign":
+            return foreign
+        return anchor
+
+    monkeypatch.setattr(v3._runtime, "db_for", fake_db_for)
+
+    # Seed ONLY in foreign DB. If routing is broken, search hits anchor → empty.
+    seed_env = v3._handle_v3_write(
+        {
+            "workspace_id": "foreign",
+            "kind": "decision",
+            "payload": {"title": "Routed Kelly sizing", "decision_text": "Body"},
+        }
+    )
+    assert seed_env["ok"], seed_env
+    assert seen["workspace_id"] == "foreign"
+
+    env = v3._handle_v3_search({"workspace_id": "foreign", "query": "kelly", "limit": 5})
+    assert env["ok"] is True
+    titles = [hit["projection"]["title"] for hit in env["data"]]
+    assert "Routed Kelly sizing" in titles, env
+
+    # Sanity: search with workspace_id='anchor' against the anchor DB finds nothing.
+    env_anchor = v3._handle_v3_search({"workspace_id": "anchor", "query": "kelly", "limit": 5})
+    assert env_anchor["ok"] is True
+    assert env_anchor["data"] == []
+    anchor.close()
+    foreign.close()
+
+
+def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory_get(workspace_id='foreign', id=X) must hit the foreign DB."""
+    anchor_path = tmp_path / "anchor.db"
+    foreign_path = tmp_path / "foreign.db"
+    anchor = sqlite3.connect(anchor_path)
+    foreign = sqlite3.connect(foreign_path)
+    for conn in (anchor, foreign):
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        conn.commit()
+
+    relaxed = v3._runtime.settings.model_copy(
+        update={
+            "workspace_id": "anchor",
+            "strict_workspace_isolation": False,
+            "forbid_default_workspace": False,
+            "hub_mode": True,
+        }
+    )
+    monkeypatch.setattr(v3._runtime, "settings", relaxed)
+    monkeypatch.setattr(v3._runtime, "db", lambda: anchor)
+    monkeypatch.setattr(
+        v3._runtime,
+        "db_for",
+        lambda wsid: foreign if wsid == "foreign" else anchor,
+    )
+
+    seed_env = v3._handle_v3_write(
+        {
+            "workspace_id": "foreign",
+            "kind": "decision",
+            "payload": {"title": "Foreign-only", "decision_text": "Body"},
+        }
+    )
+    assert seed_env["ok"], seed_env
+    dec_id = str(seed_env["data"]["id"])
+
+    env = v3._handle_v3_get({"workspace_id": "foreign", "kind": "decision", "id": dec_id})
+    assert env["ok"] is True
+    assert env["data"]["id"] == dec_id
+
+    env_anchor = v3._handle_v3_get({"workspace_id": "anchor", "kind": "decision", "id": dec_id})
+    assert env_anchor["ok"] is False
+    assert env_anchor["error"]["code"] == "not_found"
+    anchor.close()
+    foreign.close()

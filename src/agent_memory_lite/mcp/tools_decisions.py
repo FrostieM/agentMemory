@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
+    decision_neighbor_dicts,
     resolve_source_episode_id,
 )
 from agent_memory_lite.ingestion.decision_writer import write_decision
@@ -47,6 +48,14 @@ def memory_write_decision(
             title=str(payload.get("title") or ""),
             text=str(payload.get("decision_text") or ""),
             rationale=payload.get("rationale"),
+        ),
+        "decision_neighbors": decision_neighbor_dicts(
+            conn,
+            workspace_id=workspace_id,
+            title=str(payload.get("title") or ""),
+            text=str(payload.get("decision_text") or ""),
+            rationale=payload.get("rationale"),
+            exclude_id=decision.id,
         ),
     }
 

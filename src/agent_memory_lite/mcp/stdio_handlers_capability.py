@@ -25,7 +25,9 @@ def _handle_link_capability(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    return _capability_link_payload(link_capability(_runtime.db(), CapabilityLinkIn(**payload)))
+    return _capability_link_payload(
+        link_capability(_runtime.db_for(str(payload["workspace_id"])), CapabilityLinkIn(**payload))
+    )
 
 
 def _handle_list_capability_links(args: dict[str, Any]) -> dict[str, Any]:
@@ -67,7 +69,9 @@ def _handle_upsert_behavior_instruction(args: dict[str, Any]) -> dict[str, Any]:
     if delegated is not None:
         return delegated
 
-    instruction = upsert_behavior_instruction(_runtime.db(), BehaviorInstructionIn(**payload))
+    instruction = upsert_behavior_instruction(
+        _runtime.db_for(str(payload["workspace_id"])), BehaviorInstructionIn(**payload)
+    )
     return _behavior_instruction_payload(instruction)
 
 

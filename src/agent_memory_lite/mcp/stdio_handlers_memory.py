@@ -4,7 +4,11 @@ Each handler:
 
 1. Normalises payload + applies workspace guard (read or write intent).
 2. Calls the corresponding ``agent_memory_lite.*`` backend function
-   with ``_runtime.db()``.
+   with ``_runtime.db_for(workspace_id)`` so the explicit ``workspace_id``
+   routes through the registry. A misconfigured anchor (e.g. server
+   bound to ``copyBot`` while operator asks for ``agent-memory-lite``)
+   still hits the right DB when the workspace is in the registry; the
+   anchor remains the fallback for unregistered ids.
 3. Returns the SAME envelope shape the HTTP routes return:
    ``{"ok": bool, "data": ..., "error": {"code", "message"} | None}``.
 
@@ -70,7 +74,7 @@ def _handle_v3_search(args: dict[str, Any]) -> dict[str, Any]:
     limit = int(payload.get("limit") or 10)
     rerank = bool(payload.get("rerank") or False)
     hits = search(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         query=query,
         kinds=kinds,
@@ -90,7 +94,7 @@ def _handle_v3_get(args: dict[str, Any]) -> dict[str, Any]:
         return _err("invalid_args", "kind and id are required")
     fields = _parse_fields(payload.get("fields"))
     obj = get_object(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -114,7 +118,7 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not isinstance(body, dict):
         return _err("invalid_args", "kind + payload object are required")
     out = write(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         kind=kind,
         payload=body,
@@ -135,7 +139,7 @@ def _handle_v3_edit(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not object_id or not isinstance(fields, dict):
         return _err("invalid_args", "kind, id, and fields object are required")
     out = edit(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -157,7 +161,7 @@ def _handle_v3_pin(args: dict[str, Any]) -> dict[str, Any]:
     pinned_flag = payload.get("pinned")
     pinned = True if pinned_flag is None else bool(pinned_flag)
     out = pin(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -177,7 +181,7 @@ def _handle_v3_archive(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not object_id:
         return _err("invalid_args", "kind and id are required")
     out = archive(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -199,11 +203,14 @@ def _handle_v3_brief(args: dict[str, Any]) -> dict[str, Any]:
     workspace_id = str(payload["workspace_id"])
     max_tokens = int(payload.get("max_tokens") or 500)
     task = payload.get("task")
+    raw_session = payload.get("session_id")
+    session_id = str(raw_session) if isinstance(raw_session, str) and raw_session else None
     brief = compose_brief(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         task=task if isinstance(task, str) else None,
         max_tokens=max_tokens,
+        session_id=session_id,
     )
     return _ok(
         {
@@ -224,7 +231,7 @@ def _handle_v3_lint(args: dict[str, Any]) -> dict[str, Any]:
         return _err("invalid_args", "tool_name + tool_payload object are required")
     transcript_path = payload.get("transcript_path")
     result = run_lint(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         tool_name=tool_name,
         tool_payload=tool_payload,
@@ -240,7 +247,7 @@ def _handle_v3_invoke_skill(args: dict[str, Any]) -> dict[str, Any]:
     if not skill_id:
         return _err("invalid_args", "skill_id is required")
     out = fetch_skill_body(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         skill_id=skill_id,
     )
@@ -258,7 +265,7 @@ def _handle_v3_impact_check(args: dict[str, Any]) -> dict[str, Any]:
     callers_limit = int(payload.get("callers_limit") or 20)
     hot_threshold = int(payload.get("hot_threshold") or 3)
     report = impact_check(
-        _runtime.db(),
+        _runtime.db_for(workspace_id),
         workspace_id=workspace_id,
         file_path=file_path,
         callers_limit=callers_limit,
