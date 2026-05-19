@@ -466,6 +466,264 @@ def scenario_e_consolidation_cycle(conn: sqlite3.Connection, ws: str) -> None:
 # ============================================================
 
 
+# ============================================================
+# SCENARIO F -- Bi-temporal time-travel (Phase 6)
+# ============================================================
+
+
+def scenario_f_bi_temporal_time_travel(conn: sqlite3.Connection, ws: str) -> None:
+    hdr("SCENARIO F -- Bi-temporal: decision with past valid_to drops out today")
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from agent_memory_lite.storage.reader import list_kind  # noqa: PLC0415
+
+    test_id = "scenario_f_expired_decision"
+    conn.execute("DELETE FROM decisions WHERE id = ?", (test_id,))
+    past_validity = (datetime.now(UTC) - timedelta(days=90)).isoformat()
+    past_expiry = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    middle = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    step(f"writing decision valid_from={past_validity[:10]} valid_to={past_expiry[:10]}")
+    conn.execute(
+        """INSERT INTO decisions
+           (id, workspace_id, title, decision_text, gist, status,
+            valid_from, valid_to, created_at, updated_at, outcome_score, pinned)
+           VALUES (?, ?, 'scenario-F historical decision', 'body',
+                   'historical', 'active', ?, ?, ?, ?, 0.0, 0)""",
+        (test_id, ws, past_validity, past_expiry, iso_now(), iso_now()),
+    )
+    conn.commit()
+    step("list_kind(kind='decision') as of NOW")
+    today_rows = list_kind(conn, workspace_id=ws, kind="decision", limit=500)
+    today_visible = any(r["id"] == test_id for r in today_rows)
+    check("expired decision NOT visible today", not today_visible)
+    step(f"list_kind(kind='decision', as_of={middle[:10]})  // 60 days ago")
+    historical_rows = list_kind(conn, workspace_id=ws, kind="decision", limit=500, as_of=middle)
+    historical_visible = any(r["id"] == test_id for r in historical_rows)
+    check("expired decision IS visible at historical as_of", historical_visible)
+    conn.execute("DELETE FROM decisions WHERE id = ?", (test_id,))
+    conn.commit()
+
+
+# ============================================================
+# SCENARIO G -- Outcome staleness decay
+# ============================================================
+
+
+def scenario_g_outcome_staleness(conn: sqlite3.Connection, ws: str) -> None:
+    hdr("SCENARIO G -- Outcome staleness: old positive feedback < fresh positive feedback")
+
+    from agent_memory_lite.cognition.outcome_recompute import (  # noqa: PLC0415
+        OutcomeInputs,
+        compute_outcome,
+    )
+
+    step("comparing fresh (0 days) vs stale (120 days) decisions, same EWMA + usage")
+    fresh = OutcomeInputs(
+        feedback_ewma=0.8,
+        age_days=0.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=20,
+    )
+    stale = OutcomeInputs(
+        feedback_ewma=0.8,
+        age_days=120.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=20,
+    )
+    f_score = compute_outcome(fresh)
+    s_score = compute_outcome(stale)
+    info(f"fresh outcome={f_score:.3f}  stale outcome={s_score:.3f}  diff={f_score - s_score:.3f}")
+    check("fresh > stale (decay applies)", f_score > s_score)
+    check("stale decay is at least 0.4 (per design)", (f_score - s_score) >= 0.4)
+    # Extreme age: should drift toward 0 not flip negative.
+    very_stale = OutcomeInputs(
+        feedback_ewma=0.8,
+        age_days=10_000.0,
+        archived=False,
+        superseded=False,
+        rejected=False,
+        usage_count=20,
+    )
+    vs_score = compute_outcome(very_stale)
+    info(f"very-stale (10k days) outcome={vs_score:.3f}")
+    check("very-stale never goes below 0 for positive EWMA", vs_score >= -0.01)
+
+
+# ============================================================
+# SCENARIO H -- Pinned override (pinned + outcome < 0 still in brief)
+# ============================================================
+
+
+def scenario_h_pinned_override(conn: sqlite3.Connection, ws: str) -> None:
+    hdr("SCENARIO H -- Operator-pinned decision survives a negative outcome")
+    from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
+
+    test_id = "scenario_h_pinned_bad"
+    conn.execute("DELETE FROM decisions WHERE id = ?", (test_id,))
+    step("seeding pinned=1 decision with outcome=-0.5")
+    now = iso_now()
+    conn.execute(
+        """INSERT INTO decisions
+           (id, workspace_id, title, decision_text, gist, status, valid_from,
+            created_at, updated_at, outcome_score, pinned)
+           VALUES (?, ?, 'scenario-H pinned-with-bad-outcome', 'body',
+                   'pinned but failing', 'active', ?, ?, ?, -0.5, 1)""",
+        (test_id, ws, now, now, now),
+    )
+    conn.commit()
+    brief_mod._BRIEF_CACHE.clear()
+    brief = compose_brief(conn, workspace_id=ws, max_tokens=500)
+    visible = test_id in brief.body_md
+    check("pinned negative-outcome decision STILL appears in brief", visible)
+    # The watch-outs section should ALSO show it (negative outcome).
+    watch_visible = "## Watch-outs" in brief.body_md and test_id in brief.body_md
+    check("pinned negative-outcome appears in body (Active and/or Watch-outs)", watch_visible)
+    conn.execute("DELETE FROM decisions WHERE id = ?", (test_id,))
+    conn.commit()
+
+
+# ============================================================
+# SCENARIO J -- Self-model drift after new high-outcome decisions
+# ============================================================
+
+
+def scenario_j_self_model_drift(conn: sqlite3.Connection, ws: str) -> None:
+    hdr("SCENARIO J -- Self-model adapts: new high-outcome decision becomes an invariant")
+    from agent_memory_lite.cognition.self_model import (  # noqa: PLC0415
+        refresh_self_model,
+    )
+
+    # Snapshot the current self-model.
+    step("snapshotting current self-model")
+    before = refresh_self_model(conn, workspace_id=ws)
+    conn.commit()
+    check("baseline self-model present", before is not None)
+    if before is None:
+        return
+    info(f"baseline invariants count: {len(before.invariants)}")
+    # Add a fresh high-outcome decision with a distinctive token.
+    marker_id = "scenario_j_marker_decision"
+    conn.execute("DELETE FROM decisions WHERE id = ?", (marker_id,))
+    step("inserting a PINNED decision with outcome=0.9 and unique token 'zeppelinaut'")
+    # Pin the marker so it's guaranteed to land in top-3 ahead of other
+    # pinned rows that compete for the narrative's quote slot. Without
+    # pinning, a workspace with many existing pinned decisions can
+    # legitimately push the marker out of top-3 (real behaviour: pinned
+    # rows come first in the sort, regardless of outcome).
+    now = iso_now()
+    conn.execute(
+        """INSERT INTO decisions
+           (id, workspace_id, title, decision_text, gist, status, valid_from,
+            created_at, updated_at, outcome_score, pinned)
+           VALUES (?, ?,
+                   'zeppelinaut canonical invariant: prefer X over Y under condition Z',
+                   'body', 'zeppelinaut canonical invariant', 'active',
+                   ?, ?, ?, 0.9, 1)""",
+        (marker_id, ws, now, now, now),
+    )
+    conn.commit()
+    step("refreshing self-model")
+    after = refresh_self_model(conn, workspace_id=ws)
+    conn.commit()
+    check("self-model row exists after refresh", after is not None)
+    if after is None:
+        return
+    info(f"new invariants count: {len(after.invariants)}")
+    marker_in_invariants = marker_id in after.invariants
+    check("new high-outcome decision became an invariant id", marker_in_invariants)
+    marker_in_text = "zeppelinaut" in after.identity_text.lower()
+    check("new decision's distinctive token surfaces in narrative", marker_in_text)
+    # Cleanup.
+    conn.execute("DELETE FROM decisions WHERE id = ?", (marker_id,))
+    conn.commit()
+
+
+# ============================================================
+# SCENARIO L -- Cold start (empty in-memory DB, all phases hit)
+# ============================================================
+
+
+def scenario_l_cold_start() -> None:
+    hdr("SCENARIO L -- Cold start: organ_pass on a freshly-migrated empty DB")
+    from agent_memory_lite.cognition.brief import compose_brief as cb  # noqa: PLC0415
+    from agent_memory_lite.config.settings import Settings as _Settings  # noqa: PLC0415
+    from agent_memory_lite.maintenance.organ_pass import run_organ_pass as _run  # noqa: PLC0415
+
+    # Build an in-memory DB with all 8 migrations applied.
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    migrations_dir = REPO_ROOT / "migrations" / "canonical"
+    db.executescript((migrations_dir / "0001_init.sql").read_text(encoding="utf-8"))
+    for n in (
+        "0002_outcome_loop.sql",
+        "0003_hebbian.sql",
+        "0004_consolidation_feedback.sql",
+        "0005_reflexes.sql",
+        "0006_self_model.sql",
+        "0007_bi_temporal.sql",
+        "0008_causal_links.sql",
+    ):
+        db.executescript((migrations_dir / n).read_text(encoding="utf-8"))
+    db.commit()
+    step("running organ_pass on completely empty workspace")
+    report = _run(db, workspace_id="cold_start_ws", settings=_Settings())
+    info(f"errors={report.errors}")
+    check("no errors on cold start", report.errors == [])
+    check("self-model written even on empty workspace", report.self_model_refreshed is True)
+    step("composing brief on empty workspace")
+    brief = cb(db, workspace_id="cold_start_ws", max_tokens=500)
+    info(f"brief body: {len(brief.body_md)} chars, {brief.token_count} tokens")
+    check("brief renders on empty workspace", len(brief.body_md) > 0)
+    check("brief title includes workspace name", "cold_start_ws" in brief.body_md)
+    db.close()
+
+
+# ============================================================
+# SCENARIO M -- Performance baseline
+# ============================================================
+
+
+def scenario_m_performance(conn: sqlite3.Connection, ws: str) -> None:
+    hdr("SCENARIO M -- Performance: organ_pass + brief + recall under real-scale data")
+    import time  # noqa: PLC0415
+
+    settings = Settings()
+    from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
+    from agent_memory_lite.maintenance.organ_pass import run_organ_pass  # noqa: PLC0415
+
+    # Tally workspace data scale.
+    rows_count = {}
+    for table in ("decisions", "theories", "behaviors", "skills", "chunks", "episodes"):
+        rows_count[table] = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE workspace_id=?", (ws,)
+        ).fetchone()[0]
+    info(f"workspace scale: {rows_count}")
+    step("timing run_organ_pass")
+    t0 = time.perf_counter()
+    run_organ_pass(conn, workspace_id=ws, settings=settings)
+    conn.commit()
+    organ_ms = (time.perf_counter() - t0) * 1000
+    info(f"organ_pass: {organ_ms:.0f} ms")
+    check("organ_pass under 5000 ms", organ_ms < 5000)
+    step("timing compose_brief (cache miss)")
+    brief_mod._BRIEF_CACHE.clear()
+    t0 = time.perf_counter()
+    compose_brief(conn, workspace_id=ws, max_tokens=500)
+    brief_ms = (time.perf_counter() - t0) * 1000
+    info(f"brief (cold): {brief_ms:.0f} ms")
+    check("brief cold under 500 ms", brief_ms < 500)
+    step("timing recall(topic='kelly', depth=2)")
+    t0 = time.perf_counter()
+    recall(conn, workspace_id=ws, topic="kelly", depth=2, limit=10)
+    recall_ms = (time.perf_counter() - t0) * 1000
+    info(f"recall: {recall_ms:.0f} ms")
+    check("recall under 1000 ms", recall_ms < 1000)
+
+
 def _count_edges(conn: sqlite3.Connection, ws: str) -> int:
     return int(
         conn.execute(
@@ -485,11 +743,15 @@ def _decision_outcome(conn: sqlite3.Connection, dec_id: str) -> float:
 # ============================================================
 
 
-def main() -> int:
+def main() -> int:  # noqa: PLR0912 — linear dispatch over 11 named scenarios
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("--db", required=True, type=Path)
     parser.add_argument("--workspace", required=True)
-    parser.add_argument("--scenario", default="all", choices=("all", "a", "b", "c", "d", "e"))
+    parser.add_argument(
+        "--scenario",
+        default="all",
+        choices=("all", "a", "b", "c", "d", "e", "f", "g", "h", "j", "l", "m"),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     if not args.db.exists():
@@ -508,6 +770,18 @@ def main() -> int:
             scenario_d_recall_after_workflows(conn, args.workspace)
         if args.scenario in ("all", "e"):
             scenario_e_consolidation_cycle(conn, args.workspace)
+        if args.scenario in ("all", "f"):
+            scenario_f_bi_temporal_time_travel(conn, args.workspace)
+        if args.scenario in ("all", "g"):
+            scenario_g_outcome_staleness(conn, args.workspace)
+        if args.scenario in ("all", "h"):
+            scenario_h_pinned_override(conn, args.workspace)
+        if args.scenario in ("all", "j"):
+            scenario_j_self_model_drift(conn, args.workspace)
+        if args.scenario in ("all", "l"):
+            scenario_l_cold_start()
+        if args.scenario in ("all", "m"):
+            scenario_m_performance(conn, args.workspace)
     finally:
         conn.close()
     print()
