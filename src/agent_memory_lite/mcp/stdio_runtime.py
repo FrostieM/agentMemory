@@ -7,7 +7,6 @@ the path-resolution rules that decide which DB the server anchors to.
 from __future__ import annotations
 
 import contextlib
-import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -20,22 +19,14 @@ from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.mcp.stdio_env import _env_flag, _env_float, _memory_http_base_url
+from agent_memory_lite.mcp.stdio_unresolved_warn import (
+    _unresolved_warned,
+    reset_unresolved_warned,
+    warn_unresolved_once,
+)
 from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.factory import get_vector_store
-
-_log = logging.getLogger(__name__)
-# Per-process set of workspace_ids the registry could not resolve. Used
-# to log a misconfiguration warning ONCE per id (silent fallback would
-# hide the bug audit #4 surfaces — the operator gets wrong empty results
-# without knowing why). Tests reset via reset_unresolved_warned.
-_unresolved_warned: set[str] = set()
-
-
-def reset_unresolved_warned() -> None:
-    """Test hook: clear the warn-once set for db_for fallbacks."""
-    _unresolved_warned.clear()
-
 
 __all__ = [
     "_Runtime",
@@ -45,6 +36,12 @@ __all__ = [
     "_registry_paths_for",
     "_resolve_paths_from_cwd",
     "_runtime",
+    # Re-exported from stdio_unresolved_warn so existing test imports
+    # ``from agent_memory_lite.mcp.stdio_runtime import _unresolved_warned``
+    # keep working after the SLOC-driven extraction.
+    "_unresolved_warned",
+    "reset_unresolved_warned",
+    "warn_unresolved_once",
     "workspace_schema",
 ]
 
@@ -125,24 +122,12 @@ class _Runtime:
             return self.db()
         resolved = _registry_paths_for(self, workspace_id)
         if resolved is None:
-            # Warn-once per unresolved id so a misconfigured anchor /
-            # missing registry entry doesn't silently return wrong-empty
-            # results. Anchor remains the fallback to preserve uptime.
-            if (
-                workspace_id not in _unresolved_warned
-                and workspace_id != self.settings.workspace_id
-            ):
-                _unresolved_warned.add(workspace_id)
-                _log.warning(
-                    "db_for: workspace_id=%r not in registry %s; "
-                    "falling back to anchor=%r (db=%s). Misconfigured? "
-                    "Register via scripts/register_workspace.py or check "
-                    "MEMORY_DB_PATH / MEMORY_WORKSPACE_ID env.",
-                    workspace_id,
-                    self.settings.workspaces_file,
-                    self.settings.workspace_id,
-                    self.settings.db_path,
-                )
+            warn_unresolved_once(
+                workspace_id=workspace_id,
+                anchor_id=self.settings.workspace_id,
+                workspaces_file=self.settings.workspaces_file,
+                anchor_db_path=self.settings.db_path,
+            )
             return self.db()
         db_path, _ = resolved
         if Path(db_path) == Path(self.settings.db_path):
