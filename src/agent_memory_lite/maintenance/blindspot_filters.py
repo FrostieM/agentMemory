@@ -120,3 +120,28 @@ def emit_limit() -> int:
 
 def sample_tokens_per_episode() -> int:
     return _int_env("MEMORY_BLINDSPOT_SAMPLE_TOKENS_PER_EPISODE", 80, floor=10)
+
+
+# Live-audit-2026-05-20 finding: pre-commit ``file_indexed`` events
+# dominate the corpus on workspaces with active code-memory ingestion.
+# Their token surface (directory / module names) creates 100%
+# false-positive blindspots. Defaults skip every auto-event source_type
+# we ship; operator can override with a comma-separated env list.
+_DEFAULT_EXCLUDED_SOURCE_TYPES: tuple[str, ...] = (
+    "file_indexed",
+    "file_ingest",
+    "code_chunk_indexed",
+    "auto_ingest",
+)
+
+
+def excluded_source_types() -> tuple[str, ...]:
+    """Auto-event source_types skipped by the blindspot scanner.
+
+    Returns the env override when present, else the shipped defaults.
+    """
+    raw = os.environ.get("MEMORY_BLINDSPOT_EXCLUDED_SOURCE_TYPES", "").strip()
+    if not raw:
+        return _DEFAULT_EXCLUDED_SOURCE_TYPES
+    parts = tuple(item.strip() for item in raw.split(",") if item.strip())
+    return parts or _DEFAULT_EXCLUDED_SOURCE_TYPES

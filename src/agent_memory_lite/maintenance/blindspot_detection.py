@@ -54,6 +54,7 @@ from agent_memory_lite.maintenance.blindspot_filters import (
 )
 from agent_memory_lite.maintenance.blindspot_filters import (
     emit_limit,
+    excluded_source_types,
     is_enabled,
     lookback_days,
     min_episode_count,
@@ -133,10 +134,19 @@ def find_blindspots(
     cap = limit if limit is not None else emit_limit()
     sample_cap = sample_tokens_per_episode()
     cutoff = (datetime.now(UTC) - timedelta(days=horizon_days)).isoformat()
+    # Live-audit-2026-05-20: exclude auto-event source_types whose
+    # episodes are mechanically-generated (e.g. ``file_indexed`` from
+    # the pre-commit ingest hook) — they dominate the corpus and surface
+    # directory / module / __init__ tokens that no architectural decision
+    # would address. Override via ``MEMORY_BLINDSPOT_EXCLUDED_SOURCE_TYPES``
+    # (comma-separated) when the deployment uses other auto-event types.
+    excluded = excluded_source_types()
+    placeholders = ",".join("?" * len(excluded)) if excluded else "''"
     try:
         ep_rows = conn.execute(
-            "SELECT raw_text FROM episodes WHERE workspace_id = ? AND created_at >= ?",
-            (workspace_id, cutoff),
+            f"SELECT raw_text FROM episodes WHERE workspace_id = ? AND created_at >= ? "
+            f"AND source_type NOT IN ({placeholders})",
+            (workspace_id, cutoff, *excluded),
         ).fetchall()
     except sqlite3.OperationalError:
         return []
