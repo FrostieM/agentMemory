@@ -34,6 +34,7 @@ from agent_memory_lite.api.schemas.record_compound import (
     RecordWithEvidenceResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
     decision_neighbor_dicts,
@@ -56,13 +57,28 @@ def record_with_evidence_route(
     settings: SettingsDep,
 ) -> RecordWithEvidenceResponse:
     ensure_workspace_writable(body.workspace_id, settings)
-    with trace_memory_operation(
-        workspace_id=body.workspace_id,
-        endpoint="/memory/record_with_evidence",
-        operation="record_with_evidence",
-        label="Record decision with evidence",
-        snippet=body.decision_title,
-    ) as trace:
+    # Round-2 atomicity fix: each inner writer used its own with_tx()
+    # commit point, so a failure in step 2 (decision) left step 1
+    # (episode) committed — orphan episode + dangling
+    # source_episode_id chain. Wrapping the whole sequence in an
+    # outer with_tx() turns the inner BEGINs into SAVEPOINTs that
+    # roll back to the outer transaction together.
+    #
+    # Caveat: vector embeddings inside ingest_episode are flushed to
+    # LanceDB AFTER its SQLite commit, so they remain orphaned on
+    # rollback. The vector orphan is recoverable via
+    # ``scripts/reindex_vectors.py``; the SQLite orphan is the
+    # harder-to-recover one and that's what this txn guards.
+    with (
+        trace_memory_operation(
+            workspace_id=body.workspace_id,
+            endpoint="/memory/record_with_evidence",
+            operation="record_with_evidence",
+            label="Record decision with evidence",
+            snippet=body.decision_title,
+        ) as trace,
+        with_tx(conn),
+    ):
         # Step 1: ingest the supporting episode.
         episode_in = EpisodeIn(
             workspace_id=body.workspace_id,

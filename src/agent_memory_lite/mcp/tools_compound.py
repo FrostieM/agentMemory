@@ -17,6 +17,7 @@ import sqlite3
 from typing import Any
 
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
@@ -67,74 +68,81 @@ def memory_record_with_evidence(
 
         settings = get_settings()
 
-    # Step 1: ingest the supporting episode.
-    episode_in = EpisodeIn(
-        workspace_id=workspace_id,
-        session_id=payload.get("session_id"),
-        task_id=payload.get("task_id"),
-        source_type=EpisodeSource(payload.get("evidence_source_type", "agent_action")),
-        raw_text=str(payload["evidence_text"]),
-        trust_level=TrustLevel(payload.get("evidence_trust_level", "agent_observed")),
-        importance=float(payload.get("evidence_importance", 0.6)),
-    )
-    ingest_result = ingest_episode(
-        conn,
-        episode_in,
-        embedding_provider=embedding_provider,
-        vector_store=vector_store,
-        auto_promote_settings=settings,
-    )
-    episode_id = ingest_result.episode.id
-
-    # Step 2: write the decision with the freshly-created episode id
-    # threaded explicitly.
-    decision = write_decision(
-        conn,
-        DecisionIn(
+    # Round-2 atomicity fix: wrap all three SQLite-writing steps in one
+    # transaction. Inner writers use their own with_tx() — that now becomes
+    # a SAVEPOINT so a failure in step 2/3 rolls step 1 back too. Mirrors
+    # the HTTP route's atomicity guarantee. Vector embeddings inside
+    # ingest_episode still flush post-SAVEPOINT-release so a later rollback
+    # can leave orphan vectors (recoverable via reindex_vectors.py).
+    with with_tx(conn):
+        # Step 1: ingest the supporting episode.
+        episode_in = EpisodeIn(
             workspace_id=workspace_id,
-            title=str(payload["decision_title"]),
-            decision_text=str(payload["decision_text"]),
-            rationale=payload.get("decision_rationale"),
-            supersedes_decision_id=payload.get("supersedes_decision_id"),
-            source_episode_id=episode_id,
-            confidence=float(payload.get("decision_confidence", 0.9)),
-            importance=float(payload.get("decision_importance", 0.8)),
-            references=list(payload.get("references", [])),
-        ),
-    )
-
-    # Phase 1 outcome-loop parity: drop the superseded decision's
-    # outcome_score the same way the HTTP route does. Failure-soft;
-    # implicit feedback never blocks the parent write.
-    record_supersede_feedback(
-        conn,
-        workspace_id=workspace_id,
-        source_type="decision",
-        superseded_id=decision.supersedes_decision_id,
-        settings=settings,
-    )
-
-    # Step 3 (optional): link the decision to a capability.
-    cap_type = payload.get("capability_type")
-    cap_name = payload.get("capability_name")
-    cap_relation = payload.get("capability_relation")
-    link_id: str | None = None
-    if cap_type and cap_name and cap_relation:
-        link = link_capability(
+            session_id=payload.get("session_id"),
+            task_id=payload.get("task_id"),
+            source_type=EpisodeSource(payload.get("evidence_source_type", "agent_action")),
+            raw_text=str(payload["evidence_text"]),
+            trust_level=TrustLevel(payload.get("evidence_trust_level", "agent_observed")),
+            importance=float(payload.get("evidence_importance", 0.6)),
+        )
+        ingest_result = ingest_episode(
             conn,
-            CapabilityLinkIn(
+            episode_in,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+            auto_promote_settings=settings,
+        )
+        episode_id = ingest_result.episode.id
+
+        # Step 2: write the decision with the freshly-created episode id
+        # threaded explicitly.
+        decision = write_decision(
+            conn,
+            DecisionIn(
                 workspace_id=workspace_id,
-                target_type=CapabilityLinkTargetType.DECISION,
-                target_id=decision.id,
-                capability_type=CapabilityType(cap_type),
-                capability_name=str(cap_name),
-                relation=CapabilityLinkRelation(cap_relation),
-                rationale=payload.get("capability_rationale"),
-                strength=float(payload.get("capability_strength", 0.7)),
+                title=str(payload["decision_title"]),
+                decision_text=str(payload["decision_text"]),
+                rationale=payload.get("decision_rationale"),
+                supersedes_decision_id=payload.get("supersedes_decision_id"),
                 source_episode_id=episode_id,
+                confidence=float(payload.get("decision_confidence", 0.9)),
+                importance=float(payload.get("decision_importance", 0.8)),
+                references=list(payload.get("references", [])),
             ),
         )
-        link_id = link.id
+
+        # Phase 1 outcome-loop parity: drop the superseded decision's
+        # outcome_score the same way the HTTP route does. Failure-soft;
+        # implicit feedback never blocks the parent write.
+        record_supersede_feedback(
+            conn,
+            workspace_id=workspace_id,
+            source_type="decision",
+            superseded_id=decision.supersedes_decision_id,
+            settings=settings,
+        )
+
+        # Step 3 (optional): link the decision to a capability.
+        cap_type = payload.get("capability_type")
+        cap_name = payload.get("capability_name")
+        cap_relation = payload.get("capability_relation")
+        link_id: str | None = None
+        if cap_type and cap_name and cap_relation:
+            link = link_capability(
+                conn,
+                CapabilityLinkIn(
+                    workspace_id=workspace_id,
+                    target_type=CapabilityLinkTargetType.DECISION,
+                    target_id=decision.id,
+                    capability_type=CapabilityType(cap_type),
+                    capability_name=str(cap_name),
+                    relation=CapabilityLinkRelation(cap_relation),
+                    rationale=payload.get("capability_rationale"),
+                    strength=float(payload.get("capability_strength", 0.7)),
+                    source_episode_id=episode_id,
+                ),
+            )
+            link_id = link.id
 
     # Move 3 + Move 5: surface capability suggestions (when no link was
     # made) and decision neighbors (always) so MCP local-fallback callers
