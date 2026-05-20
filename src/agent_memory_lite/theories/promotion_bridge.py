@@ -51,7 +51,10 @@ def _supporting_evidence_metrics(conn: sqlite3.Connection, *, theory_id: str) ->
     count = len(supporting)
     if count == 0:
         return (0, 0.0)
-    avg_confidence = sum(row.confidence for row in supporting) / count
+    # v3.5 sector-5 audit-followup: legacy evidence rows can carry
+    # ``confidence=None``. Summing None propagates a TypeError that
+    # crashed the bridge for the whole theory. Coerce to 0.0.
+    avg_confidence = sum(float(row.confidence or 0.0) for row in supporting) / count
     return (count, avg_confidence)
 
 

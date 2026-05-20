@@ -54,30 +54,50 @@ def run_integrity_audit(
     expected_provider_name: str | None = None,
     expected_vector_backend: str | None = None,
 ) -> IntegrityReport:
-    checks = {
-        "sqlite": sqlite_check(conn),
-        "workspace_manifest": workspace_manifest_check(conn, workspace_id),
-        "workspace_pollution": workspace_pollution_check(
-            conn,
-            workspace_id,
-            db_path=Path(db_path) if db_path is not None else None,
+    # v3.5 sector-5 audit-followup: per-check try/except so one
+    # exception in any check (e.g. sqlite_check's PRAGMA fetchone[0]
+    # blowing up on a corrupt DB, or workspace_pollution_check
+    # OperationalError on a poisoned schema) cannot abort the entire
+    # audit. Each check now degrades to a typed "error" entry that
+    # the operator can see in the report.
+    from collections.abc import Callable  # noqa: PLC0415
+
+    db_path_obj = Path(db_path) if db_path is not None else None
+    _check_specs: tuple[tuple[str, Callable[[], IntegrityCheck]], ...] = (
+        ("sqlite", lambda: sqlite_check(conn)),
+        ("workspace_manifest", lambda: workspace_manifest_check(conn, workspace_id)),
+        (
+            "workspace_pollution",
+            lambda: workspace_pollution_check(conn, workspace_id, db_path=db_path_obj),
         ),
-        "fts": fts_check(conn, workspace_id),
-        "vector": vector_check(
-            conn,
-            workspace_id,
-            vector_store,
-            expected_provider_name=expected_provider_name,
-            expected_vector_backend=expected_vector_backend,
+        ("fts", lambda: fts_check(conn, workspace_id)),
+        (
+            "vector",
+            lambda: vector_check(
+                conn,
+                workspace_id,
+                vector_store,
+                expected_provider_name=expected_provider_name,
+                expected_vector_backend=expected_vector_backend,
+            ),
         ),
-        "retrieval_roundtrip": roundtrip_check(conn, workspace_id),
-        "maintenance_events": maintenance_check(conn, workspace_id),
-        "capability_links": capability_links_check(conn, workspace_id),
-        "candidate_hygiene": candidate_hygiene_check(conn, workspace_id),
-        "research_hygiene": research_hygiene_check(conn, workspace_id),
-        "hygiene": hygiene_report_check(conn, workspace_id),
-        "stray_dbs": stray_db_check(Path(db_path) if db_path is not None else None),
-    }
+        ("retrieval_roundtrip", lambda: roundtrip_check(conn, workspace_id)),
+        ("maintenance_events", lambda: maintenance_check(conn, workspace_id)),
+        ("capability_links", lambda: capability_links_check(conn, workspace_id)),
+        ("candidate_hygiene", lambda: candidate_hygiene_check(conn, workspace_id)),
+        ("research_hygiene", lambda: research_hygiene_check(conn, workspace_id)),
+        ("hygiene", lambda: hygiene_report_check(conn, workspace_id)),
+        ("stray_dbs", lambda: stray_db_check(db_path_obj)),
+    )
+    checks: dict[str, IntegrityCheck] = {}
+    for name, runner in _check_specs:
+        try:
+            checks[name] = runner()
+        except Exception as exc:  # noqa: BLE001 — per-check isolation
+            checks[name] = IntegrityCheck(
+                status="degraded",
+                details={"error": f"{type(exc).__name__}: {exc}"},
+            )
     failures = [name for name, check in checks.items() if check.status == "degraded"]
     warnings = [name for name, check in checks.items() if check.status == "warning"]
     unknown = [name for name, check in checks.items() if check.status == "unknown"]

@@ -56,8 +56,15 @@ def _registered_workspace_ids(db_path: Path | None) -> set[str]:
 
 
 def sqlite_check(conn: sqlite3.Connection) -> IntegrityCheck:
-    integrity = str(conn.execute("PRAGMA integrity_check").fetchone()[0])
-    quick = str(conn.execute("PRAGMA quick_check").fetchone()[0])
+    # v3.5 sector-5 audit-followup: ``PRAGMA integrity_check`` returns
+    # the rows it has and can in theory return an empty result on a
+    # mid-corruption read. ``fetchone()[0]`` would raise TypeError on
+    # None and the whole audit would abort (no other checks would
+    # run). Treat an empty / None response as "unknown" → degraded.
+    integrity_row = conn.execute("PRAGMA integrity_check").fetchone()
+    integrity = str(integrity_row[0]) if integrity_row else "unknown"
+    quick_row = conn.execute("PRAGMA quick_check").fetchone()
+    quick = str(quick_row[0]) if quick_row else "unknown"
     fk_rows = conn.execute("PRAGMA foreign_key_check").fetchall()
     status = "ok" if integrity == "ok" and quick == "ok" and not fk_rows else "degraded"
     return IntegrityCheck(

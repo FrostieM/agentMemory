@@ -226,20 +226,34 @@ def _upsert_finding(
     bumping ``recurrence_count`` and refreshing ``last_seen_at``.
     Returns True if a new row was inserted (vs a recurrence bump)."""
     now = iso_now()
+    # v3.5 sector-5 audit-followup: look for ANY existing row for this
+    # (workspace, kind) — not just open ones. The pre-fix code only
+    # found open rows; a resolved row from a prior tick that re-trips
+    # would INSERT a fresh row, leaving stale "resolved" rows
+    # accumulating and resetting recurrence_count to 1 each time.
+    # Now we re-open the same row instead.
     existing = conn.execute(
-        "SELECT id, recurrence_count FROM maintenance_events "
-        "WHERE workspace_id = ? AND kind = ? AND status = 'open'",
+        "SELECT id, recurrence_count, status FROM maintenance_events "
+        "WHERE workspace_id = ? AND kind = ? "
+        "ORDER BY last_seen_at DESC LIMIT 1",
         (workspace_id, kind),
     ).fetchone()
     if existing:
+        prior_status = str(existing[2] or "open")
+        was_resolved = prior_status == "resolved"
         conn.execute(
             "UPDATE maintenance_events "
-            "SET recurrence_count = COALESCE(recurrence_count, 0) + 1, "
-            "    last_seen_at = ?, summary = ?, details_json = ? "
+            "SET status = 'open', "
+            "    recurrence_count = COALESCE(recurrence_count, 0) + 1, "
+            "    last_seen_at = ?, summary = ?, details_json = ?, "
+            "    resolved_at = NULL "
             "WHERE id = ?",
             (now, summary, json.dumps(details), existing[0]),
         )
-        return False
+        # Treat a resolve→reopen as a fresh emit for callers that
+        # track new-vs-recurrence (so the operator sees the regression
+        # rather than just a silent counter bump).
+        return was_resolved
     conn.execute(
         """INSERT INTO maintenance_events
            (id, workspace_id, kind, severity, status, summary,

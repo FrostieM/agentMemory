@@ -215,8 +215,20 @@ def refresh_workspace(
         n = 0
         for row in rows:
             new_score = compute_outcome(adapter(row, now_iso))
-            existing = float(row["outcome_score"] or 0.0)
-            if abs(new_score - existing) >= 1e-4:
+            # v3.5 sector-5 audit-followup: distinguish NULL from 0.0.
+            # Pre-fix, ``float(row["outcome_score"] or 0.0)`` coerced
+            # NULL into 0.0; a freshly-computed 0.0 then matched and
+            # the write was skipped. Rows stayed NULL forever and the
+            # downstream ``COALESCE(outcome_score, 0.0)`` kept hiding
+            # it. Treat NULL as "always update so the column gets
+            # populated".
+            raw_existing = row["outcome_score"]
+            if raw_existing is None:
+                should_write = True
+            else:
+                existing = float(raw_existing)
+                should_write = abs(new_score - existing) >= 1e-4
+            if should_write:
                 conn.execute(
                     f"UPDATE {table} SET outcome_score = ? WHERE id = ?", (new_score, row["id"])
                 )

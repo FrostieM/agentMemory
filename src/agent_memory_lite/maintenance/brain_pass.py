@@ -138,7 +138,7 @@ def _step_outcome(
 
         report.outcome_updated = refresh_workspace(conn, workspace_id=workspace_id, now_iso=now_iso)
         conn.commit()
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"outcome:{exc}")
 
 
@@ -169,7 +169,7 @@ def _step_hebbian(
         report.hebbian_edges_upserted = upserted
         report.hebbian_edges_gated = gated
         report.hebbian_rows_pruned = pruned
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"hebbian:{exc}")
 
 
@@ -189,7 +189,7 @@ def _step_promote_insights(
         stats = promote_eligible_insights(conn, workspace_id=workspace_id)
         report.insights_promoted = stats.promoted
         report.insights_skipped = stats.skipped
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"promote:{exc}")
 
 
@@ -213,7 +213,7 @@ def _step_reflex_distill(
             min_support=settings.reflex_distiller_min_support,
         )
         report.reflex_rules_distilled = result.rules_upserted
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"reflex_distill:{exc}")
 
 
@@ -237,7 +237,7 @@ def _step_self_model(
             ollama_model=ollama_model,
         )
         report.self_model_refreshed = model is not None
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"self_model:{exc}")
 
 
@@ -255,7 +255,7 @@ def _step_causal(
         cr = extract_workspace(conn, workspace_id=workspace_id)
         report.causal_invalidated = cr.invalidated_links
         report.causal_derived = cr.derived_links
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"causal:{exc}")
     # v3.1 Vector 4: derive embedding-based semantic causal links. Gated
     # by its own env flag (default off); failure-soft on any provider /
@@ -265,7 +265,7 @@ def _step_causal(
 
         derived_n = derive_workspace(conn, workspace_id=workspace_id)
         report.causal_derived += derived_n
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"causal_embedding:{exc}")
 
 
@@ -279,7 +279,7 @@ def _step_db_hygiene(conn: sqlite3.Connection, workspace_id: str, report: BrainP
         report.vacuum_ran = hygiene.vacuum_ran
         if hygiene.errors:
             report.errors.extend(f"db_hygiene:{e}" for e in hygiene.errors)
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"db_hygiene:{exc}")
 
 
@@ -317,7 +317,7 @@ def _step_experiment_proposal(
         except Exception:
             conn.execute("ROLLBACK")
             raise
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"experiment_proposal:{exc}")
 
 
@@ -380,7 +380,7 @@ def _step_predictive_failure(
     except sqlite3.OperationalError as exc:
         report.predictive_warnings_available = False
         report.errors.append(f"predictive_failure:{exc}")
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"predictive_failure:{exc}")
 
 
@@ -406,7 +406,7 @@ def _step_predictive_lr_train(
         report.predictive_lr_samples = result.samples
         if result.errors:
             report.errors.extend(f"predictive_lr:{e}" for e in result.errors)
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"predictive_lr:{exc}")
 
 
@@ -424,7 +424,7 @@ def _step_causal_did(conn: sqlite3.Connection, workspace_id: str, report: BrainP
         result = extract_did_links(conn, workspace_id=workspace_id)
         report.causal_did_pairs_scanned = result.pairs_scanned
         report.causal_did_links_emitted = result.links_emitted
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"causal_did:{exc}")
 
 
@@ -449,7 +449,7 @@ def _step_causal_granger(
         result = extract_granger_links(conn, workspace_id=workspace_id)
         report.causal_granger_pairs_scanned = result.pairs_scanned
         report.causal_granger_links_emitted = result.links_emitted
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"causal_granger:{exc}")
 
 
@@ -475,7 +475,7 @@ def _step_autonomous_loop(
         report.autonomous_held = result.held
         if result.errors:
             report.errors.extend(f"autonomous:{e}" for e in result.errors)
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"autonomous:{exc}")
 
 
@@ -498,7 +498,7 @@ def _step_drift_sentinel(
         report.drift_resolved = list(result.resolved)
         if result.errors:
             report.errors.extend(f"drift:{e}" for e in result.errors)
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"drift:{exc}")
 
 
@@ -522,7 +522,7 @@ def _step_behavior_auto_archive(
             age_days=settings.behavior_auto_archive_age_days,
         )
         report.behaviors_auto_archived = result.archived
-    except (sqlite3.Error, ImportError) as exc:
+    except Exception as exc:
         report.errors.append(f"behavior_auto_archive:{exc}")
 
 
