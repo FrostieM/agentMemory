@@ -9,6 +9,94 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.5.0 — 2026-05-20 (read-path hardening + ranker tuning + pipeline benchmark scaffold)
+
+### Read-path enum-drift safety net
+
+A live incident the morning of 2026-05-20 surfaced a class of bug
+that had been latent for several minor releases: writers that
+bypassed the repository helpers and INSERTed raw enum strings via
+plain SQL would land values the row→model parser didn't recognise,
+the parser raised ``ValueError`` deep inside ``build_context``, and
+``/memory/get_context`` returned HTTP 500 with no actionable detail.
+copyBot's memory brief was killed for ~2.5h before the cause was
+isolated. Two writers were caught in the act: ``autonomous_loop``
+emitting ``theory_evidence.kind='autonomous_corroboration'`` and
+the code indexer emitting ``chunks.kind='block'`` / ``'symbol'``.
+
+Two layered defenses now cover every read parser:
+
+- ``models.enums.coerce_enum(EnumCls, raw, fallback)`` — universal
+  helper that catches ``ValueError`` on unknown DB strings, handles
+  non-string inputs (NULL, int, bytes), and returns the supplied
+  fallback. Every ``row_to_*`` parser uses it.
+- Seven previously-undocumented labels registered as first-class
+  enum members so legitimate rows round-trip with full semantics:
+  ``TheoryEvidenceKind.AUTONOMOUS_CORROBORATION``,
+  ``ChunkKind.BLOCK``, ``ChunkKind.SYMBOL``,
+  ``TrustLevel.USER_PROVIDED``, ``EpisodeSource.MANUAL``,
+  ``EpisodeSource.USER_PROVIDED``, ``InsightType.CONSOLIDATION``,
+  ``InsightStatus.CANDIDATE``.
+
+Coverage by ``tests/unit/models/test_coerce_enum.py`` and
+``tests/unit/repositories/test_theory_evidence_kind_tolerance.py``:
+known values round-trip, unknown strings degrade to fallback,
+NULL/int/list don't crash, every drift label parses correctly.
+
+### Ranker tuning — MRR 0.3611 → 0.9889 on MemBench
+
+The ``filter_rank_limit`` ranker used by ``/memory/list_decisions``
+treated the pinned bit as an absolute sort key. With two pinned
+decisions on the agent-memory-lite workspace they always sat at
+ranks 1-2 regardless of the query, capping MRR at ~1/3 for any
+non-pinned-target title-verbatim query. The v3.5 ranker:
+
+- Browse mode (no query) keeps pinned-first ordering.
+- Query mode demotes pinned to a content-score boost so a precise
+  match still wins.
+- Title-token weight is 3x body-token weight.
+- All-tokens-in-title bonus (+5.0) gives exact matches the decisive
+  lead over partial siblings.
+- ``outcome_score`` contributes additively so low-outcome decisions
+  sink relative to high-outcome ones at the same title score.
+
+Locked by ``tests/unit/repositories/test_decisions_ranker.py``.
+Baselines saved to ``scripts/calibration/baselines/membench_v3.4.0.json``
+(0.3611) and ``membench_v3.5.0.json`` (0.9889) for regression checks.
+
+### Pipeline-level BEIR benchmark — scaffolding
+
+``scripts/membench_pipeline.py`` lands the third tier of MemBench:
+the full retrieval stack (ingest → chunk → FTS5 → LanceDB → RRF →
+reranker) measured against published BEIR qrels, complementing the
+embedder-only ``membench_external.py`` (0.6694 on SciFact) and the
+internal ``membench.py`` (MRR). The script ships with:
+
+- Smart-slice mode: pick queries first, then ingest each query's
+  relevant docs + 5x distractors so a 30-query run actually
+  measures discriminative ranking instead of "is the doc in our DB".
+- ``--db-path`` for throwaway DB routing via ``X-Memory-DB-Path``
+  headers — keeps the host workspace clean. A v3.5 incident proved
+  this matters: BEIR docs leaked into agent-memory-lite's DB before
+  the isolation argument shipped.
+
+Full-corpus runs take hours (HTTP ingestion is the long pole) and
+are operator-initiated.
+
+### Workspace pollution check — hub-mode false positive removed
+
+``integrity_db_checks.workspace_pollution_check`` flagged ANY
+foreign workspace_id as degraded, which produced a constant false
+positive on hub-mode setups where one ``memory.db`` legitimately
+serves multiple registered workspaces. The check now reads the
+workspace registry, splits foreign rows into
+``registered_foreign_rows`` (legitimate hub mates, status stays
+``ok``) and ``unregistered_foreign_rows`` (real stray writes,
+``degraded`` as before). Locked by two new tests in
+``tests/unit/maintenance/test_integrity.py``.
+
+---
+
 ## 3.4.0 — 2026-05-20 (multi-minor roll-up: brain loops + drift safety + observability)
 
 ### MemBench v2 — cross-project retrieval comparison
