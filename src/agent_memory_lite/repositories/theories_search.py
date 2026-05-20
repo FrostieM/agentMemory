@@ -62,12 +62,39 @@ def row_to_theory(row: sqlite3.Row) -> Theory:
     )
 
 
+def _coerce_evidence_kind(raw: object) -> TheoryEvidenceKind:
+    """Convert a raw DB ``kind`` string into the enum, tolerating
+    unknown values.
+
+    Historical context: v3.4 ``cognition/autonomous_loop.py`` bypassed
+    the ``add_theory_evidence`` repo helper and INSERTed a literal
+    ``'autonomous_corroboration'`` string before that value existed in
+    ``TheoryEvidenceKind``. Once a single such row landed, every
+    ``/memory/get_context`` that gathered the parent theory raised
+    ``ValueError`` and the route returned HTTP 500.
+
+    Two defenses now cover that class of bug:
+
+    1. The canonical value is registered in the enum so legitimate
+       rows round-trip cleanly.
+    2. This helper falls back to ``NEUTRAL`` for any other unknown
+       string a future raw-SQL writer might introduce, instead of
+       letting the exception escape the read path.
+    """
+    if isinstance(raw, TheoryEvidenceKind):
+        return raw
+    try:
+        return TheoryEvidenceKind(str(raw))
+    except ValueError:
+        return TheoryEvidenceKind.NEUTRAL
+
+
 def row_to_evidence(row: sqlite3.Row) -> TheoryEvidence:
     return TheoryEvidence(
         id=row["id"],
         workspace_id=row["workspace_id"],
         theory_id=row["theory_id"],
-        kind=TheoryEvidenceKind(row["kind"]),
+        kind=_coerce_evidence_kind(row["kind"]),
         summary=row["summary"],
         source_episode_id=row["source_episode_id"],
         artifact_path=row["artifact_path"],

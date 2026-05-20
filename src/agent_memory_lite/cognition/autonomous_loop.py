@@ -50,6 +50,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from agent_memory_lite.models.enums import TheoryEvidenceKind
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
@@ -313,16 +314,22 @@ def _promote_to_theory(
             now,
         ),
     )
+    # v3.4 follow-up: route the kind through the enum so any future
+    # rename or migration touches a single place. ``add_theory_evidence``
+    # is the canonical helper, but we keep the raw INSERT here because
+    # this code path runs inside ``brain_pass`` and must stay
+    # transaction-safe without re-entering the outer write helpers.
+    evidence_kind = TheoryEvidenceKind.AUTONOMOUS_CORROBORATION.value
     for ep_id in supporting_episodes:
         evidence_id = new_id(IdKind.THEORY_EVIDENCE)
         conn.execute(
             """INSERT INTO theory_evidence
                (id, workspace_id, theory_id, kind, summary,
                 source_episode_id, confidence, observed_at, created_at)
-               VALUES (?, ?, ?, 'autonomous_corroboration',
+               VALUES (?, ?, ?, ?,
                        'token-overlap match in episode corpus',
                        ?, ?, ?, ?)""",
-            (evidence_id, workspace_id, theory_id, ep_id, confidence, now, now),
+            (evidence_id, workspace_id, theory_id, evidence_kind, ep_id, confidence, now, now),
         )
     # Mark candidate accepted so V1 reject-loop doesn't regenerate.
     from agent_memory_lite.maintenance.candidates_table import (  # noqa: PLC0415

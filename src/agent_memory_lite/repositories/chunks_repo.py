@@ -29,13 +29,38 @@ def _row_optional_str(row: sqlite3.Row, column: str) -> str | None:
     return value if value else None
 
 
+def _coerce_chunk_kind(raw: object) -> ChunkKind:
+    """Convert a raw DB ``kind`` string to the enum, tolerating values
+    the enum does not yet know about.
+
+    The code indexer (v1.4 → v2.1.x) historically inserted bare strings
+    (``'block'``, ``'symbol'``) that were not registered as enum values
+    until later — and once one such row landed, every
+    ``/memory/get_context`` call that gathered it raised ``ValueError``
+    and the route returned HTTP 500. Two defenses now cover that:
+
+    1. ``BLOCK`` / ``SYMBOL`` are first-class enum values (added in
+       the same patch as this helper).
+    2. Any other unknown string a future writer might introduce falls
+       back to ``DOC`` instead of crashing the read path. ``DOC`` is
+       the safest default because the brief / context renderer treats
+       it as plain prose text — degraded ranking, never wrong output.
+    """
+    if isinstance(raw, ChunkKind):
+        return raw
+    try:
+        return ChunkKind(str(raw))
+    except ValueError:
+        return ChunkKind.DOC
+
+
 def _row_to_chunk(row: sqlite3.Row) -> Chunk:
     return Chunk(
         id=row["id"],
         workspace_id=row["workspace_id"],
         file_id=row["file_id"],
         episode_id=row["episode_id"],
-        kind=ChunkKind(row["kind"]),
+        kind=_coerce_chunk_kind(row["kind"]),
         text=row["text"],
         summary=row["summary"],
         label=_row_label(row),

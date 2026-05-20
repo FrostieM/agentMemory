@@ -36,6 +36,15 @@ class ChunkKind(StrEnum):
     DOC = "doc"
     LOG = "log"
     SUMMARY = "summary"
+    # v1.4 → v2.1.x code-memory tools: the language-aware code indexer
+    # writes both whole-block chunks (function/class body) AND single-
+    # symbol chunks (just the name + signature line). These existed as
+    # bare strings in the chunks table for many releases before being
+    # registered as enum values; until then every ``_row_to_chunk``
+    # call on a real-code workspace raised ``ValueError`` and the
+    # whole ``/memory/get_context`` route returned HTTP 500.
+    BLOCK = "block"
+    SYMBOL = "symbol"
 
 
 class DecisionStatus(StrEnum):
@@ -65,6 +74,19 @@ class TheoryEvidenceKind(StrEnum):
     MIXED = "mixed"
     NEUTRAL = "neutral"
     EXPERIMENT = "experiment"
+    # v3.4 #1: autonomous_loop emits this when token-overlap evidence
+    # corroborates a V1 candidate. Logically a "supporting" sub-kind
+    # but kept distinct so the operator can filter agent-derived
+    # evidence from human/experiment-derived evidence in the UI and
+    # in hygiene audits. The autonomous_loop bypassed the
+    # ``add_theory_evidence`` repo helper and wrote the raw string
+    # before this enum value existed, which caused every
+    # ``/memory/get_context`` call to crash with 500 the moment a
+    # theory carrying this evidence was gathered. Adding it as a
+    # first-class enum value makes existing rows round-trip; see also
+    # the defensive fallback in ``repositories/theories_search.py:
+    # row_to_evidence`` for future unknown kinds.
+    AUTONOMOUS_CORROBORATION = "autonomous_corroboration"
 
 
 class ExperimentStatus(StrEnum):
