@@ -11,6 +11,34 @@ behavioural change.
 
 ## 3.4.0 — 2026-05-20 (multi-minor roll-up: brain loops + drift safety + observability)
 
+### MemBench v2 — cross-project retrieval comparison
+
+`scripts/membench_external.py` runs a BEIR task (default `SciFact`)
+through our embedding model via `mteb` + `sentence-transformers` and
+prints our number next to the published MTEB leaderboard. First live
+run, 2026-05-20:
+
+| System | NDCG@10 (BEIR SciFact) |
+|---|---|
+| **Our deployment (`intfloat/multilingual-e5-small`)** | **0.6694** |
+| Published `e5-small` baseline | 0.68 (delta -0.011, within run variance) |
+| BM25 lexical baseline | 0.67 |
+| OpenAI `text-embedding-ada-002` | 0.72 |
+| Cohere `embed-multilingual-v3.0` | 0.74 |
+| `nomic-embed-text-v1` | 0.73 |
+
+Our embedding is configured correctly (matches published number for
+this model). The 5-7 NDCG@10 gap to ada/Cohere/nomic is the price of
+the local-only constraint: e5-small is 118M params vs 350M-1B for the
+commercial models. Trade-off is portable + zero-cost, accepted.
+
+To run this benchmark: `pip install mteb` then
+`python scripts/membench_external.py --task SciFact`.
+Dataset (5MB) auto-downloads to `~/.cache/mteb/` on first run.
+CPU runtime ~5-10 min. Result lands in `--save` JSON for tracking.
+
+
+
 Catches the version string up to where the code has actually been
 since 3.0.0. The intermediate v3.1 / v3.2 / v3.3 milestones (Vectors
 1–6, UX hardening, adaptive-memory polish) all shipped on disk but
