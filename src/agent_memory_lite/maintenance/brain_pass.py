@@ -71,6 +71,9 @@ class BrainPassReport:
     # v3.3 Vector 5 LR: per-pass training outcome.
     predictive_lr_trained: bool = False
     predictive_lr_samples: int = 0
+    # v3.4 drift sentinel telemetry.
+    drift_findings: list[str] = field(default_factory=list)
+    drift_resolved: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -98,6 +101,8 @@ class BrainPassReport:
             "causal_did_links_emitted": self.causal_did_links_emitted,
             "predictive_lr_trained": self.predictive_lr_trained,
             "predictive_lr_samples": self.predictive_lr_samples,
+            "drift_findings": list(self.drift_findings),
+            "drift_resolved": list(self.drift_resolved),
             "errors": list(self.errors),
         }
 
@@ -390,9 +395,7 @@ def _step_predictive_lr_train(
         report.errors.append(f"predictive_lr:{exc}")
 
 
-def _step_causal_did(
-    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
-) -> None:
+def _step_causal_did(conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport) -> None:
     """v3.3 Vector 4 method (a): mine DiD causal links from
     supersede pairs. Failure-soft on missing schema."""
     try:
@@ -408,6 +411,29 @@ def _step_causal_did(
         report.causal_did_links_emitted = result.links_emitted
     except (sqlite3.Error, ImportError) as exc:
         report.errors.append(f"causal_did:{exc}")
+
+
+def _step_drift_sentinel(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.4 drift sentinel: detect FK / FTS / vector coverage gaps
+    and emit maintenance_events. Resolves stale findings when the
+    underlying metrics clear. Failure-soft."""
+    try:
+        from agent_memory_lite.maintenance.drift_sentinel import (  # noqa: PLC0415
+            detect_drift,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return
+        result = detect_drift(conn, workspace_id=workspace_id)
+        report.drift_findings = list(result.findings)
+        report.drift_resolved = list(result.resolved)
+        if result.errors:
+            report.errors.extend(f"drift:{e}" for e in result.errors)
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"drift:{exc}")
 
 
 def _step_behavior_auto_archive(
@@ -455,6 +481,7 @@ def run_brain_pass(
     _step_predictive_failure(conn, workspace_id, report)
     _step_causal_did(conn, workspace_id, report)
     _step_predictive_lr_train(conn, workspace_id, started, report)
+    _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     try:
         conn.commit()
