@@ -9,6 +9,95 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.4.0 — 2026-05-20 (multi-minor roll-up: brain loops + drift safety + observability)
+
+Catches the version string up to where the code has actually been
+since 3.0.0. The intermediate v3.1 / v3.2 / v3.3 milestones (Vectors
+1–6, UX hardening, adaptive-memory polish) all shipped on disk but
+never bumped ``pyproject.toml`` / ``src/agent_memory_lite/version.py``
+— ``/health`` was still reporting ``3.1.0`` while features past v3.4
+were already running. This release closes that gap and rolls in the
+v3.4 batch that landed in the 2026-05-20 session.
+
+### v3.4 — what landed this session
+
+**v3.4 #1 — autonomous_loop discipline.** ``_promote_to_theory`` in
+``src/agent_memory_lite/cognition/autonomous_loop.py`` now synthesizes
+two falsifiable predictions and two measurable validation_criteria
+from the V1 proposal body before INSERT, and the SQL writes
+``validation_criteria_json`` (previously missing from the column
+list). Closes the audit gap that flagged every autonomously promoted
+theory as ``undisciplined_active_theories``.
+
+**v3.4 — drift_sentinel ``dangling_capability_links``.** Fourth
+detector alongside fk_violations / fts_coverage / vector_coverage.
+LEFT-JOINs ``capability_links`` against ``agent_roles`` /
+``agent_skills`` / ``agent_playbooks``; emits
+``memory_drift_capability_links`` the same brain_pass tick a
+capability gets deleted, instead of waiting for the operator-run
+audit window (which on 2026-05-20 missed 16 dangling rows for 10
+days). Closes theory ``th_6bbb2cf024961a0f``.
+
+**v3.4 #6 — hygiene action queue (full stack).** Operator-side
+triage lifecycle on ``maintenance_events``: new ``action_status``
+(open / claimed / dismissed / resolved) orthogonal to substrate
+status, ``assigned_to`` / ``action_notes`` / ``claimed_at`` /
+``dismissed_at`` columns (migration 0036 + 0037 backfill). Two new
+HTTP routes (``/memory/claim_maintenance_event`` and
+``/memory/dismiss_maintenance_event``), extended list filter
+``action_statuses``. New ``/ui/queue`` page with claim / resolve /
+dismiss buttons, filter selects (action_status / kind / severity),
+nav link wired into all 8 sister UI pages. Opt-in Playwright
+browser smoke (``MEMORY_QUEUE_E2E_URL``).
+
+**v3.4 #7 — V4 method (b) Granger lead-lag causality.** Third
+source for the causal_links table alongside DiD on supersedes
+(``causal_did``, v3.3) and embedding similarity (``causal_embedding``,
+v3.1). Builds per-day activity vectors from
+``memory_usage_feedback`` over a 30-day window; for each ordered
+pair (X, Y) with ≥3 non-zero buckets each, computes the lead-lag
+gap ``|corr(X_{t-1}, Y_t)| - |corr(Y_{t-1}, Y_t)|`` and emits
+``causal_link(relation='granger_caused', weight=|r_xy_lag|)`` when
+the gap clears the threshold and the correlation is positive.
+Pure-stdlib ``statistics.correlation`` — no statsmodels / numpy.
+
+**v3.4 #8 — V5 LR sees audit_log churn.** Three new feature slots
+appended to the V5 SGD-LR feature vector: workspace ``velocity``
+(audit rows per day, normalized), ``edit_share`` (fraction of those
+rows in the mutation set), ``agent_diversity`` (distinct agent_ids).
+Computed AS OF each historical sample's ``created_at`` for
+leakage-safe training. Model version bumped lr_v1 → lr_v2;
+``audit_dim`` field on the saved model so predict can match. Live
+training on agent-memory-lite produces non-zero audit-slot weights
+(``-0.55 / -0.01 / -0.81``) — SGD finds real signal in churn.
+
+**setup_agent.py --doctor.** Read-only scan of every workspace in
+``~/.agent_memory/workspaces.json``: missing paths, deprecated
+hook scripts in ``settings.local.json`` (the exact pattern that
+silently killed copyBot's memory brief for ~2.5h on 2026-05-20 via
+an ``inject_memory_context.py`` override), pending DB migrations,
+MCP workspace_id mismatches, missing pretooluse enforcement rules.
+Exit 0 healthy / 1 warnings / 2 critical; ``--json`` for CI piping.
+
+**``db.migrations.apply_migrations`` bug fix.** The function
+inserted rows into ``schema_migrations`` without ``conn.commit()``,
+so migrations rolled back at the next connection close. Caught by
+the new doctor — it flagged 0037 as still pending after two apply
+runs. The fix adds an explicit commit; every workspace registered
+in ``workspaces.json`` should now have its migrations stick.
+
+### Earlier 3.x milestones (functionally present since 2026-05-19)
+
+* **v3.1** — research vectors. Heuristic experiment proposal,
+  adaptive retrieval, blindspot detection, predictive failure,
+  embedding-based causality, inter-agent negotiation, cross-encoder
+  reranker. Tasks #19–#46 in the project task tracker.
+* **v3.2** — UX hardening from live audit. Tasks #51–#56.
+* **v3.3** — adaptive memory push to 8.33/10 average. Tasks #57–#62
+  (V1 min-evidence gate, V4 DiD multi-method, V5 LR with stdlib SGD,
+  V6 disputes lifecycle, V2 transfer-learning bootstrap, V3 workspace
+  stopword learning).
+
 ## 3.0.0 — 2026-05-19 (agent UX follow-ups)
 
 Version-files alignment with the existing ``v3.0.0`` git tag
