@@ -71,12 +71,16 @@ def test_active_memory_respects_disabled_flags(
 
 
 def test_active_memory_counts_open_proposals(conn: sqlite3.Connection) -> None:
-    """A seeded insight in the conf window produces a proposal in the count."""
-    conn.execute(
-        "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
-        "VALUES ('ep_a', 'ws', 'agent_action', 'fixture', "
-        "'2026-05-19T00:00:00+00:00')",
-    )
+    """A seeded insight in the conf window produces a proposal in the count.
+
+    v3.3: the min-evidence gate (default 3) drops thin-signal insights,
+    so seed 3 distinct episodes to clear the threshold."""
+    for ep_id in ("ep_a", "ep_b", "ep_c"):
+        conn.execute(
+            "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
+            "VALUES (?, 'ws', 'agent_action', 'fixture', '2026-05-19T00:00:00+00:00')",
+            (ep_id,),
+        )
     conn.execute(
         """INSERT INTO insights
            (id, workspace_id, insight_type, summary, gist, proposed_action,
@@ -84,7 +88,7 @@ def test_active_memory_counts_open_proposals(conn: sqlite3.Connection) -> None:
             status, tags_json, created_at, updated_at)
            VALUES ('ins_a', 'ws', 'lesson', 'a long body for the proposal',
                    'a long body for the proposal', NULL, NULL, NULL,
-                   '["ep_a"]', 0.55, 'candidate', '[]',
+                   '["ep_a", "ep_b", "ep_c"]', 0.55, 'candidate', '[]',
                    '2026-05-19T00:00:00+00:00',
                    '2026-05-19T00:00:00+00:00')"""
     )
