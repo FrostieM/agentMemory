@@ -27,6 +27,7 @@ from agent_memory_lite.ingestion.file_post_chunk import (
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.files import FileRecord
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.repositories.files_repo import get_file_by_path, upsert_file_row
@@ -72,6 +73,15 @@ def ingest_file(
         )
 
     file_id = existing.id if existing is not None else new_id(IdKind.FILE)
+    # v3.5 audit-followup: secret leakage fix. /memory/ingest_file
+    # stamps trust_level=UNTRUSTED_DOC and writes file contents straight
+    # into chunks.text + chunks_fts. A file containing API keys,
+    # ``.env``-style assignments, or JWTs would have landed in plaintext.
+    # Redact the body BEFORE chunking so secrets never reach the chunker.
+    # The content_hash is computed on the original bytes (already done
+    # above) so idempotency is preserved.
+    redacted = redact(content)
+    content = redacted.text
     chunk_records = chunk_for_kind(content, language=language)
     kind = chunk_kind_for(language)
     with with_tx(conn):

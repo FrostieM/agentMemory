@@ -15,6 +15,7 @@ from agent_memory_lite.models.enums import (
     MaintenanceActionStatus,
     MaintenanceEventStatus,
     MaintenanceSeverity,
+    coerce_enum,
 )
 from agent_memory_lite.models.maintenance import MaintenanceEvent
 
@@ -35,7 +36,11 @@ def _action_status(row: sqlite3.Row) -> MaintenanceActionStatus:
         raw = row["action_status"]
     except (IndexError, KeyError):
         return MaintenanceActionStatus.OPEN
-    return MaintenanceActionStatus(raw) if raw else MaintenanceActionStatus.OPEN
+    if not raw:
+        return MaintenanceActionStatus.OPEN
+    # v3.5 audit-followup: drift-tolerant — unknown value degrades to OPEN
+    # so the queue page never 500s on a stray status string.
+    return coerce_enum(MaintenanceActionStatus, raw, MaintenanceActionStatus.OPEN)
 
 
 def _opt_col(row: sqlite3.Row, name: str) -> str | None:
@@ -49,12 +54,15 @@ def _opt_col(row: sqlite3.Row, name: str) -> str | None:
 
 
 def row_to_event(row: sqlite3.Row) -> MaintenanceEvent:
+    # v3.5 audit-followup: tolerate unknown severity / status strings so
+    # /ui/queue + /health + hygiene reports degrade gracefully instead
+    # of 500ing the whole route on a single rogue row.
     return MaintenanceEvent(
         id=row["id"],
         workspace_id=row["workspace_id"],
         kind=row["kind"],
-        severity=MaintenanceSeverity(row["severity"]),
-        status=MaintenanceEventStatus(row["status"]),
+        severity=coerce_enum(MaintenanceSeverity, row["severity"], MaintenanceSeverity.WARNING),
+        status=coerce_enum(MaintenanceEventStatus, row["status"], MaintenanceEventStatus.OPEN),
         summary=row["summary"],
         details=_json_dict(row["details_json"]),
         source_episode_id=row["source_episode_id"],

@@ -87,7 +87,23 @@ def insert_theory_row(
     )
 
 
-def archive_theory(conn: sqlite3.Connection, *, theory_id: str, updated_at: str) -> None:
+def archive_theory(
+    conn: sqlite3.Connection,
+    *,
+    theory_id: str,
+    updated_at: str,
+    workspace_id: str | None = None,
+) -> None:
+    # v3.5 audit-followup: same hub-mode defense-in-depth pattern as
+    # ``close_decision`` — filter by workspace_id when the caller has it
+    # so an id collision cannot mutate a foreign workspace's row.
+    if workspace_id is not None:
+        conn.execute(
+            "UPDATE theories SET status = 'superseded', updated_at = ? "
+            "WHERE id = ? AND workspace_id = ?",
+            (updated_at, theory_id, workspace_id),
+        )
+        return
     conn.execute(
         "UPDATE theories SET status = 'superseded', updated_at = ? WHERE id = ?",
         (updated_at, theory_id),

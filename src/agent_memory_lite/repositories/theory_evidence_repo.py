@@ -31,13 +31,19 @@ def insert_theory_evidence_row(
     observed_at: str,
     created_at: str,
 ) -> None:
+    # v3.5 audit-followup: dict-keyed lookup KeyError'd on
+    # AUTONOMOUS_CORROBORATION before this entry was added — the
+    # autonomous loop emits that kind on every promotion. ``.get()``
+    # with a 0.0 default makes the function safe against any future
+    # enum value added by the same pattern.
     strength_delta = {
         TheoryEvidenceKind.SUPPORTING: confidence,
         TheoryEvidenceKind.REFUTING: -confidence,
         TheoryEvidenceKind.MIXED: -0.5 * confidence,
         TheoryEvidenceKind.NEUTRAL: 0.0,
         TheoryEvidenceKind.EXPERIMENT: 0.0,
-    }[kind]
+        TheoryEvidenceKind.AUTONOMOUS_CORROBORATION: 0.5 * confidence,
+    }.get(kind, 0.0)
     conn.execute(
         """
         INSERT INTO theory_evidence (
@@ -66,7 +72,10 @@ def insert_theory_evidence_row(
             evidence_count = evidence_count + 1,
             evidence_strength = evidence_strength + ?,
             last_tested_at = CASE
-                WHEN ? IN ('supporting', 'refuting', 'mixed', 'experiment') THEN ?
+                WHEN ? IN (
+                    'supporting', 'refuting', 'mixed', 'experiment',
+                    'autonomous_corroboration'
+                ) THEN ?
                 ELSE last_tested_at
             END
         WHERE id = ?

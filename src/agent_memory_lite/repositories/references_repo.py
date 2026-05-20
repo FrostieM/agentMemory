@@ -20,12 +20,18 @@ from dataclasses import dataclass
 # Per-table list of columns that may contain ad-hoc id references in
 # text. Order matches priority in the response: ids show up earliest
 # in the sources that matter most.
+# v3.5 audit-followup: column names corrected to the actual schema.
+# The audit caught ``tags`` and ``metadata`` here — those are stored as
+# ``tags_json`` and ``metadata_json``. The wrong names raised
+# ``sqlite3.DatabaseError``, which the per-table try/except below
+# swallows silently, so what_references was returning incomplete
+# results (theories + snapshots) without any error to the operator.
 _REFERENCE_TABLES: list[tuple[str, str, list[str]]] = [
     ("decisions", "decision", ["title", "decision_text", "rationale", "supersedes_decision_id"]),
-    ("theories", "theory", ["title", "claim", "mechanism", "experiment_plan", "tags"]),
+    ("theories", "theory", ["title", "claim", "mechanism", "experiment_plan", "tags_json"]),
     ("research_insights", "insight", ["summary", "proposed_action", "target_id"]),
     ("research_experiments", "experiment", ["title", "hypothesis", "theory_id", "snapshot_id"]),
-    ("memory_snapshots", "snapshot", ["snapshot_key", "title", "metadata"]),
+    ("memory_snapshots", "snapshot", ["snapshot_key", "title", "metadata_json"]),
     ("chunks", "chunk", ["text", "summary"]),
     ("episodes", "episode", ["raw_text"]),
     ("behavior_instructions", "behavior_instruction", ["name", "rule", "rationale"]),

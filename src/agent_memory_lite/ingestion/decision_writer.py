@@ -58,6 +58,7 @@ def write_decision(
                 conn,
                 decision_id=payload.supersedes_decision_id,
                 valid_to=timestamp,
+                workspace_id=payload.workspace_id,
             )
         insert_decision_row(
             conn,

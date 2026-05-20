@@ -15,19 +15,31 @@ from agent_memory_lite.models.enums import (
     CapabilityLinkRelation,
     CapabilityLinkTargetType,
     CapabilityType,
+    coerce_enum,
 )
 
 
 def _row_to_link(row: sqlite3.Row) -> CapabilityLink:
+    # v3.5 audit-followup: three drift sites in one parser. Capability
+    # links enrich list_decisions / list_theories on every brief and
+    # envelope; an unknown relation / target_type / capability_type would
+    # 500 the entire route. Fallbacks: DECISION (most common target),
+    # SKILL (most common capability), METHOD (the generic relation).
     return CapabilityLink(
         id=row["id"],
         workspace_id=row["workspace_id"],
-        target_type=CapabilityLinkTargetType(row["target_type"]),
+        target_type=coerce_enum(
+            CapabilityLinkTargetType,
+            row["target_type"],
+            CapabilityLinkTargetType.DECISION,
+        ),
         target_id=row["target_id"],
-        capability_type=CapabilityType(row["capability_type"]),
+        capability_type=coerce_enum(CapabilityType, row["capability_type"], CapabilityType.SKILL),
         capability_id=row["capability_id"],
         capability_name=row["capability_name"],
-        relation=CapabilityLinkRelation(row["relation"]),
+        relation=coerce_enum(
+            CapabilityLinkRelation, row["relation"], CapabilityLinkRelation.METHOD
+        ),
         rationale=row["rationale"],
         strength=float(row["strength"]),
         source_episode_id=row["source_episode_id"],

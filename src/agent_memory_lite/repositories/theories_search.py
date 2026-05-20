@@ -50,7 +50,10 @@ def row_to_theory(row: sqlite3.Row) -> Theory:
         experiment_plan=row["experiment_plan"],
         dependent_decision_ids=_json_list(row["dependent_decision_ids_json"]),
         tags=_json_list(row["tags_json"]),
-        status=TheoryStatus(row["status"]),
+        # v3.5 audit-followup: same drift-tolerance pattern as evidence kind.
+        # An unknown future status (or pre-v3 'archived' before the enum
+        # caught up) must not 500 every /memory/get_context call.
+        status=coerce_enum(TheoryStatus, row["status"], TheoryStatus.PROPOSED),
         supersedes_theory_id=row["supersedes_theory_id"],
         source_episode_id=row["source_episode_id"],
         confidence=float(row["confidence"]),

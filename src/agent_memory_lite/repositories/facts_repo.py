@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from agent_memory_lite.models.enums import TrustLevel
+from agent_memory_lite.models.enums import TrustLevel, coerce_enum
 from agent_memory_lite.models.facts import Fact
 
 
 def _row_to_fact(row: sqlite3.Row) -> Fact:
+    # v3.5 audit-followup: drift-tolerant TrustLevel for the same reason
+    # the other row→model parsers got it — a future writer that stamps an
+    # unregistered value must not 500 every /memory/get_context call.
     return Fact(
         id=row["id"],
         workspace_id=row["workspace_id"],
@@ -21,7 +24,7 @@ def _row_to_fact(row: sqlite3.Row) -> Fact:
         source_episode_id=row["source_episode_id"],
         confidence=float(row["confidence"]),
         importance=float(row["importance"]),
-        trust_level=TrustLevel(row["trust_level"]),
+        trust_level=coerce_enum(TrustLevel, row["trust_level"], TrustLevel.UNKNOWN),
         observed_at=row["observed_at"],
         valid_from=row["valid_from"],
         valid_to=row["valid_to"],

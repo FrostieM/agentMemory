@@ -12,7 +12,7 @@ import json
 import sqlite3
 
 from agent_memory_lite.models.decisions import Decision
-from agent_memory_lite.models.enums import DecisionStatus
+from agent_memory_lite.models.enums import DecisionStatus, coerce_enum
 
 
 def parse_references(row: sqlite3.Row) -> list[str]:
@@ -57,7 +57,10 @@ def row_to_decision(row: sqlite3.Row) -> Decision:
         title=row["title"],
         decision_text=row["decision_text"],
         rationale=row["rationale"],
-        status=DecisionStatus(row["status"]),
+        # v3.5 audit-followup: tolerate unknown future status strings so
+        # the read path degrades to ACTIVE instead of crashing every
+        # /memory/get_context (same pattern as evidence-kind / chunk-kind).
+        status=coerce_enum(DecisionStatus, row["status"], DecisionStatus.ACTIVE),
         supersedes_decision_id=row["supersedes_decision_id"],
         source_episode_id=row["source_episode_id"],
         confidence=float(row["confidence"]),

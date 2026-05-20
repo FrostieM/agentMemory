@@ -17,6 +17,7 @@ from agent_memory_lite.models.enums import (
     BehaviorInstructionKind,
     BehaviorInstructionPriority,
     BehaviorInstructionScope,
+    coerce_enum,
 )
 from agent_memory_lite.utils.time import now, parse_iso
 
@@ -58,17 +59,33 @@ def tokens_from(query: str | None) -> list[str]:
 
 
 def row_to_instruction(row: sqlite3.Row) -> BehaviorInstruction:
+    # v3.5 audit-followup: four drift sites in one parser. Behavior
+    # instructions ride every envelope; an unknown future kind/scope/
+    # priority/conflict_policy would 500 the brief + get_context. The
+    # PRIORITY_WEIGHT / SCOPE_WEIGHT dicts below also KeyError on a
+    # value missing from the const map, so the safe fallback must be
+    # a member that IS in those dicts (SUGGESTION / GLOBAL).
     return BehaviorInstruction(
         id=row["id"],
         workspace_id=row["workspace_id"],
         name=row["name"],
-        kind=BehaviorInstructionKind(row["kind"]),
-        scope=BehaviorInstructionScope(row["scope"]),
-        priority=BehaviorInstructionPriority(row["priority"]),
+        kind=coerce_enum(
+            BehaviorInstructionKind, row["kind"], BehaviorInstructionKind.OPERATING_RULE
+        ),
+        scope=coerce_enum(BehaviorInstructionScope, row["scope"], BehaviorInstructionScope.GLOBAL),
+        priority=coerce_enum(
+            BehaviorInstructionPriority,
+            row["priority"],
+            BehaviorInstructionPriority.SUGGESTION,
+        ),
         rule=row["rule"],
         rationale=row["rationale"] or "",
         applies_to=_json_list(row["applies_to_json"]),
-        conflict_policy=BehaviorConflictPolicy(row["conflict_policy"]),
+        conflict_policy=coerce_enum(
+            BehaviorConflictPolicy,
+            row["conflict_policy"],
+            BehaviorConflictPolicy.LATEST_WINS,
+        ),
         source_episode_id=row["source_episode_id"],
         source_type=str(_row_value(row, "source_type", "manual") or "manual"),
         source_id=_row_value(row, "source_id"),

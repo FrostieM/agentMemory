@@ -66,6 +66,7 @@ def write_theory(
                 conn,
                 theory_id=payload.supersedes_theory_id,
                 updated_at=timestamp,
+                workspace_id=payload.workspace_id,
             )
         insert_theory_row(
             conn,

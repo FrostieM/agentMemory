@@ -7,7 +7,12 @@ import sqlite3
 from typing import Any
 
 from agent_memory_lite.models.candidates import MemoryCandidate, StoredMemoryCandidate
-from agent_memory_lite.models.enums import MemoryCandidateKind, MemoryCandidateStatus, TrustLevel
+from agent_memory_lite.models.enums import (
+    MemoryCandidateKind,
+    MemoryCandidateStatus,
+    TrustLevel,
+    coerce_enum,
+)
 from agent_memory_lite.repositories.candidates_search import (
     rank_candidate,
     searchable_text,
@@ -29,22 +34,27 @@ def _json_list(raw: str | None) -> list[str]:
 
 
 def _row_to_candidate(row: sqlite3.Row) -> StoredMemoryCandidate:
+    # v3.5 audit-followup: three drift sites in one parser. Vector 1/5
+    # both wrote new kind literals before the enum caught up; if anyone
+    # invents another value, /memory/get_context + /pending_review would
+    # 500 every call. Fallback PROJECT_FACT (generic-bucket) for kind,
+    # UNKNOWN for trust, NEW for status.
     return StoredMemoryCandidate(
         id=row["id"],
         workspace_id=row["workspace_id"],
-        kind=MemoryCandidateKind(row["kind"]),
+        kind=coerce_enum(MemoryCandidateKind, row["kind"], MemoryCandidateKind.PROJECT_FACT),
         subject=row["subject"],
         predicate=row["predicate"],
         object=row["object"],
         evidence=row["evidence"],
         confidence=float(row["confidence"]),
         importance=float(row["importance"]),
-        trust_level=TrustLevel(row["trust_level"]),
+        trust_level=coerce_enum(TrustLevel, row["trust_level"], TrustLevel.UNKNOWN),
         temporal=_json_dict(row["temporal_json"]),
         write_targets=_json_list(row["write_targets_json"]),
         metadata=_json_dict(row["metadata_json"]),
         source_episode_id=row["source_episode_id"],
-        status=MemoryCandidateStatus(row["status"]),
+        status=coerce_enum(MemoryCandidateStatus, row["status"], MemoryCandidateStatus.NEW),
         promoted_target_type=row["promoted_target_type"],
         promoted_target_id=row["promoted_target_id"],
         created_at=row["created_at"],

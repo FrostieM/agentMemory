@@ -91,7 +91,23 @@ def close_decision(
     *,
     decision_id: str,
     valid_to: str,
+    workspace_id: str | None = None,
 ) -> None:
+    # v3.5 audit-followup: ``workspace_id`` filter added as defense-in-
+    # depth so hub-mode operation cannot accidentally close a foreign
+    # workspace's decision via id collision. Decision ids are
+    # cryptographic-shaped (``dec_<hash>``) so collisions are vanishing,
+    # but the filter costs nothing and matches the invariant.
+    if workspace_id is not None:
+        conn.execute(
+            """
+            UPDATE decisions
+            SET status = 'superseded', valid_to = ?, updated_at = ?
+            WHERE id = ? AND workspace_id = ?
+            """,
+            (valid_to, valid_to, decision_id, workspace_id),
+        )
+        return
     conn.execute(
         """
         UPDATE decisions
