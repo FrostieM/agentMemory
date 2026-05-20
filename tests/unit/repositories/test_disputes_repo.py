@@ -103,7 +103,7 @@ def test_resolve_with_invalid_status_raises(conn: sqlite3.Connection) -> None:
         claimant_agent_id="a",
         claim_text="c",
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="new_status must be one of"):
         resolve_dispute(conn, dispute_id=dispute_id, new_status="bogus")
 
 

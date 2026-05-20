@@ -84,9 +84,7 @@ def _seed_insight(
     min-evidence behaviour pass an explicit list."""
     import json as _json  # noqa: PLC0415
 
-    source_ids = (
-        [f"ep_auto_{insight_id}"] if source_episode_ids is None else source_episode_ids
-    )
+    source_ids = [f"ep_auto_{insight_id}"] if source_episode_ids is None else source_episode_ids
     import contextlib  # noqa: PLC0415
 
     for ep_id in source_ids:
@@ -733,9 +731,7 @@ def test_looks_like_generic_llm_noise_catches_ai_agent_opener() -> None:
         "The AI agent's performance improves incrementally when processing"
     )
     assert looks_like_generic_llm_noise("The agent demonstrates superior accuracy")
-    assert looks_like_generic_llm_noise(
-        "HYPOTHESIS: The AI agent exhibits a tendency to..."
-    )
+    assert looks_like_generic_llm_noise("HYPOTHESIS: The AI agent exhibits a tendency to...")
 
 
 def test_looks_like_generic_llm_noise_passes_real_hypothesis() -> None:
