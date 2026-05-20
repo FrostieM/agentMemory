@@ -52,3 +52,11 @@ def conf_window() -> tuple[float, float]:
 
 def emit_limit() -> int:
     return _int_env("MEMORY_EXPERIMENT_PROPOSAL_LIMIT", 3, floor=1)
+
+
+def min_evidence() -> int:
+    """v3.3 roadmap gate: an insight must have at least ``N`` source
+    episodes before V1 generates a proposal from it. Stops the heuristic
+    consolidation pass from turning 1-2 episodes into a polished LLM
+    hypothesis. Default 3 per ``docs/V3_1_BREAKTHROUGH_ROADMAP.md``."""
+    return _int_env("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", 3, floor=1)

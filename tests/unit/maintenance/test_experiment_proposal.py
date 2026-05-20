@@ -23,6 +23,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # don't accidentally hit a dev-box Ollama (the LLM-specific tests
     # set the flag explicitly).
     monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", raising=False)
+    # v3.3 min-evidence gate — relax to 1 for legacy tests that seed
+    # insights without explicit source_episode_ids. The min-evidence
+    # behavior gets its own focused tests further down that re-set
+    # the env to the production default (3).
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", "1")
 
 
 @pytest.fixture
@@ -71,10 +76,17 @@ def _seed_insight(
 ) -> None:
     """Seed an insight. When ``source_episode_ids`` are given, seed the
     matching episode rows so the FK from memory_candidates (added by
-    persist_proposal) resolves."""
+    persist_proposal) resolves.
+
+    v3.3: when caller passes nothing, default to a single auto-named
+    episode so the min-evidence gate (floor=1 in the test fixture)
+    doesn't drop every legacy seed silently. Tests that exercise the
+    min-evidence behaviour pass an explicit list."""
     import json as _json  # noqa: PLC0415
 
-    source_ids = source_episode_ids or []
+    source_ids = (
+        [f"ep_auto_{insight_id}"] if source_episode_ids is None else source_episode_ids
+    )
     import contextlib  # noqa: PLC0415
 
     for ep_id in source_ids:
@@ -631,6 +643,157 @@ def test_workspace_isolation_for_rejected_filter(conn: sqlite3.Connection) -> No
     proposals_b = ep.find_proposal_candidates(conn, workspace_id="ws_b")
     assert "ins_xws" not in {p.insight_id for p in proposals_a}
     assert "ins_xws" in {p.insight_id for p in proposals_b}
+
+
+# ============================================================
+# v3.3 min-evidence gate
+# ============================================================
+
+
+def test_min_evidence_gate_drops_thin_insight(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v3.3: an insight backed by fewer than min_evidence episodes is
+    skipped. Default min_evidence=3 (per roadmap)."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", "3")
+    _seed_insight(
+        conn,
+        insight_id="ins_thin",
+        summary="Hypothesis backed by 1 episode only",
+        confidence=0.55,
+        source_episode_ids=["ep_only"],
+    )
+    out = ep.find_proposal_candidates(conn, workspace_id="ws")
+    assert "ins_thin" not in {p.insight_id for p in out}
+
+
+def test_min_evidence_gate_passes_thick_insight(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Insight with >= min_evidence episodes survives the gate."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", "3")
+    _seed_insight(
+        conn,
+        insight_id="ins_thick",
+        summary="Hypothesis with three pieces of evidence",
+        confidence=0.55,
+        source_episode_ids=["e1", "e2", "e3"],
+    )
+    out = ep.find_proposal_candidates(conn, workspace_id="ws")
+    assert "ins_thick" in {p.insight_id for p in out}
+
+
+def test_min_evidence_default_is_three(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Roadmap default — operator must explicitly lower for testing."""
+    monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", raising=False)
+    from agent_memory_lite.maintenance.experiment_proposal_config import (  # noqa: PLC0415
+        min_evidence,
+    )
+
+    assert min_evidence() == 3
+
+
+def test_min_evidence_floor_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bogus value below floor → fall back to floor=1."""
+    monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", "-5")
+    from agent_memory_lite.maintenance.experiment_proposal_config import (  # noqa: PLC0415
+        min_evidence,
+    )
+
+    assert min_evidence() == 1
+
+
+def test_evidence_count_helper(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The internal counter handles malformed JSON gracefully."""
+    from agent_memory_lite.maintenance import experiment_proposal as mod  # noqa: PLC0415
+
+    assert mod._evidence_count(None) == 0
+    assert mod._evidence_count("") == 0
+    assert mod._evidence_count('["e1", "e2", "e3"]') == 3
+    assert mod._evidence_count('["e1", null, "e2"]') == 2  # nulls don't count
+    assert mod._evidence_count('["e1", {"id": "e2"}, "e3"]') == 2  # dicts don't count
+    assert mod._evidence_count('"not a list"') == 0
+    assert mod._evidence_count("malformed json") == 0
+
+
+# ============================================================
+# v3.3 LLM generic-noise filter
+# ============================================================
+
+
+def test_looks_like_generic_llm_noise_catches_ai_agent_opener() -> None:
+    from agent_memory_lite.maintenance.experiment_proposal_body import (  # noqa: PLC0415
+        looks_like_generic_llm_noise,
+    )
+
+    assert looks_like_generic_llm_noise(
+        "AI agent exhibits bias in decision-making processes when allocating"
+    )
+    assert looks_like_generic_llm_noise(
+        "The AI agent's performance improves incrementally when processing"
+    )
+    assert looks_like_generic_llm_noise("The agent demonstrates superior accuracy")
+    assert looks_like_generic_llm_noise(
+        "HYPOTHESIS: The AI agent exhibits a tendency to..."
+    )
+
+
+def test_looks_like_generic_llm_noise_passes_real_hypothesis() -> None:
+    from agent_memory_lite.maintenance.experiment_proposal_body import (  # noqa: PLC0415
+        looks_like_generic_llm_noise,
+    )
+
+    # Real domain-specific hypotheses start with the substrate, not the actor.
+    assert not looks_like_generic_llm_noise(
+        "Quarter-Kelly bet sizing improves drawdown compared to half-Kelly"
+    )
+    assert not looks_like_generic_llm_noise(
+        "Boot-gate filter rejects param_kind=exit before strategy runs"
+    )
+    assert not looks_like_generic_llm_noise(
+        "Hypothesis: cross-file resolver finds 95% of symbol refs without grep"
+    )
+
+
+def test_looks_like_generic_llm_noise_handles_empty() -> None:
+    from agent_memory_lite.maintenance.experiment_proposal_body import (  # noqa: PLC0415
+        looks_like_generic_llm_noise,
+    )
+
+    assert looks_like_generic_llm_noise("")
+    assert looks_like_generic_llm_noise("   ")
+
+
+def test_try_llm_body_filters_generic_noise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the LLM returns a generic 'AI agent exhibits...' body, the
+    try_llm_body wrapper drops it so the caller falls back to the
+    heuristic body (which at least quotes the source insight)."""
+    from agent_memory_lite.maintenance import experiment_proposal_body as body_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        body_mod,
+        "llm_body_for_insight",
+        lambda **_kw: (
+            "AI agent exhibits bias in decision-making processes when calibrating",
+            "Validation: the agent consistently underperforms across multiple tests",
+        ),
+    )
+    out = body_mod.try_llm_body("ins_x", "kelly sizing maybe improves drawdown", 0.55)
+    assert out is None  # filter dropped the generic body
+
+
+def test_try_llm_body_passes_real_hypothesis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuine domain-specific LLM body passes through unchanged."""
+    from agent_memory_lite.maintenance import experiment_proposal_body as body_mod  # noqa: PLC0415
+
+    good_body = (
+        "Quarter-Kelly bet sizing reduces 95th percentile drawdown by >=30% "
+        "vs half-Kelly across 500 simulated days.",
+        "Validate by replaying 500 days at both fractions and comparing drawdown.",
+    )
+    monkeypatch.setattr(body_mod, "llm_body_for_insight", lambda **_kw: good_body)
+    out = body_mod.try_llm_body("ins_y", "kelly sizing improves drawdown", 0.55)
+    assert out == good_body
 
 
 def test_excluded_helper_failure_soft_no_table(tmp_path: Path) -> None:

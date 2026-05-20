@@ -31,6 +31,7 @@ from agent_memory_lite.maintenance.experiment_proposal_config import (
     conf_window,
     emit_limit,
     is_enabled,
+    min_evidence,
 )
 from agent_memory_lite.maintenance.experiment_proposal_writer import persist_proposal
 
@@ -136,6 +137,27 @@ def _first_source_episode(raw_json: str | None) -> str:
     return ""
 
 
+def _evidence_count(raw_json: str | None) -> int:
+    """Count VALID string entries in ``source_episode_ids_json``.
+
+    v3.3 min-evidence gate: skip proposals from insights backed by
+    fewer than ``MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE`` episodes
+    (default 3, per roadmap). Reuses ``_first_source_episode``'s
+    tolerance for malformed payloads — non-string elements count as 0.
+    """
+    if not raw_json:
+        return 0
+    try:
+        import json as _json  # noqa: PLC0415
+
+        ids = _json.loads(raw_json)
+    except (ValueError, TypeError):
+        return 0
+    if not isinstance(ids, list):
+        return 0
+    return sum(1 for x in ids if isinstance(x, str) and x.strip())
+
+
 def _excluded_insight_ids(conn: sqlite3.Connection, *, workspace_id: str) -> set[str]:
     """Return insight ids whose candidate is already accepted/rejected.
 
@@ -198,6 +220,7 @@ def find_proposal_candidates(
         return []
     cap = limit if limit is not None else emit_limit()
     lo, hi = conf_window()
+    min_ev = min_evidence()
     excluded = _excluded_insight_ids(conn, workspace_id=workspace_id)
     # Vector1-audit H2: do NOT swallow OperationalError here. The
     # ``insights`` table missing is a misconfiguration the operator
@@ -223,15 +246,23 @@ def find_proposal_candidates(
             summary = str(row["gist"] or row["summary"] or "")
             insight_id = str(row["id"])
             confidence = float(row["confidence"] or 0.0)
-            source_episode_id = _first_source_episode(row["source_episode_ids_json"])
+            raw_ids = row["source_episode_ids_json"]
         else:
             insight_id = str(row[0])
             summary = str(row[2] or row[1] or "")
             confidence = float(row[3] or 0.0)
-            source_episode_id = _first_source_episode(row[4] if len(row) > 4 else None)
+            raw_ids = row[4] if len(row) > 4 else None
+        source_episode_id = _first_source_episode(raw_ids)
+        evidence_n = _evidence_count(raw_ids)
         # v3.2 reject-loop termination: drop insights whose candidate
         # was already triaged. Saves LLM call + UI bounce-back.
         if insight_id in excluded:
+            continue
+        # v3.3 min-evidence gate: roadmap requires >=N cluster episodes
+        # before a proposal is allowed to surface. Without this gate,
+        # a 1-2 episode "Recurring theme" gets a polished LLM body that
+        # the operator then rejects — pure noise. Default 3.
+        if evidence_n < min_ev:
             continue
         # Vector1-audit M3: strip + min-length gate to keep
         # whitespace-only summaries out of memory_candidates.
