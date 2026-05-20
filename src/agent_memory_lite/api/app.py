@@ -16,6 +16,7 @@ from agent_memory_lite.api.agent_identity_middleware import AgentIdentityMiddlew
 from agent_memory_lite.api.app_routes import register_all
 from agent_memory_lite.api.auth import install_api_token_guard
 from agent_memory_lite.api.errors import install_handlers
+from agent_memory_lite.api.origin_guard_middleware import OriginGuardMiddleware
 from agent_memory_lite.api.workspace_routing_middleware import WorkspaceRoutingMiddleware
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
@@ -60,6 +61,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     install_handlers(app)
     install_api_token_guard(app, settings)
+    # v3.5 sector-6+7 audit-followup: refuse browser requests whose
+    # Origin / Host header doesn't point at loopback. Defeats DNS-
+    # rebinding + cross-site form-POST attacks against the local
+    # service. curl / httpx / inject hooks pass loopback unchanged.
+    # Operator opts out with MEMORY_ALLOW_REMOTE_ORIGIN=1.
+    app.add_middleware(OriginGuardMiddleware)
     # Hub mode: route /memory/* requests to the workspace_id's own DB
     # automatically when the caller did not pass an explicit
     # X-Memory-DB-Path header. No-op when hub_mode is off, so project

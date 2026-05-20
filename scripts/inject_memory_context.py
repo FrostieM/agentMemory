@@ -64,7 +64,31 @@ with contextlib.suppress(AttributeError, ValueError):
 with contextlib.suppress(AttributeError, ValueError):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
-DEFAULT_BASE = os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765")
+def _validate_base(raw: str) -> str:
+    """v3.5 sector-6+7 audit-followup: same loopback guard as
+    ``inject_memory_brief._validate_base``. Non-loopback URL would
+    redirect every prompt + agent claim to an attacker host."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return raw
+    if os.environ.get("AGENT_MEMORY_ALLOW_REMOTE_BASE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return raw
+    print(
+        f"# inject_memory_context: refusing non-loopback AGENT_MEMORY_BASE={raw!r} "
+        "(set AGENT_MEMORY_ALLOW_REMOTE_BASE=1 to override).",
+        file=sys.stderr,
+    )
+    return "http://127.0.0.1:8765"
+
+
+DEFAULT_BASE = _validate_base(os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765"))
 DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "default")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_INJECT_TOKENS", "1500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_INJECT_TIMEOUT", "30.0"))

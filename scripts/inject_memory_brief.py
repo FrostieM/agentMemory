@@ -57,7 +57,38 @@ with contextlib.suppress(AttributeError, ValueError):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 
-DEFAULT_BASE = os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765")
+def _validate_base(raw: str) -> str:
+    """v3.5 sector-6+7 audit-followup: refuse non-loopback AGENT_MEMORY_BASE.
+
+    Pre-fix: any process that could set the env var redirected every
+    prompt + brief request to an attacker host (response gets injected
+    verbatim into the agent's context). Loopback-only by default keeps
+    the local-only invariant. Operator can opt out with
+    ``AGENT_MEMORY_ALLOW_REMOTE_BASE=1`` for the rare case of an SSH
+    tunnel / explicit reverse proxy.
+    """
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return raw
+    if os.environ.get("AGENT_MEMORY_ALLOW_REMOTE_BASE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return raw
+    print(
+        f"# inject_memory_brief: refusing non-loopback AGENT_MEMORY_BASE={raw!r} "
+        "(set AGENT_MEMORY_ALLOW_REMOTE_BASE=1 to override). "
+        "Falling back to http://127.0.0.1:8765.",
+        file=sys.stderr,
+    )
+    return "http://127.0.0.1:8765"
+
+
+DEFAULT_BASE = _validate_base(os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765"))
 DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_BRIEF_TOKENS", "500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_BRIEF_TIMEOUT", "10.0"))

@@ -9,6 +9,105 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.6.0 — 2026-05-20 (full project audit by AI agents — 8 sectors, 28 fixes, 7 security holes closed)
+
+A round-robin audit by 23 parallel AI agent runs swept the entire
+project in 8 sectors (Storage, Retrieval, Ingestion, API/MCP,
+Cognition, UI, Scripts, Tests). 28 critical/high findings landed
+as fixes in 6 commits over this release, with 60+ new regression
+tests locking the contracts.
+
+### Security (7 holes closed)
+
+- **Path-traversal in ``X-Memory-DB-Path`` / ``-Vector-Path``
+  headers** (sector 4) — previously any local process / DNS-rebind
+  attacker could redirect the service at ANY readable SQLite file
+  on disk. ``api/deps.py`` now validates the override against the
+  registered workspaces allow-list.
+- **Origin / Host guard middleware** (sectors 6-7) — refuses
+  browser POSTs from non-loopback Origin and DNS-rebind Host
+  headers. Local browsers visiting a malicious page could
+  previously trigger ``/memory/promote_candidate`` etc.
+- **AGENT_MEMORY_BASE loopback validation** (sectors 6-7) — the
+  inject hooks now refuse non-loopback URLs so the env var cannot
+  exfiltrate every prompt + brief to an attacker host.
+- **XSS in ``ui/graph.html`` + ``ui/code.html``** (sector 6) —
+  tooltip + table interpolated raw DB-sourced strings into
+  innerHTML.
+- **Secret leakage via file_pipeline + capability_writer +
+  promote_insight_to_behavior** (sectors 1+3) — three write paths
+  bypassed ``redact()``. Capabilities ride every brief; insights
+  promoted to pinned behaviors stayed in every envelope. All now
+  redact before persist.
+- **Trust gate widened** (sector 3) — UNTRUSTED_DOC →
+  decision/correction/bug/fix candidates no longer bypass.
+- **4 new secret patterns**: Stripe live/test keys, basic-auth
+  URLs, GCP service-account marker, generic Bearer tokens.
+- **SQL injection allow-list** on ``date_range_clause`` column
+  parameter (sector 1).
+- **LanceDB workspace_id + vector_id boundary validation** (sector
+  2) — DataFusion filter built via f-string was injection-shaped.
+
+### Reliability (silent crashes closed)
+
+- **Universal ``coerce_enum``** swept 8 enum-bearing parsers
+  (sectors 1+2) — one bad row in DB can no longer 500 the read
+  path (same shape as the v3.4 incident that bricked copyBot for
+  2.5h).
+- **chunks_repo tolerant JSON + float** — corrupt metadata no
+  longer crashes every chunk read.
+- **FTS query try/except** — malformed BM25 syntax no longer
+  escapes to 500.
+- **candidates_vector wrap** — embedder OOM / LanceDB corruption
+  now degrade to FTS-only.
+- **Global Exception handler** (sector 4) — any unhandled
+  exception becomes a typed JSON 500 envelope.
+- **brain_pass step isolation** (sector 5) — broadened from
+  ``(sqlite3.Error, ImportError)`` to ``Exception`` so one bad
+  loop cannot kill the 16 siblings.
+- **integrity_audit per-check try/except** (sector 5) — one bad
+  check no longer aborts the whole audit.
+- **drift_sentinel reopens resolved findings** instead of
+  INSERTing duplicates (sector 5).
+
+### Quality
+
+- **FTS OR→AND** join (sector 2) — multi-token queries no longer
+  devolve to "any-token match"; main contributor to the NDCG=0.67
+  plateau on BEIR SciFact.
+- **LanceDB metric=cosine** (sector 2) — was defaulting to L2,
+  scores were polluted.
+- **Spreading activation hops_seen check** — no exponential
+  blow-up on cycles.
+- **MRR stays at 0.9889** on MemBench through all 6 commits, no
+  regression.
+
+### Data correctness
+
+- **outcome_recompute NULL handling** (sector 5) — distinguishes
+  NULL from 0.0; rows no longer stay NULL forever.
+- **theory_evidence strength_delta** missing
+  AUTONOMOUS_CORROBORATION key — KeyError on every autonomous loop
+  promote.
+- **references_repo column drift** — was returning incomplete
+  what_references results silently.
+- **close_decision + archive_theory** take workspace_id for
+  hub-mode defense.
+- **promotion_bridge** None confidence coercion.
+
+### Scope NOT touched (deferred to next session)
+
+- Concurrency: shared sqlite3.Connection across HTTP+MCP+brain_pass
+  is documented but not refactored.
+- MCP-HTTP parity gaps (response shape, missing fields, SafeText
+  bypass).
+- record_with_evidence atomicity claim.
+- Body size limit DoS guard.
+- Performance N+1 batching in candidates_vector / recall /
+  spreading_activation.
+
+---
+
 ## 3.5.0 — 2026-05-20 (read-path hardening + ranker tuning + pipeline benchmark scaffold)
 
 ### Read-path enum-drift safety net

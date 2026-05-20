@@ -221,12 +221,19 @@
       .attr("stroke", "#0d1117").attr("stroke-width", 1.5)
       .style("cursor", "pointer");
 
+    // v3.5 sector-6 audit-followup: HTML-escape every interpolated
+    // field. Symbol names + file paths come from the DB; a code file
+    // with a crafted symbol name (e.g. ``<img onerror=...>``) would
+    // execute in the operator's browser via the tooltip innerHTML.
+    const escHtml = (s) => String(s ?? "").replace(/[&<>"']/g, ch => (
+      {"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"}[ch]
+    ));
     const tip = $("#tooltip");
     node.on("mouseenter", (e, d) => {
-      tip.innerHTML = `<b>${d.qualified_name}</b><br/>` +
-        `${d.symbol_kind || "?"} · ${d.language || "?"}<br/>` +
-        `<span style="color:#8b949e">${d.file_path || ""}</span><br/>` +
-        `degree: ${d.degree}`;
+      tip.innerHTML = `<b>${escHtml(d.qualified_name)}</b><br/>` +
+        `${escHtml(d.symbol_kind || "?")} · ${escHtml(d.language || "?")}<br/>` +
+        `<span style="color:#8b949e">${escHtml(d.file_path || "")}</span><br/>` +
+        `degree: ${escHtml(d.degree)}`;
       tip.style.display = "block";
       tip.style.left = (e.clientX + 10) + "px";
       tip.style.top = (e.clientY + 10) + "px";

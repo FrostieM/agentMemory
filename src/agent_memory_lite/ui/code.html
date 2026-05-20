@@ -432,7 +432,9 @@ function renderHot(items) {
   const ws = $("#workspaceInput").value;
   tbody.innerHTML = items.map(i => {
     const href = `/ui/graph?workspace_id=${encodeURIComponent(ws)}&center=${encodeURIComponent(i.qualified_name)}`;
-    return `<tr><td class="qn"><a href="${href}" style="color:#ffa657;text-decoration:none;border-bottom:1px dashed var(--line-soft)">${escape(i.qualified_name)}</a></td><td>${i.inbound_calls}</td></tr>`;
+    // v3.5 sector-6 audit-followup: escape i.inbound_calls too —
+    // numeric today, but a backend type drift would inject HTML.
+    return `<tr><td class="qn"><a href="${href}" style="color:#ffa657;text-decoration:none;border-bottom:1px dashed var(--line-soft)">${escape(i.qualified_name)}</a></td><td>${escape(i.inbound_calls)}</td></tr>`;
   }).join("");
 }
 
