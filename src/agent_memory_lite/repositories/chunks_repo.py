@@ -6,7 +6,7 @@ import json
 import sqlite3
 
 from agent_memory_lite.models.chunks import Chunk, ChunkIn
-from agent_memory_lite.models.enums import ChunkKind
+from agent_memory_lite.models.enums import ChunkKind, coerce_enum
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
@@ -30,28 +30,16 @@ def _row_optional_str(row: sqlite3.Row, column: str) -> str | None:
 
 
 def _coerce_chunk_kind(raw: object) -> ChunkKind:
-    """Convert a raw DB ``kind`` string to the enum, tolerating values
-    the enum does not yet know about.
+    """Thin wrapper that pins the safe fallback for chunks.kind.
 
-    The code indexer (v1.4 → v2.1.x) historically inserted bare strings
-    (``'block'``, ``'symbol'``) that were not registered as enum values
-    until later — and once one such row landed, every
-    ``/memory/get_context`` call that gathered it raised ``ValueError``
-    and the route returned HTTP 500. Two defenses now cover that:
-
-    1. ``BLOCK`` / ``SYMBOL`` are first-class enum values (added in
-       the same patch as this helper).
-    2. Any other unknown string a future writer might introduce falls
-       back to ``DOC`` instead of crashing the read path. ``DOC`` is
-       the safest default because the brief / context renderer treats
-       it as plain prose text — degraded ranking, never wrong output.
+    See ``models.enums.coerce_enum`` for the underlying contract and
+    historical context (code-indexer raw-SQL ``'block'`` / ``'symbol'``
+    writes crashed the read path before the enum caught up). ``DOC``
+    is the safest fallback — the brief / context renderer treats it
+    as plain prose text, so an unknown future kind only degrades
+    ranking, never produces wrong output.
     """
-    if isinstance(raw, ChunkKind):
-        return raw
-    try:
-        return ChunkKind(str(raw))
-    except ValueError:
-        return ChunkKind.DOC
+    return coerce_enum(ChunkKind, raw, ChunkKind.DOC)
 
 
 def _row_to_chunk(row: sqlite3.Row) -> Chunk:

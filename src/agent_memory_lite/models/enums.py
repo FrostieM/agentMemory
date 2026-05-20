@@ -1,11 +1,45 @@
 """Domain enums.
 
 All string-valued so they round-trip cleanly through SQLite TEXT columns and JSON.
+
+Drift-tolerant parsing
+======================
+
+Multiple write paths in this codebase bypass the repository helpers
+and INSERT raw enum strings via plain SQL — the autonomous_loop, the
+code indexer, and the consolidation loop are all examples. Once such
+a writer ships a literal that the enum doesn't (yet) know about, the
+naive ``EnumCls(row["col"])`` call inside a row→model parser raises
+``ValueError`` and the whole read path (``/memory/get_context``,
+``/memory/list_*``, the brief) returns HTTP 500 silently.
+
+``coerce_enum`` is the universal safety net: it catches the
+``ValueError``, returns the supplied ``fallback`` member, and lets
+the read path degrade gracefully. Use it from every ``row_to_*``
+parser instead of constructing the enum directly. When a missing
+value turns out to be load-bearing, register it as a first-class
+member in the enum so the UI / hygiene checks can still distinguish
+it from the generic fallback bucket.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
+
+
+def coerce_enum[E: StrEnum](enum_cls: type[E], raw: object, fallback: E) -> E:
+    """Return ``raw`` parsed as ``enum_cls`` or ``fallback`` on any
+    unknown value / type. Never raises.
+
+    Already-an-instance fast path keeps the call cheap when the caller
+    is constructing the model from already-validated input.
+    """
+    if isinstance(raw, enum_cls):
+        return raw
+    try:
+        return enum_cls(str(raw))
+    except ValueError:
+        return fallback
 
 
 class TrustLevel(StrEnum):
@@ -16,6 +50,11 @@ class TrustLevel(StrEnum):
     AGENT_INFERRED = "agent_inferred"
     UNTRUSTED_DOC = "untrusted_doc"
     UNKNOWN = "unknown"
+    # Pre-v3 episodes ingested via the manual ``/memory/ingest_episode``
+    # path historically stamped this value. Keeping it as a first-class
+    # member preserves the round-trip; ``coerce_enum`` is the safety net
+    # if a future writer invents another label.
+    USER_PROVIDED = "user_provided"
 
 
 class EpisodeSource(StrEnum):
@@ -28,6 +67,15 @@ class EpisodeSource(StrEnum):
     FILE_CHANGED = "file_changed"
     SYSTEM = "system"
     SUMMARY = "summary"
+    # Operator-supplied episodes (manual CLI / HTTP POST without a
+    # session_id) land with ``source_type='manual'`` and behaviors written
+    # via ``upsert_behavior_instruction`` flow stamp the same value into
+    # their own provenance column. The episodes table inherited the
+    # literal in older runs before the canonical enum existed; register
+    # it now so ``_row_to_episode`` doesn't have to lean on ``coerce_enum``
+    # for the common case.
+    MANUAL = "manual"
+    USER_PROVIDED = "user_provided"
 
 
 class ChunkKind(StrEnum):
@@ -116,6 +164,10 @@ class InsightType(StrEnum):
     LESSON = "lesson"
     RISK = "risk"
     OPPORTUNITY = "opportunity"
+    # ``cognition/consolidation.py`` writes this label when the reflective
+    # compactor distills a recurring episode pattern. It existed as a
+    # bare string for several releases before the enum caught up.
+    CONSOLIDATION = "consolidation"
 
 
 class InsightStatus(StrEnum):
@@ -123,6 +175,12 @@ class InsightStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     ARCHIVED = "archived"
+    # Many writers ship insights with ``status='candidate'`` — see
+    # ``consolidation.py``, ``promote_insight_to_behavior.py``,
+    # ``brief.py``, ``ui_brain.py``, etc. Logically a synonym of ``NEW``
+    # but recorded as its own state for the review-queue UI to filter
+    # operator-pending candidates from agent-pending NEW rows.
+    CANDIDATE = "candidate"
 
 
 class MemoryCandidateKind(StrEnum):

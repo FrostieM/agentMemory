@@ -13,6 +13,7 @@ from agent_memory_lite.models.enums import (
     InsightStatus,
     InsightType,
     TheoryEvidenceKind,
+    coerce_enum,
 )
 from agent_memory_lite.models.research import (
     DomainConcept,
@@ -97,7 +98,7 @@ def row_to_experiment(row: sqlite3.Row) -> Experiment:
         cohort_definition=row["cohort_definition"],
         success_criteria=json_dict(row["success_criteria_json"]),
         command=row["command"],
-        status=ExperimentStatus(row["status"]),
+        status=coerce_enum(ExperimentStatus, row["status"], ExperimentStatus.PLANNED),
         priority=float(row["priority"]),
         owner=row["owner"],
         due_at=row["due_at"],
@@ -115,7 +116,7 @@ def row_to_result(row: sqlite3.Row) -> ExperimentResult:
         workspace_id=row["workspace_id"],
         experiment_id=row["experiment_id"],
         theory_id=row["theory_id"],
-        kind=TheoryEvidenceKind(row["kind"]),
+        kind=coerce_enum(TheoryEvidenceKind, row["kind"], TheoryEvidenceKind.NEUTRAL),
         summary=row["summary"],
         metrics=json_dict(row["metrics_json"]),
         artifact_path=row["artifact_path"],
@@ -131,7 +132,7 @@ def row_to_concept(row: sqlite3.Row) -> DomainConcept:
         id=row["id"],
         workspace_id=row["workspace_id"],
         name=row["name"],
-        kind=ConceptKind(row["kind"]),
+        kind=coerce_enum(ConceptKind, row["kind"], ConceptKind.TERM),
         definition=row["definition"],
         aliases=json_list(row["aliases_json"]),
         tags=json_list(row["tags_json"]),
@@ -144,17 +145,22 @@ def row_to_concept(row: sqlite3.Row) -> DomainConcept:
 
 
 def row_to_insight(row: sqlite3.Row) -> ResearchInsight:
+    # Insights have historically used both ``status='candidate'`` (operator
+    # review queue) and ``insight_type='consolidation'`` (reflective
+    # compactor output) — both registered as enum members in this patch.
+    # ``coerce_enum`` is the safety net for the next label the consolidation
+    # / promote pipelines invent before the enum catches up.
     return ResearchInsight(
         id=row["id"],
         workspace_id=row["workspace_id"],
-        insight_type=InsightType(row["insight_type"]),
+        insight_type=coerce_enum(InsightType, row["insight_type"], InsightType.LESSON),
         summary=row["summary"],
         proposed_action=row["proposed_action"],
         target_type=row["target_type"],
         target_id=row["target_id"],
         source_episode_ids=json_list(row["source_episode_ids_json"]),
         confidence=float(row["confidence"]),
-        status=InsightStatus(row["status"]),
+        status=coerce_enum(InsightStatus, row["status"], InsightStatus.NEW),
         tags=json_list(row["tags_json"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
+from agent_memory_lite.models.enums import EpisodeSource, TrustLevel, coerce_enum
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
@@ -21,16 +21,19 @@ def _row_label(row: sqlite3.Row) -> str | None:
 
 
 def _row_to_episode(row: sqlite3.Row) -> Episode:
+    # ``coerce_enum`` swallows unknown DB values from pre-v3 writes
+    # (operator-supplied 'manual' / 'user_provided', etc.) so the
+    # read path degrades gracefully instead of returning HTTP 500.
     return Episode(
         id=row["id"],
         workspace_id=row["workspace_id"],
         session_id=row["session_id"],
         task_id=row["task_id"],
-        source_type=EpisodeSource(row["source_type"]),
+        source_type=coerce_enum(EpisodeSource, row["source_type"], EpisodeSource.SYSTEM),
         raw_text=row["raw_text"],
         summary=row["summary"],
         label=_row_label(row),
-        trust_level=TrustLevel(row["trust_level"]),
+        trust_level=coerce_enum(TrustLevel, row["trust_level"], TrustLevel.UNKNOWN),
         importance=float(row["importance"]),
         confidence=float(row["confidence"]),
         created_at=row["created_at"],

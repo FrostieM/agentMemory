@@ -16,6 +16,7 @@ from agent_memory_lite.models.enums import (
     CapabilityLinkTargetType,
     TheoryEvidenceKind,
     TheoryStatus,
+    coerce_enum,
 )
 from agent_memory_lite.models.theories import Theory, TheoryEvidence
 from agent_memory_lite.repositories.capability_links_repo import capability_link_text_by_target
@@ -63,30 +64,16 @@ def row_to_theory(row: sqlite3.Row) -> Theory:
 
 
 def _coerce_evidence_kind(raw: object) -> TheoryEvidenceKind:
-    """Convert a raw DB ``kind`` string into the enum, tolerating
-    unknown values.
+    """Thin wrapper that pins the safe fallback for theory_evidence.
 
-    Historical context: v3.4 ``cognition/autonomous_loop.py`` bypassed
-    the ``add_theory_evidence`` repo helper and INSERTed a literal
-    ``'autonomous_corroboration'`` string before that value existed in
-    ``TheoryEvidenceKind``. Once a single such row landed, every
-    ``/memory/get_context`` that gathered the parent theory raised
-    ``ValueError`` and the route returned HTTP 500.
-
-    Two defenses now cover that class of bug:
-
-    1. The canonical value is registered in the enum so legitimate
-       rows round-trip cleanly.
-    2. This helper falls back to ``NEUTRAL`` for any other unknown
-       string a future raw-SQL writer might introduce, instead of
-       letting the exception escape the read path.
+    See ``models.enums.coerce_enum`` for the underlying contract and
+    the historical context (v3.4 ``autonomous_loop`` bypass that
+    crashed ``/memory/get_context`` with HTTP 500). ``NEUTRAL`` is
+    the safest default — neither supports nor refutes a theory, so
+    the UI / hygiene checks downgrade ranking but don't draw the
+    wrong conclusion about a rogue row.
     """
-    if isinstance(raw, TheoryEvidenceKind):
-        return raw
-    try:
-        return TheoryEvidenceKind(str(raw))
-    except ValueError:
-        return TheoryEvidenceKind.NEUTRAL
+    return coerce_enum(TheoryEvidenceKind, raw, TheoryEvidenceKind.NEUTRAL)
 
 
 def row_to_evidence(row: sqlite3.Row) -> TheoryEvidence:
