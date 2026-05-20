@@ -11,7 +11,11 @@ import json
 import sqlite3
 from typing import Any
 
-from agent_memory_lite.models.enums import MaintenanceEventStatus, MaintenanceSeverity
+from agent_memory_lite.models.enums import (
+    MaintenanceActionStatus,
+    MaintenanceEventStatus,
+    MaintenanceSeverity,
+)
 from agent_memory_lite.models.maintenance import MaintenanceEvent
 from agent_memory_lite.repositories.maintenance_queries import (
     count_open_maintenance_events,
@@ -23,7 +27,9 @@ from agent_memory_lite.repositories.maintenance_queries import (
 # Re-export read-side helpers so existing imports keep working without
 # every call site moving to the new module right away.
 __all__ = [
+    "claim_maintenance_event",
     "count_open_maintenance_events",
+    "dismiss_maintenance_event",
     "insert_maintenance_event_row",
     "list_maintenance_events",
     "list_open_maintenance_events",
@@ -115,13 +121,88 @@ def resolve_maintenance_event(
 ) -> MaintenanceEvent | None:
     if status == MaintenanceEventStatus.OPEN:
         raise ValueError("maintenance event resolution status must be resolved or ignored")
+    # v3.4 #6: keep substrate ``status`` and operator ``action_status`` in
+    # sync on resolve. resolve_maintenance_event is the substrate path
+    # (metric cleared or operator marked done) so the operator state goes
+    # to RESOLVED too. The dedicated claim / dismiss paths only touch
+    # ``action_status`` because the substrate state may still be open.
     conn.execute(
         """
         UPDATE maintenance_events
-        SET status = ?, resolved_at = ?
+        SET status = ?, resolved_at = ?,
+            action_status = ?
         WHERE id = ?
         """,
-        (status.value, resolved_at, event_id),
+        (status.value, resolved_at, MaintenanceActionStatus.RESOLVED.value, event_id),
     )
+    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    return row_to_event(row) if row is not None else None
+
+
+def claim_maintenance_event(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    assigned_to: str,
+    claimed_at: str,
+    action_notes: str | None = None,
+) -> MaintenanceEvent | None:
+    """v3.4 #6 — operator claims an event for triage. Does NOT touch
+    substrate ``status`` (the underlying drift is still real). Idempotent
+    only in the sense that re-claiming bumps ``claimed_at`` and may
+    re-assign; nothing prevents one operator overwriting another's claim
+    because the queue UI shows the assignee in the row chip."""
+    cur = conn.execute(
+        """
+        UPDATE maintenance_events
+        SET action_status = ?,
+            assigned_to = ?,
+            claimed_at = ?,
+            action_notes = COALESCE(?, action_notes)
+        WHERE id = ?
+        """,
+        (
+            MaintenanceActionStatus.CLAIMED.value,
+            assigned_to,
+            claimed_at,
+            action_notes,
+            event_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        return None
+    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    return row_to_event(row) if row is not None else None
+
+
+def dismiss_maintenance_event(
+    conn: sqlite3.Connection,
+    *,
+    event_id: str,
+    dismissed_at: str,
+    action_notes: str | None = None,
+) -> MaintenanceEvent | None:
+    """v3.4 #6 — operator marks the finding non-actionable. Distinct from
+    the substrate IGNORED ``status``: the underlying drift may still be
+    real, the operator just decided this particular ticket is not worth
+    chasing (false positive, duplicate of another open ticket, expected
+    transient, etc.). ``status`` stays as-is."""
+    cur = conn.execute(
+        """
+        UPDATE maintenance_events
+        SET action_status = ?,
+            dismissed_at = ?,
+            action_notes = COALESCE(?, action_notes)
+        WHERE id = ?
+        """,
+        (
+            MaintenanceActionStatus.DISMISSED.value,
+            dismissed_at,
+            action_notes,
+            event_id,
+        ),
+    )
+    if cur.rowcount == 0:
+        return None
     row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
     return row_to_event(row) if row is not None else None

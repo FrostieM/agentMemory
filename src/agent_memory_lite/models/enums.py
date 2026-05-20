@@ -137,6 +137,19 @@ class MaintenanceEventStatus(StrEnum):
     IGNORED = "ignored"
 
 
+class MaintenanceActionStatus(StrEnum):
+    """v3.4 #6 — operator-side triage state. Orthogonal to
+    ``MaintenanceEventStatus``: ``status`` tracks the substrate-level
+    truth (does the drift still exist?), ``action_status`` tracks the
+    operator workflow (is anyone working on this?). The queue page at
+    ``/ui/queue`` filters by this dimension."""
+
+    OPEN = "open"
+    CLAIMED = "claimed"
+    DISMISSED = "dismissed"
+    RESOLVED = "resolved"
+
+
 class MaintenanceSeverity(StrEnum):
     INFO = "info"
     WARNING = "warning"

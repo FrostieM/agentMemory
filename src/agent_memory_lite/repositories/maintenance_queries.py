@@ -11,13 +11,41 @@ import json
 import sqlite3
 from typing import Any
 
-from agent_memory_lite.models.enums import MaintenanceEventStatus, MaintenanceSeverity
+from agent_memory_lite.models.enums import (
+    MaintenanceActionStatus,
+    MaintenanceEventStatus,
+    MaintenanceSeverity,
+)
 from agent_memory_lite.models.maintenance import MaintenanceEvent
 
 
 def _json_dict(raw: str | None) -> dict[str, Any]:
     data = json.loads(raw or "{}")
     return data if isinstance(data, dict) else {}
+
+
+def _action_status(row: sqlite3.Row) -> MaintenanceActionStatus:
+    """Read ``action_status`` from a row that may predate migration 0036.
+
+    On a freshly-migrated DB every column is populated by the ALTER TABLE
+    default ('open'), but a sqlite3.Row from a test fixture or an
+    in-memory DB that never ran the migration would raise IndexError.
+    Defaulting to OPEN keeps the read path resilient."""
+    try:
+        raw = row["action_status"]
+    except (IndexError, KeyError):
+        return MaintenanceActionStatus.OPEN
+    return MaintenanceActionStatus(raw) if raw else MaintenanceActionStatus.OPEN
+
+
+def _opt_col(row: sqlite3.Row, name: str) -> str | None:
+    """Return ``row[name]`` or None when the column doesn't exist
+    (same migration-resilience rationale as ``_action_status``)."""
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return None
+    return None if value is None else str(value)
 
 
 def row_to_event(row: sqlite3.Row) -> MaintenanceEvent:
@@ -34,6 +62,11 @@ def row_to_event(row: sqlite3.Row) -> MaintenanceEvent:
         target_id=row["target_id"],
         created_at=row["created_at"],
         resolved_at=row["resolved_at"],
+        action_status=_action_status(row),
+        assigned_to=_opt_col(row, "assigned_to"),
+        action_notes=_opt_col(row, "action_notes"),
+        claimed_at=_opt_col(row, "claimed_at"),
+        dismissed_at=_opt_col(row, "dismissed_at"),
     )
 
 
@@ -73,14 +106,23 @@ def list_maintenance_events(
     *,
     workspace_id: str,
     statuses: list[MaintenanceEventStatus] | None = None,
+    action_statuses: list[MaintenanceActionStatus] | None = None,
     limit: int = 20,
 ) -> list[MaintenanceEvent]:
+    """List maintenance events filtered by substrate ``status`` and/or
+    operator-triage ``action_status``. v3.4 #6 adds ``action_statuses``
+    so the /ui/queue page can filter by triage state without losing the
+    pre-existing substrate filter."""
     clauses = ["workspace_id = ?"]
     params: list[str | int] = [workspace_id]
     if statuses:
         placeholders = ",".join("?" for _ in statuses)
         clauses.append(f"status IN ({placeholders})")
         params.extend(status.value for status in statuses)
+    if action_statuses:
+        placeholders = ",".join("?" for _ in action_statuses)
+        clauses.append(f"action_status IN ({placeholders})")
+        params.extend(s.value for s in action_statuses)
     params.append(limit)
     rows = conn.execute(
         f"""
