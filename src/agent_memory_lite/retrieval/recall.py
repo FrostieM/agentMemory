@@ -30,6 +30,7 @@ from typing import Any
 
 from agent_memory_lite.retrieval.causal_extractor import list_outgoing
 from agent_memory_lite.retrieval.spreading_activation import (
+    _DEFAULT_CAUSAL_RELATIONS,
     ActivationNode,
     spread,
 )
@@ -118,12 +119,17 @@ def recall(
         seeds.append((hit.kind, item_id, max(0.5, hit.score)))
     if not seeds:
         return []
-    # Step 2: spread activation.
+    # Step 2: spread activation. Opt the spreader into ``causal_links``
+    # so V4's ``semantically_similar_to`` edges actually expand the
+    # recall frontier alongside the Hebbian co-retrieval signal. Pre-
+    # V4 these links were only annotations on Step 3's surfaced rows;
+    # now they drive node discovery too.
     activations: list[ActivationNode] = spread(
         conn,
         workspace_id=workspace_id,
         seeds=seeds,
         max_hops=depth,
+        causal_relations=_DEFAULT_CAUSAL_RELATIONS,
         max_nodes=limit * 4,
     )
     # Combine seeds + spread result so the seed rows are first-class

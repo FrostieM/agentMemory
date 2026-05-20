@@ -35,6 +35,22 @@ _DEFAULT_EDGE_KINDS = (
     "similar_signature",
 )
 
+# v3.1 Vector 4 follow-up: spreading_activation walks causal_links too
+# when a caller opts in via ``causal_relations``. The relation set
+# below is the safe full default for the recall path — it includes the
+# semantic-similarity links emitted by ``retrieval.causal_embedding``
+# (the 190-link layer V4 ships) plus the operator-derived
+# (``derived_from`` / ``supersedes`` / ``invalidated_by`` /
+# ``contradicts``) family, so V4 actually drives recall expansion
+# instead of just annotating the surfaced rows.
+_DEFAULT_CAUSAL_RELATIONS = (
+    "semantically_similar_to",
+    "derived_from",
+    "supersedes",
+    "invalidated_by",
+    "contradicts",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ActivationNode:
@@ -59,7 +75,7 @@ def _split_qualified(qname: str) -> tuple[str, str]:
     return kind, item_id
 
 
-def _neighbors(
+def _neighbors_soft_edges(
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
@@ -67,7 +83,7 @@ def _neighbors(
     edge_kinds: tuple[str, ...],
     min_edge_weight: float,
 ) -> list[tuple[str, float]]:
-    """Return ``(neighbor_qualified_name, edge_weight)`` for one node.
+    """Return ``(neighbor_qualified_name, edge_weight)`` from ``soft_edges``.
 
     Soft edges are undirected in spirit but stored directionally; we
     UNION both endpoints so a seed reaches associates whether it was
@@ -99,13 +115,113 @@ def _neighbors(
     except sqlite3.OperationalError:
         return []
     out: list[tuple[str, float]] = []
-    seen: set[str] = set()
     for row in rows:
-        other = row["other"]
+        out.append((row["other"], float(row["weight"] or 0.0)))
+    return out
+
+
+def _neighbors_causal(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    qname: str,
+    causal_relations: tuple[str, ...],
+    min_edge_weight: float,
+) -> list[tuple[str, float]]:
+    """Return ``(neighbor_qualified_name, edge_weight)`` from ``causal_links``.
+
+    ``causal_links`` stores endpoints as separate ``(kind, id)`` columns
+    rather than the qualified-string form ``soft_edges`` uses, so we
+    rebuild the qualified name via ``kind || ':' || id`` and parse the
+    incoming ``qname`` the same way. Bidirectional UNION mirrors the
+    ``soft_edges`` traversal — outgoing links surface the dst, incoming
+    links surface the src, so V4's ``semantically_similar_to`` rows
+    (which are stored as ``earlier -> later``) are reachable from either
+    endpoint.
+
+    Wrapped in its own try/except so a pre-migration DB that has
+    ``soft_edges`` but not ``causal_links`` keeps spreading on soft
+    edges instead of going dark.
+    """
+    src_kind, src_id = _split_qualified(qname)
+    if not src_kind or not src_id:
+        return []
+    placeholders = ", ".join("?" * len(causal_relations))
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT (dst_kind || ':' || dst_id) AS other, weight
+              FROM causal_links
+             WHERE workspace_id = ? AND src_kind = ? AND src_id = ?
+               AND relation IN ({placeholders}) AND weight >= ?
+            UNION ALL
+            SELECT (src_kind || ':' || src_id) AS other, weight
+              FROM causal_links
+             WHERE workspace_id = ? AND dst_kind = ? AND dst_id = ?
+               AND relation IN ({placeholders}) AND weight >= ?
+            """,
+            (
+                workspace_id,
+                src_kind,
+                src_id,
+                *causal_relations,
+                min_edge_weight,
+                workspace_id,
+                src_kind,
+                src_id,
+                *causal_relations,
+                min_edge_weight,
+            ),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out: list[tuple[str, float]] = []
+    for row in rows:
+        out.append((row["other"], float(row["weight"] or 0.0)))
+    return out
+
+
+def _neighbors(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    qname: str,
+    edge_kinds: tuple[str, ...],
+    min_edge_weight: float,
+    causal_relations: tuple[str, ...] | None = None,
+) -> list[tuple[str, float]]:
+    """Combine ``soft_edges`` and (optional) ``causal_links`` neighbours.
+
+    De-duplicates ``(other, weight)`` pairs but does NOT sum duplicate
+    weights — if the same pair shows up on both substrates, the
+    spread() body still walks each row, so the natural reinforcement
+    from showing up twice falls out of the BFS contribution sum. The
+    dedup here is only to avoid the literal-duplicate row from the
+    bidirectional UNION inside one substrate.
+    """
+    soft = _neighbors_soft_edges(
+        conn,
+        workspace_id=workspace_id,
+        qname=qname,
+        edge_kinds=edge_kinds,
+        min_edge_weight=min_edge_weight,
+    )
+    causal: list[tuple[str, float]] = []
+    if causal_relations:
+        causal = _neighbors_causal(
+            conn,
+            workspace_id=workspace_id,
+            qname=qname,
+            causal_relations=causal_relations,
+            min_edge_weight=min_edge_weight,
+        )
+    out: list[tuple[str, float]] = []
+    seen: set[str] = set()
+    for other, weight in (*soft, *causal):
         if other in seen or other == qname:
             continue
         seen.add(other)
-        out.append((other, float(row["weight"] or 0.0)))
+        out.append((other, weight))
     return out
 
 
@@ -119,6 +235,7 @@ def spread(
     min_edge_weight: float = 0.1,
     min_activation: float = 0.05,
     edge_kinds: tuple[str, ...] | None = None,
+    causal_relations: tuple[str, ...] | None = None,
     max_nodes: int = 64,
 ) -> list[ActivationNode]:
     """BFS activation spread from ``seeds`` to depth ``max_hops``.
@@ -128,6 +245,14 @@ def spread(
     activation desc. The inhibitory cutoff ``min_edge_weight`` matches
     the standard 0.1 floor; ``min_activation`` prunes deep low-impact
     nodes so the result set stays bounded.
+
+    ``causal_relations`` opts the traversal into ``causal_links``
+    alongside ``soft_edges``. Pass ``_DEFAULT_CAUSAL_RELATIONS`` (or a
+    subset) to let V4's ``semantically_similar_to`` rows drive spread
+    expansion in addition to the Hebbian co-retrieval signal. Default
+    ``None`` keeps backwards-compatible behaviour for callers (e.g.
+    the brief's ``_build_associates``) that don't want causal nodes
+    surfacing as cheap one-hop neighbours.
     """
     if not seeds or max_hops <= 0:
         return []
@@ -152,6 +277,7 @@ def spread(
             qname=node,
             edge_kinds=kinds,
             min_edge_weight=min_edge_weight,
+            causal_relations=causal_relations,
         )
         for other, weight in neighbours:
             contribution = current * weight * (decay ** (hops + 1))
