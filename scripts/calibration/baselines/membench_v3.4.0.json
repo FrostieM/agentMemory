@@ -1,0 +1,8 @@
+{
+  "workspace_id": "agent-memory-lite",
+  "queries_evaluated": 45,
+  "mrr": 0.36111111111111127,
+  "recall_at_5": 1.0,
+  "recall_at_10": 1.0,
+  "misses": []
+}
