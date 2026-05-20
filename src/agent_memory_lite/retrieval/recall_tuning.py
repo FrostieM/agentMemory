@@ -14,8 +14,22 @@ to drop noise; high empty-result rate → depth+1, lower floor. Neither
 fires → ``None`` (keep caller default). The recall handler applies
 the hint only when the caller passed no explicit param.
 
+v3.3 transfer-learning bootstrap: when the local workspace has fewer
+than ``min_samples`` rows in the window AND
+``MEMORY_RECALL_TRANSFER_ENABLED=true`` (default), the rollup falls
+back to ``ALL`` workspaces in the same DB. This unblocks cold-start
+workspaces that share a DB with active siblings — most common in
+project-mode where one operator has historic recall data on workspace
+A and just spun up workspace B in the same SQLite. Hub-mode cross-DB
+transfer is a follow-up because it would require iterating over the
+``~/.agent_memory/workspaces.json`` registry; v3.3 ships the
+single-DB case to keep the change surgical.
+
 Settings (all read fresh per call): ``MEMORY_RECALL_TUNING_ENABLED``
-(default true), ``..._WINDOW_HOURS`` (72), ``..._MIN_SAMPLES`` (8).
+(default true), ``..._WINDOW_HOURS`` (72), ``..._MIN_SAMPLES`` (8),
+``MEMORY_RECALL_TRANSFER_ENABLED`` (default true),
+``MEMORY_RECALL_TRANSFER_MIN_SAMPLES`` (default 16 — higher bar than
+own-workspace samples because cross-workspace signal is noisier).
 """
 
 from __future__ import annotations
@@ -50,6 +64,18 @@ def window_hours() -> int:
 
 def min_samples() -> int:
     return _int_env("MEMORY_RECALL_TUNING_MIN_SAMPLES", 8)
+
+
+def is_transfer_enabled() -> bool:
+    """v3.3: default ON. Set ``MEMORY_RECALL_TRANSFER_ENABLED=false``
+    to restore strict per-workspace tuning (no cross-pollination)."""
+    return _bool_env("MEMORY_RECALL_TRANSFER_ENABLED", True)
+
+
+def transfer_min_samples() -> int:
+    """Higher bar than own-workspace samples — cross-workspace signal
+    is mixed-domain so we need more rows to trust the rollup."""
+    return _int_env("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", 16)
 
 
 def _normalize_topic(topic: str) -> str:
@@ -108,23 +134,28 @@ def record_outcome(
 
 
 def _rollup_stats(
-    conn: sqlite3.Connection, *, workspace_id: str
+    conn: sqlite3.Connection, *, workspace_id: str | None
 ) -> tuple[int, float, float] | None:
     """Read recent recall_history and return (n, empty_rate, mean_outcome).
 
-    Returns ``None`` when the table is missing or empty. Splits out the
-    SQL so ``suggest_params`` stays under the return-count linter cap.
+    Pass ``workspace_id=None`` to aggregate across ALL workspaces in
+    the same DB — the v3.3 transfer-learning path. Returns ``None`` when
+    the table is missing or empty.
     """
     cutoff_hours = window_hours()
     cutoff = f"datetime('now', '-{cutoff_hours} hours')"
+    where = "created_at >= " + cutoff
+    params: tuple[str, ...] = ()
+    if workspace_id is not None:
+        where = "workspace_id = ? AND " + where
+        params = (workspace_id,)
     try:
         row = conn.execute(
             f"SELECT COUNT(*) AS n, "
             f"AVG(CASE WHEN hits_count = 0 THEN 1.0 ELSE 0.0 END) AS empty_rate, "
             f"AVG(COALESCE(avg_outcome_x100, 0)) AS mean_outcome_x100 "
-            f"FROM recall_history "
-            f"WHERE workspace_id = ? AND created_at >= {cutoff}",
-            (workspace_id,),
+            f"FROM recall_history WHERE {where}",
+            params,
         ).fetchone()
     except sqlite3.OperationalError:
         return None
@@ -141,32 +172,61 @@ def _rollup_stats(
     return n, empty_rate, mean_outcome_x100 / 100.0
 
 
-def suggest_params(
-    conn: sqlite3.Connection, *, workspace_id: str, base_depth: int, base_floor: float
+def _apply_rules(
+    *, stats: tuple[int, float, float], base_depth: int, base_floor: float, reason_prefix: str
 ) -> RecallSuggestion | None:
-    """Roll up recent recall_history and propose tuned params.
+    """Apply the two heuristic rules to a rollup snapshot.
 
-    Returns ``None`` when (a) tuning disabled, (b) not enough samples,
-    or (c) no rule fires. Caller treats ``None`` as "keep default".
+    Returns ``None`` when no rule fires. ``reason_prefix`` is "" for
+    own-workspace and "transfer:" for the v3.3 fallback path so the
+    operator can grep audit rows by source.
     """
-    if not is_tuning_enabled():
-        return None
-    stats = _rollup_stats(conn, workspace_id=workspace_id)
-    if stats is None:
-        return None
-    n, empty_rate, mean_outcome = stats
-    if n < min_samples():
-        return None
+    _n, empty_rate, mean_outcome = stats
     if empty_rate > 0.4 and base_depth < 3:
         return RecallSuggestion(
             depth=min(3, base_depth + 1),
             outcome_floor=max(-1.0, base_floor - 0.1),
-            reason="increase_depth",
+            reason=f"{reason_prefix}increase_depth",
         )
     if mean_outcome >= 0.3:
         return RecallSuggestion(
             depth=base_depth,
             outcome_floor=min(1.0, base_floor + 0.1),
-            reason="raise_floor",
+            reason=f"{reason_prefix}raise_floor",
         )
     return None
+
+
+def suggest_params(
+    conn: sqlite3.Connection, *, workspace_id: str, base_depth: int, base_floor: float
+) -> RecallSuggestion | None:
+    """Roll up recent recall_history and propose tuned params.
+
+    Two-tier strategy:
+
+    1. Own-workspace rollup over the last ``window_hours``. If
+       ``min_samples`` reached, apply the heuristic rules and return.
+    2. v3.3 transfer fallback: aggregate ALL workspaces in the same
+       DB. If ``transfer_min_samples`` reached AND
+       ``MEMORY_RECALL_TRANSFER_ENABLED=true``, apply the rules with
+       a ``transfer:`` reason prefix so the operator can audit.
+    3. Neither tier qualifies → return ``None`` (caller keeps default).
+    """
+    if not is_tuning_enabled():
+        return None
+    stats = _rollup_stats(conn, workspace_id=workspace_id)
+    if stats is not None and stats[0] >= min_samples():
+        return _apply_rules(
+            stats=stats, base_depth=base_depth, base_floor=base_floor, reason_prefix=""
+        )
+    if not is_transfer_enabled():
+        return None
+    transfer_stats = _rollup_stats(conn, workspace_id=None)
+    if transfer_stats is None or transfer_stats[0] < transfer_min_samples():
+        return None
+    return _apply_rules(
+        stats=transfer_stats,
+        base_depth=base_depth,
+        base_floor=base_floor,
+        reason_prefix="transfer:",
+    )

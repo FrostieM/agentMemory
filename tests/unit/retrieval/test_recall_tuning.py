@@ -18,6 +18,11 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_RECALL_TUNING_ENABLED", raising=False)
     monkeypatch.delenv("MEMORY_RECALL_TUNING_WINDOW_HOURS", raising=False)
     monkeypatch.delenv("MEMORY_RECALL_TUNING_MIN_SAMPLES", raising=False)
+    # v3.3 transfer-learning fallback — disable by default so legacy
+    # tests that assert "below min_samples → None" keep their semantics.
+    # The transfer-specific tests turn it on explicitly.
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "false")
+    monkeypatch.delenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", raising=False)
 
 
 @pytest.fixture
@@ -191,6 +196,101 @@ def test_record_outcome_failure_soft_when_table_missing(tmp_path: Path) -> None:
 def test_env_helpers_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_RECALL_TUNING_WINDOW_HOURS", raising=False)
     monkeypatch.delenv("MEMORY_RECALL_TUNING_MIN_SAMPLES", raising=False)
+    monkeypatch.delenv("MEMORY_RECALL_TRANSFER_ENABLED", raising=False)
+    monkeypatch.delenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", raising=False)
     assert rt.window_hours() == 72
     assert rt.min_samples() == 8
     assert rt.is_tuning_enabled() is True
+    # v3.3 defaults
+    assert rt.is_transfer_enabled() is True
+    assert rt.transfer_min_samples() == 16
+
+
+# ============================================================
+# v3.3 transfer learning bootstrap
+# ============================================================
+
+
+def test_cold_workspace_borrows_from_siblings_in_same_db(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold workspace with <min_samples but siblings have enough →
+    transfer-flavored suggestion fires."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", "10")
+    # ws_cold has just 2 samples — below own-workspace threshold (8).
+    for _ in range(2):
+        _seed(conn, workspace_id="ws_cold", depth=2, floor=0.0, hits=3, outcome=0.5)
+    # ws_warm has 12 samples — clears the transfer-only threshold (10).
+    for _ in range(12):
+        _seed(conn, workspace_id="ws_warm", depth=2, floor=0.0, hits=3, outcome=0.5)
+    out = rt.suggest_params(conn, workspace_id="ws_cold", base_depth=2, base_floor=0.0)
+    assert out is not None
+    assert out.reason.startswith("transfer:")
+    # Strong avg outcome (0.5 >= 0.3 threshold) → raise_floor.
+    assert "raise_floor" in out.reason
+
+
+def test_cold_workspace_no_siblings_returns_none(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No history at all → no transfer suggestion."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", "10")
+    out = rt.suggest_params(conn, workspace_id="ws_cold", base_depth=2, base_floor=0.0)
+    assert out is None
+
+
+def test_transfer_respects_disabled_flag(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When MEMORY_RECALL_TRANSFER_ENABLED=false, cold workspace gets
+    None even if siblings have enough samples."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "false")
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", "10")
+    for _ in range(12):
+        _seed(conn, workspace_id="ws_warm", depth=2, floor=0.0, hits=3, outcome=0.5)
+    out = rt.suggest_params(conn, workspace_id="ws_cold", base_depth=2, base_floor=0.0)
+    assert out is None
+
+
+def test_warm_workspace_prefers_own_data_over_transfer(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the local workspace has >=min_samples, the local rules
+    fire — transfer fallback is NOT consulted (and the reason has no
+    'transfer:' prefix)."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "true")
+    # Local workspace clears own-workspace threshold (default 8).
+    for _ in range(10):
+        _seed(conn, workspace_id="ws_active", depth=2, floor=0.0, hits=3, outcome=0.5)
+    out = rt.suggest_params(conn, workspace_id="ws_active", base_depth=2, base_floor=0.0)
+    assert out is not None
+    assert not out.reason.startswith("transfer:")
+
+
+def test_transfer_threshold_below_floor_returns_none(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Siblings have history but below transfer threshold → None."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", "20")
+    for _ in range(12):  # below the higher transfer threshold
+        _seed(conn, workspace_id="ws_warm", depth=2, floor=0.0, hits=3, outcome=0.5)
+    out = rt.suggest_params(conn, workspace_id="ws_cold", base_depth=2, base_floor=0.0)
+    assert out is None
+
+
+def test_transfer_increase_depth_path(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Transfer rollup with high empty-rate → increase_depth suggestion."""
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_RECALL_TRANSFER_MIN_SAMPLES", "10")
+    # All 12 sibling samples returned 0 hits → empty_rate 1.0 >> 0.4
+    for _ in range(12):
+        _seed(conn, workspace_id="ws_warm", depth=1, floor=0.0, hits=0, outcome=None)
+    out = rt.suggest_params(conn, workspace_id="ws_cold", base_depth=1, base_floor=0.0)
+    assert out is not None
+    assert out.reason == "transfer:increase_depth"
+    assert out.depth == 2
