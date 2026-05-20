@@ -110,11 +110,71 @@ def _header_or_query(request: Request, header_name: str, query_name: str) -> str
     return request.query_params.get(query_name)
 
 
+def _allowed_db_paths(settings: Settings) -> set[Path]:
+    """All physical DB paths the service is willing to honor via
+    ``X-Memory-DB-Path`` override.
+
+    v3.5 sector-4 audit-followup: previously the override accepted any
+    string — a local process (or DNS-rebind attacker) could read any
+    SQLite file on disk by setting the header. The allow-list is
+    derived from (a) the anchor settings.db_path and (b) every
+    workspace registered in the hub registry. Anything else is
+    rejected as ``ValidationError`` BEFORE ``open_connection`` runs.
+    """
+    allowed: set[Path] = {settings.db_path.resolve()}
+    try:
+        from agent_memory_lite.config.workspace_registry import (  # noqa: PLC0415
+            WorkspaceRegistry,
+        )
+
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        for entry in registry.list():
+            try:
+                allowed.add(Path(entry.db_path).resolve())
+            except (OSError, ValueError):
+                continue
+    except Exception:
+        pass
+    return allowed
+
+
+def _allowed_vector_paths(settings: Settings) -> set[Path]:
+    allowed: set[Path] = {settings.vector_db_path.resolve()}
+    try:
+        from agent_memory_lite.config.workspace_registry import (  # noqa: PLC0415
+            WorkspaceRegistry,
+        )
+
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        for entry in registry.list():
+            try:
+                allowed.add(Path(entry.vector_path).resolve())
+            except (OSError, ValueError):
+                continue
+    except Exception:
+        pass
+    return allowed
+
+
 def _resolve_db_path(request: Request, settings: Settings) -> Path:
     override = _header_or_query(request, "x-memory-db-path", "db_path")
-    if override:
-        return Path(override)
-    return settings.db_path
+    if not override:
+        return settings.db_path
+    # v3.5 sector-4 audit-followup: reject overrides that don't match
+    # the registry. Path-traversal + reading /etc/passwd-style files
+    # was previously trivially possible by simply setting the header.
+    try:
+        candidate = Path(override).resolve()
+    except (OSError, ValueError) as exc:
+        raise ValidationError(f"X-Memory-DB-Path is not a valid path: {exc}") from None
+    allowed = _allowed_db_paths(settings)
+    if candidate not in allowed:
+        raise ValidationError(
+            f"X-Memory-DB-Path {override!r} is not in the workspace registry. "
+            "Register the workspace via /memory/workspaces or "
+            "scripts/setup_agent.py before pointing the service at it."
+        )
+    return candidate
 
 
 def get_db_dep(request: Request, settings: SettingsDep) -> Iterator[sqlite3.Connection]:
@@ -147,7 +207,16 @@ def _build_request_scoped_store(settings: Settings, override: str) -> VectorStor
 def get_vector_store_dep(request: Request, settings: SettingsDep) -> VectorStore:
     override = _header_or_query(request, "x-memory-vector-path", "vector_path")
     if override:
-        return _build_request_scoped_store(settings, override)
+        # v3.5 sector-4 audit-followup: same allow-list as DB header.
+        try:
+            candidate = Path(override).resolve()
+        except (OSError, ValueError) as exc:
+            raise ValidationError(f"X-Memory-Vector-Path is not a valid path: {exc}") from None
+        if candidate not in _allowed_vector_paths(settings):
+            raise ValidationError(
+                f"X-Memory-Vector-Path {override!r} is not in the workspace registry."
+            )
+        return _build_request_scoped_store(settings, str(candidate))
     global _vector_store_singleton  # noqa: PLW0603
     if _vector_store_singleton is None:
         _vector_store_singleton = get_vector_store(settings)

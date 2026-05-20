@@ -6,10 +6,13 @@ Problem-style JSON response.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+_LOG = logging.getLogger(__name__)
 
 
 class MemoryServiceError(RuntimeError):
@@ -41,3 +44,27 @@ def install_handlers(app: FastAPI) -> None:
     @app.exception_handler(MemoryServiceError)
     async def _handle_service_error(_request: Request, exc: MemoryServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+
+    # v3.5 sector-4 audit-followup: catch-all so storage / vector /
+    # extraction failures degrade to a typed 500 envelope instead of
+    # FastAPI's bare ``"detail":"Internal Server Error"``. The
+    # original message is logged but NOT returned to the client (the
+    # error string can carry SQL fragments / paths that leak setup
+    # info). Operator-facing diagnostics live in server logs.
+    @app.exception_handler(Exception)
+    async def _handle_unhandled(_request: Request, exc: Exception) -> JSONResponse:
+        _LOG.exception(
+            "Unhandled exception in route — converting to typed 500",
+            exc_info=exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_error",
+                "detail": (
+                    "An unexpected error occurred. Check the service logs for the "
+                    "stack trace. If the error is reproducible, file an issue with "
+                    "the request payload."
+                ),
+            },
+        )

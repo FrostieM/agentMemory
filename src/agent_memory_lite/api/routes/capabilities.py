@@ -17,6 +17,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.errors import ValidationError
 from agent_memory_lite.api.routes.capability_responses import (
     to_playbook_response,
     to_role_response,
@@ -97,7 +98,9 @@ def record_capability_outcome_route(
 ) -> RecordCapabilityOutcomeResponse:
     ensure_workspace_writable(body.workspace_id, settings)
     if body.kind not in SUPPORTED_KINDS:
-        raise ValueError(f"unsupported capability kind: {body.kind!r}")
+        # v3.5 sector-4 audit-followup: raw ValueError escaped as 500.
+        # Convert to typed ValidationError → 400 envelope.
+        raise ValidationError(f"unsupported capability kind: {body.kind!r}")
     updated = record_outcome(
         conn,
         workspace_id=body.workspace_id,
