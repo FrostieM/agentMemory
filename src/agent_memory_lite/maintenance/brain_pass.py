@@ -68,6 +68,9 @@ class BrainPassReport:
     # v3.3 Vector 4 method (a): DiD causal links emitted from supersede pairs.
     causal_did_pairs_scanned: int = 0
     causal_did_links_emitted: int = 0
+    # v3.3 Vector 5 LR: per-pass training outcome.
+    predictive_lr_trained: bool = False
+    predictive_lr_samples: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -93,6 +96,8 @@ class BrainPassReport:
             "behaviors_auto_archived": self.behaviors_auto_archived,
             "causal_did_pairs_scanned": self.causal_did_pairs_scanned,
             "causal_did_links_emitted": self.causal_did_links_emitted,
+            "predictive_lr_trained": self.predictive_lr_trained,
+            "predictive_lr_samples": self.predictive_lr_samples,
             "errors": list(self.errors),
         }
 
@@ -359,6 +364,32 @@ def _step_predictive_failure(
         report.errors.append(f"predictive_failure:{exc}")
 
 
+def _step_predictive_lr_train(
+    conn: sqlite3.Connection, workspace_id: str, now_iso: str, report: BrainPassReport
+) -> None:
+    """v3.3 Vector 5: retrain the LR classifier on accumulated history.
+
+    Cheap when below min_samples (just a COUNT query); SGD-bounded
+    when training. Idempotent: model JSON in workspace_meta is
+    replaced on each successful train.
+    """
+    try:
+        from agent_memory_lite.maintenance.predictive_lr import (  # noqa: PLC0415
+            is_enabled,
+            train_workspace,
+        )
+
+        if not is_enabled():
+            return
+        result = train_workspace(conn, workspace_id=workspace_id, now_iso=now_iso)
+        report.predictive_lr_trained = result.trained
+        report.predictive_lr_samples = result.samples
+        if result.errors:
+            report.errors.extend(f"predictive_lr:{e}" for e in result.errors)
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"predictive_lr:{exc}")
+
+
 def _step_causal_did(
     conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
 ) -> None:
@@ -423,6 +454,7 @@ def run_brain_pass(
     _step_experiment_proposal(conn, workspace_id, report)
     _step_predictive_failure(conn, workspace_id, report)
     _step_causal_did(conn, workspace_id, report)
+    _step_predictive_lr_train(conn, workspace_id, started, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     try:
         conn.commit()
