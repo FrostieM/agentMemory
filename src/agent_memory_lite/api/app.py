@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from agent_memory_lite.api.agent_identity_middleware import AgentIdentityMiddleware
 from agent_memory_lite.api.app_routes import register_all
 from agent_memory_lite.api.auth import install_api_token_guard
+from agent_memory_lite.api.body_size_limit_middleware import BodySizeLimitMiddleware
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.origin_guard_middleware import OriginGuardMiddleware
 from agent_memory_lite.api.workspace_routing_middleware import WorkspaceRoutingMiddleware
@@ -67,6 +68,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # service. curl / httpx / inject hooks pass loopback unchanged.
     # Operator opts out with MEMORY_ALLOW_REMOTE_ORIGIN=1.
     app.add_middleware(OriginGuardMiddleware)
+    # v3.6 Round-2: hard-cap request body size BEFORE workspace routing
+    # touches it. The service has no auth by default and binds 127.0.0.1
+    # so a careless tool loop or a same-host attacker can otherwise POST
+    # GBs and either pin the embedding worker or fill the WAL. Default
+    # 10 MB covers legitimate code/episode ingest; raise via env when
+    # ingesting larger documents on purpose.
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
+    )
     # Hub mode: route /memory/* requests to the workspace_id's own DB
     # automatically when the caller did not pass an explicit
     # X-Memory-DB-Path header. No-op when hub_mode is off, so project

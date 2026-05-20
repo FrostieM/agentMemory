@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     api_token_file: Path = Field(
         Path(".agent_memory/token"), validation_alias="MEMORY_API_TOKEN_FILE"
     )
+    # v3.6 Round-2 DoS guard: cap accepted request body. The service has no
+    # auth by default and binds 127.0.0.1; a malicious page (or curl loop)
+    # can still POST gigabytes and either pin the embedding worker or fill
+    # the SQLite WAL. 10 MB covers legitimate ingest_file (code + small PDFs)
+    # and ingest_episode transcripts; raise via MEMORY_MAX_REQUEST_BODY_BYTES
+    # for unusually large file ingests.
+    max_request_body_bytes: int = Field(
+        10_485_760,
+        ge=1_024,
+        validation_alias="MEMORY_MAX_REQUEST_BODY_BYTES",
+    )
     db_path: Path = Field(Path(".agent_memory/memory.db"), validation_alias="MEMORY_DB_PATH")
     vector_db_path: Path = Field(
         Path(".agent_memory/vectors.lance"), validation_alias="VECTOR_DB_PATH"
