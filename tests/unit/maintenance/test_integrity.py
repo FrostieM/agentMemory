@@ -150,6 +150,77 @@ def test_integrity_detects_default_workspace_pollution(
     assert report.checks["workspace_pollution"].details["default_rows"]
 
 
+def test_integrity_unregistered_foreign_workspace_is_pollution(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """A foreign workspace id that the registry does NOT mention is
+    still flagged as pollution — the check shouldn't go silent just
+    because we taught it about registered hub-mode mates."""
+    ingest_episode(applied_conn, _episode("rogue write", workspace_id="rogue-ws"))
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.status == "degraded"
+    poll = report.checks["workspace_pollution"]
+    assert "rogue-ws" not in {"project-a", "default"}
+    assert poll.details["unregistered_foreign_rows"].get("episodes") == 1
+    assert poll.details["registered_foreign_rows"] == {}
+
+
+def test_integrity_registered_foreign_workspace_is_not_pollution(
+    applied_conn: sqlite3.Connection,
+    tmp_path,  # type: ignore[no-untyped-def]
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """When the foreign workspace id is REGISTERED against the same
+    DB file in workspaces.json, hub-mode is doing what it's designed
+    to do. The check must not raise degraded on that — that was the
+    v3.4 false positive that buried the real ``vector`` failure
+    under audit noise on agent-memory-lite itself."""
+    # Build a registry that lists both project-a (target) and a
+    # cohabiting hub mate against the same DB file.
+    db_path = tmp_path / "memory.db"
+    # Touch the file so resolve() works on Windows.
+    db_path.write_bytes(b"")
+    registry_payload = {
+        "workspaces": [
+            {
+                "id": "project-a",
+                "db_path": str(db_path),
+                "vector_path": str(tmp_path / "vectors.lance"),
+                "label": "host",
+                "project_root": str(tmp_path),
+            },
+            {
+                "id": "hub-mate",
+                "db_path": str(db_path),
+                "vector_path": str(tmp_path / "vectors.lance"),
+                "label": "mate",
+                "project_root": str(tmp_path / "mate"),
+            },
+        ]
+    }
+    registry_path = tmp_path / "workspaces.json"
+    import json as _json  # noqa: PLC0415
+
+    registry_path.write_text(_json.dumps(registry_payload), encoding="utf-8")
+    monkeypatch.setenv("MEMORY_WORKSPACES_FILE", str(registry_path))
+    # Settings caches; reset to pick up the env override.
+    import agent_memory_lite.config.settings as _settings_mod  # noqa: PLC0415
+
+    monkeypatch.setattr(_settings_mod, "_SETTINGS", None, raising=False)
+
+    ingest_episode(applied_conn, _episode("hub mate write", workspace_id="hub-mate"))
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a", db_path=str(db_path))
+
+    poll = report.checks["workspace_pollution"]
+    assert poll.details["registered_foreign_rows"].get("episodes") == 1
+    assert poll.details["unregistered_foreign_rows"] == {}
+    assert poll.status == "ok"
+    assert "workspace_pollution" not in report.failures
+
+
 def test_integrity_detects_dangling_capability_link(
     applied_conn: sqlite3.Connection,
 ) -> None:

@@ -118,14 +118,22 @@ def test_propose_experiments_persist_flag_writes_candidates(
 ) -> None:
     """When ``persist=true`` is passed + insights have evidence
     episodes, candidate rows land. We seed a hybrid-schema insight
-    to verify the round-trip."""
+    to verify the round-trip.
+
+    v3.5 fixture update: ``min_evidence`` floor raised to 3 by task
+    #57 (V1 min-evidence gate + LLM noise filter). The test now
+    seeds three evidence episodes so the scanner accepts the insight.
+    Originally one episode was enough; that path is locked elsewhere.
+    """
     _patch_runtime(monkeypatch, conn)
-    # Seed an episode + insight directly through the hybrid schema.
-    conn.execute(
-        "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
-        "VALUES (?, 'ws', 'agent_action', 'fixture', '2026-05-19T00:00:00+00:00')",
-        ("ep_seed",),
-    )
+    # Seed three episodes + an insight that cites all of them — the
+    # min-evidence gate (default 3) drops anything with fewer.
+    for ep_id in ("ep_seed_1", "ep_seed_2", "ep_seed_3"):
+        conn.execute(
+            "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
+            "VALUES (?, 'ws', 'agent_action', 'fixture', '2026-05-19T00:00:00+00:00')",
+            (ep_id,),
+        )
     conn.execute(
         """INSERT INTO insights
            (id, workspace_id, insight_type, summary, gist, proposed_action,
@@ -133,7 +141,7 @@ def test_propose_experiments_persist_flag_writes_candidates(
             status, tags_json, created_at, updated_at)
            VALUES ('ins_seed', 'ws', 'lesson', 'a long summary body text',
                    'a long summary body text', NULL, NULL, NULL,
-                   '["ep_seed"]', 0.55, 'candidate', '[]',
+                   '["ep_seed_1", "ep_seed_2", "ep_seed_3"]', 0.55, 'candidate', '[]',
                    '2026-05-19T00:00:00+00:00',
                    '2026-05-19T00:00:00+00:00')"""
     )
@@ -168,11 +176,14 @@ def test_propose_experiments_persist_string_true_coerces(
     is truthy in Python — protects against MCP wire layer string-ifying
     booleans."""
     _patch_runtime(monkeypatch, conn)
-    conn.execute(
-        "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
-        "VALUES (?, 'ws', 'agent_action', 'fixture', '2026-05-19T00:00:00+00:00')",
-        ("ep_str",),
-    )
+    # Three evidence episodes — see ``test_propose_experiments_persist_flag_writes_candidates``
+    # for the v3.5 min-evidence rationale.
+    for ep_id in ("ep_str_1", "ep_str_2", "ep_str_3"):
+        conn.execute(
+            "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
+            "VALUES (?, 'ws', 'agent_action', 'fixture', '2026-05-19T00:00:00+00:00')",
+            (ep_id,),
+        )
     conn.execute(
         """INSERT INTO insights
            (id, workspace_id, insight_type, summary, gist, proposed_action,
@@ -180,7 +191,7 @@ def test_propose_experiments_persist_string_true_coerces(
             status, tags_json, created_at, updated_at)
            VALUES ('ins_str', 'ws', 'lesson', 'long enough body text',
                    'long enough body text', NULL, NULL, NULL,
-                   '["ep_str"]', 0.55, 'candidate', '[]',
+                   '["ep_str_1", "ep_str_2", "ep_str_3"]', 0.55, 'candidate', '[]',
                    '2026-05-19T00:00:00+00:00',
                    '2026-05-19T00:00:00+00:00')"""
     )

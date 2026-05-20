@@ -57,7 +57,11 @@ def run_integrity_audit(
     checks = {
         "sqlite": sqlite_check(conn),
         "workspace_manifest": workspace_manifest_check(conn, workspace_id),
-        "workspace_pollution": workspace_pollution_check(conn, workspace_id),
+        "workspace_pollution": workspace_pollution_check(
+            conn,
+            workspace_id,
+            db_path=Path(db_path) if db_path is not None else None,
+        ),
         "fts": fts_check(conn, workspace_id),
         "vector": vector_check(
             conn,
