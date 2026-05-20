@@ -23,6 +23,14 @@ Checks shipped:
   the file row has been deleted. Same query as fk_violations but
   scoped to the workspace; pinned separately so v3.5 can act on it
   without scanning the FK matrix.
+* ``dangling_capability_links`` — capability_links rows whose
+  (capability_type, capability_id) target no longer exists in
+  agent_roles / agent_skills / agent_playbooks. The schema has no
+  FK on (capability_type, capability_id) so deleting a capability
+  leaves dangling refs that PRAGMA foreign_key_check cannot see;
+  today (2026-05-20) we hand-cleaned 16 such orphans that had
+  accumulated since 2026-05-10. This check catches them the same
+  brain_pass tick they appear (theory th_6bbb2cf024961a0f).
 
 Each finding lands as ``maintenance_event(kind='memory_drift', ...)``
 with a stable id derived from (workspace, check). Re-running the
@@ -39,6 +47,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from agent_memory_lite.utils.ids import IdKind, new_id
@@ -99,6 +108,53 @@ def _check_fk_violations(conn: sqlite3.Connection, workspace_id: str) -> tuple[s
     return (
         f"{count} chunk(s) reference missing files. "
         f"Run scripts/memory_audit.py --repair-vectors to clean.",
+        count,
+    )
+
+
+def _check_dangling_capability_links(
+    conn: sqlite3.Connection, workspace_id: str
+) -> tuple[str, int] | None:
+    """Count capability_links whose (capability_type, capability_id) no
+    longer resolves to an agent_role / skill / playbook row in this
+    workspace. Returns ``(detail, count)`` when count > 0, ``None`` when
+    clean.
+
+    SQLite has no FK on (capability_type, capability_id) — see the
+    schema for capability_links — so deleting a capability silently
+    leaves dangling refs. Today's audit had 16 such rows pointing at
+    play_badf081489e59f36 / skill_81b73a2284f20e6a, both deleted by an
+    earlier reseed without redirecting links to the surviving same-name
+    twins. This check would have caught them at the next brain_pass."""
+    try:
+        row = conn.execute(
+            """SELECT COUNT(*) FROM capability_links cl
+                 LEFT JOIN agent_skills s
+                        ON s.id = cl.capability_id
+                       AND cl.capability_type = 'skill'
+                 LEFT JOIN agent_playbooks p
+                        ON p.id = cl.capability_id
+                       AND cl.capability_type = 'playbook'
+                 LEFT JOIN agent_roles r
+                        ON r.id = cl.capability_id
+                       AND cl.capability_type = 'role'
+                WHERE cl.workspace_id = ?
+                  AND (
+                      (cl.capability_type = 'skill' AND s.id IS NULL)
+                   OR (cl.capability_type = 'playbook' AND p.id IS NULL)
+                   OR (cl.capability_type = 'role' AND r.id IS NULL)
+                  )""",
+            (workspace_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    count = int(row[0]) if row else 0
+    if count == 0:
+        return None
+    return (
+        f"{count} capability_link(s) point at a deleted role/skill/playbook. "
+        f"Inspect via scripts/memory_audit.py or re-target to a "
+        f"surviving same-name twin.",
         count,
     )
 
@@ -207,6 +263,40 @@ def _resolve_finding(conn: sqlite3.Connection, *, workspace_id: str, kind: str) 
     return cur.rowcount > 0
 
 
+def _emit_or_resolve(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    kind: str,
+    short_label: str,
+    result: tuple[str, float | int] | None,
+    detail_key: str,
+    finding_fmt: Callable[[float | int], str],
+    report: DriftReport,
+) -> None:
+    """Common landing path for every detector: upsert finding when the
+    check returned non-None, otherwise resolve any prior open event.
+
+    Factored out so ``detect_drift`` stays under ruff's PLR0912 branch
+    budget when we add more checks (we already have four; #6 hygiene
+    action queue + future referent checks will keep adding more)."""
+    if result is not None:
+        summary, value = result
+        try:
+            _upsert_finding(
+                conn,
+                workspace_id=workspace_id,
+                kind=kind,
+                summary=summary,
+                details={detail_key: value},
+            )
+            report.findings.append(finding_fmt(value))
+        except sqlite3.Error as exc:
+            report.errors.append(f"{short_label}:{exc}")
+    elif _resolve_finding(conn, workspace_id=workspace_id, kind=kind):
+        report.resolved.append(short_label)
+
+
 def detect_drift(conn: sqlite3.Connection, *, workspace_id: str) -> DriftReport:
     """Run all drift checks. Emits ``maintenance_events`` for findings,
     resolves them when underlying metrics clear. Returns a summary."""
@@ -215,68 +305,63 @@ def detect_drift(conn: sqlite3.Connection, *, workspace_id: str) -> DriftReport:
         return report
     threshold = coverage_threshold()
 
-    # FK violations
-    fk_result = _check_fk_violations(conn, workspace_id)
-    if fk_result is not None:
-        summary, count = fk_result
-        try:
-            _upsert_finding(
-                conn,
-                workspace_id=workspace_id,
-                kind="memory_drift_fk",
-                summary=summary,
-                details={"violations": count},
-            )
-            report.findings.append(f"fk:{count}")
-        except sqlite3.Error as exc:
-            report.errors.append(f"fk:{exc}")
-    elif _resolve_finding(conn, workspace_id=workspace_id, kind="memory_drift_fk"):
-        report.resolved.append("fk")
-
-    # FTS coverage
-    fts_result = _check_coverage_gap(
-        conn, workspace_id, sibling_table="chunks_fts", sibling_label="FTS", threshold=threshold
-    )
-    if fts_result is not None:
-        summary, ratio = fts_result
-        try:
-            _upsert_finding(
-                conn,
-                workspace_id=workspace_id,
-                kind="memory_drift_fts",
-                summary=summary,
-                details={"coverage": ratio},
-            )
-            report.findings.append(f"fts:{int(ratio * 100)}%")
-        except sqlite3.Error as exc:
-            report.errors.append(f"fts:{exc}")
-    elif _resolve_finding(conn, workspace_id=workspace_id, kind="memory_drift_fts"):
-        report.resolved.append("fts")
-
-    # Vector coverage (via embedding_id presence in chunks — cheap proxy
-    # that doesn't require opening LanceDB on every brain_pass tick).
-    vec_result = _check_coverage_gap(
+    _emit_or_resolve(
         conn,
-        workspace_id,
-        sibling_table="embedding_id",
-        sibling_label="vector",
-        threshold=threshold,
+        workspace_id=workspace_id,
+        kind="memory_drift_fk",
+        short_label="fk",
+        result=_check_fk_violations(conn, workspace_id),
+        detail_key="violations",
+        finding_fmt=lambda v: f"fk:{int(v)}",
+        report=report,
     )
-    if vec_result is not None:
-        summary, ratio = vec_result
-        try:
-            _upsert_finding(
-                conn,
-                workspace_id=workspace_id,
-                kind="memory_drift_vector",
-                summary=summary,
-                details={"coverage": ratio},
-            )
-            report.findings.append(f"vector:{int(ratio * 100)}%")
-        except sqlite3.Error as exc:
-            report.errors.append(f"vector:{exc}")
-    elif _resolve_finding(conn, workspace_id=workspace_id, kind="memory_drift_vector"):
-        report.resolved.append("vector")
+    # Dangling capability_links — schema has no FK on (capability_type,
+    # capability_id), so this check is the only path that catches them
+    # before the operator runs memory_audit (theory th_6bbb2cf024961a0f).
+    _emit_or_resolve(
+        conn,
+        workspace_id=workspace_id,
+        kind="memory_drift_capability_links",
+        short_label="capability_links",
+        result=_check_dangling_capability_links(conn, workspace_id),
+        detail_key="dangling",
+        finding_fmt=lambda v: f"capability_links:{int(v)}",
+        report=report,
+    )
+    _emit_or_resolve(
+        conn,
+        workspace_id=workspace_id,
+        kind="memory_drift_fts",
+        short_label="fts",
+        result=_check_coverage_gap(
+            conn,
+            workspace_id,
+            sibling_table="chunks_fts",
+            sibling_label="FTS",
+            threshold=threshold,
+        ),
+        detail_key="coverage",
+        finding_fmt=lambda v: f"fts:{int(float(v) * 100)}%",
+        report=report,
+    )
+    # Vector coverage via chunks.embedding_id presence — cheap proxy
+    # that doesn't require opening LanceDB on every brain_pass tick.
+    _emit_or_resolve(
+        conn,
+        workspace_id=workspace_id,
+        kind="memory_drift_vector",
+        short_label="vector",
+        result=_check_coverage_gap(
+            conn,
+            workspace_id,
+            sibling_table="embedding_id",
+            sibling_label="vector",
+            threshold=threshold,
+        ),
+        detail_key="coverage",
+        finding_fmt=lambda v: f"vector:{int(float(v) * 100)}%",
+        report=report,
+    )
 
     conn.commit()
     return report

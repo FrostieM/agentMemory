@@ -168,6 +168,112 @@ def test_workspace_isolation(conn: sqlite3.Connection) -> None:
     assert any(kind == "memory_drift_fk" for kind, _ in _open_events(conn, ws="ws_a"))
 
 
+def _seed_capability_link(
+    conn: sqlite3.Connection,
+    *,
+    link_id: str,
+    capability_type: str,
+    capability_id: str,
+    capability_name: str = "missing",
+    target_type: str = "decision",
+    target_id: str = "dec_x",
+    ws: str = "ws",
+) -> None:
+    """Insert a capability_link row directly. Useful for orphan-seeding:
+    the test can point ``capability_id`` at a row that was never inserted
+    into agent_skills/playbooks/roles, mimicking the production state
+    where a capability got deleted but its links survived."""
+    conn.execute(
+        """INSERT INTO capability_links
+           (id, workspace_id, target_type, target_id,
+            capability_type, capability_id, capability_name,
+            relation, strength, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'method', 0.7,
+                   '2026-05-20T00:00:00+00:00',
+                   '2026-05-20T00:00:00+00:00')""",
+        (
+            link_id,
+            ws,
+            target_type,
+            target_id,
+            capability_type,
+            capability_id,
+            capability_name,
+        ),
+    )
+    conn.commit()
+
+
+def _seed_real_skill(conn: sqlite3.Connection, *, skill_id: str, ws: str = "ws") -> None:
+    """Insert an agent_skills row so a capability_link pointing at it is
+    NOT dangling. Mirrors the minimal columns the test corpus needs."""
+    conn.execute(
+        """INSERT INTO agent_skills (id, workspace_id, name, summary,
+                                     active, created_at, updated_at)
+           VALUES (?, ?, 'fixture-skill', 'fixture', 1,
+                   '2026-05-20T00:00:00+00:00',
+                   '2026-05-20T00:00:00+00:00')""",
+        (skill_id, ws),
+    )
+    conn.commit()
+
+
+def test_capability_links_drift_detected_and_resolved(conn: sqlite3.Connection) -> None:
+    """Dangling capability_link (capability_id pointing at missing skill)
+    → finding. Once the skill row appears, next pass resolves the event.
+    This is the v3.4 follow-up to today's audit-cleanup (theory
+    th_6bbb2cf024961a0f predicted exactly this check)."""
+    _seed_capability_link(
+        conn,
+        link_id="caplink_orphan_1",
+        capability_type="skill",
+        capability_id="skill_missing",
+    )
+    r1 = detect_drift(conn, workspace_id="ws")
+    assert "capability_links:1" in r1.findings
+    events = _open_events(conn)
+    assert any(kind == "memory_drift_capability_links" for kind, _ in events)
+    # Materialize the missing skill → next pass resolves the event.
+    _seed_real_skill(conn, skill_id="skill_missing")
+    r2 = detect_drift(conn, workspace_id="ws")
+    assert "capability_links" in r2.resolved
+    assert all(kind != "memory_drift_capability_links" for kind, _ in _open_events(conn))
+
+
+def test_capability_links_drift_recurrence(conn: sqlite3.Connection) -> None:
+    """Repeated runs over the same dangling rows bump recurrence_count,
+    not duplicate rows. Same idempotency contract as the fk check."""
+    _seed_capability_link(
+        conn,
+        link_id="caplink_orphan_2",
+        capability_type="playbook",
+        capability_id="play_missing",
+    )
+    detect_drift(conn, workspace_id="ws")
+    detect_drift(conn, workspace_id="ws")
+    rows = conn.execute(
+        "SELECT recurrence_count FROM maintenance_events "
+        "WHERE workspace_id = 'ws' AND kind = 'memory_drift_capability_links'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == 2  # 1 insert + 1 bump
+
+
+def test_capability_links_check_is_workspace_scoped(conn: sqlite3.Connection) -> None:
+    """A dangling link in workspace A must not flag workspace B."""
+    _seed_capability_link(
+        conn,
+        link_id="caplink_orphan_a",
+        capability_type="role",
+        capability_id="role_missing",
+        ws="ws_a",
+    )
+    detect_drift(conn, workspace_id="ws_b")
+    assert all(kind != "memory_drift_capability_links" for kind, _ in _open_events(conn, ws="ws_b"))
+    detect_drift(conn, workspace_id="ws_a")
+    assert any(kind == "memory_drift_capability_links" for kind, _ in _open_events(conn, ws="ws_a"))
+
+
 def test_threshold_override(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tighten threshold → previously-OK coverage becomes a finding."""
     _seed_file(conn, file_id="f1")
