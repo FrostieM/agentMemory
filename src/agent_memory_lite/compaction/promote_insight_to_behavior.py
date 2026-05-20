@@ -83,10 +83,19 @@ def _insert_behavior_from_insight(
     conn: sqlite3.Connection, *, workspace_id: str, insight_row: sqlite3.Row
 ) -> str:
     """Insert one pinned behavior row sourced from an insight. Returns behavior id."""
+    # v3.5 sector-3 audit-followup: redact the insight summary BEFORE it
+    # becomes a pinned behavior. Episode-derived insights may carry
+    # secrets the consolidation LLM rephrased past the original
+    # redaction; without this redact() they'd land in behaviors.rule
+    # and surface verbatim in every future brief / envelope.
+    from agent_memory_lite.redaction.redactor import redact  # noqa: PLC0415
+
     behavior_id = new_id(IdKind.BEHAVIOR_INSTRUCTION)
     now = iso_now()
-    body = insight_row["summary"] or insight_row["gist"] or "auto-promoted insight"
-    one_line = (insight_row["gist"] or insight_row["summary"] or "")[:160]
+    raw_body = insight_row["summary"] or insight_row["gist"] or "auto-promoted insight"
+    raw_one_line = (insight_row["gist"] or insight_row["summary"] or "")[:160]
+    body = redact(raw_body).text
+    one_line = redact(raw_one_line).text
     name = f"insight-{insight_row['id'][-12:]}"
     conn.execute(
         """
@@ -124,18 +133,24 @@ def promote_eligible_insights(conn: sqlite3.Connection, *, workspace_id: str) ->
     ``status='promoted'`` and the gate query never re-selects it. A
     second call on the same workspace performs no work.
     """
+    # v3.5 sector-3 audit-followup: wrap the loop in with_tx so a
+    # caller wrapping us inside an outer transaction cannot prematurely
+    # flush via the previous bare ``conn.commit()``. ``with_tx`` uses
+    # SAVEPOINTs when nested so this stays composable.
+    from agent_memory_lite.db.transactions import with_tx  # noqa: PLC0415
+
     rows = _eligible_insights(conn, workspace_id=workspace_id)
     promoted = 0
     skipped = 0
-    for row in rows:
-        if _behavior_already_exists(conn, workspace_id=workspace_id, insight_id=row["id"]):
-            skipped += 1
-            continue
-        try:
-            _insert_behavior_from_insight(conn, workspace_id=workspace_id, insight_row=row)
-            promoted += 1
-        except sqlite3.Error:
-            skipped += 1
-            continue
-    conn.commit()
+    with with_tx(conn):
+        for row in rows:
+            if _behavior_already_exists(conn, workspace_id=workspace_id, insight_id=row["id"]):
+                skipped += 1
+                continue
+            try:
+                _insert_behavior_from_insight(conn, workspace_id=workspace_id, insight_row=row)
+                promoted += 1
+            except sqlite3.Error:
+                skipped += 1
+                continue
     return PromotionStats(inspected=len(rows), promoted=promoted, skipped=skipped)

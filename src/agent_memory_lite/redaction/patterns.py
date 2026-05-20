@@ -26,4 +26,23 @@ SHAPE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"[\s\S]+?-----END (?:RSA |OPENSSH |EC |DSA |PGP )?PRIVATE KEY( BLOCK)?-----"
         ),
     ),
+    # v3.5 sector-3 audit-followup: shapes the auditor flagged as
+    # missing. Real-world `.env` / shell-command leakage paths.
+    (
+        "stripe_key",
+        re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{20,}\b"),
+    ),
+    (
+        "basic_auth_url",
+        re.compile(r"https?://[^:@\s/]+:[^@\s/]+@\S+"),
+    ),
+    (
+        "gcp_service_account_hint",
+        re.compile(r'"type"\s*:\s*"service_account"'),
+    ),
+    # Generic Bearer tokens not already caught by jwt — common shape.
+    (
+        "bearer_token",
+        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{20,}", re.IGNORECASE),
+    ),
 )

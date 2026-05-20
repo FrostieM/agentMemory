@@ -12,8 +12,22 @@ from agent_memory_lite.extraction.thresholds import CORE_PROMOTION_TRUST
 from agent_memory_lite.models.candidates import MemoryCandidate
 from agent_memory_lite.models.enums import MemoryCandidateKind, TrustLevel
 
+# v3.5 sector-3 audit-followup: expanded list of kinds that an
+# UNTRUSTED_DOC candidate must NOT promote into. Previously only
+# PROCEDURAL_RULE / CONSTRAINT were guarded — DECISION / CORRECTION /
+# BUG / FIX could land as candidates from doc-sourced episodes, then
+# the operator could promote them into behaviors / decisions / core.
+# All six kinds carry execution-shaping semantic weight, so they all
+# need the higher trust floor.
 PROMOTABLE_KINDS: frozenset[MemoryCandidateKind] = frozenset(
-    {MemoryCandidateKind.PROCEDURAL_RULE, MemoryCandidateKind.CONSTRAINT}
+    {
+        MemoryCandidateKind.PROCEDURAL_RULE,
+        MemoryCandidateKind.CONSTRAINT,
+        MemoryCandidateKind.DECISION,
+        MemoryCandidateKind.CORRECTION,
+        MemoryCandidateKind.BUG,
+        MemoryCandidateKind.FIX,
+    }
 )
 
 
