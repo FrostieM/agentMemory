@@ -58,6 +58,47 @@ def resolve_source_episode_id(
     return find_recent_episode_for_agent(conn, workspace_id=workspace_id)
 
 
+def record_supersede_feedback(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    source_type: str,
+    superseded_id: str | None,
+    settings: Settings | None = None,
+) -> None:
+    """Phase 1 outcome-loop: emit implicit negative feedback on the
+    SUPERSEDED row so its outcome_score drops on next refresh.
+
+    Centralised here because three write surfaces (HTTP write_decision,
+    HTTP record_with_evidence, MCP local-fallback for both) all need
+    the same call. Round-2 audit found the MCP paths used to skip it,
+    which silently broke the outcome loop for MCP-only deployments
+    (HTTP service down) — superseded decisions kept their old positive
+    scores instead of fading.
+
+    Failure-soft. Implicit feedback is enhancement, not correctness:
+    if the maintenance module is unimportable or the write errors,
+    swallow it rather than blowing up the parent decision/theory write.
+    """
+    if not superseded_id:
+        return
+    try:
+        from agent_memory_lite.maintenance.implicit_feedback import (  # noqa: PLC0415
+            record_implicit_supersede,
+        )
+
+        effective = settings if settings is not None else get_settings()
+        record_implicit_supersede(
+            conn,
+            settings=effective,
+            workspace_id=workspace_id,
+            source_type=source_type,
+            source_id=superseded_id,
+        )
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
 def capability_suggestion_dicts(
     conn: sqlite3.Connection,
     *,

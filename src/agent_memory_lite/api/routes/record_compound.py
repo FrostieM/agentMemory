@@ -37,6 +37,7 @@ from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
     decision_neighbor_dicts,
+    record_supersede_feedback,
 )
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
@@ -108,22 +109,14 @@ def record_with_evidence_route(
         )
         # Phase 1 outcome-loop: emit implicit supersede feedback on the
         # OLD decision so its outcome_score drops on next refresh.
-        if decision.supersedes_decision_id:
-            try:
-                from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
-                from agent_memory_lite.maintenance.implicit_feedback import (  # noqa: PLC0415
-                    record_implicit_supersede,
-                )
-
-                record_implicit_supersede(
-                    conn,
-                    settings=get_settings(),
-                    workspace_id=decision.workspace_id,
-                    source_type="decision",
-                    source_id=decision.supersedes_decision_id,
-                )
-            except Exception:  # pragma: no cover - defensive
-                pass
+        # Shared helper keeps HTTP + MCP local-fallback aligned.
+        record_supersede_feedback(
+            conn,
+            workspace_id=decision.workspace_id,
+            source_type="decision",
+            superseded_id=decision.supersedes_decision_id,
+            settings=settings,
+        )
         trace.stage_done(
             "decision",
             "Decision persisted",

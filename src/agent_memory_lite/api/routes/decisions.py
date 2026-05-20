@@ -24,7 +24,10 @@ from agent_memory_lite.api.schemas.decisions import (
     WriteDecisionResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.ingestion._write_helpers import resolve_source_episode_id
+from agent_memory_lite.ingestion._write_helpers import (
+    record_supersede_feedback,
+    resolve_source_episode_id,
+)
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.models.decisions import Decision, DecisionIn
 from agent_memory_lite.repositories.decisions_repo import list_active_decisions, list_all_decisions
@@ -104,25 +107,17 @@ def write_decision_route(
         )
         trace.stage_started("persist", "Persist decision")
         decision = write_decision(conn, payload)
-        # Phase 1 outcome-loop: when a decision supersedes another, the
-        # superseded row gets an implicit negative-feedback boost so its
-        # outcome_score drops on the next refresh. Failure-soft.
-        if decision.supersedes_decision_id:
-            try:
-                from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
-                from agent_memory_lite.maintenance.implicit_feedback import (  # noqa: PLC0415
-                    record_implicit_supersede,
-                )
-
-                record_implicit_supersede(
-                    conn,
-                    settings=get_settings(),
-                    workspace_id=decision.workspace_id,
-                    source_type="decision",
-                    source_id=decision.supersedes_decision_id,
-                )
-            except Exception:  # pragma: no cover - defensive
-                pass
+        # Phase 1 outcome-loop: emit implicit negative feedback on the
+        # SUPERSEDED decision so its outcome_score drops on next refresh.
+        # Failure-soft. Shared helper keeps HTTP + MCP local-fallback +
+        # record_with_evidence aligned (Round-2 parity sweep).
+        record_supersede_feedback(
+            conn,
+            workspace_id=decision.workspace_id,
+            source_type="decision",
+            superseded_id=decision.supersedes_decision_id,
+            settings=settings,
+        )
         trace.stage_done(
             "persist",
             "Decision persisted",

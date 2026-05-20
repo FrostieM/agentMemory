@@ -7,6 +7,7 @@ from typing import Any
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
     decision_neighbor_dicts,
+    record_supersede_feedback,
     resolve_source_episode_id,
 )
 from agent_memory_lite.ingestion.decision_writer import write_decision
@@ -45,6 +46,16 @@ def _handle_write_decision(args: dict[str, Any]) -> dict[str, Any]:
         settings=_runtime.settings,
     )
     decision = write_decision(conn, DecisionIn(**payload))
+    # Round-2 parity fix: HTTP path emits implicit supersede feedback so
+    # the superseded decision's outcome_score drops. The MCP fallback used
+    # to skip it, breaking the outcome loop for MCP-only deployments.
+    record_supersede_feedback(
+        conn,
+        workspace_id=workspace_id,
+        source_type="decision",
+        superseded_id=decision.supersedes_decision_id,
+        settings=_runtime.settings,
+    )
     return {
         "decision_id": decision.id,
         "status": decision.status.value,
@@ -132,4 +143,5 @@ def _handle_record_with_evidence(args: dict[str, Any]) -> dict[str, Any]:
         embedding_provider=_runtime.provider(),
         vector_store=_runtime.store(),
         payload=payload,
+        settings=_runtime.settings,
     )

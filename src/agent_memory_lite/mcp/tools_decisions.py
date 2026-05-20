@@ -8,6 +8,7 @@ from typing import Any
 from agent_memory_lite.ingestion._write_helpers import (
     capability_suggestion_dicts,
     decision_neighbor_dicts,
+    record_supersede_feedback,
     resolve_source_episode_id,
 )
 from agent_memory_lite.ingestion.decision_writer import write_decision
@@ -38,6 +39,16 @@ def memory_write_decision(
         allow_orphan=allow_orphan,
     )
     decision = write_decision(conn, DecisionIn(**payload))
+    # Round-2 parity fix: emit implicit supersede feedback so this MCP
+    # path matches HTTP /memory/write_decision. Without this the
+    # superseded decision keeps its old outcome_score on MCP-only
+    # deployments. Failure-soft via the shared helper.
+    record_supersede_feedback(
+        conn,
+        workspace_id=workspace_id,
+        source_type="decision",
+        superseded_id=decision.supersedes_decision_id,
+    )
     return {
         "decision_id": decision.id,
         "status": decision.status.value,
