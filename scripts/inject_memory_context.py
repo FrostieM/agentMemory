@@ -64,6 +64,7 @@ with contextlib.suppress(AttributeError, ValueError):
 with contextlib.suppress(AttributeError, ValueError):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
+
 def _validate_base(raw: str) -> str:
     """v3.5 sector-6+7 audit-followup: same loopback guard as
     ``inject_memory_brief._validate_base``. Non-loopback URL would

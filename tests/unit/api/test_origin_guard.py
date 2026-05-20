@@ -80,9 +80,7 @@ def test_dns_rebinding_host_blocked(client: TestClient) -> None:
     assert response.json()["error"] == "host_blocked"
 
 
-def test_opt_out_via_env(
-    monkeypatch: pytest.MonkeyPatch, client: TestClient
-) -> None:
+def test_opt_out_via_env(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:
     """MEMORY_ALLOW_REMOTE_ORIGIN=1 lets the operator front the
     service with a reverse proxy."""
     monkeypatch.setenv("MEMORY_ALLOW_REMOTE_ORIGIN", "1")
@@ -102,7 +100,8 @@ def test_inject_brief_loopback_validator_accepts_loopback() -> None:
 
     script_path = Path(__file__).resolve().parents[3] / "scripts" / "inject_memory_brief.py"
     spec = importlib.util.spec_from_file_location("inject_memory_brief_test", script_path)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules["inject_memory_brief_test"] = mod
     spec.loader.exec_module(mod)
