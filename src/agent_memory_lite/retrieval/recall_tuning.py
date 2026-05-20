@@ -14,22 +14,29 @@ to drop noise; high empty-result rate → depth+1, lower floor. Neither
 fires → ``None`` (keep caller default). The recall handler applies
 the hint only when the caller passed no explicit param.
 
-v3.3 transfer-learning bootstrap: when the local workspace has fewer
-than ``min_samples`` rows in the window AND
-``MEMORY_RECALL_TRANSFER_ENABLED=true`` (default), the rollup falls
-back to ``ALL`` workspaces in the same DB. This unblocks cold-start
-workspaces that share a DB with active siblings — most common in
-project-mode where one operator has historic recall data on workspace
-A and just spun up workspace B in the same SQLite. Hub-mode cross-DB
-transfer is a follow-up because it would require iterating over the
-``~/.agent_memory/workspaces.json`` registry; v3.3 ships the
-single-DB case to keep the change surgical.
+Three-tier transfer-learning bootstrap:
+
+1. **Own workspace** — same SQLite, same workspace_id, last
+   ``window_hours`` rows. Lowest noise, lowest bar (``min_samples=8``).
+2. **Same-DB transfer** (v3.3, ``MEMORY_RECALL_TRANSFER_ENABLED=true``,
+   default). When tier 1 is thin, aggregate ALL workspaces in the
+   same SQLite. Higher bar (``transfer_min_samples=16``) because
+   sibling workspaces may be mixed-domain.
+3. **Cross-DB transfer** (v3.4 #9,
+   ``MEMORY_RECALL_TRANSFER_CROSS_DB_ENABLED=true``, default OFF).
+   When tier 2 is also thin, walk ``~/.agent_memory/workspaces.json``
+   and aggregate ``recall_history`` from every OTHER registered DB.
+   Highest bar (``..._MIN_SAMPLES=32``). The actual cross-DB scan
+   lives in ``recall_tuning_cross_db`` so that module owns the
+   registry iteration + per-peer connection lifecycle.
 
 Settings (all read fresh per call): ``MEMORY_RECALL_TUNING_ENABLED``
 (default true), ``..._WINDOW_HOURS`` (72), ``..._MIN_SAMPLES`` (8),
 ``MEMORY_RECALL_TRANSFER_ENABLED`` (default true),
 ``MEMORY_RECALL_TRANSFER_MIN_SAMPLES`` (default 16 — higher bar than
-own-workspace samples because cross-workspace signal is noisier).
+own-workspace samples because cross-workspace signal is noisier),
+``MEMORY_RECALL_TRANSFER_CROSS_DB_ENABLED`` (default false),
+``MEMORY_RECALL_TRANSFER_CROSS_DB_MIN_SAMPLES`` (default 32).
 """
 
 from __future__ import annotations
@@ -197,20 +204,26 @@ def _apply_rules(
     return None
 
 
-def suggest_params(
+def suggest_params(  # noqa: PLR0911 — linear three-tier fallback; splitting hurts readability
     conn: sqlite3.Connection, *, workspace_id: str, base_depth: int, base_floor: float
 ) -> RecallSuggestion | None:
     """Roll up recent recall_history and propose tuned params.
 
-    Two-tier strategy:
+    Three-tier strategy:
 
     1. Own-workspace rollup over the last ``window_hours``. If
-       ``min_samples`` reached, apply the heuristic rules and return.
-    2. v3.3 transfer fallback: aggregate ALL workspaces in the same
-       DB. If ``transfer_min_samples`` reached AND
-       ``MEMORY_RECALL_TRANSFER_ENABLED=true``, apply the rules with
-       a ``transfer:`` reason prefix so the operator can audit.
-    3. Neither tier qualifies → return ``None`` (caller keeps default).
+       ``min_samples`` reached, apply the heuristic rules and return
+       with reason prefix ``""``.
+    2. v3.3 same-DB transfer fallback: aggregate ALL workspaces in
+       the same DB. If ``transfer_min_samples`` reached AND
+       ``MEMORY_RECALL_TRANSFER_ENABLED=true``, apply with prefix
+       ``"transfer:"``.
+    3. v3.4 #9 cross-DB transfer fallback: walk the workspaces
+       registry, aggregate ``recall_history`` from every other
+       registered DB. If ``cross_db_min_samples`` reached AND
+       ``MEMORY_RECALL_TRANSFER_CROSS_DB_ENABLED=true``, apply with
+       prefix ``"transfer_cross_db:"`` so audits can grep by source.
+    4. Nothing fires → return ``None`` (caller keeps default).
     """
     if not is_tuning_enabled():
         return None
@@ -219,14 +232,51 @@ def suggest_params(
         return _apply_rules(
             stats=stats, base_depth=base_depth, base_floor=base_floor, reason_prefix=""
         )
-    if not is_transfer_enabled():
+    if is_transfer_enabled():
+        transfer_stats = _rollup_stats(conn, workspace_id=None)
+        if transfer_stats is not None and transfer_stats[0] >= transfer_min_samples():
+            return _apply_rules(
+                stats=transfer_stats,
+                base_depth=base_depth,
+                base_floor=base_floor,
+                reason_prefix="transfer:",
+            )
+    # v3.4 #9 tier 3: cross-DB fallback. Late import keeps this module
+    # cheap when cross-DB transfer is disabled (the default).
+    from agent_memory_lite.retrieval.recall_tuning_cross_db import (  # noqa: PLC0415
+        cross_db_min_samples,
+        is_cross_db_enabled,
+        rollup_cross_db_stats,
+    )
+
+    if not is_cross_db_enabled():
         return None
-    transfer_stats = _rollup_stats(conn, workspace_id=None)
-    if transfer_stats is None or transfer_stats[0] < transfer_min_samples():
+    current_db = _current_db_path(conn)
+    if current_db is None:
+        return None
+    cross_stats = rollup_cross_db_stats(current_db_path=current_db, window_hours=window_hours())
+    if cross_stats is None or cross_stats[0] < cross_db_min_samples():
         return None
     return _apply_rules(
-        stats=transfer_stats,
+        stats=cross_stats,
         base_depth=base_depth,
         base_floor=base_floor,
-        reason_prefix="transfer:",
+        reason_prefix="transfer_cross_db:",
     )
+
+
+def _current_db_path(conn: sqlite3.Connection) -> str | None:
+    """Return the file path of the ``main`` schema on this connection,
+    or ``None`` for in-memory / unrecognized connections. Used by tier
+    3 so the cross-DB scanner can skip the current DB and avoid
+    double-counting rows the same-DB tier already saw."""
+    try:
+        for row in conn.execute("PRAGMA database_list").fetchall():
+            # row shape: (seq, name, file). 'main' is the user DB.
+            name = row[1] if not isinstance(row, sqlite3.Row) else row["name"]
+            file_ = row[2] if not isinstance(row, sqlite3.Row) else row["file"]
+            if name == "main" and file_:
+                return str(file_)
+    except sqlite3.Error:
+        return None
+    return None
