@@ -136,6 +136,50 @@ def _first_source_episode(raw_json: str | None) -> str:
     return ""
 
 
+def _excluded_insight_ids(conn: sqlite3.Connection, *, workspace_id: str) -> set[str]:
+    """Return insight ids whose candidate is already accepted/rejected.
+
+    v3.2 reject-loop termination: ``persist_proposal`` writes a row
+    with deterministic id ``cand_prop_<insight_id>`` and gates ON
+    CONFLICT updates by ``status='new'``, so an operator-rejected row
+    can never silently flip back. BUT the scanner still re-finds the
+    same insight every brain_pass and pays for an Ollama call to
+    regenerate the body (which the writer then no-ops away). Worse,
+    the GET /memory/propose_experiments preview surfaces the
+    "regenerated" proposal as if it were fresh, so the operator sees
+    a rejected proposal reappear minutes after the reject.
+
+    Cheap fix: skip insights that already have a non-'new' candidate
+    in this workspace. Saves the LLM cost, stops the UI bounce-back,
+    and preserves the audit trail (rejected candidate stays in DB).
+
+    Failure-soft: when the candidates table doesn't exist
+    (pre-migration DB), return empty set so the scanner still runs.
+    """
+    from agent_memory_lite.maintenance.candidates_table import (  # noqa: PLC0415
+        resolve_candidates_table,
+    )
+
+    table = resolve_candidates_table(conn)
+    if table is None:
+        return set()
+    try:
+        rows = conn.execute(
+            f"SELECT subject FROM {table} "
+            f"WHERE workspace_id = ? AND kind = 'theory_proposal' "
+            f"AND status IN ('accepted', 'rejected') AND subject IS NOT NULL",
+            (workspace_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return set()
+    out: set[str] = set()
+    for row in rows:
+        sid = row["subject"] if isinstance(row, sqlite3.Row) else row[0]
+        if isinstance(sid, str) and sid:
+            out.add(sid)
+    return out
+
+
 def find_proposal_candidates(
     conn: sqlite3.Connection, *, workspace_id: str, limit: int | None = None
 ) -> list[ExperimentProposal]:
@@ -144,16 +188,26 @@ def find_proposal_candidates(
     Returns at most ``limit`` rows (default
     ``MEMORY_EXPERIMENT_PROPOSAL_LIMIT``). Empty list when the feature
     is disabled or no insight clears the confidence window.
+
+    v3.2 reject-loop termination: insights whose deterministic
+    candidate id (``cand_prop_<insight_id>``) is already
+    accepted/rejected are skipped so the LLM is not re-called and the
+    UI does not surface a "fresh" copy of a rejected proposal.
     """
     if not is_enabled():
         return []
     cap = limit if limit is not None else emit_limit()
     lo, hi = conf_window()
+    excluded = _excluded_insight_ids(conn, workspace_id=workspace_id)
     # Vector1-audit H2: do NOT swallow OperationalError here. The
     # ``insights`` table missing is a misconfiguration the operator
     # needs to see. ``brain_pass._step_experiment_proposal`` wraps the
     # call with its own ``except (sqlite3.Error, Exception)`` and
     # surfaces the error into the maintenance report.
+    # v3.2: SELECT 2*cap so we still have ``cap`` candidates left after
+    # the rejected/accepted filter prunes some. Cheap — insights table
+    # is small + already filtered by confidence + status='candidate'.
+    select_limit = cap * 2 if excluded else cap
     rows = conn.execute(
         "SELECT id, summary, gist, confidence, source_episode_ids_json "
         "FROM insights "
@@ -161,7 +215,7 @@ def find_proposal_candidates(
         "AND COALESCE(confidence, 0.0) >= ? "
         "AND COALESCE(confidence, 0.0) <= ? "
         "ORDER BY confidence DESC LIMIT ?",
-        (workspace_id, lo, hi, cap),
+        (workspace_id, lo, hi, select_limit),
     ).fetchall()
     out: list[ExperimentProposal] = []
     for row in rows:
@@ -175,6 +229,10 @@ def find_proposal_candidates(
             summary = str(row[2] or row[1] or "")
             confidence = float(row[3] or 0.0)
             source_episode_id = _first_source_episode(row[4] if len(row) > 4 else None)
+        # v3.2 reject-loop termination: drop insights whose candidate
+        # was already triaged. Saves LLM call + UI bounce-back.
+        if insight_id in excluded:
+            continue
         # Vector1-audit M3: strip + min-length gate to keep
         # whitespace-only summaries out of memory_candidates.
         if len(summary.strip()) < _MIN_SUMMARY_LEN:
@@ -192,4 +250,6 @@ def find_proposal_candidates(
                 source_episode_id=source_episode_id,
             )
         )
+        if len(out) >= cap:
+            break
     return out

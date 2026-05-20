@@ -521,3 +521,134 @@ def test_persist_proposal_returns_empty_on_fk_violation(conn: sqlite3.Connection
         "SELECT COUNT(*) FROM memory_candidates WHERE id = 'cand_prop_ins_orphan_fk'"
     ).fetchone()
     assert row[0] == 0
+
+
+# ============================================================
+# v3.2 reject-loop termination
+# ============================================================
+
+
+def _seed_triaged_candidate(
+    conn: sqlite3.Connection,
+    *,
+    insight_id: str,
+    status: str,
+    workspace_id: str = "ws",
+) -> None:
+    """Helper: seed a memory_candidate(kind=theory_proposal) with the
+    deterministic id + given status, mimicking what persist_proposal
+    would write followed by an operator promote/reject."""
+    cand_id = f"cand_prop_{insight_id}"
+    ep_id = f"ep_{insight_id}"
+    import contextlib  # noqa: PLC0415
+
+    with contextlib.suppress(sqlite3.IntegrityError):
+        _seed_episode(conn, ep_id=ep_id, workspace_id=workspace_id)
+    conn.execute(
+        """INSERT INTO memory_candidates (
+            id, workspace_id, kind, subject, predicate, object, evidence,
+            confidence, importance, trust_level, temporal_json,
+            write_targets_json, metadata_json, source_episode_id,
+            status, created_at, updated_at
+        ) VALUES (?, ?, 'theory_proposal', ?, 'proposes_theory', ?, '',
+                  0.55, 0.5, 'agent_observed', '{}', '[]', '{}', ?, ?,
+                  '2026-05-19T00:00:00+00:00',
+                  '2026-05-19T00:00:00+00:00')""",
+        (cand_id, workspace_id, insight_id, "prior body", ep_id, status),
+    )
+    conn.commit()
+
+
+def test_rejected_insight_is_skipped(conn: sqlite3.Connection) -> None:
+    """v3.2 reject-loop termination: an insight whose candidate is
+    rejected does NOT come back on the next scan — saves the LLM call
+    AND stops the UI bounce-back where the operator sees a rejected
+    proposal reappear."""
+    _seed_insight(
+        conn,
+        insight_id="ins_already_rejected",
+        summary="Some hypothesis that was rejected before",
+        confidence=0.55,
+        source_episode_ids=["ep_ins_already_rejected"],
+    )
+    _seed_triaged_candidate(conn, insight_id="ins_already_rejected", status="rejected")
+
+    proposals = ep.find_proposal_candidates(conn, workspace_id="ws")
+    insight_ids = {p.insight_id for p in proposals}
+    assert "ins_already_rejected" not in insight_ids
+
+
+def test_accepted_insight_is_skipped(conn: sqlite3.Connection) -> None:
+    """An accepted candidate also blocks regeneration. The accepted
+    proposal already lives in the theories table — no need to surface
+    a parallel proposal of the same hypothesis."""
+    _seed_insight(
+        conn,
+        insight_id="ins_already_accepted",
+        summary="Hypothesis promoted to a theory",
+        confidence=0.6,
+        source_episode_ids=["ep_ins_already_accepted"],
+    )
+    _seed_triaged_candidate(conn, insight_id="ins_already_accepted", status="accepted")
+
+    proposals = ep.find_proposal_candidates(conn, workspace_id="ws")
+    insight_ids = {p.insight_id for p in proposals}
+    assert "ins_already_accepted" not in insight_ids
+
+
+def test_new_status_candidate_does_not_block(conn: sqlite3.Connection) -> None:
+    """A candidate still in 'new' state should NOT block its insight —
+    the persist layer's ON CONFLICT UPDATE will refresh the body, so the
+    scanner should still consider it."""
+    _seed_insight(
+        conn,
+        insight_id="ins_pending_review",
+        summary="Hypothesis pending operator triage",
+        confidence=0.5,
+        source_episode_ids=["ep_ins_pending_review"],
+    )
+    _seed_triaged_candidate(conn, insight_id="ins_pending_review", status="new")
+
+    proposals = ep.find_proposal_candidates(conn, workspace_id="ws")
+    insight_ids = {p.insight_id for p in proposals}
+    assert "ins_pending_review" in insight_ids
+
+
+def test_workspace_isolation_for_rejected_filter(conn: sqlite3.Connection) -> None:
+    """A rejected candidate in workspace A must not block scanning of
+    the same insight_id in workspace B."""
+    _seed_insight(
+        conn,
+        insight_id="ins_xws",
+        summary="cross-workspace shared insight id",
+        confidence=0.5,
+        source_episode_ids=["ep_ws_b"],
+        workspace_id="ws_b",
+    )
+    _seed_triaged_candidate(conn, insight_id="ins_xws", status="rejected", workspace_id="ws_a")
+
+    proposals_a = ep.find_proposal_candidates(conn, workspace_id="ws_a")
+    proposals_b = ep.find_proposal_candidates(conn, workspace_id="ws_b")
+    assert "ins_xws" not in {p.insight_id for p in proposals_a}
+    assert "ins_xws" in {p.insight_id for p in proposals_b}
+
+
+def test_excluded_helper_failure_soft_no_table(tmp_path: Path) -> None:
+    """If neither candidates table exists (pre-migration DB), the helper
+    returns empty set so the scanner still runs on insights alone."""
+    db = tmp_path / "bare.db"
+    c = sqlite3.connect(db)
+    c.row_factory = sqlite3.Row
+    # Only create insights table — no memory_candidates / candidates.
+    c.executescript("""
+        CREATE TABLE insights (
+            id TEXT PRIMARY KEY, workspace_id TEXT, status TEXT,
+            confidence REAL, summary TEXT, gist TEXT,
+            source_episode_ids_json TEXT
+        );
+    """)
+    try:
+        result = ep._excluded_insight_ids(c, workspace_id="ws")
+        assert result == set()
+    finally:
+        c.close()
