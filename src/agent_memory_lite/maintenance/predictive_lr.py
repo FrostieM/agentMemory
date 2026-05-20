@@ -38,6 +38,10 @@ import os
 import sqlite3
 from dataclasses import asdict, dataclass, field
 
+from agent_memory_lite.maintenance.predictive_lr_audit import (
+    AUDIT_FEATURE_COUNT,
+    workspace_audit_signals,
+)
 from agent_memory_lite.maintenance.predictive_lr_features import (
     VOCAB_SIZE,
     build_vocab,
@@ -45,7 +49,10 @@ from agent_memory_lite.maintenance.predictive_lr_features import (
     featurize,
 )
 
-_META_KEY = "predictive_lr_model_v1"
+# v3.4 #8: bumped from v1 to v2 because the feature vector grew by
+# AUDIT_FEATURE_COUNT slots. Old v1 model rows stay in workspace_meta
+# but no longer load — train_workspace runs from scratch on first call.
+_META_KEY = "predictive_lr_model_v2"
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -87,15 +94,21 @@ def learning_rate() -> float:
 
 @dataclass(frozen=True, slots=True)
 class LRModel:
-    """Serialized LR model. ``weights`` and ``vocab`` align by index."""
+    """Serialized LR model. ``weights`` and ``vocab`` align by index.
+
+    ``audit_dim`` (v3.4 #8) records how many trailing audit_log slots
+    the feature vector carried at train time. Predict must match.
+    A v1 model loaded from a workspace_meta row written by the older
+    code path has audit_dim=0 by default."""
 
     vocab: list[str]
     weights: list[float]
     bias: float
     trained_at: str
     n_samples: int
-    version: str = "lr_v1"
+    version: str = "lr_v2"
     threshold: float = 0.6
+    audit_dim: int = 0
 
 
 @dataclass(slots=True)
@@ -187,19 +200,30 @@ def predict_negative_outcome(
     text: str,
     recent_outcomes: list[float],
     trail_length: int,
+    audit_signals: tuple[float, ...] | None = None,
 ) -> float | None:
     """Return probability ∈ [0, 1] that the candidate decision will
-    lead to a negative outcome trend. ``None`` when no model trained."""
+    lead to a negative outcome trend. ``None`` when no model trained.
+
+    ``audit_signals`` (v3.4 #8): must match the model's ``audit_dim``.
+    Pass ``workspace_audit_signals(conn, ...)`` from the caller. When
+    a model was trained with ``audit_dim=0`` (legacy) any provided
+    audit_signals are silently dropped, keeping the older inference
+    path working until the next training cycle refreshes the model."""
     if model is None:
         return None
+    use_audit = audit_signals if model.audit_dim else None
     features = featurize(
         text=text,
         vocab=model.vocab,
         recent_outcomes=recent_outcomes,
         trail_length=trail_length,
+        audit_signals=use_audit,
     )
-    if len(features) != feature_dim(model.vocab):  # pragma: no cover - defensive
-        return None
+    if len(features) != feature_dim(model.vocab, audit_dim=model.audit_dim):
+        # Mismatch can happen if the caller passed the wrong audit_dim
+        # against an older model. Fail-soft: no prediction.
+        return None  # pragma: no cover - defensive
     return _sigmoid(_dot(model.weights, features) + model.bias)
 
 
@@ -235,14 +259,30 @@ def train_workspace(conn: sqlite3.Connection, *, workspace_id: str, now_iso: str
     ]
     vocab = build_vocab(texts, size=VOCAB_SIZE)
     outcomes = [float(r[3] or 0.0) for r in rows]
+    created_at_list = [str(r[4] or "") for r in rows]
     samples: list[tuple[list[float], int]] = []
     for i, (text, outcome) in enumerate(zip(texts, outcomes, strict=True)):
         recent = outcomes[max(0, i - 10) : i]
-        features = featurize(text=text, vocab=vocab, recent_outcomes=recent, trail_length=i)
+        # v3.4 #8: pull workspace audit signals AS OF this sample's
+        # created_at so historical training samples never peek at
+        # events that happened after them. Zeros on missing schema.
+        audit_signals = workspace_audit_signals(
+            conn, workspace_id=workspace_id, as_of_ts=created_at_list[i] or None
+        )
+        features = featurize(
+            text=text,
+            vocab=vocab,
+            recent_outcomes=recent,
+            trail_length=i,
+            audit_signals=audit_signals,
+        )
         label = 1 if outcome < -0.2 else 0
         samples.append((features, label))
     weights, bias, loss = _train_sgd(
-        samples, dim=feature_dim(vocab), n_epochs=epochs(), lr=learning_rate()
+        samples,
+        dim=feature_dim(vocab, audit_dim=AUDIT_FEATURE_COUNT),
+        n_epochs=epochs(),
+        lr=learning_rate(),
     )
     model = LRModel(
         vocab=vocab,
@@ -250,6 +290,7 @@ def train_workspace(conn: sqlite3.Connection, *, workspace_id: str, now_iso: str
         bias=bias,
         trained_at=now_iso,
         n_samples=len(samples),
+        audit_dim=AUDIT_FEATURE_COUNT,
     )
     save_model(conn, workspace_id=workspace_id, model=model)
     return TrainReport(samples=len(samples), trained=True, final_loss=loss)

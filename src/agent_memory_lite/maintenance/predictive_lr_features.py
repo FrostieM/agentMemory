@@ -16,10 +16,15 @@ Feature vector layout (deterministic, persisted with the model):
 * extra slot ``[K+1]`` — normalized decision trail length (number
                        of decisions in the last 7 days, clipped to
                        ``MAX_TRAIL`` then divided).
+* extra slots ``[K+2..K+4]`` (v3.4 #8, optional) — workspace audit_log
+                       signals: velocity / edit_share / agent_diversity.
+                       Only appended when ``audit_signals`` is provided;
+                       legacy callers (audit_signals=None) get the
+                       2-slot layout for byte-compatible behaviour.
 
 Output is plain ``list[float]`` so the LR can dot-product without
-numpy. The companion model stores the same vocab so train/predict
-operate on aligned indices.
+numpy. The companion model stores the same vocab + ``audit_dim`` so
+train/predict operate on aligned indices.
 """
 
 from __future__ import annotations
@@ -86,6 +91,7 @@ def featurize(
     vocab: list[str],
     recent_outcomes: list[float],
     trail_length: int,
+    audit_signals: tuple[float, ...] | None = None,
 ) -> list[float]:
     """Build one feature vector from a candidate decision.
 
@@ -93,6 +99,11 @@ def featurize(
     for the workspace's last ``TREND_WINDOW`` decisions (oldest first).
     ``trail_length`` is the count of decisions in the recent past
     (training pass picks a 7-day window, but the caller decides).
+    ``audit_signals`` (v3.4 #8): optional tuple of workspace-level
+    audit_log scalars, each pre-normalized to [0, 1]. When None the
+    function preserves the v1 2-extras layout so legacy callers stay
+    byte-compatible. The model's ``audit_dim`` field tells the train /
+    predict pair how many audit slots to expect.
     """
     tokens = tokenize(text)
     bow = [1.0 if tok in tokens else 0.0 for tok in vocab]
@@ -101,9 +112,17 @@ def featurize(
     trend = max(0.0, min(1.0, (avg + 1.0) / 2.0))
     # Trail slot: clip and normalize.
     trail = min(trail_length, MAX_TRAIL) / MAX_TRAIL
+    if audit_signals:
+        # Defensive copy + clamp; caller might pass un-normalized values.
+        audit = [max(0.0, min(1.0, float(s))) for s in audit_signals]
+        return [*bow, trend, trail, *audit]
     return [*bow, trend, trail]
 
 
-def feature_dim(vocab: list[str]) -> int:
-    """Total feature count given a vocab — bow + 2 extras."""
-    return len(vocab) + 2
+def feature_dim(vocab: list[str], *, audit_dim: int = 0) -> int:
+    """Total feature count: bow + 2 trend/trail extras + audit_dim.
+
+    Defaults audit_dim=0 to keep the legacy ``feature_dim(vocab)``
+    signature working — older modules that don't know about audit
+    signals call it without keyword args."""
+    return len(vocab) + 2 + audit_dim
