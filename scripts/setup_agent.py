@@ -1188,7 +1188,29 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear CLI argparser; readable as
             "consistent. CI runs the same sync and fails if `git diff` is dirty."
         ),
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help=(
+            "Scan every registered workspace (~/.agent_memory/workspaces.json) "
+            "for drift: missing paths, deprecated hook scripts in settings.local.json, "
+            "pending DB migrations, MCP workspace_id mismatches, missing pretooluse "
+            "enforcement rules. Read-only. Exit 0 healthy, 1 warnings, 2 critical."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --doctor: emit machine-readable JSON instead of the text table.",
+    )
     args = parser.parse_args()
+
+    if args.doctor:
+        # Late import keeps the doctor module out of the normal-mode boot path
+        # so a stray import error in it can't break a working install run.
+        from _setup_doctor import main as _doctor_main  # noqa: PLC0415
+
+        return _doctor_main(as_json=args.json)
 
     if args.sync_repo:
         return sync_repo_contracts()

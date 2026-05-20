@@ -74,4 +74,14 @@ def apply_migrations(
             (migration.version, iso_now()),
         )
         new_versions.append(migration.version)
+    if new_versions:
+        # Without an explicit commit the INSERT into schema_migrations rolls
+        # back the next time the connection is closed without a manual
+        # commit elsewhere. ``executescript`` clears the autocommit flag on
+        # some Python/SQLite combos, so even the bare INSERT can sit in an
+        # uncommitted transaction. setup_agent.py --doctor caught the
+        # symptom on 2026-05-20 — applied set lost 0037 between two
+        # successive runs because the prior apply path used the connection
+        # without committing.
+        conn.commit()
     return new_versions
