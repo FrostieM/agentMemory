@@ -74,6 +74,10 @@ class BrainPassReport:
     # v3.4 drift sentinel telemetry.
     drift_findings: list[str] = field(default_factory=list)
     drift_resolved: list[str] = field(default_factory=list)
+    # v3.4 #1 autonomous loop — closes V1→theory→V4/V5 cycle.
+    autonomous_examined: int = 0
+    autonomous_promoted: int = 0
+    autonomous_held: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -103,6 +107,9 @@ class BrainPassReport:
             "predictive_lr_samples": self.predictive_lr_samples,
             "drift_findings": list(self.drift_findings),
             "drift_resolved": list(self.drift_resolved),
+            "autonomous_examined": self.autonomous_examined,
+            "autonomous_promoted": self.autonomous_promoted,
+            "autonomous_held": self.autonomous_held,
             "errors": list(self.errors),
         }
 
@@ -413,6 +420,32 @@ def _step_causal_did(conn: sqlite3.Connection, workspace_id: str, report: BrainP
         report.errors.append(f"causal_did:{exc}")
 
 
+def _step_autonomous_loop(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.4 #1 — close V1→theory→V4/V5 cycle.
+
+    Runs AFTER V1 (so fresh proposals are present in the queue) and
+    BEFORE V4 DiD / V5 LR (so newly promoted theories feed both on
+    the same pass). Failure-soft."""
+    try:
+        from agent_memory_lite.cognition.autonomous_loop import (  # noqa: PLC0415
+            is_enabled,
+            run_autonomous_pass,
+        )
+
+        if not is_enabled():
+            return
+        result = run_autonomous_pass(conn, workspace_id=workspace_id)
+        report.autonomous_examined = result.examined
+        report.autonomous_promoted = result.promoted
+        report.autonomous_held = result.held
+        if result.errors:
+            report.errors.extend(f"autonomous:{e}" for e in result.errors)
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"autonomous:{exc}")
+
+
 def _step_drift_sentinel(
     conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
 ) -> None:
@@ -478,6 +511,10 @@ def run_brain_pass(
     _step_causal(conn, workspace_id, settings, report)
     _step_db_hygiene(conn, workspace_id, report)
     _step_experiment_proposal(conn, workspace_id, report)
+    # v3.4 #1: autonomous loop reads V1 candidates emitted by the
+    # step above and promotes the confident ones to theories BEFORE
+    # V4 DiD / V5 LR scan, so both pick up the new theories same pass.
+    _step_autonomous_loop(conn, workspace_id, report)
     _step_predictive_failure(conn, workspace_id, report)
     _step_causal_did(conn, workspace_id, report)
     _step_predictive_lr_train(conn, workspace_id, started, report)
