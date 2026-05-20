@@ -56,6 +56,60 @@ from agent_memory_lite.utils.time import iso_now
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 _MIN_TOKEN_LEN = 4  # filter ultra-short like "and", "the", "of"
 _EVIDENCE_WINDOW_DAYS = 30
+_CLAIM_PREVIEW_CHARS = 140  # keep prediction body readable; full text lives in claim
+
+
+def _synthesize_discipline(
+    *, proposal_text: str, supporting_episode_count: int
+) -> tuple[list[str], list[str]]:
+    """Return (predictions, validation_criteria) for an autonomously-promoted
+    theory.
+
+    Today's audit on 2026-05-20 caught ``th_d22488f4a35d3de5`` — a theory
+    produced by ``_promote_to_theory`` with empty ``predictions_json`` and
+    empty ``validation_criteria_json``. ``scripts/memory_audit.py`` then
+    flagged it as ``undisciplined_active_theories``. The discipline-rule
+    contract says every active/proposed theory must carry at least one
+    prediction AND at least one validation_criterion so future agents
+    know what would confirm/refute it.
+
+    The autonomous loop already knows two things at promotion time: the
+    proposal text (the claim) and the supporting-episode count (a proxy
+    for prior corroboration strength). We deterministically convert both
+    into a falsifiable prediction + a measurable validation criterion so
+    the hygiene check passes without LLM round-trips. Verbose but cheap.
+    """
+    preview = (proposal_text or "").strip()
+    if len(preview) > _CLAIM_PREVIEW_CHARS:
+        preview = preview[:_CLAIM_PREVIEW_CHARS].rstrip() + "..."
+    # Prediction: corroboration grows (the V4/V5 layer will keep mining
+    # evidence next ticks). Anchored to the autonomous_loop's own token-
+    # overlap rule so the next pass can score progress against it.
+    predictions = [
+        (
+            f"Supporting evidence for the claim grows by >=2 over the next "
+            f"{_EVIDENCE_WINDOW_DAYS} days. Starting count at promotion was "
+            f"{supporting_episode_count}; corroborating episodes are those "
+            f"that token-overlap the claim by >=2 terms."
+        ),
+        (
+            "No V6 dispute or V4 supersede event is filed against this "
+            "theory within the same window."
+        ),
+    ]
+    # Validation criteria: explicit thresholds the next audit can re-check.
+    validation_criteria = [
+        (
+            f">=1 new supporting episode (token-overlap >=2 with: '{preview}') "
+            f"recorded within {_EVIDENCE_WINDOW_DAYS} days, OR an experiment "
+            "row with status='completed' and metrics confirming the claim."
+        ),
+        (
+            "Theory is NOT cited by a memory_dispute row with status "
+            "'contested' or 'rejected' at validation time."
+        ),
+    ]
+    return predictions, validation_criteria
 
 
 @dataclass(slots=True)
@@ -228,19 +282,29 @@ def _promote_to_theory(
     theory_id = new_id(IdKind.THEORY)
     title = proposal_text[:60].strip() or f"From insight {insight_id}"
     primary_episode = supporting_episodes[0] if supporting_episodes else None
+    # v3.4 audit-followup (insight_6cf19fa37cf05012): synthesize discipline
+    # fields BEFORE the INSERT so the hygiene check never flags autonomously
+    # promoted theories as ``undisciplined_active_theories``.
+    predictions, validation_criteria = _synthesize_discipline(
+        proposal_text=proposal_text,
+        supporting_episode_count=len(supporting_episodes),
+    )
     conn.execute(
         """INSERT INTO theories
            (id, workspace_id, title, domain, claim, mechanism,
-            predictions_json, experiment_plan, tags_json, status,
+            predictions_json, validation_criteria_json,
+            experiment_plan, tags_json, status,
             confidence, importance, source_episode_id,
             evidence_count, evidence_strength, created_at, updated_at)
-           VALUES (?, ?, ?, 'autonomous_loop', ?, '', '[]', '', '[]',
+           VALUES (?, ?, ?, 'autonomous_loop', ?, '', ?, ?, '', '[]',
                    'proposed', ?, 0.6, ?, ?, ?, ?, ?)""",
         (
             theory_id,
             workspace_id,
             title,
             proposal_text,
+            json.dumps(predictions),
+            json.dumps(validation_criteria),
             confidence,
             primary_episode,
             len(supporting_episodes),

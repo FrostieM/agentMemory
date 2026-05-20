@@ -10,6 +10,7 @@ import pytest
 
 from agent_memory_lite.cognition.autonomous_loop import (
     _score_candidate,
+    _synthesize_discipline,
     confidence_threshold,
     is_enabled,
     max_promotions_per_pass,
@@ -129,6 +130,42 @@ def test_score_candidate_no_evidence() -> None:
     assert supporting == []
 
 
+def test_synthesize_discipline_returns_non_empty_lists() -> None:
+    """Both lists must be non-empty for every input — the audit hygiene
+    check classifies a theory as undisciplined the moment either list is
+    empty, so the helper has no input range where it may return ``[]``."""
+    preds, vcs = _synthesize_discipline(
+        proposal_text="Quarter-Kelly bet sizing improves drawdown",
+        supporting_episode_count=3,
+    )
+    assert len(preds) >= 1
+    assert len(vcs) >= 1
+    assert all(isinstance(s, str) and s.strip() for s in preds + vcs)
+    # The starting evidence count must surface in the prediction body so
+    # the next audit can measure growth deterministically.
+    assert "3" in preds[0]
+
+
+def test_synthesize_discipline_truncates_long_proposal() -> None:
+    """A wall-of-text proposal must not blow up the validation_criterion
+    body — we cap the preview at 140 chars + ellipsis."""
+    long_text = "Kelly sizing " * 80  # ~1040 chars
+    preds, vcs = _synthesize_discipline(proposal_text=long_text, supporting_episode_count=0)
+    # The validation criterion embeds the truncated preview.
+    assert "..." in vcs[0]
+    # Prediction count is still solid: starting evidence count makes it in.
+    assert "0" in preds[0]
+
+
+def test_synthesize_discipline_handles_blank_proposal() -> None:
+    """Empty/whitespace proposal still produces a usable validation
+    criterion (the surrounding contract guarantees non-empty lists)."""
+    preds, vcs = _synthesize_discipline(proposal_text="   ", supporting_episode_count=5)
+    assert len(preds) >= 1
+    assert len(vcs) >= 1
+    assert all(s.strip() for s in preds + vcs)
+
+
 def test_run_autonomous_pass_promotes_confident_candidate(
     conn: sqlite3.Connection,
 ) -> None:
@@ -156,10 +193,22 @@ def test_run_autonomous_pass_promotes_confident_candidate(
     assert report.held == 0
     # Theory row was written.
     theories = conn.execute(
-        "SELECT id, claim, confidence, status FROM theories WHERE workspace_id = 'ws'"
+        "SELECT id, claim, confidence, status, predictions_json,"
+        " validation_criteria_json FROM theories WHERE workspace_id = 'ws'"
     ).fetchall()
     assert len(theories) == 1
     assert theories[0][3] == "proposed"
+    # v3.4 audit-followup: every autonomously-promoted theory must carry
+    # non-empty discipline fields so memory_audit.py never flags it as
+    # undisciplined. Both fields are JSON-encoded lists of strings.
+    import json as _j  # noqa: PLC0415
+
+    preds = _j.loads(theories[0][4] or "[]")
+    vcs = _j.loads(theories[0][5] or "[]")
+    assert len(preds) >= 1, "autonomously-promoted theory must have >=1 prediction"
+    assert len(vcs) >= 1, "autonomously-promoted theory must have >=1 validation_criterion"
+    assert all(isinstance(p, str) and p.strip() for p in preds)
+    assert all(isinstance(v, str) and v.strip() for v in vcs)
     # theory_evidence rows: at minimum the 3 source episodes + 1 corpus = 4.
     n_ev = conn.execute(
         "SELECT COUNT(*) FROM theory_evidence WHERE theory_id = ?",
