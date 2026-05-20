@@ -196,14 +196,57 @@ class InsightDraft:
     signal_tokens_csv: str
 
 
-def distill_cluster(cluster: Cluster) -> InsightDraft:
-    """Heuristic distillation: top 6 signal tokens + cluster size become the summary."""
-    signal = sorted(cluster.signal_tokens)[:6]
-    summary = (
+def _heuristic_summary(cluster: Cluster, signal: list[str]) -> str:
+    """Legacy word-frequency summary — used as fallback when LLM is off
+    or unreachable."""
+    return (
         f"Recurring theme ({len(cluster.members)} episodes): {', '.join(signal)}"
         if signal
         else f"Recurring theme ({len(cluster.members)} episodes)"
     )
+
+
+def _try_llm_summary(cluster: Cluster, signal: list[str]) -> str | None:
+    """v3.2: Ollama-augmented 1-line pattern statement. Returns ``None``
+    on any failure so the caller falls back to ``_heuristic_summary``."""
+    try:
+        from agent_memory_lite.cognition.consolidation_llm import (  # noqa: PLC0415
+            llm_distill_cluster,
+        )
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+    except ImportError:
+        return None
+    try:
+        settings = get_settings()
+        if not settings.consolidation_llm_enabled:
+            return None
+        base_url = str(getattr(settings, "llm_base_url", "") or "")
+        model = str(getattr(settings, "llm_model", "") or "")
+    except Exception:  # pragma: no cover - defensive
+        return None
+    excerpts = [ep.gist for ep in cluster.members[:5] if ep.gist.strip()]
+    if not excerpts:
+        return None
+    return llm_distill_cluster(
+        excerpts=excerpts,
+        signal_tokens=signal,
+        member_count=len(cluster.members),
+        base_url=base_url,
+        model=model,
+    )
+
+
+def distill_cluster(cluster: Cluster) -> InsightDraft:
+    """v3.2: LLM-augmented distillation with heuristic fallback.
+
+    Tries the Ollama path first (``_try_llm_summary``) so insights read
+    like "Pattern: agent ingests file_indexed events from pre-commit
+    hook" instead of the word-frequency salad "Recurring theme (5
+    episodes): docs, file_indexed". Falls back to the v3.1 heuristic
+    when LLM is disabled / unreachable / returns NO_PATTERN.
+    """
+    signal = sorted(cluster.signal_tokens)[:6]
+    summary = _try_llm_summary(cluster, signal) or _heuristic_summary(cluster, signal)
     return InsightDraft(
         summary=summary,
         evidence_episode_ids=[ep.id for ep in cluster.members],

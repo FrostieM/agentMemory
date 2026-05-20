@@ -238,6 +238,15 @@ class Settings(BaseSettings):
     behavior_auto_archive_age_days: int = Field(
         30, ge=1, validation_alias="MEMORY_BEHAVIOR_AUTO_ARCHIVE_AGE_DAYS"
     )
+    # v3.2: LLM-augmented sleep consolidation. Replaces the word-frequency
+    # "Recurring theme (N episodes): tok1, tok2" heuristic with an Ollama-
+    # written 1-line pattern statement. Failure-soft: heuristic fallback
+    # when Ollama unreachable. Operator sets
+    # ``MEMORY_CONSOLIDATION_LLM_ENABLED=false`` to restore the v3.1
+    # heuristic body byte-for-byte.
+    consolidation_llm_enabled: bool = Field(
+        True, validation_alias="MEMORY_CONSOLIDATION_LLM_ENABLED"
+    )
 
     # v1.6 cold-memory lifecycle. Tracking writes last_retrieved_at on the
     # top-K (cheap, batched audit). Auto-queue emits cold_candidate

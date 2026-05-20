@@ -164,7 +164,10 @@ def test_pinned_behavior_tokens_empty_on_empty_workspace(conn: sqlite3.Connectio
     assert _pinned_behavior_token_sets(conn, workspace_id="ws") == []
 
 
-def test_distill_cluster_returns_summary_and_signal() -> None:
+def test_distill_cluster_returns_summary_and_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v3.2: force LLM off to lock heuristic body shape — the LLM path
+    has its own tests in test_consolidation_llm.py."""
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "false")
     episodes = [
         EpisodeView(
             id="e1", gist="kelly sizing one", ts="t1", token_set=frozenset({"kelly", "sizing"})
@@ -177,3 +180,60 @@ def test_distill_cluster_returns_summary_and_signal() -> None:
     draft = distill_cluster(cluster)
     assert "kelly" in draft.summary
     assert draft.evidence_episode_ids == ["e1", "e2"]
+
+
+def test_distill_cluster_uses_llm_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """v3.2: when consolidation_llm.llm_distill_cluster returns a
+    non-empty body, distill_cluster surfaces it instead of the
+    'Recurring theme (N episodes): tok1, tok2' fallback."""
+    from agent_memory_lite.cognition import consolidation as cmod  # noqa: PLC0415
+
+    def fake_llm(*, excerpts: list[str], **_kw: object) -> str:
+        return "Pattern: agent kept reaching for kelly sizing in identical setups."
+
+    monkeypatch.setattr(
+        "agent_memory_lite.cognition.consolidation_llm.llm_distill_cluster", fake_llm
+    )
+    # Force the inner _try_llm_summary to think LLM is enabled regardless of env.
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "true")
+
+    episodes = [
+        EpisodeView(
+            id=f"e{i}",
+            gist=f"kelly sizing experiment {i}",
+            ts="t",
+            token_set=frozenset({"kelly", "sizing"}),
+        )
+        for i in range(3)
+    ]
+    cluster = cmod.Cluster(seed=episodes[0], members=episodes)
+    draft = cmod.distill_cluster(cluster)
+    assert draft.summary.startswith("Pattern:")
+    assert "Recurring theme" not in draft.summary
+
+
+def test_distill_cluster_falls_back_when_llm_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM returning None (Ollama unreachable / NO_PATTERN) → heuristic body."""
+    from agent_memory_lite.cognition import consolidation as cmod  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        "agent_memory_lite.cognition.consolidation_llm.llm_distill_cluster",
+        lambda **_kw: None,
+    )
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "true")
+
+    episodes = [
+        EpisodeView(
+            id=f"e{i}",
+            gist=f"kelly sizing {i}",
+            ts="t",
+            token_set=frozenset({"kelly", "sizing"}),
+        )
+        for i in range(2)
+    ]
+    cluster = cmod.Cluster(seed=episodes[0], members=episodes)
+    draft = cmod.distill_cluster(cluster)
+    assert "Recurring theme" in draft.summary
+    assert "kelly" in draft.summary
