@@ -28,13 +28,13 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from agent_memory_lite.retrieval.causal_extractor import list_outgoing
+from agent_memory_lite.retrieval.causal_extractor import list_outgoing_batch
 from agent_memory_lite.retrieval.spreading_activation import (
     _DEFAULT_CAUSAL_RELATIONS,
     ActivationNode,
     spread,
 )
-from agent_memory_lite.storage.reader import get_object, search
+from agent_memory_lite.storage.reader import get_objects_batch, search
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,27 +59,6 @@ def _combined_score(activation: float, outcome_score: float) -> float:
     medium-activation high-outcome row.
     """
     return activation * (1.0 + max(-1.0, min(1.0, outcome_score)))
-
-
-def _causal_links_for_node(
-    conn: sqlite3.Connection, *, workspace_id: str, kind: str, item_id: str
-) -> list[dict[str, Any]]:
-    """Compact projection of a node's outgoing causal links."""
-    rows = list_outgoing(
-        conn,
-        workspace_id=workspace_id,
-        src_kind=kind,
-        src_id=item_id,
-    )
-    return [
-        {
-            "relation": row["relation"],
-            "dst_kind": row["dst_kind"],
-            "dst_id": row["dst_id"],
-            "weight": float(row["weight"] or 0.0),
-        }
-        for row in rows
-    ]
 
 
 def recall(
@@ -143,33 +122,56 @@ def recall(
             )
             visited.add((kind, item_id))
     # Step 3-5: resolve projections + apply outcome floor + bi-temporal.
+    #
+    # Round-2 audit: the pre-fix loop ran ``get_object`` + ``list_outgoing``
+    # PER node — 1 + 2N round-trips for an N-node activation set.
+    # Batched here per ``kind`` group: one IN-list query per kind for
+    # projections, one for causal links. For a typical spread of 20-30
+    # nodes across 3-4 kinds, that's ~6-8 queries vs ~60.
     out: list[RecallHit] = []
-    for node in activations:
-        if kinds and node.kind not in kinds:
-            continue
-        proj = get_object(
-            conn,
-            workspace_id=workspace_id,
-            kind=node.kind,
-            object_id=node.object_id,
+    # Filter once + group by kind.
+    filtered_nodes = [n for n in activations if not kinds or n.kind in kinds]
+    ids_by_kind: dict[str, list[str]] = {}
+    for node in filtered_nodes:
+        ids_by_kind.setdefault(node.kind, []).append(node.object_id)
+    # Batch-fetch projections and causal links per kind.
+    projections_by_kind: dict[str, dict[str, dict[str, Any]]] = {}
+    causal_by_kind: dict[str, dict[str, list[Any]]] = {}
+    for k, ids in ids_by_kind.items():
+        projections_by_kind[k] = get_objects_batch(
+            conn, workspace_id=workspace_id, kind=k, object_ids=ids
         )
+        causal_by_kind[k] = {
+            sid: [
+                {
+                    "relation": row["relation"],
+                    "dst_kind": row["dst_kind"],
+                    "dst_id": row["dst_id"],
+                    "weight": float(row["weight"] or 0.0),
+                }
+                for row in rows
+            ]
+            for sid, rows in list_outgoing_batch(
+                conn,
+                workspace_id=workspace_id,
+                src_kind=k,
+                src_ids=ids,
+            ).items()
+        }
+    # Now build the RecallHit list using O(1) dict lookups instead of
+    # per-node SQL. Iteration order matches ``activations`` so the
+    # downstream sort is deterministic across the batched and the
+    # legacy paths.
+    for node in filtered_nodes:
+        proj = projections_by_kind.get(node.kind, {}).get(node.object_id)
         if proj is None:
             continue
         score_value = float(proj.get("outcome_score") or 0.0)
         if score_value < outcome_floor:
             continue
-        # Phase 6 bi-temporal cut: we cannot apply where_valid generally
-        # via get_object (it returns a single row). For now, recall
-        # surfaces all rows that satisfy the floor; the operator-level
-        # bi-temporal filter applies through list_kind callers. Future
-        # work: add ``as_of`` filter inside get_object for the bi-temporal
-        # kinds.
-        causal = _causal_links_for_node(
-            conn,
-            workspace_id=workspace_id,
-            kind=node.kind,
-            item_id=node.object_id,
-        )
+        # Phase 6 bi-temporal cut: see legacy note above; the as_of
+        # filter still lives in list_kind callers, not here.
+        causal = causal_by_kind.get(node.kind, {}).get(node.object_id, [])
         out.append(
             RecallHit(
                 kind=node.kind,

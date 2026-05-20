@@ -220,6 +220,40 @@ def extract_workspace(conn: sqlite3.Connection, *, workspace_id: str) -> CausalR
     )
 
 
+def list_outgoing_batch(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    src_kind: str,
+    src_ids: list[str],
+) -> dict[str, list[sqlite3.Row]]:
+    """Round-2 audit: batched ``list_outgoing`` for the recall hot path.
+
+    Replaces N per-source SELECTs with one IN-list query when callers
+    already have a list of src_ids of the same src_kind. Returns a
+    dict mapping ``src_id`` -> rows so callers can fan out without
+    extra round-trips. Empty input -> empty dict. Missing
+    causal_links table (pre-migration DB) -> empty dict (failure-soft,
+    matches ``list_outgoing``).
+    """
+    if not src_ids:
+        return {}
+    unique = list(dict.fromkeys(src_ids))[:500]
+    placeholders = ",".join("?" * len(unique))
+    sql = (
+        "SELECT * FROM causal_links WHERE workspace_id = ? "
+        f"AND src_kind = ? AND src_id IN ({placeholders})"
+    )
+    try:
+        rows = conn.execute(sql, (workspace_id, src_kind, *unique)).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    out: dict[str, list[sqlite3.Row]] = {sid: [] for sid in unique}
+    for row in rows:
+        out.setdefault(row["src_id"], []).append(row)
+    return out
+
+
 def list_outgoing(
     conn: sqlite3.Connection,
     *,

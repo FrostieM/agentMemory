@@ -169,6 +169,52 @@ def list_kind(
 # ============================================================
 
 
+def get_objects_batch(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    kind: str,
+    object_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Round-2 audit: batched ``get_object`` for the recall hot path.
+
+    Replaces N single-row SELECTs with one IN-list query when callers
+    already have a list of ids of the SAME kind. Returns a dict keyed
+    by ``id_col`` value so callers can do O(1) lookup as they iterate
+    their original ordering. Empty input -> empty dict. Unknown kind
+    -> empty dict (mirrors ``get_object`` returning None per id).
+
+    Compact projection only — selective ``fields=`` is intentionally
+    NOT supported; callers that need full bodies have a single id and
+    should use ``get_object`` directly. Batching is for the discovery
+    path where projection is enough.
+    """
+    if not object_ids or kind not in _KIND_TABLES:
+        return {}
+    table, id_col = _KIND_TABLES[kind]
+    # De-dup + cap to a safe IN-list size. SQLite's default
+    # SQLITE_MAX_VARIABLE_NUMBER is 999 in older builds and 32766 in
+    # 3.32+; ~500 is a comfortable ceiling that matches the recall
+    # surface (max_nodes is limit*4, typically <50).
+    unique = list(dict.fromkeys(object_ids))[:500]
+    placeholders = ",".join("?" * len(unique))
+    rows = conn.execute(
+        f"SELECT * FROM {table} WHERE workspace_id = ? AND {id_col} IN ({placeholders})",
+        (workspace_id, *unique),
+    ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        projection = project(kind, row)
+        if projection is None:
+            continue
+        # Prefer the id from the projection so we key on whatever
+        # `project()` chose to surface (usually equal to id_col, but
+        # stay defensive in case the projector renames).
+        row_id = str(projection.get("id") or row[id_col])
+        out[row_id] = projection
+    return out
+
+
 def get_object(
     conn: sqlite3.Connection,
     *,
