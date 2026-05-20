@@ -71,6 +71,9 @@ from agent_memory_lite.maintenance.blindspot_filters import (
 from agent_memory_lite.maintenance.blindspot_filters import (
     is_opaque_id as _is_opaque_id,
 )
+from agent_memory_lite.maintenance.blindspot_learned_stops import (
+    learn_workspace_stops as _learn_workspace_stops,
+)
 
 # Re-export the env-helper functions so existing callers / tests that
 # import them from this module keep working without churn.
@@ -175,10 +178,17 @@ def find_blindspots(
     if not candidates:
         return []
     decision_tokens = _decision_token_set(conn, workspace_id=workspace_id, days=horizon_days)
+    # v3.3 last-mile: workspace-learned stopwords. Tokens that appear in
+    # >=40% of episodes are workspace-common infrastructure ('compiled',
+    # '27d') — not blindspots. Cached per (workspace, day) so repeated
+    # brief renders skip the recomputation.
+    learned_stops = _learn_workspace_stops(
+        conn, workspace_id=workspace_id, lookback_days=horizon_days
+    )
     out = [
         Blindspot(token=tok, episode_count=episode_counts[tok], decision_count=0)
         for tok in candidates
-        if tok not in decision_tokens
+        if tok not in decision_tokens and tok not in learned_stops
     ]
     # v3.3: rank by (episode_count desc, compound-identifier first,
     # token-length desc). Compound identifiers (snake_case / CamelCase
