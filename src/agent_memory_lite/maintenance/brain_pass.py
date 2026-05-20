@@ -63,6 +63,8 @@ class BrainPassReport:
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
     # legacy-only deploy looks different from "feature ran clean".
     predictive_warnings_available: bool = True
+    # v3.2 dead-behavior auto-archive count (rows flipped active=1 -> 0).
+    behaviors_auto_archived: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -85,6 +87,7 @@ class BrainPassReport:
             "experiment_proposals": self.experiment_proposals,
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
+            "behaviors_auto_archived": self.behaviors_auto_archived,
             "errors": list(self.errors),
         }
 
@@ -351,6 +354,30 @@ def _step_predictive_failure(
         report.errors.append(f"predictive_failure:{exc}")
 
 
+def _step_behavior_auto_archive(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """v3.2: archive never-fired behaviors older than the age threshold."""
+    if not settings.behavior_auto_archive_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.behavior_auto_archive import (  # noqa: PLC0415
+            auto_archive_dead_behaviors,
+        )
+
+        result = auto_archive_dead_behaviors(
+            conn,
+            workspace_id=workspace_id,
+            age_days=settings.behavior_auto_archive_age_days,
+        )
+        report.behaviors_auto_archived = result.archived
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"behavior_auto_archive:{exc}")
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -370,6 +397,7 @@ def run_brain_pass(
     _step_db_hygiene(conn, workspace_id, report)
     _step_experiment_proposal(conn, workspace_id, report)
     _step_predictive_failure(conn, workspace_id, report)
+    _step_behavior_auto_archive(conn, workspace_id, settings, report)
     try:
         conn.commit()
     except sqlite3.Error as exc:

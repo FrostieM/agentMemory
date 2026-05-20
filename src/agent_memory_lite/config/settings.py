@@ -223,6 +223,21 @@ class Settings(BaseSettings):
     behavior_apply_tracking_enabled: bool = Field(
         True, validation_alias="MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED"
     )
+    # v3.2 dead-behavior auto-archive: live-2026-05-20 audit showed 27/91
+    # behaviors on copyBot with application_count=0 (never fired) bloating
+    # every brief's <behavior_instructions> envelope and burning context
+    # tokens. brain_pass now flips ``active=0`` on rows that have zero
+    # applications AND were created more than ``..._AGE_DAYS`` ago AND are
+    # not pinned AND don't carry priority='system'. Audit-safe: archived
+    # rows stay in DB with ``reviewed_by='auto_archive_v3_2'`` so the
+    # operator can grep + unarchive if a soft fire-tracking bug caused
+    # false-positives.
+    behavior_auto_archive_enabled: bool = Field(
+        True, validation_alias="MEMORY_BEHAVIOR_AUTO_ARCHIVE_ENABLED"
+    )
+    behavior_auto_archive_age_days: int = Field(
+        30, ge=1, validation_alias="MEMORY_BEHAVIOR_AUTO_ARCHIVE_AGE_DAYS"
+    )
 
     # v1.6 cold-memory lifecycle. Tracking writes last_retrieved_at on the
     # top-K (cheap, batched audit). Auto-queue emits cold_candidate
