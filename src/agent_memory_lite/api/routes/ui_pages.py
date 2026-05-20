@@ -46,6 +46,9 @@ _ASSETS: dict[str, str] = {
     "recall.html": "text/html; charset=utf-8",
     "reflexes.html": "text/html; charset=utf-8",
     "metrics.html": "text/html; charset=utf-8",
+    # v3.4 #6: hygiene action queue (operator-side triage of
+    # maintenance_events). Sister page to /ui/review.
+    "queue.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -108,6 +111,17 @@ def memory_ui_reflexes() -> FileResponse:
 def memory_ui_metrics() -> FileResponse:
     """v3.0.0-final brain telemetry dashboard."""
     return _serve_html("metrics.html")
+
+
+@router.get("/ui/queue")
+def memory_ui_queue() -> FileResponse:
+    """v3.4 #6 hygiene findings action queue.
+
+    Lists open maintenance_events with claim / dismiss / resolve
+    operator actions. Distinct from /ui/review which targets
+    memory_candidates (knowledge-side); this one targets
+    maintenance_events (substrate-side)."""
+    return _serve_html("queue.html")
 
 
 @router.get("/ui/{asset_name}")

@@ -30,6 +30,10 @@
     graph: "/ui/graph",
     review: "/ui/review",
     browse: "/ui/browse",
+    recall: "/ui/recall",
+    reflexes: "/ui/reflexes",
+    metrics: "/ui/metrics",
+    queue: "/ui/queue",
   };
 
   // Workspace registry cache: id -> { db_path, vector_path, label }.

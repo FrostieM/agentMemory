@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agent-memory-lite — hygiene action queue</title>
+<link rel="stylesheet" href="/ui/styles.css?v=20260520-v34-queue" />
+<style>
+  /* v3.4 #6 hygiene findings action queue. Operator-side triage of
+     maintenance_events: claim / dismiss / resolve. Sister page to
+     /ui/review (which handles memory_candidates). */
+  .queue-body { padding: 24px 32px; max-width: 1180px; }
+  .filters { display: flex; gap: 0.6em; flex-wrap: wrap; align-items: center;
+             margin-bottom: 1em; font-size: 0.88em; }
+  .filters label { color: var(--text-2); display: inline-flex; gap: 0.35em; align-items: center; }
+  .filters select { background: var(--bg-1); color: var(--text-0);
+                    border: 1px solid var(--line-soft); border-radius: 4px;
+                    padding: 0.3em 0.5em; font-family: inherit; font-size: 0.88em; }
+  .summary { display: flex; gap: 1.2em; margin-bottom: 1em; align-items: center;
+             font-size: 0.9em; color: var(--text-2); }
+  .summary b { color: var(--text-0); font-weight: 600; }
+
+  .event { background: var(--bg-1); border: 1px solid var(--line-soft);
+           border-radius: 8px; padding: 0.85em 1em; margin-bottom: 0.7em; }
+  .event.sev-warning { border-left: 3px solid #d29922; }
+  .event.sev-error { border-left: 3px solid #f85149; }
+  .event.sev-critical { border-left: 3px solid #ff7b72; }
+  .event.sev-info { border-left: 3px solid #58a6ff; }
+  .event.action-claimed { background: rgba(88, 166, 255, 0.06); }
+  .event.action-dismissed { opacity: 0.55; }
+  .event.action-resolved { opacity: 0.45; }
+
+  .event-head { display: flex; justify-content: space-between; align-items: flex-start;
+                gap: 0.8em; margin-bottom: 0.35em; }
+  .event-summary { font-size: 1.02em; color: var(--text-0); margin: 0;
+                   font-weight: 500; line-height: 1.4; }
+  .event-meta { color: var(--text-2); font-size: 0.76em; text-transform: uppercase;
+                letter-spacing: 0.05em; font-family: ui-monospace, monospace;
+                margin-top: 0.4em; }
+  .event-id { color: var(--text-3); font-size: 0.72em; font-family: ui-monospace, monospace; }
+
+  .chip-action { display: inline-block; padding: 0.12em 0.6em; border-radius: 10px;
+                 font-size: 0.72em; font-family: ui-monospace, monospace;
+                 text-transform: uppercase; letter-spacing: 0.04em;
+                 background: var(--bg-0); border: 1px solid var(--line-soft);
+                 color: var(--text-2); margin-left: 0.5em; }
+  .chip-action.is-claimed { color: #58a6ff; border-color: #58a6ff; }
+  .chip-action.is-dismissed { color: #d29922; border-color: #d29922; }
+  .chip-action.is-resolved { color: #56d364; border-color: #56d364; }
+
+  .assigned { color: var(--text-1); font-size: 0.85em; margin-top: 0.4em; }
+  .assigned .who { color: var(--accent); font-weight: 500; }
+  .notes { color: var(--text-1); font-size: 0.85em; margin-top: 0.4em;
+           padding: 0.4em 0.6em; background: var(--bg-0); border-radius: 4px;
+           font-style: italic; }
+
+  .event-actions { display: flex; gap: 0.5em; margin-top: 0.7em; flex-wrap: wrap; }
+  .btn { padding: 0.36em 0.85em; border-radius: 6px; cursor: pointer;
+         font-family: inherit; font-size: 0.84em; border: 1px solid transparent;
+         font-weight: 500; }
+  .btn-claim { background: #1f6feb; color: white; }
+  .btn-claim:hover { background: #388bfd; }
+  .btn-resolve { background: #238636; color: white; }
+  .btn-resolve:hover { background: #2ea043; }
+  .btn-dismiss { background: transparent; color: #d29922; border-color: #d29922; }
+  .btn-dismiss:hover { background: rgba(210, 153, 34, 0.12); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .empty-state { color: var(--text-2); font-style: italic; padding: 2em;
+                 text-align: center; background: var(--bg-1); border-radius: 8px;
+                 border: 1px solid var(--line-soft); }
+  .toast { position: fixed; bottom: 20px; right: 20px; padding: 0.7em 1em;
+           border-radius: 6px; background: var(--bg-1); border: 1px solid var(--line-soft);
+           color: var(--text-0); font-size: 0.88em; z-index: 100; max-width: 420px;
+           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+  .toast.is-error { border-color: #f85149; color: #f85149; }
+  .toast.is-success { border-color: #56d364; color: #56d364; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="12" cy="12" r="2.4" fill="currentColor"></circle>
+            <circle cx="4" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="20" cy="12" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="4" r="1.4" fill="currentColor" opacity="0.7"></circle>
+            <circle cx="12" cy="20" r="1.4" fill="currentColor" opacity="0.7"></circle>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Memory</div>
+          <div class="brand-sub">Hygiene Queue · agent-memory-lite</div>
+        </div>
+      </div>
+      <div class="header-pills">
+        <span id="healthChip" class="chip"><span class="chip-dot"></span><span class="chip-label">health</span><span class="chip-value">…</span></span>
+        <span id="maintChip" class="chip"><span class="chip-label">open</span><span class="chip-value">0</span></span>
+        <span id="claimedChip" class="chip"><span class="chip-label">claimed</span><span class="chip-value">0</span></span>
+      </div>
+      <div class="header-meta">
+        <label class="ws-pick">
+          <span class="ws-label">workspace</span>
+          <select id="workspaceInput" autocomplete="off" class="ws-val"></select>
+        </label>
+      </div>
+    </header>
+    <nav class="app-nav" aria-label="UI sections">
+      <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
+      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
+      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
+      <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
+      <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
+      <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
+      <a class="app-nav-link" data-nav="review" href="/ui/review">Review</a>
+      <a class="app-nav-link is-active" data-nav="queue" href="/ui/queue">Queue</a>
+      <a class="app-nav-link" data-nav="browse" href="/ui/browse">Browse</a>
+    </nav>
+
+    <main class="queue-body">
+      <div class="summary">
+        <span><b id="total-events">0</b> event(s) shown</span>
+        <button id="refresh" class="btn btn-claim" style="margin-left:auto">refresh</button>
+      </div>
+      <div class="filters">
+        <label>action_status
+          <select id="filter-action">
+            <option value="open,claimed" selected>working queue (open + claimed)</option>
+            <option value="open">open only</option>
+            <option value="claimed">claimed only</option>
+            <option value="dismissed">dismissed only</option>
+            <option value="resolved">resolved only</option>
+            <option value="">all</option>
+          </select>
+        </label>
+        <label>kind
+          <select id="filter-kind">
+            <option value="" selected>all kinds</option>
+            <option value="memory_drift_fk">memory_drift_fk</option>
+            <option value="memory_drift_fts">memory_drift_fts</option>
+            <option value="memory_drift_vector">memory_drift_vector</option>
+            <option value="memory_drift_capability_links">memory_drift_capability_links</option>
+          </select>
+        </label>
+        <label>severity
+          <select id="filter-severity">
+            <option value="" selected>all severities</option>
+            <option value="info">info</option>
+            <option value="warning">warning</option>
+            <option value="error">error</option>
+            <option value="critical">critical</option>
+          </select>
+        </label>
+      </div>
+      <div id="event-list"><div class="empty-state">loading…</div></div>
+    </main>
+  </div>
+
+<script src="/ui/app_header.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+function escape(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]
+  ));
+}
+
+function toast(msg, kind) {
+  const t = document.createElement("div");
+  t.className = "toast" + (kind ? " is-" + kind : "");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+function selectedActionStatuses() {
+  const raw = $("#filter-action").value;
+  if (!raw) return null; // "all" → no filter
+  return raw.split(",").filter(Boolean);
+}
+
+async function load() {
+  const ws = $("#workspaceInput").value;
+  const list = $("#event-list");
+  list.innerHTML = `<div class="empty-state">loading…</div>`;
+  try {
+    const body = {
+      workspace_id: ws,
+      limit: 100,
+    };
+    const actionStatuses = selectedActionStatuses();
+    if (actionStatuses) body.action_statuses = actionStatuses;
+    const r = await fetch("/memory/list_maintenance_events", {
+      method: "POST",
+      headers: window.AppHeader.jsonHeaders(ws),
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    const data = await r.json();
+    let events = data.events || [];
+    // Client-side narrowing for kind/severity so the filter UI stays
+    // responsive without re-querying the server every keystroke.
+    const kindF = $("#filter-kind").value;
+    const sevF = $("#filter-severity").value;
+    if (kindF) events = events.filter((e) => e.kind === kindF);
+    if (sevF) events = events.filter((e) => e.severity === sevF);
+    $("#total-events").textContent = events.length;
+    $("#maintChip").querySelector(".chip-value").textContent =
+      events.filter((e) => e.action_status === "open").length;
+    $("#claimedChip").querySelector(".chip-value").textContent =
+      events.filter((e) => e.action_status === "claimed").length;
+    if (!events.length) {
+      list.innerHTML = `<div class="empty-state">no events match the current filter — clean queue</div>`;
+      return;
+    }
+    list.innerHTML = events.map(renderEvent).join("");
+    list.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => doAction(btn));
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state" style="color:#f85149">load failed: ${escape(e.message)}</div>`;
+  }
+}
+
+function renderEvent(e) {
+  const sev = e.severity || "info";
+  const act = e.action_status || "open";
+  const created = e.created_at ? new Date(e.created_at).toLocaleString() : "?";
+  const claimedBlock = e.assigned_to
+    ? `<div class="assigned">claimed by <span class="who">${escape(e.assigned_to)}</span>${
+        e.claimed_at ? " at " + escape(new Date(e.claimed_at).toLocaleString()) : ""
+      }</div>`
+    : "";
+  const notesBlock = e.action_notes
+    ? `<div class="notes">${escape(e.action_notes)}</div>`
+    : "";
+  const canClaim = act === "open";
+  const canResolve = act !== "resolved";
+  const canDismiss = act === "open" || act === "claimed";
+  return `
+    <div class="event sev-${escape(sev)} action-${escape(act)}" data-id="${escape(e.event_id)}">
+      <div class="event-head">
+        <div>
+          <div class="event-summary">${escape(e.summary)}<span class="chip-action is-${escape(act)}">${escape(act)}</span></div>
+          <div class="event-meta">${escape(e.kind)} · ${escape(sev)} · status=${escape(e.status)} · ${escape(created)}</div>
+        </div>
+        <div class="event-id">${escape(e.event_id)}</div>
+      </div>
+      ${claimedBlock}
+      ${notesBlock}
+      <div class="event-actions">
+        ${canClaim ? `<button class="btn btn-claim" data-action="claim" data-id="${escape(e.event_id)}">claim</button>` : ""}
+        ${canResolve ? `<button class="btn btn-resolve" data-action="resolve" data-id="${escape(e.event_id)}">resolve</button>` : ""}
+        ${canDismiss ? `<button class="btn btn-dismiss" data-action="dismiss" data-id="${escape(e.event_id)}">dismiss</button>` : ""}
+      </div>
+    </div>`;
+}
+
+async function doAction(btn) {
+  const id = btn.dataset.id;
+  const action = btn.dataset.action;
+  if (action === "claim") return claim(btn, id);
+  if (action === "resolve") return resolve(btn, id);
+  if (action === "dismiss") return dismiss(btn, id);
+}
+
+async function postAction(btn, path, payload, successMsg) {
+  const ws = $("#workspaceInput").value;
+  btn.disabled = true;
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: window.AppHeader.jsonHeaders(ws),
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+    toast(successMsg, "success");
+    await load();
+  } catch (e) {
+    btn.disabled = false;
+    toast(`${path.split("/").pop()} failed: ${e.message}`, "error");
+  }
+}
+
+function claim(btn, id) {
+  const who = prompt("assigned_to (your handle):", "operator") || "";
+  if (!who.trim()) return;
+  const notes = prompt("optional notes (cancel to skip):") || null;
+  return postAction(
+    btn,
+    "/memory/claim_maintenance_event",
+    { event_id: id, assigned_to: who.trim(), action_notes: notes },
+    `claimed ${id}`,
+  );
+}
+
+function resolve(btn, id) {
+  return postAction(
+    btn,
+    "/memory/resolve_maintenance_event",
+    { event_id: id, status: "resolved" },
+    `resolved ${id}`,
+  );
+}
+
+function dismiss(btn, id) {
+  const notes = prompt("dismiss reason (optional):") || null;
+  return postAction(
+    btn,
+    "/memory/dismiss_maintenance_event",
+    { event_id: id, action_notes: notes },
+    `dismissed ${id}`,
+  );
+}
+
+$("#refresh").addEventListener("click", load);
+$("#filter-action").addEventListener("change", load);
+$("#filter-kind").addEventListener("change", load);
+$("#filter-severity").addEventListener("change", load);
+window.AppHeader.init({ active: "queue", onWorkspaceChange: () => load() });
+</script>
+</body>
+</html>
