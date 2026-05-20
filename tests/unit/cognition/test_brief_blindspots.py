@@ -60,10 +60,16 @@ def test_brief_surfaces_blindspots(conn: sqlite3.Connection) -> None:
         _seed_episode(conn, idx=i, text="kelly sizing analysis")
     body = compose_brief(conn, workspace_id="ws", max_tokens=500).body_md
     assert "## Blindspots" in body
-    # At least one of the three tokens lands as a blindspot row. The
-    # 0.03 budget slot may only fit one row at default ``max_tokens``;
-    # which token wins depends on Counter's insertion order for ties.
-    expected_tokens = {"kelly", "sizing", "analysis"}
+    # At least one of the tokens (unigram or v3.3 bigram) lands as a
+    # blindspot row. The 0.03 budget slot may only fit one row at
+    # default ``max_tokens``; which token wins depends on ranking.
+    expected_tokens = {
+        "kelly",
+        "sizing",
+        "analysis",
+        "kelly sizing",
+        "sizing analysis",
+    }
     assert any(f"'{tok}'" in body for tok in expected_tokens), body
 
 

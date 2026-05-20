@@ -13,10 +13,23 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from agent_memory_lite.ingestion.capability_suggester import _tokenize
+from agent_memory_lite.maintenance.blindspot_bigrams import (
+    bigram_tokens as _bigram_tokens,
+)
+from agent_memory_lite.maintenance.blindspot_bigrams import (
+    is_bigrams_enabled,
+)
 from agent_memory_lite.maintenance.blindspot_filters import (
     DECISION_TOKENS_CACHE,
     cache_remember,
 )
+
+
+def _tokenize_for_blindspots(text: str) -> set[str]:
+    """v3.3: switch between unigram and bigram tokenizer based on the
+    same env flag the episode side checks, so the asymmetry (episode
+    token NOT in decision token set) compares apples to apples."""
+    return _bigram_tokens(text) if is_bigrams_enabled() else _tokenize(text)
 
 
 def decision_token_set(conn: sqlite3.Connection, *, workspace_id: str, days: int) -> set[str]:
@@ -53,6 +66,6 @@ def decision_token_set(conn: sqlite3.Connection, *, workspace_id: str, days: int
         else:
             parts = list(row)
         text = " ".join(str(p) for p in parts if p)
-        out.update(_tokenize(text))
+        out.update(_tokenize_for_blindspots(text))
     cache_remember(cache_key, out)
     return out

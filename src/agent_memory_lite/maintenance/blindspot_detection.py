@@ -42,6 +42,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from agent_memory_lite.ingestion.capability_suggester import _tokenize
+from agent_memory_lite.maintenance.blindspot_bigrams import (
+    bigram_tokens as _bigram_tokens,
+)
+from agent_memory_lite.maintenance.blindspot_bigrams import (
+    is_bigrams_enabled,
+    is_compound_identifier,
+)
 from agent_memory_lite.maintenance.blindspot_decision_tokens import (
     decision_token_set as _decision_token_set,
 )
@@ -101,12 +108,17 @@ def _tokens_from(text: str, *, cap: int) -> set[str]:
     so an episode counts as 1 toward each unique token regardless of
     how many times the token appears inside it.
 
+    v3.3: when ``MEMORY_BLINDSPOT_BIGRAMS_ENABLED=true`` (default),
+    the token set includes bigrams alongside unigrams so multi-word
+    concepts ('kelly sizing', 'tier ladder') surface as cohesive
+    blindspots instead of fragmenting into useless components.
+
     Audit-round-3 fix: ``set`` iteration order depends on Python's
     hash randomization → the truncated cap was non-deterministic across
     process restarts → blindspot recall jittered between runs. Sort
     deterministically before slicing.
     """
-    tokens = _tokenize(text)
+    tokens = _bigram_tokens(text) if is_bigrams_enabled() else _tokenize(text)
     if not tokens or cap >= len(tokens):
         return tokens
     return set(sorted(tokens)[:cap])
@@ -168,7 +180,18 @@ def find_blindspots(
         for tok in candidates
         if tok not in decision_tokens
     ]
-    out.sort(key=lambda b: -b.episode_count)
+    # v3.3: rank by (episode_count desc, compound-identifier first,
+    # token-length desc). Compound identifiers (snake_case / CamelCase
+    # / bigrams with at least one underscore) are domain-specific
+    # concepts; they should beat plain unigrams at the same frequency.
+    out.sort(
+        key=lambda b: (
+            -b.episode_count,
+            0 if (is_compound_identifier(b.token) or " " in b.token) else 1,
+            -len(b.token),
+            b.token,  # final tiebreak: deterministic alpha order
+        )
+    )
     capped = out[:cap]
     # v3.1 LLM augmentation — best-effort enrichment per row. Failure-soft.
     from agent_memory_lite.maintenance.blindspot_enrich import (  # noqa: PLC0415

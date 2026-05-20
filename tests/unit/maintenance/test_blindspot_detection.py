@@ -88,12 +88,16 @@ def test_returns_empty_on_pristine_workspace(conn: sqlite3.Connection) -> None:
 
 
 def test_finds_token_in_many_episodes_but_no_decision(conn: sqlite3.Connection) -> None:
-    """'kelly' appears in 5 episodes, never in any decision → blindspot."""
+    """'kelly' appears in 5 episodes, never in any decision → surface it
+    as a blindspot. v3.3 bigram mode promotes 'kelly sizing' to the top
+    since multi-word phrases beat plain unigrams at the same frequency;
+    either is acceptable — the intent is that the 'kelly' concept
+    surfaces."""
     for i in range(5):
         _seed_episode(conn, ep_id=f"ep{i}", raw_text=f"kelly sizing chat number {i}")
     out = bs.find_blindspots(conn, workspace_id="ws", min_episodes=5)
     tokens = {b.token for b in out}
-    assert "kelly" in tokens
+    assert "kelly" in tokens or "kelly sizing" in tokens
 
 
 def test_token_with_decision_is_not_blindspot(conn: sqlite3.Connection) -> None:
@@ -243,9 +247,12 @@ def test_long_digit_runs_filtered_but_tech_terms_survive(
     assert "2026" not in tokens
     assert "0042" not in tokens
     # Tech terms with short digit suffix survive (at least one should
-    # land in the top-N blindspots given they all appear in 5 episodes):
-    assert tokens & {"python3", "oauth2", "sha1"}, (
-        f"expected at least one tech term in tokens, got {tokens}"
+    # land in the top-N blindspots given they all appear in 5 episodes).
+    # v3.3: bigrams may take the unigram slots, so check both forms.
+    tech_terms = {"python3", "oauth2", "sha1"}
+    tech_bigrams = {"python3 oauth2", "oauth2 sha1"}
+    assert tokens & tech_terms or tokens & tech_bigrams, (
+        f"expected at least one tech term (unigram or bigram) in tokens, got {tokens}"
     )
 
 
