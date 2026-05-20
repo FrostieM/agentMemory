@@ -2,6 +2,16 @@
 
 Multi-role hedges ranker errors. ``decide_role_activation`` is offline-testable;
 ``fetch_top_capabilities`` is the HTTP boundary.
+
+v3.2 rewrite: previous version forced the agent to open every reply with
+"Acting as role stack: X + Y" verbatim and warned that skipping was a
+"discipline violation." That turned roles into stage props — the agent
+*performed* having a skill instead of *using* it, and burned 50-100
+output tokens per turn on the announcement. Humans don't say "Acting as
+Doctor" before each diagnosis; they internalize their training and
+apply it. The reminder now informs the agent which capabilities are
+relevant — roles + purposes + skill method stay surfaced — but does
+NOT prescribe an opening sentence or threaten discipline action.
 """
 
 from __future__ import annotations
@@ -97,7 +107,7 @@ def decide_role_activation(
     )
     top_skill = top_skills[0] if top_skills else None
     single = len(top_roles) == 1
-    lines = ["[role-activation] Top capability matches for this task:"]
+    lines = ["[role-activation] Capabilities active for this task:"]
     if single:
         lines.extend(_render_role(top_roles[0], label=None))
     else:
@@ -108,17 +118,11 @@ def decide_role_activation(
         lines.append(f"  SKILL:   {top_skill.get('name') or '(unnamed skill)'}")
         lines.append(f"  METHOD:  {_trim(top_skill.get('summary') or '(no summary recorded)')}")
     lines.append("")
-    lines.append("REQUIRED in your response:")
-    if single:
-        lines.append('  1. First sentence: "Acting as <role>." (verbatim opening).')
-    else:
-        names = " + ".join(r.get("name") or "?" for r in top_roles)
-        lines.append(f'  1. First sentence: "Acting as role stack: {names}." (verbatim).')
-    lines.append("  2. Apply each ROLE purpose as a hard boundary; STOP on conflict.")
-    if top_skill is not None:
-        lines.append("  3. Use the SKILL method, not ad-hoc reasoning.")
-    lines.append("")
-    lines.append("Skipping role activation is a discipline violation.")
+    lines.append(
+        "Apply role purposes as soft constraints on your reasoning. "
+        "Prefer the SKILL method over ad-hoc reasoning when relevant. "
+        "Internalize and act — no need to announce role activation in your reply."
+    )
     return RoleActivation(inject=True, prompt="\n".join(lines))
 
 

@@ -58,7 +58,7 @@ def test_inactive_role_skipped() -> None:
     assert d.inject is False
 
 
-def test_valid_role_injects_with_required_sections() -> None:
+def test_valid_role_injects_with_informational_sections() -> None:
     caps = {
         "roles": [_role("Quant Research Engineer", "Evaluate strategy quality with replay")],
         "skills": [_skill("Replay and backtest design", "Design explicit baselines + acceptance")],
@@ -71,9 +71,12 @@ def test_valid_role_injects_with_required_sections() -> None:
     assert "[role-activation]" in d.prompt
     assert "Quant Research Engineer" in d.prompt
     assert "Replay and backtest design" in d.prompt
-    # Single role => verbatim Acting-as opener
-    assert "Acting as <role>." in d.prompt
-    assert "discipline violation" in d.prompt
+    # v3.2: informational only. No verbatim opening, no discipline-violation
+    # stick — roles inform, the agent internalizes and acts.
+    assert "Acting as" not in d.prompt
+    assert "verbatim" not in d.prompt
+    assert "discipline violation" not in d.prompt
+    assert "no need to announce" in d.prompt.lower()
 
 
 def test_multi_role_stack_injection_when_top_k_available() -> None:
@@ -97,9 +100,9 @@ def test_multi_role_stack_injection_when_top_k_available() -> None:
     assert "Quant Research Engineer" in d.prompt
     # 3rd role NOT present at default top_k=2
     assert "Production Reliability Engineer" not in d.prompt
-    # Acting-as line uses role stack form
-    assert "Acting as role stack:" in d.prompt
-    assert "Senior Frontend UX Architect + Quant Research Engineer" in d.prompt
+    # v3.2: no verbatim opener even in multi-role case
+    assert "Acting as role stack" not in d.prompt
+    assert "verbatim" not in d.prompt
 
 
 def test_top_k_roles_configurable() -> None:
@@ -119,7 +122,12 @@ def test_top_k_roles_configurable() -> None:
     assert "ROLE PRIMARY:" in d_k3.prompt
     assert "ROLE SECONDARY:" in d_k3.prompt
     assert "ROLE TERTIARY:" in d_k3.prompt
-    assert "R1 + R2 + R3" in d_k3.prompt
+    # All three roles surfaced as informational labels, no "X + Y + Z" stack
+    # phrase since we no longer demand a verbatim opening sentence.
+    assert "R1" in d_k3.prompt
+    assert "R2" in d_k3.prompt
+    assert "R3" in d_k3.prompt
+    assert "Acting as" not in d_k3.prompt
 
     d_k1 = decide_role_activation(
         user_prompt="design a backtest for the source-flip edge analysis",
@@ -130,7 +138,7 @@ def test_top_k_roles_configurable() -> None:
     # Single-role form when top_k=1
     assert "ROLE PRIMARY:" not in d_k1.prompt
     assert "ROLE:" in d_k1.prompt
-    assert "Acting as <role>." in d_k1.prompt
+    assert "Acting as" not in d_k1.prompt
 
 
 def test_role_without_skill_still_injects() -> None:
