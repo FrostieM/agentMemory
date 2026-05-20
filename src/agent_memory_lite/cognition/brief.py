@@ -542,6 +542,13 @@ def _build_watch_outs(
     Surfaces failed approaches so the agent does not propose them again.
     Phase 1 puts decisions, theories, and behaviors into the same pool;
     later phases (consolidation feedback, recall) may extend.
+
+    v3.5: ``status != 'archived'`` filter added because the operator
+    already dispositioned archived rows — keeping them in watch-outs
+    re-surfaces noise on every brief and pushes meaningful watch-outs
+    out of the limit-N pool. v3 smoke-test artifacts on the
+    agent-memory-lite workspace stayed in the brief for ~3 days before
+    this was caught.
     """
     # Hand-stitched UNION rather than reader.list_kind because we want a
     # single cross-kind ORDER BY outcome_score ASC pass.
@@ -550,16 +557,19 @@ def _build_watch_outs(
                outcome_score, status
           FROM decisions
          WHERE workspace_id = ? AND outcome_score < 0
+           AND status != 'archived'
         UNION ALL
         SELECT id, 'theory' AS kind, COALESCE(gist, title, claim, '') AS gist,
                outcome_score, status
           FROM theories
          WHERE workspace_id = ? AND outcome_score < 0
+           AND status != 'archived'
         UNION ALL
         SELECT id, 'behavior' AS kind, COALESCE(rule_one_line, name, '') AS gist,
                outcome_score, NULL AS status
           FROM behaviors
          WHERE workspace_id = ? AND outcome_score < 0
+           AND active = 1
         ORDER BY outcome_score ASC
         LIMIT ?
     """

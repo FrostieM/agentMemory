@@ -101,3 +101,32 @@ def test_watch_outs_empty_when_all_positive(conn: sqlite3.Connection) -> None:
     brief = compose_brief(conn, workspace_id="ws")
     # Watch-outs header should not appear when there are no negatives.
     assert "## Watch-outs" not in brief.body_md
+
+
+def test_archived_negative_outcome_decision_not_in_watch_outs(
+    conn: sqlite3.Connection,
+) -> None:
+    """v3.5: archived rows already got dispositioned by the operator —
+    re-surfacing them in the watch-outs section eats budget and pushes
+    real watch-outs out of the limit-N pool. The agent-memory-lite
+    workspace had three "v3 smoke" archived rows stuck at the top of
+    watch-outs for ~3 days before this filter shipped."""
+    _seed_decision(
+        conn,
+        id="dec_smoke_old",
+        gist="archived smoke test",
+        outcome_score=-1.0,
+        status="archived",
+    )
+    _seed_decision(
+        conn,
+        id="dec_real_concern",
+        gist="real negative outcome",
+        outcome_score=-0.5,
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    _, _, watch_section = brief.body_md.partition("## Watch-outs")
+    # Archived row must NOT surface
+    assert "dec_smoke_old" not in watch_section
+    # Active negative row STILL must surface
+    assert "dec_real_concern" in watch_section
