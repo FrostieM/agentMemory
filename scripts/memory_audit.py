@@ -40,7 +40,19 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--repair-vectors",
         action="store_true",
-        help="Drop and rebuild the chunks vector namespace from SQLite chunks.",
+        help=(
+            "Resume-safe rebuild: embed only chunks missing from the vector store. "
+            "v3.4+ default — safe to re-run, picks up where last run stopped."
+        ),
+    )
+    parser.add_argument(
+        "--rebuild-vectors-force",
+        action="store_true",
+        help=(
+            "Force drop + full rebuild of the chunks vector namespace. Use only when "
+            "the embedding model changed and stale vectors must go. Slower + risky if "
+            "interrupted."
+        ),
     )
     parser.add_argument(
         "--repair-embedding-refs",
@@ -177,7 +189,12 @@ def _chunk_count(conn: sqlite3.Connection, *, workspace_id: str) -> int:
 def main() -> int:  # noqa: PLR0912
     args = _parser().parse_args()
     settings = _settings(args)
-    repairing = bool(args.repair_fts or args.repair_vectors or args.repair_embedding_refs)
+    repairing = bool(
+        args.repair_fts
+        or args.repair_vectors
+        or args.rebuild_vectors_force
+        or args.repair_embedding_refs
+    )
     if repairing and not args.backup_first and not args.dry_run_repair:
         print("Refusing repair without --backup-first.", file=sys.stderr)
         return 1
@@ -198,18 +215,36 @@ def main() -> int:  # noqa: PLR0912
                 )
         if args.repair_fts and not args.dry_run_repair:
             repair_fts(conn, workspace_id=settings.workspace_id)
-        if args.repair_vectors and not args.dry_run_repair:
+        if (args.repair_vectors or args.rebuild_vectors_force) and not args.dry_run_repair:
             if _chunk_count(conn, workspace_id=settings.workspace_id) == 0:
                 store.open()
                 store.drop_namespace(NAMESPACE_CHUNKS)
             else:
                 provider = get_embedding_provider(settings)
+                # Progress callback: print one line per 5% milestone so the
+                # operator sees movement during long rebuilds. Silent when
+                # ``--json`` so we don't corrupt machine-readable output.
+                last_pct: list[int] = [-1]
+
+                def _progress(done: int, total: int) -> None:
+                    if total == 0:
+                        return
+                    pct = int(100 * done / total)
+                    if pct >= last_pct[0] + 5 and not args.json:
+                        print(
+                            f"  reindex_chunks: {done}/{total} ({pct}%)",
+                            flush=True,
+                        )
+                        last_pct[0] = pct
+
                 reindex_chunks(
                     conn,
                     workspace_id=settings.workspace_id,
                     provider=provider,
                     store=store,
                     batch_size=settings.embedding_batch_size,
+                    resume=not args.rebuild_vectors_force,
+                    progress_callback=_progress,
                 )
         if args.repair_embedding_refs and not args.dry_run_repair:
             repair_chunk_embedding_refs(
@@ -237,7 +272,7 @@ def main() -> int:  # noqa: PLR0912
             payload["repair_plan"] = _repair_plan(
                 payload,
                 repair_fts_flag=args.repair_fts,
-                repair_vectors_flag=args.repair_vectors,
+                repair_vectors_flag=args.repair_vectors or args.rebuild_vectors_force,
                 repair_embedding_refs_flag=args.repair_embedding_refs,
             )
         _print(payload, as_json=args.json)
