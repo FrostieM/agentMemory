@@ -68,6 +68,12 @@ class BrainPassReport:
     # v3.3 Vector 4 method (a): DiD causal links emitted from supersede pairs.
     causal_did_pairs_scanned: int = 0
     causal_did_links_emitted: int = 0
+    # v3.4 #7 Vector 4 method (b): Granger-style lead-lag causality on
+    # memory_usage_feedback daily activity. pairs_scanned counts ordered
+    # (X, Y) pairs that cleared the min-activity gate; links_emitted
+    # counts NEW granger_caused rows landed this tick.
+    causal_granger_pairs_scanned: int = 0
+    causal_granger_links_emitted: int = 0
     # v3.3 Vector 5 LR: per-pass training outcome.
     predictive_lr_trained: bool = False
     predictive_lr_samples: int = 0
@@ -103,6 +109,8 @@ class BrainPassReport:
             "behaviors_auto_archived": self.behaviors_auto_archived,
             "causal_did_pairs_scanned": self.causal_did_pairs_scanned,
             "causal_did_links_emitted": self.causal_did_links_emitted,
+            "causal_granger_pairs_scanned": self.causal_granger_pairs_scanned,
+            "causal_granger_links_emitted": self.causal_granger_links_emitted,
             "predictive_lr_trained": self.predictive_lr_trained,
             "predictive_lr_samples": self.predictive_lr_samples,
             "drift_findings": list(self.drift_findings),
@@ -420,6 +428,31 @@ def _step_causal_did(conn: sqlite3.Connection, workspace_id: str, report: BrainP
         report.errors.append(f"causal_did:{exc}")
 
 
+def _step_causal_granger(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.4 #7 Vector 4 method (b): lead-lag Granger detector on
+    memory_usage_feedback daily activity. Sister method to DiD —
+    both drop their links into causal_links so the recall layer can
+    read multi-method confirmation as a confidence boost. Granger
+    runs AFTER DiD because DiD operates on the smaller supersede
+    set and is therefore cheaper to fail-soft if it errors first.
+    Failure-soft on missing schema."""
+    try:
+        from agent_memory_lite.retrieval.causal_granger import (  # noqa: PLC0415
+            extract_granger_links,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return
+        result = extract_granger_links(conn, workspace_id=workspace_id)
+        report.causal_granger_pairs_scanned = result.pairs_scanned
+        report.causal_granger_links_emitted = result.links_emitted
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"causal_granger:{exc}")
+
+
 def _step_autonomous_loop(
     conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
 ) -> None:
@@ -517,6 +550,7 @@ def run_brain_pass(
     _step_autonomous_loop(conn, workspace_id, report)
     _step_predictive_failure(conn, workspace_id, report)
     _step_causal_did(conn, workspace_id, report)
+    _step_causal_granger(conn, workspace_id, report)
     _step_predictive_lr_train(conn, workspace_id, started, report)
     _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
