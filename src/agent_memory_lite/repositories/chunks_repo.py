@@ -54,16 +54,54 @@ def _row_to_chunk(row: sqlite3.Row) -> Chunk:
         label=_row_label(row),
         line_start=row["line_start"],
         line_end=row["line_end"],
-        symbols=json.loads(row["symbols_json"] or "[]"),
+        # v3.5 sector-2 audit-followup: one malformed JSON cell would
+        # crash every read on chunks (and any envelope that gathered it).
+        # Tolerant ``_safe_json_*`` falls back to [] / {} on parse error.
+        symbols=_safe_json_list(row["symbols_json"]),
         symbol_kind=_row_optional_str(row, "symbol_kind"),
         qualified_name=_row_optional_str(row, "qualified_name"),
         parent_qualified_name=_row_optional_str(row, "parent_qualified_name"),
         embedding_id=row["embedding_id"],
-        importance=float(row["importance"]),
-        confidence=float(row["confidence"]),
+        # v3.5 sector-2 audit-followup: NULL or non-numeric importance/
+        # confidence would raise TypeError/ValueError inside float() and
+        # crash the parser. Default to 0.0 so the row still loads.
+        importance=_safe_float(row["importance"]),
+        confidence=_safe_float(row["confidence"]),
         created_at=row["created_at"],
-        metadata=json.loads(row["metadata_json"] or "{}"),
+        metadata=_safe_json_dict(row["metadata_json"]),
     )
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce to float, fall back to ``default`` on NULL / type error."""
+    if value is None:
+        return default
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_json_list(raw: object) -> list[object]:
+    """JSON-decode a list column, falling back to ``[]`` on any error."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _safe_json_dict(raw: object) -> dict[str, object]:
+    """JSON-decode a dict column, falling back to ``{}`` on any error."""
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def insert_chunk(

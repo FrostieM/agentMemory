@@ -6,6 +6,7 @@ The store returns a `score` already in similarity space (higher = closer).
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
@@ -15,6 +16,7 @@ from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
 DEFAULT_LIMIT = 30
+_LOG = logging.getLogger(__name__)
 
 
 def collect_vector(
@@ -28,13 +30,30 @@ def collect_vector(
 ) -> list[RetrievalCandidate]:
     if not query.strip():
         return []
-    vectors = provider.embed_batch([query], kind="query")
-    hits = store.query(
-        NAMESPACE_CHUNKS,
-        vectors[0],
-        workspace_id=workspace_id,
-        k=limit,
-    )
+    # v3.5 sector-2 audit-followup: tolerate embedder + vector-store
+    # failures so a corrupt LanceDB table / Ollama OOM / model cold-start
+    # error cannot 500 the entire ``/memory/get_context``. Retrieval
+    # degrades gracefully to FTS-only when this returns ``[]``. The
+    # caller (``context_builder``) already handles empty vector results.
+    try:
+        vectors = provider.embed_batch([query], kind="query")
+    except Exception as exc:  # noqa: BLE001 — every embed failure must degrade, not crash
+        _LOG.warning("collect_vector: embed_batch failed (%s); degrading to FTS-only", exc)
+        return []
+    # ``vectors`` is np.ndarray of shape (N, dim). Use len() — ``not vectors``
+    # is ambiguous on a numpy array (raises "truth value of array").
+    if len(vectors) == 0:
+        return []
+    try:
+        hits = store.query(
+            NAMESPACE_CHUNKS,
+            vectors[0],
+            workspace_id=workspace_id,
+            k=limit,
+        )
+    except Exception as exc:  # noqa: BLE001 — same rationale as above
+        _LOG.warning("collect_vector: store.query failed (%s); degrading to FTS-only", exc)
+        return []
     candidates: list[RetrievalCandidate] = []
     for hit in hits:
         chunk = get_chunk(conn, hit.id)

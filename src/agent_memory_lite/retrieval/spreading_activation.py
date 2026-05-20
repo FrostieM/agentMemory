@@ -92,6 +92,13 @@ def _neighbors_soft_edges(
     UNION both endpoints so a seed reaches associates whether it was
     the src or dst at insert time.
     """
+    # v3.5 sector-2 audit-followup: an empty ``edge_kinds`` tuple would
+    # render ``IN ()`` which SQLite parses as a syntax error and the
+    # try/except would swallow — but callers think they got an empty
+    # neighbour list when they actually mis-configured. Fail fast and
+    # explicit instead.
+    if not edge_kinds:
+        return []
     placeholders = ", ".join("?" * len(edge_kinds))
     try:
         rows = conn.execute(
@@ -290,8 +297,15 @@ def spread(
             new_total = prior + contribution
             activations[other] = new_total
             next_hops = hops + 1
-            if hops_seen.get(other, max_hops + 1) > next_hops:
-                hops_seen[other] = next_hops
+            # v3.5 sector-2 audit-followup: only re-enqueue when this
+            # is a SHORTER path to ``other`` than any prior visit.
+            # The pre-fix code unconditionally appended, so a dense
+            # soft_edges graph + cycles produced exponential BFS work
+            # and double-counted contributions through every revisit.
+            previous_hops = hops_seen.get(other, max_hops + 1)
+            if previous_hops <= next_hops:
+                continue
+            hops_seen[other] = next_hops
             queue.append((other, next_hops, contribution))
     out: list[ActivationNode] = []
     for qname, total in activations.items():

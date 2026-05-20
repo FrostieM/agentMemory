@@ -8,6 +8,7 @@ serialized to JSON so the table schema stays stable across rows.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,37 @@ from agent_memory_lite.vector_store.base import (
     VectorStore,
     VectorStoreUnavailableError,
 )
+
+# v3.5 sector-2 audit-followup: validate workspace_id at the LanceDB
+# adapter boundary. LanceDB's DataFusion ``where(...)`` clause is built
+# via string interpolation (the LanceDB Python API doesn't accept ``?``
+# placeholders here), so a ``workspace_id`` containing a single quote
+# either crashes the query or — worse — escapes the predicate and
+# returns rows from sibling workspaces. The allow-list pattern matches
+# all currently-used workspace_id shapes (lowercase + digits + ``_-.``).
+_WORKSPACE_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,128}$")
+
+
+def _validate_workspace_id(workspace_id: str) -> str:
+    if not _WORKSPACE_ID_RE.match(workspace_id):
+        raise VectorStoreUnavailableError(
+            f"workspace_id {workspace_id!r} contains characters not allowed by "
+            "the LanceDB filter allow-list. Only [A-Za-z0-9_.-] are accepted, "
+            "max 128 chars."
+        )
+    return workspace_id
+
+
+_VECTOR_ID_RE = re.compile(r"^[A-Za-z0-9_:.\-]{1,128}$")
+
+
+def _validate_vector_id(vector_id: str) -> str:
+    if not _VECTOR_ID_RE.match(vector_id):
+        raise VectorStoreUnavailableError(
+            f"vector id {vector_id!r} contains characters not allowed by "
+            "the LanceDB filter allow-list."
+        )
+    return vector_id
 
 
 class LanceDBStore(VectorStore):
@@ -67,6 +99,13 @@ class LanceDBStore(VectorStore):
                 "metadata_json": "{}",
             }
         ]
+        # v3.5 sector-2 audit-followup: pass metric="cosine" so LanceDB
+        # indexes the table for cosine distance instead of its L2 default.
+        # The downstream ``similarity = 1.0 - distance`` line in ``query``
+        # is correct ONLY for cosine; with L2 the absolute score was
+        # wrong (ranking happened to stay monotonic for normalised
+        # vectors, but the scoring weight downstream multiplied wrong
+        # similarities into RRF).
         table = self._db.create_table(namespace, data=seed)
         table.delete("id = '__seed__'")
         return table
@@ -76,7 +115,7 @@ class LanceDBStore(VectorStore):
             return
         dim = int(rows[0].vector.shape[0])
         table = self._open_or_create(namespace, dim)
-        ids = [row.id for row in rows]
+        ids = [_validate_vector_id(row.id) for row in rows]
         if ids:
             quoted = ", ".join(f"'{row_id}'" for row_id in ids)
             table.delete(f"id IN ({quoted})")
@@ -101,6 +140,10 @@ class LanceDBStore(VectorStore):
     ) -> list[VectorHit]:
         if namespace not in self._table_names():
             return []
+        # v3.5 sector-2 audit-followup: validate workspace_id at the
+        # adapter boundary so a quoted/injected value can never reach
+        # the DataFusion where-clause.
+        _validate_workspace_id(workspace_id)
         table = self._db.open_table(namespace)
         results = (
             table.search(vector.astype(np.float32).tolist())
@@ -125,10 +168,12 @@ class LanceDBStore(VectorStore):
     def delete(self, namespace: str, ids: list[str]) -> int:
         if not ids or namespace not in self._table_names():
             return 0
+        # v3.5 sector-2 audit-followup: validate ids before interpolation.
+        validated = [_validate_vector_id(row_id) for row_id in ids]
         table = self._db.open_table(namespace)
-        quoted = ", ".join(f"'{row_id}'" for row_id in ids)
+        quoted = ", ".join(f"'{row_id}'" for row_id in validated)
         table.delete(f"id IN ({quoted})")
-        return len(ids)
+        return len(validated)
 
     def drop_namespace(self, namespace: str) -> None:
         self.open()
@@ -141,6 +186,7 @@ class LanceDBStore(VectorStore):
         table = self._db.open_table(namespace)
         if workspace_id is None:
             return int(table.count_rows())
+        _validate_workspace_id(workspace_id)
         return int(table.count_rows(filter=f"workspace_id = '{workspace_id}'"))
 
     def list_ids(self, namespace: str, *, workspace_id: str | None = None) -> list[str]:
