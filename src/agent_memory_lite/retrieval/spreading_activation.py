@@ -49,6 +49,9 @@ _DEFAULT_CAUSAL_RELATIONS = (
     "supersedes",
     "invalidated_by",
     "contradicts",
+    # v3.3: DiD-extracted causal links from supersede pairs with a
+    # meaningful outcome delta. See ``retrieval.causal_did``.
+    "caused",
 )
 
 

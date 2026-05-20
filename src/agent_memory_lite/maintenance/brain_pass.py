@@ -65,6 +65,9 @@ class BrainPassReport:
     predictive_warnings_available: bool = True
     # v3.2 dead-behavior auto-archive count (rows flipped active=1 -> 0).
     behaviors_auto_archived: int = 0
+    # v3.3 Vector 4 method (a): DiD causal links emitted from supersede pairs.
+    causal_did_pairs_scanned: int = 0
+    causal_did_links_emitted: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -88,6 +91,8 @@ class BrainPassReport:
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
             "behaviors_auto_archived": self.behaviors_auto_archived,
+            "causal_did_pairs_scanned": self.causal_did_pairs_scanned,
+            "causal_did_links_emitted": self.causal_did_links_emitted,
             "errors": list(self.errors),
         }
 
@@ -354,6 +359,26 @@ def _step_predictive_failure(
         report.errors.append(f"predictive_failure:{exc}")
 
 
+def _step_causal_did(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """v3.3 Vector 4 method (a): mine DiD causal links from
+    supersede pairs. Failure-soft on missing schema."""
+    try:
+        from agent_memory_lite.retrieval.causal_did import (  # noqa: PLC0415
+            extract_did_links,
+            is_enabled,
+        )
+
+        if not is_enabled():
+            return
+        result = extract_did_links(conn, workspace_id=workspace_id)
+        report.causal_did_pairs_scanned = result.pairs_scanned
+        report.causal_did_links_emitted = result.links_emitted
+    except (sqlite3.Error, ImportError) as exc:
+        report.errors.append(f"causal_did:{exc}")
+
+
 def _step_behavior_auto_archive(
     conn: sqlite3.Connection,
     workspace_id: str,
@@ -397,6 +422,7 @@ def run_brain_pass(
     _step_db_hygiene(conn, workspace_id, report)
     _step_experiment_proposal(conn, workspace_id, report)
     _step_predictive_failure(conn, workspace_id, report)
+    _step_causal_did(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     try:
         conn.commit()
