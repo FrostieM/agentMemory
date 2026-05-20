@@ -266,4 +266,173 @@ def test_main_respects_hook_fallback_disabled(
     assert rc == 0
     out = capsys.readouterr().out
     assert "no workspace registered" in out
-    assert "<memory_brief>" not in out
+
+
+# ============================================================
+# v3.2 once-per-session dedup
+# ============================================================
+
+
+def test_should_skip_brief_first_call_emits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First call for a fresh session always emits the full brief."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    skip, turn = v3hook._should_skip_brief(session_id="sess_new", body_md="brief content v1")
+    assert skip is False
+    assert turn == 1
+
+
+def test_should_skip_brief_unchanged_body_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identical body on a subsequent call → skip."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    monkeypatch.setattr(v3hook, "DEFAULT_REFRESH_EVERY_N", 20)
+    body = "brief content v1\nwith multiple lines"
+    skip1, t1 = v3hook._should_skip_brief(session_id="sess_x", body_md=body)
+    skip2, t2 = v3hook._should_skip_brief(session_id="sess_x", body_md=body)
+    skip3, t3 = v3hook._should_skip_brief(session_id="sess_x", body_md=body)
+    assert (skip1, t1) == (False, 1)
+    assert (skip2, t2) == (True, 2)
+    assert (skip3, t3) == (True, 3)
+
+
+def test_should_skip_brief_changed_body_emits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When body_md changes (memory state moved), emit fresh brief
+    and reset the turn counter."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    skip_a, turn_a = v3hook._should_skip_brief(session_id="sess_y", body_md="version A")
+    skip_b, turn_b = v3hook._should_skip_brief(session_id="sess_y", body_md="version B")
+    assert (skip_a, turn_a) == (False, 1)
+    assert (skip_b, turn_b) == (False, 1)
+
+
+def test_should_skip_brief_refresh_every_n_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Periodic refresh: after N identical-body calls, the hook re-emits."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    monkeypatch.setattr(v3hook, "DEFAULT_REFRESH_EVERY_N", 3)
+    body = "stable brief"
+    out = [v3hook._should_skip_brief(session_id="sess_z", body_md=body) for _ in range(5)]
+    # turn=1 emit; turn=2 skip; turn=3 emit (refresh boundary, counter resets);
+    # then 4=>1 emit, 5=>2 skip again.
+    skips = [s for s, _ in out]
+    assert skips == [False, True, False, True, False]
+
+
+def test_should_skip_brief_disabled_never_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operator escape hatch: MEMORY_BRIEF_DEDUP_ENABLED=false → always emit."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", False)
+    body = "stable brief"
+    skip1, _ = v3hook._should_skip_brief(session_id="sess_w", body_md=body)
+    skip2, _ = v3hook._should_skip_brief(session_id="sess_w", body_md=body)
+    assert skip1 is False
+    assert skip2 is False
+
+
+def test_should_skip_brief_no_session_id_never_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No stable session_id → dedup is impossible; emit every time."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    skip_a, _ = v3hook._should_skip_brief(session_id=None, body_md="content")
+    skip_b, _ = v3hook._should_skip_brief(session_id="", body_md="content")
+    assert skip_a is False
+    assert skip_b is False
+
+
+def test_session_memo_path_is_filesystem_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pathological session_id (with slashes / Windows-illegal chars)
+    must produce a usable filename."""
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path)
+    p = v3hook._session_memo_path("C:/Users/x/transcript_2026-05-20.jsonl")
+    # The path should be safe: no path separators in the basename.
+    assert "/" not in p.name
+    assert "\\" not in p.name
+    assert p.name.startswith("brief_")
+
+
+def test_emit_unchanged_format(capsys: pytest.CaptureFixture) -> None:
+    """The 1-line skip notice carries the turn counter and stays short."""
+    v3hook._emit_unchanged(7)
+    out = capsys.readouterr().out
+    assert "<agent-memory>" in out
+    assert "memory brief unchanged" in out
+    assert "turn=7" in out
+    # Should be substantially shorter than a real brief.
+    assert len(out) < 400
+
+
+def test_main_dedup_emits_unchanged_on_second_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """End-to-end: same session_id + same brief body → 2nd call emits
+    the 1-line unchanged notice instead of the full brief."""
+    registry = tmp_path / "workspaces.json"
+    project = tmp_path / "proj"
+    project.mkdir()
+    _write_registry(
+        registry,
+        [
+            {
+                "id": "proj",
+                "project_root": str(project),
+                "db_path": "x.db",
+                "vector_path": "x.lance",
+            }
+        ],
+    )
+    monkeypatch.setattr(v3hook, "REGISTRY_PATH", registry)
+    monkeypatch.setattr(v3hook, "SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", True)
+    monkeypatch.setattr(v3hook, "DEFAULT_REFRESH_EVERY_N", 20)
+
+    stable_body = "# Identity\n- pinned discipline rule one\n- pinned discipline rule two\n"
+    monkeypatch.setattr(
+        v3hook,
+        "_fetch_brief",
+        lambda **_: {"body_md": stable_body},
+    )
+
+    import io  # noqa: PLC0415
+
+    event_json = json.dumps(
+        {
+            "prompt": "what's the status",
+            "cwd": str(project),
+            "session_id": "sess_e2e_dedup",
+        }
+    )
+
+    # First turn: full brief.
+    monkeypatch.setattr("sys.stdin", io.StringIO(event_json))
+    monkeypatch.setattr("os.getcwd", lambda: str(project))
+    assert v3hook.main() == 0
+    first = capsys.readouterr().out
+    assert "<memory_brief>" in first
+    assert "pinned discipline rule one" in first
+
+    # Second turn (same session, same body): unchanged notice only.
+    monkeypatch.setattr("sys.stdin", io.StringIO(event_json))
+    monkeypatch.setattr("os.getcwd", lambda: str(project))
+    assert v3hook.main() == 0
+    second_out = capsys.readouterr().out
+    assert "<memory_brief>" not in second_out
+    assert "memory brief unchanged" in second_out
+    assert "turn=2" in second_out

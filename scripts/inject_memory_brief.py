@@ -27,11 +27,22 @@ Stdout: a single block
 
 Failure-soft: any HTTP / JSON / FS error emits a one-line notice and exits
 0 so the agent still sees the user's prompt.
+
+v3.2 once-per-session dedup (live-2026-05-20 audit feedback): when the
+caller passes a stable ``session_id`` AND the body_md hash matches what
+the same session received last turn, emit a 1-line "memory unchanged"
+notice instead of the full brief. Saves ~400 input tokens / turn across
+follow-up turns. The full brief re-renders every
+``MEMORY_BRIEF_REFRESH_EVERY_N_TURNS`` turns (default 20) so the agent
+never goes a long session without a refresh anchor. Set
+``MEMORY_BRIEF_DEDUP_ENABLED=false`` to disable; the legacy
+emit-every-turn behavior comes back.
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import sys
@@ -134,6 +145,98 @@ def _emit_notice(message: str) -> None:
     )
 
 
+def _emit_unchanged(turn: int) -> None:
+    """v3.2: a 1-line breadcrumb instead of the full ~500-token brief when
+    memory state has not changed since the previous turn in this session.
+    Carries the turn counter so the operator can see the dedup is firing."""
+    sys.stdout.write(
+        f"<agent-memory>\n"
+        f"<!-- memory brief unchanged since last turn "
+        f"(turn={turn}); skipping inline re-render. "
+        f"Call memory_brief tool if you need the full body. -->\n"
+        f"</agent-memory>\n"
+    )
+
+
+# ---- v3.2 once-per-session dedup memo -------------------------------------
+
+DEFAULT_DEDUP_ENABLED = os.environ.get("MEMORY_BRIEF_DEDUP_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+DEFAULT_REFRESH_EVERY_N = int(os.environ.get("MEMORY_BRIEF_REFRESH_EVERY_N_TURNS", "20"))
+SESSIONS_DIR = Path(
+    os.environ.get("MEMORY_BRIEF_SESSIONS_DIR", str(Path.home() / ".agent_memory" / "sessions"))
+)
+
+
+def _session_memo_path(session_id: str) -> Path:
+    """Per-session memo file. Slug the id to keep it filesystem-safe."""
+    slug = hashlib.sha1(session_id.encode("utf-8"), usedforsecurity=False).hexdigest()[:24]
+    return SESSIONS_DIR / f"brief_{slug}.json"
+
+
+def _load_memo(session_id: str) -> dict[str, object]:
+    """Read the prior memo for this session. ``{}`` on miss / IO error."""
+    p = _session_memo_path(session_id)
+    if not p.exists():
+        return {}
+    try:
+        loaded = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _save_memo(session_id: str, *, body_hash: str, turn: int) -> None:
+    """Best-effort write — failure here must not break the hook."""
+    p = _session_memo_path(session_id)
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        p.write_text(
+            json.dumps({"hash": body_hash, "turn": turn}),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _body_hash(body_md: str) -> str:
+    """Stable fingerprint of the brief body — short SHA1 hex."""
+    return hashlib.sha1(body_md.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
+def _should_skip_brief(
+    *,
+    session_id: str | None,
+    body_md: str,
+) -> tuple[bool, int]:
+    """Return ``(skip, turn_counter)``.
+
+    ``skip=True`` when dedup is enabled, the session memo says we already
+    sent the same body within the refresh window, AND the workspace state
+    did not change. Otherwise ``skip=False`` and the caller must emit
+    the full brief + persist the memo with the new turn count.
+    """
+    if not DEFAULT_DEDUP_ENABLED or not session_id:
+        return (False, 0)
+    memo = _load_memo(session_id)
+    prior_hash = str(memo.get("hash") or "")
+    raw_turn = memo.get("turn")
+    prior_turn = int(raw_turn) if isinstance(raw_turn, (int, str)) and str(raw_turn).strip() else 0
+    current_hash = _body_hash(body_md)
+    next_turn = prior_turn + 1
+    if prior_hash == current_hash and next_turn < DEFAULT_REFRESH_EVERY_N:
+        # Same content + we're not at the periodic refresh point.
+        _save_memo(session_id, body_hash=current_hash, turn=next_turn)
+        return (True, next_turn)
+    # Hash changed OR refresh due → emit + reset counter.
+    _save_memo(session_id, body_hash=current_hash, turn=1)
+    return (False, 1)
+
+
 def _fetch_brief(
     *,
     base_url: str,
@@ -231,12 +334,16 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
 
     raw_session = event.get("session_id") or event.get("transcript_path") or ""
     session_id = str(raw_session) if raw_session else None
+    # v3.2: skip the server-side sticky-brief shrink so the body stays
+    # consistent across calls — otherwise our fingerprint dedup misses
+    # the 2nd-turn emit when server shrinks 500->200 tokens. Client-side
+    # dedup gives the same savings without the extra mid-turn render.
     data = _fetch_brief(
         base_url=DEFAULT_BASE,
         workspace_id=workspace,
         max_tokens=DEFAULT_MAX_TOKENS,
         headers=headers,
-        session_id=session_id,
+        session_id=None if DEFAULT_DEDUP_ENABLED else session_id,
     )
     if data is None:
         _emit_notice(
@@ -268,6 +375,15 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
             f"</hook_notice>\n"
         )
         body_md = notice + body_md
+
+    # v3.2 once-per-session dedup: skip the full body if the same brief
+    # was sent earlier in this session AND we haven't hit the periodic
+    # refresh point. Saves ~500 tokens of input on every follow-up turn
+    # where memory state did not change.
+    skip, turn = _should_skip_brief(session_id=session_id, body_md=body_md)
+    if skip:
+        _emit_unchanged(turn)
+        return 0
 
     _emit_brief(body_md)
     return 0
