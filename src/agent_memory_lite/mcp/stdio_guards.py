@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from agent_memory_lite.mcp.stdio_runtime import _runtime
@@ -26,12 +27,17 @@ _log = logging.getLogger(__name__)
 
 # Per-process set tracking which foreign workspaces we've already warned
 # about — keeps the log signal-to-noise high on long-lived stdio servers.
+# Round-2 audit: HTTP and in-process MCP can race on the "membership
+# check + add" pair from different threads; without the lock the warn-
+# once dedup occasionally double-fires (audit row written twice).
 _hub_write_warned: set[tuple[str, str]] = set()
+_HUB_WRITE_WARNED_LOCK = threading.Lock()
 
 
 def reset_hub_write_warned() -> None:
     """Test hook: clear the per-process hub-write warn-once set."""
-    _hub_write_warned.clear()
+    with _HUB_WRITE_WARNED_LOCK:
+        _hub_write_warned.clear()
 
 
 def _hub_write_audit_enabled() -> bool:
@@ -61,9 +67,12 @@ def _audit_hub_cross_workspace_write(target_workspace_id: str) -> None:
     if target_workspace_id == anchor:
         return
     key = (anchor, target_workspace_id)
-    if key in _hub_write_warned:
-        return
-    _hub_write_warned.add(key)
+    # Atomically check-and-add; otherwise two threads can both pass the
+    # membership check and emit the audit row twice.
+    with _HUB_WRITE_WARNED_LOCK:
+        if key in _hub_write_warned:
+            return
+        _hub_write_warned.add(key)
     _log.warning(
         "hub-mode cross-workspace write: anchor=%r target=%r. Allowed by "
         "MEMORY_HUB_MODE=true; set MEMORY_STRICT_WORKSPACE_ISOLATION=true to "

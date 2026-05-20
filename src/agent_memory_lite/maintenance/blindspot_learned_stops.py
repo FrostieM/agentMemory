@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -37,6 +38,10 @@ from agent_memory_lite.maintenance.blindspot_filters import excluded_source_type
 
 _STOPS_CACHE: dict[tuple[str, str], frozenset[str]] = {}
 _STOPS_CACHE_MAX = 8
+# Round-2 audit: same LRU race as cognition.brief._BRIEF_CACHE — eviction
+# iterates while mutating, which is unsafe under concurrent inserts from
+# the blindspot sentinel + HTTP handlers.
+_STOPS_CACHE_LOCK = threading.Lock()
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -85,16 +90,19 @@ def min_corpus_size() -> int:
 
 def reset_cache() -> None:
     """Test hook: clear the per-process cache."""
-    _STOPS_CACHE.clear()
+    with _STOPS_CACHE_LOCK:
+        _STOPS_CACHE.clear()
 
 
 def _cache_remember(key: tuple[str, str], value: frozenset[str]) -> None:
-    """LRU eviction via dict insertion order."""
-    _STOPS_CACHE.pop(key, None)
-    _STOPS_CACHE[key] = value
-    while len(_STOPS_CACHE) > _STOPS_CACHE_MAX:
-        oldest = next(iter(_STOPS_CACHE))
-        del _STOPS_CACHE[oldest]
+    """LRU eviction via dict insertion order. Lock-protected — see
+    ``_BRIEF_CACHE`` for the same race rationale."""
+    with _STOPS_CACHE_LOCK:
+        _STOPS_CACHE.pop(key, None)
+        _STOPS_CACHE[key] = value
+        while len(_STOPS_CACHE) > _STOPS_CACHE_MAX:
+            oldest = next(iter(_STOPS_CACHE))
+            del _STOPS_CACHE[oldest]
 
 
 def learn_workspace_stops(
@@ -110,7 +118,8 @@ def learn_workspace_stops(
         return frozenset()
     cutoff = (datetime.now(UTC) - timedelta(days=lookback_days)).isoformat()
     cache_key = (workspace_id, cutoff[:10])  # day-level granularity
-    cached = _STOPS_CACHE.get(cache_key)
+    with _STOPS_CACHE_LOCK:
+        cached = _STOPS_CACHE.get(cache_key)
     if cached is not None:
         return cached
     excluded = excluded_source_types()

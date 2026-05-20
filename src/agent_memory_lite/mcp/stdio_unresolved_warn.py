@@ -13,18 +13,23 @@ Lifted out of ``stdio_runtime.py`` to keep that module under the
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
 # Per-process set of workspace_ids the registry could not resolve. Used
 # to log a misconfiguration warning ONCE per id; tests reset via
 # ``reset_unresolved_warned``.
+# Round-2 audit: same warn-once race as ``_hub_write_warned`` — lock
+# the check-and-add so concurrent fallbacks don't double-emit.
 _unresolved_warned: set[str] = set()
+_UNRESOLVED_WARNED_LOCK = threading.Lock()
 
 
 def reset_unresolved_warned() -> None:
     """Test hook: clear the warn-once set for db_for fallbacks."""
-    _unresolved_warned.clear()
+    with _UNRESOLVED_WARNED_LOCK:
+        _unresolved_warned.clear()
 
 
 def warn_unresolved_once(
@@ -42,9 +47,12 @@ def warn_unresolved_once(
     """
     if workspace_id == anchor_id:
         return
-    if workspace_id in _unresolved_warned:
-        return
-    _unresolved_warned.add(workspace_id)
+    # Atomic check-and-add so a concurrent fallback can't slip past us
+    # and emit a duplicate warning for the same workspace_id.
+    with _UNRESOLVED_WARNED_LOCK:
+        if workspace_id in _unresolved_warned:
+            return
+        _unresolved_warned.add(workspace_id)
     _log.warning(
         "db_for: workspace_id=%r not in registry %s; "
         "falling back to anchor=%r (db=%s). Misconfigured? "

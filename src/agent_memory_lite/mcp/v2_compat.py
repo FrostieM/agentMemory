@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -99,7 +100,10 @@ def _err(code: str, message: str, *, deprecation: str | None = None) -> dict[str
 # the deprecation notice re-emits — long-lived MCP stdio processes
 # (days/weeks) get a periodic reminder instead of a one-shot that the
 # agent forgot about hours ago. Tests reset via reset_seen_deprecations.
+# Round-2 audit: HTTP shim calls can race on the read-check-write
+# sequence; the lock ensures the TTL gate is consistent.
 _seen_deprecations: dict[str, float] = {}
+_SEEN_DEPRECATIONS_LOCK = threading.Lock()
 
 _DEFAULT_TTL_SECONDS = 3600  # 1 hour
 
@@ -138,7 +142,8 @@ def reset_seen_deprecations() -> None:
     is the intent for long-lived MCP stdio servers. Tests need a clean
     slate between cases, hence this explicit reset.
     """
-    _seen_deprecations.clear()
+    with _SEEN_DEPRECATIONS_LOCK:
+        _seen_deprecations.clear()
 
 
 def _deprecation(v2_name: str, v3_successor: str) -> str | None:
@@ -155,10 +160,14 @@ def _deprecation(v2_name: str, v3_successor: str) -> str | None:
     if _suppress_deprecation_notices():
         return None
     now = time.monotonic()
-    last_emit = _seen_deprecations.get(v2_name)
-    if last_emit is not None and (now - last_emit) < _deprecation_ttl_seconds():
-        return None
-    _seen_deprecations[v2_name] = now
+    ttl = _deprecation_ttl_seconds()
+    # Atomic read-check-write so two concurrent shim calls can't both
+    # observe an expired TTL and both re-emit.
+    with _SEEN_DEPRECATIONS_LOCK:
+        last_emit = _seen_deprecations.get(v2_name)
+        if last_emit is not None and (now - last_emit) < ttl:
+            return None
+        _seen_deprecations[v2_name] = now
     return f"{v2_name} is deprecated; use {v3_successor}. This shim will be removed at v4.0."
 
 

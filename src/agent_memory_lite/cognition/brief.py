@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,7 +52,12 @@ DEFAULT_TOKEN_BUDGET = 500
 # Sticky-brief: per-process record of which (workspace, session) pairs
 # have already received a full brief. Used to decide whether to cap
 # ``max_tokens`` on subsequent emits within the same session.
+# Round-2 audit: HTTP handlers run on a thread-pool so two requests
+# for the same session can race on the "membership check + add"
+# sequence — the sticky-tax optimisation then misfires (both emit
+# full-budget). Lock turns the check+add into one atomic step.
 _session_seen: set[tuple[str, str]] = set()
+_SESSION_SEEN_LOCK = threading.Lock()
 
 
 def _sticky_brief_enabled() -> bool:
@@ -70,7 +76,8 @@ def _sticky_followup_tokens(default: int = 200) -> int:
 
 def reset_session_seen() -> None:
     """Test hook: clear the sticky-brief seen-sessions set."""
-    _session_seen.clear()
+    with _SESSION_SEEN_LOCK:
+        _session_seen.clear()
 
 
 # Self-model narrative in the DB is 50-150 words; the brief renders an
@@ -85,6 +92,12 @@ _SELF_MODEL_BRIEF_WORDS = 40
 # dict insertion order.
 _BRIEF_CACHE_MAX = 16
 _BRIEF_CACHE: dict[tuple[str, int, str], Brief] = {}
+# Round-2 audit: LRU eviction uses `next(iter(...))` to find the oldest
+# entry, then `del`. Two threads in the eviction loop together race on
+# both the iteration and the del — dict reordering can raise
+# RuntimeError. Lock turns get/promote/insert/evict into one atomic
+# critical section per access.
+_BRIEF_CACHE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -909,13 +922,17 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
 
 
 def _cache_remember(key: tuple[str, int, str], brief: Brief) -> None:
-    """LRU-style insert into the bounded brief cache."""
-    _BRIEF_CACHE.pop(key, None)
-    _BRIEF_CACHE[key] = brief
-    while len(_BRIEF_CACHE) > _BRIEF_CACHE_MAX:
-        # Pop oldest (insertion-order = LRU because we del+set on hit).
-        oldest = next(iter(_BRIEF_CACHE))
-        del _BRIEF_CACHE[oldest]
+    """LRU-style insert into the bounded brief cache. Lock-protected:
+    pop / set / evict together so concurrent inserts can't race on
+    eviction iteration (Python's dict raises RuntimeError when its
+    insertion order mutates mid-iteration)."""
+    with _BRIEF_CACHE_LOCK:
+        _BRIEF_CACHE.pop(key, None)
+        _BRIEF_CACHE[key] = brief
+        while len(_BRIEF_CACHE) > _BRIEF_CACHE_MAX:
+            # Pop oldest (insertion-order = LRU because we del+set on hit).
+            oldest = next(iter(_BRIEF_CACHE))
+            del _BRIEF_CACHE[oldest]
 
 
 def compose_brief(
@@ -949,18 +966,28 @@ def compose_brief(
     effective_max = max_tokens
     if session_id and _sticky_brief_enabled():
         session_key = (workspace_id, session_id)
-        if session_key in _session_seen:
+        # Atomically check-and-add under the lock so two concurrent
+        # requests for the same session don't both miss the membership
+        # check and both render at full budget.
+        with _SESSION_SEEN_LOCK:
+            already_seen = session_key in _session_seen
+            if not already_seen:
+                _session_seen.add(session_key)
+        if already_seen:
             # Follow-up call in the same session — shrink the cap.
             effective_max = min(max_tokens, _sticky_followup_tokens())
-        else:
-            _session_seen.add(session_key)
     fingerprint = _workspace_fingerprint(conn, workspace_id) + ":" + _brief_env_signature()
     cache_key = (workspace_id, effective_max, fingerprint)
-    cached = _BRIEF_CACHE.get(cache_key)
+    # GET + LRU-promote must run together under the lock; otherwise a
+    # racing _cache_remember can shuffle insertion order between our
+    # ``cached = ... get`` and our ``del + reinsert`` lines.
+    with _BRIEF_CACHE_LOCK:
+        cached = _BRIEF_CACHE.get(cache_key)
+        if cached is not None:
+            # Refresh LRU position so frequently-used briefs stay hot.
+            del _BRIEF_CACHE[cache_key]
+            _BRIEF_CACHE[cache_key] = cached
     if cached is not None:
-        # Refresh LRU position so frequently-used briefs stay hot.
-        del _BRIEF_CACHE[cache_key]
-        _BRIEF_CACHE[cache_key] = cached
         # Return a new Brief with cache_hit=True; the underlying body
         # is identical (Brief is frozen so this is cheap).
         return Brief(
