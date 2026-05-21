@@ -53,6 +53,44 @@ def _validate_vector_id(vector_id: str) -> str:
     return vector_id
 
 
+def _safe_json_loads(raw: Any) -> dict[str, Any]:
+    """Round-2 audit: ``query`` used to call ``json.loads`` on
+    ``metadata_json`` unguarded. One corrupt / truncated cell (a
+    LanceDB crash mid-write, a manual edit) raised ``JSONDecodeError``
+    and broke the WHOLE query — every hit lost, the agent sees an
+    empty vector result. Degrade per-row to empty metadata so a single
+    bad cell can't take down retrieval."""
+    try:
+        loaded = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _assert_table_dim(table: Any, namespace: str, expected_dim: int) -> None:
+    """Round-2 audit: ``_open_or_create`` keyed only on namespace name.
+    If the embedding model changes dimension (384 -> 768) the existing
+    table is silently reused and ``table.add`` stores mismatched-length
+    vectors that corrupt every subsequent search. Catch the mismatch at
+    open time with a clear "rebuild required" error instead.
+
+    Failure-soft on schema introspection: if we cannot determine the
+    stored dimension (LanceDB API drift) we skip the check rather than
+    block a legitimate open."""
+    try:
+        field = table.schema.field("vector")
+        existing_dim = getattr(field.type, "list_size", None)
+    except Exception:  # pragma: no cover - schema introspection drift
+        return
+    if existing_dim is not None and existing_dim > 0 and existing_dim != expected_dim:
+        raise VectorStoreUnavailableError(
+            f"vector table {namespace!r} stores dim-{existing_dim} vectors "
+            f"but the embedding provider now produces dim-{expected_dim}. "
+            f"The embedding model changed; the table must be rebuilt — run "
+            f"scripts/reindex_vectors.py."
+        )
+
+
 class LanceDBStore(VectorStore):
     backend = "lancedb"
 
@@ -82,15 +120,38 @@ class LanceDBStore(VectorStore):
 
     def _table_names(self) -> set[str]:
         self.open()
+        # Round-2 audit: lancedb deprecated ``table_names()`` (a plain
+        # list) in favour of ``list_tables()`` which returns a paginated
+        # ``ListTablesResponse(tables=[...], page_token=...)``. The old
+        # name raises DeprecationWarning — an error under pytest's
+        # filterwarnings — and is slated for removal. Prefer the new
+        # API, walk its pagination, fall back to the old name for
+        # pre-0.30 lancedb pins.
+        list_tables = getattr(self._db, "list_tables", None)
         try:
-            return set(self._db.table_names())
+            if list_tables is None:
+                return set(self._db.table_names())
+            names: set[str] = set()
+            page_token = None
+            for _ in range(1000):  # hard cap — never spin forever on a bad token
+                resp = list_tables(page_token=page_token)
+                # New build: ListTablesResponse with .tables; older /
+                # alternate builds may return a bare list.
+                tables = getattr(resp, "tables", resp)
+                names.update(str(t) for t in tables)
+                page_token = getattr(resp, "page_token", None)
+                if not page_token:
+                    break
+            return names
         except Exception as exc:
-            raise VectorStoreUnavailableError(f"lancedb table_names failed: {exc}") from exc
+            raise VectorStoreUnavailableError(f"lancedb table list failed: {exc}") from exc
 
     def _open_or_create(self, namespace: str, sample_dim: int) -> Any:
         self.open()
         if namespace in self._table_names():
-            return self._db.open_table(namespace)
+            table = self._db.open_table(namespace)
+            _assert_table_dim(table, namespace, sample_dim)
+            return table
         seed = [
             {
                 "id": "__seed__",
@@ -116,6 +177,15 @@ class LanceDBStore(VectorStore):
         dim = int(rows[0].vector.shape[0])
         table = self._open_or_create(namespace, dim)
         ids = [_validate_vector_id(row.id) for row in rows]
+        # Round-2 audit: upsert validated row.id but wrote row.workspace_id
+        # raw. A workspace_id with a single quote was then STORED — every
+        # later query/count/delete that re-validates workspace_id rejects
+        # it, so those rows became orphan vectors unreachable from SQLite
+        # (or, worse, a stored ``x' OR '1'='1`` poisoned the table).
+        # Validate at the write boundary too — reject before the bad
+        # value can land.
+        for row in rows:
+            _validate_workspace_id(row.workspace_id)
         if ids:
             quoted = ", ".join(f"'{row_id}'" for row_id in ids)
             table.delete(f"id IN ({quoted})")
@@ -160,7 +230,7 @@ class LanceDBStore(VectorStore):
                     id=str(row["id"]),
                     workspace_id=str(row["workspace_id"]),
                     score=similarity,
-                    metadata=json.loads(row.get("metadata_json", "{}")),
+                    metadata=_safe_json_loads(row.get("metadata_json", "{}")),
                 )
             )
         return hits

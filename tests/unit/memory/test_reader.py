@@ -99,8 +99,19 @@ def test_list_kind_status_filter(conn: sqlite3.Connection) -> None:
     assert rows[0]["id"] == "dec_a"
 
 
-def test_list_kind_unknown_kind_returns_empty(conn: sqlite3.Connection) -> None:
-    assert list_kind(conn, workspace_id="ws-test", kind="nonexistent") == []
+def test_list_kind_unknown_kind_raises(conn: sqlite3.Connection) -> None:
+    """Round-2 audit: an unknown kind used to return [] — indistinguishable
+    from a genuine empty result. A plural typo (kind='decisions') then
+    silently 'found nothing'. list_kind / get_object now raise ValueError
+    so the typo / enum-drift is loud."""
+    with pytest.raises(ValueError, match="unknown kind 'nonexistent'"):
+        list_kind(conn, workspace_id="ws-test", kind="nonexistent")
+
+
+def test_get_object_unknown_kind_raises(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="unknown kind 'decisions'"):
+        # plural typo — the exact enum-drift shape the guard targets
+        get_object(conn, workspace_id="ws-test", kind="decisions", object_id="x")
 
 
 def test_get_object_returns_compact_by_default(conn: sqlite3.Connection) -> None:

@@ -23,6 +23,8 @@ allocation-light per candidate.
 
 from __future__ import annotations
 
+import math
+
 from agent_memory_lite.models.retrieval import RetrievalCandidate, ScoredHit
 
 WEIGHT_SEMANTIC = 0.30
@@ -35,6 +37,14 @@ WEIGHT_FEEDBACK = 0.05
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    """Clamp into [lo, hi]. Round-2 audit: ``max``/``min`` do NOT
+    contain NaN — ``max(0.0, min(1.0, nan))`` returns ``nan``, which
+    then poisons the summed ``score`` and makes ``hits.sort`` undefined
+    (a single non-finite key scrambles the whole ranking). A corrupt
+    distance in LanceDB metadata is enough to trigger it. Treat any
+    non-finite input as the floor so the score stays well-ordered."""
+    if not math.isfinite(value):
+        return lo
     return max(lo, min(hi, value))
 
 

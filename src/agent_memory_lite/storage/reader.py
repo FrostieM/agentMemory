@@ -15,11 +15,14 @@ or any agent runtime. It's pure SQL + dict transforms.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
 from agent_memory_lite.storage.projections import project
+
+_LOG = logging.getLogger(__name__)
 
 # ============================================================
 # Result types
@@ -76,6 +79,21 @@ _OUTCOME_KINDS = {"decision", "theory", "behavior", "skill", "insight", "chunk"}
 _BI_TEMPORAL_KINDS = {"decision", "theory", "behavior", "concept", "insight"}
 
 
+def _require_known_kind(kind: str) -> None:
+    """Round-2 audit: an unknown ``kind`` used to make ``list_kind`` /
+    ``get_object`` return ``[]`` / ``None`` — indistinguishable from a
+    genuine empty result. That is the v3.4 enum-drift class of bug: a
+    plural typo (``memory_get(kind="decisions")``) or a renamed kind
+    silently "finds nothing" and the agent concludes memory is empty.
+    Raise instead so the typo / drift is loud at the call site.
+
+    Scoped to the direct-call primitives only — internal fan-out paths
+    (``search_kind``, ``get_objects_batch``) stay lenient because they
+    iterate kinds and a per-kind skip is the correct degrade there."""
+    if kind not in _KIND_TABLES:
+        raise ValueError(f"unknown kind {kind!r}; valid kinds: {sorted(_KIND_TABLES)}")
+
+
 def list_kind(
     conn: sqlite3.Connection,
     *,
@@ -105,8 +123,7 @@ def list_kind(
     no-op on tables that lack the validity columns (pre-migration DB
     or kinds outside ``_BI_TEMPORAL_KINDS``).
     """
-    if kind not in _KIND_TABLES:
-        return []
+    _require_known_kind(kind)
     table, _ = _KIND_TABLES[kind]
     where = ["workspace_id = ?"]
     params: list[Any] = [workspace_id]
@@ -228,8 +245,7 @@ def get_object(
     Pass ``fields=['rationale','decision_text']`` to opt into full
     content for those columns. Caller controls token cost.
     """
-    if kind not in _KIND_TABLES:
-        return None
+    _require_known_kind(kind)
     table, id_col = _KIND_TABLES[kind]
     row = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND {id_col} = ?",
@@ -237,7 +253,22 @@ def get_object(
     ).fetchone()
     if row is None:
         return None
-    base = project(kind, row) or {"id": object_id, "kind": kind}
+    # Round-2 audit: a None from project() means a real projector bug
+    # (the row EXISTS in SQL). The old ``or {...}`` silently swapped in
+    # a thin stub so the bug looked like a valid thin result. Keep the
+    # stub so the caller still gets the row, but log loudly so the
+    # projector defect is visible instead of debugging-hostile.
+    projected = project(kind, row)
+    if projected is None:
+        _LOG.warning(
+            "project() returned None for kind=%r id=%r (row exists) — "
+            "projector defect; returning id/kind stub",
+            kind,
+            object_id,
+        )
+        base: dict[str, Any] = {"id": object_id, "kind": kind}
+    else:
+        base = projected
     if not fields:
         return base
     extras: dict[str, Any] = {}
@@ -296,7 +327,21 @@ def search_chunks_fts(
     query: str,
     limit: int = 10,
 ) -> list[SearchHit]:
-    """BM25 search across chunks_fts. Returns chunk projections."""
+    """BM25 search across chunks_fts. Returns chunk projections.
+
+    Round-2 audit fix: the raw ``query`` used to reach FTS5 ``MATCH``
+    directly. A query containing a bare FTS operator (``AND``/``OR``/
+    ``NOT``/``*``/``-``/``(``) either silently returned zero chunk hits
+    (the agent then concludes "no memory") or — for a query that DID
+    parse — ran an attacker-shaped match expression. Now routed through
+    the same ``fts.query._sanitize`` the canonical FTS path uses:
+    operators stripped, token + length capped, AND-joined.
+    """
+    from agent_memory_lite.fts.query import _sanitize  # noqa: PLC0415
+
+    safe = _sanitize(query)
+    if not safe:
+        return []
     sql = (
         "SELECT c.* FROM chunks_fts f "
         "JOIN chunks c ON c.id = f.chunk_id "
@@ -304,7 +349,7 @@ def search_chunks_fts(
         "ORDER BY rank LIMIT ?"
     )
     try:
-        rows = conn.execute(sql, (query, workspace_id, limit)).fetchall()
+        rows = conn.execute(sql, (safe, workspace_id, limit)).fetchall()
     except sqlite3.OperationalError:
         return []
     hits: list[SearchHit] = []
