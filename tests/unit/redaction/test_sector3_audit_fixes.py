@@ -25,7 +25,6 @@ from agent_memory_lite.models.candidates import MemoryCandidate
 from agent_memory_lite.models.enums import MemoryCandidateKind, TrustLevel
 from agent_memory_lite.redaction.redactor import redact
 
-
 # v3.5: test payloads built at runtime so GitHub secret-scanning
 # doesn't flag literal Stripe-shaped strings in the source. The
 # pattern shape is still preserved at runtime to exercise the

@@ -93,7 +93,7 @@ def run_integrity_audit(
     for name, runner in _check_specs:
         try:
             checks[name] = runner()
-        except Exception as exc:  # noqa: BLE001 — per-check isolation
+        except Exception as exc:  # per-check isolation: one check must not abort the rest
             checks[name] = IntegrityCheck(
                 status="degraded",
                 details={"error": f"{type(exc).__name__}: {exc}"},

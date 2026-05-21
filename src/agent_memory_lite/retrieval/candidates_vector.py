@@ -37,7 +37,7 @@ def collect_vector(
     # caller (``context_builder``) already handles empty vector results.
     try:
         vectors = provider.embed_batch([query], kind="query")
-    except Exception as exc:  # noqa: BLE001 — every embed failure must degrade, not crash
+    except Exception as exc:  # every embed failure must degrade to FTS-only, not crash
         _LOG.warning("collect_vector: embed_batch failed (%s); degrading to FTS-only", exc)
         return []
     # ``vectors`` is np.ndarray of shape (N, dim). Use len() — ``not vectors``
@@ -51,7 +51,7 @@ def collect_vector(
             workspace_id=workspace_id,
             k=limit,
         )
-    except Exception as exc:  # noqa: BLE001 — same rationale as above
+    except Exception as exc:  # same degrade-not-crash rationale as the embed call above
         _LOG.warning("collect_vector: store.query failed (%s); degrading to FTS-only", exc)
         return []
     candidates: list[RetrievalCandidate] = []

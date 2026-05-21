@@ -50,9 +50,7 @@ def _allow_remote() -> bool:
 
 
 class OriginGuardMiddleware(BaseHTTPMiddleware):
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if _allow_remote():
             return await call_next(request)
         host_ok = _is_loopback(request.headers.get("host"))
