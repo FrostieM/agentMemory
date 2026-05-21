@@ -3,6 +3,19 @@
 The guard inspects every URL on `Settings`, the host portion of each URL, and the
 process environment for telemetry kill-list variables. Any violation raises
 `LocalOnlyError`, which `create_app` lets propagate (the service refuses to start).
+
+Scope — what the guard does NOT cover (accepted, documented exception):
+the sentence-transformers / CrossEncoder model is fetched once from the
+huggingface_hub default host (``huggingface.co``) on first use when it is
+not already in the local HF cache. That is a one-time model BOOTSTRAP --
+analogous to the mandatory ``ollama pull`` for the LLM -- not runtime data
+exfiltration: it sends only the public model name, and every subsequent
+load is served from the local cache with zero network traffic. The guard
+audits CONFIGURED redirects (Settings URLs, ``HF_ENDPOINT`` /
+``HF_HUB_ENDPOINT``, proxy env vars) so a redirect to a CLOUD host is
+still rejected; it intentionally does not block the library's built-in
+default. Operators who need a strictly air-gapped runtime pre-pull the
+model and set ``HF_HUB_OFFLINE=1``.
 """
 
 from __future__ import annotations

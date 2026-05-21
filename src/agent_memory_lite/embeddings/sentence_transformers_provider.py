@@ -41,6 +41,12 @@ class SentenceTransformersProvider(EmbeddingProvider):
             raise EmbeddingProviderUnavailableError(
                 "sentence-transformers is not installed; install with `pip install -e .`"
             ) from exc
+        # Accepted local-only exception (see config/local_only_guard.py):
+        # if the model is not in the local HF cache this fetches it once
+        # from huggingface.co -- a one-time bootstrap, like `ollama pull`.
+        # Every later load is cache-served with zero network traffic. For
+        # a strictly air-gapped runtime, pre-pull the model and set
+        # HF_HUB_OFFLINE=1.
         try:
             model = SentenceTransformer(self._model_name)
         except Exception as exc:

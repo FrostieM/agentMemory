@@ -103,6 +103,9 @@ def _load_model(model_name: str) -> Any:
     except ImportError:
         logger.info("rerank_dep_missing", extra={"model": model_name})
         return None
+    # Accepted local-only exception (see config/local_only_guard.py): an
+    # uncached CrossEncoder model is fetched once from huggingface.co --
+    # a one-time bootstrap, not runtime exfiltration.
     try:
         model = CrossEncoder(model_name)
     except Exception as exc:  # model load may fail many ways

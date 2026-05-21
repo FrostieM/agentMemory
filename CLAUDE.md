@@ -86,6 +86,12 @@ ollama pull qwen2.5:7b-instruct                       # mandatory
 python -m agent_memory_lite                           # binds to 127.0.0.1:8765
 ```
 
+The sentence-transformers embedding model (and the optional reranker
+CrossEncoder) download once from `huggingface.co` on first use if not
+already in the local HF cache — a one-time bootstrap, like `ollama pull`.
+Every later load is cache-served with zero network traffic. For a strictly
+air-gapped runtime, pre-pull the models and set `HF_HUB_OFFLINE=1`.
+
 Quality gates before merging anything:
 
 ```bash
