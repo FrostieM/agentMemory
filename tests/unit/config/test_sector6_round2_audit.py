@@ -28,6 +28,13 @@ A third re-audit round (proxy + alias) found:
         loopback-looking request off-machine. The guard now audits the
         proxy vars, and every httpx client pins trust_env=False.
 
+A fourth re-audit round found:
+  R4 — the MCP stdio server (a first-class entry point Claude Code /
+        Cursor launch directly) never ran assert_local_only, so its
+        whole no-cloud boundary was dead under MCP. And 5 module-level
+        httpx.post() calls bypassed the trust_env=False rule the R3b
+        per-client scan missed (it only checked Client/AsyncClient).
+
 This file locks each fix so a re-audit finds nothing.
 """
 
@@ -239,22 +246,74 @@ def test_proxy_env_cloud_rejected_even_when_remote_providers_relaxed() -> None:
         assert_local_only(s_cloud, env={"HTTPS_PROXY": "https://api.openai.com"})
 
 
-# ---------- R3b (re-audit): every httpx client pins trust_env=False ----------
+# ---------- R4 (re-audit): MCP stdio server runs the local-only guard ----------
 
 
-def test_all_httpx_clients_disable_trust_env() -> None:
-    """Every httpx.Client / httpx.AsyncClient constructed in the package
-    must pass trust_env=False, so proxy / NETRC env vars cannot redirect
-    an outbound call past the local-only guard. A new client missing it
+def test_mcp_stdio_server_invokes_local_only_guard() -> None:
+    """The MCP stdio server is a first-class entry point (Claude Code /
+    Cursor launch it directly). It must run assert_local_only at startup,
+    exactly like the HTTP create_app — otherwise the embedding / LLM /
+    vector clients it drives honor a cloud base-URL / proxy unchecked."""
+    import agent_memory_lite.mcp.stdio_server as mod  # noqa: PLC0415
+
+    src = Path(mod.__file__).read_text(encoding="utf-8")
+    assert "assert_local_only(settings)" in src, "MCP stdio server lost its startup guard"
+
+
+# ---------- R3b + R4 (re-audit): every httpx call pins trust_env=False ----------
+
+
+def test_all_httpx_calls_disable_trust_env() -> None:
+    """Every httpx request — a Client/AsyncClient constructor OR a
+    module-level convenience function (httpx.post / get / ...) — must
+    pass trust_env=False, so proxy / NETRC env vars cannot redirect an
+    outbound call past the local-only guard. A new httpx call missing it
     re-opens the transport-level escape hatch."""
+    import re  # noqa: PLC0415
+
     import agent_memory_lite  # noqa: PLC0415
 
     pkg_root = Path(agent_memory_lite.__file__).resolve().parent
+    call_re = re.compile(
+        r"httpx\.(?:Client|AsyncClient|post|get|put|patch|delete|head|options|request|stream)\("
+    )
     offenders: list[str] = []
     for py in pkg_root.rglob("*.py"):
-        for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
-            if ("httpx.Client(" in line or "httpx.AsyncClient(" in line) and (
-                "trust_env=False" not in line
-            ):
+        text = py.read_text(encoding="utf-8")
+        for match in call_re.finditer(text):
+            depth = 0
+            end = len(text) - 1
+            for idx in range(match.end() - 1, len(text)):
+                if text[idx] == "(":
+                    depth += 1
+                elif text[idx] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = idx
+                        break
+            if "trust_env=False" not in text[match.start() : end + 1]:
+                lineno = text.count("\n", 0, match.start()) + 1
                 offenders.append(f"{py.name}:{lineno}")
-    assert not offenders, f"httpx client(s) missing trust_env=False: {offenders}"
+    assert not offenders, f"httpx call(s) missing trust_env=False: {offenders}"
+
+
+# ---------- R4 (re-audit): denylist tracks the embedding + vector ecosystem ----------
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "https://api.voyageai.com/v1/embeddings",
+        "https://api.jina.ai/v1/embeddings",
+        "https://ollama.com/library/foo",
+        "https://acct.lancedb.com",
+        "https://db.lancedb.io/v1",
+    ],
+)
+def test_rejects_round3_denylist_additions(host: str) -> None:
+    """Round-3/4 re-audit widened the denylist with voyageai / jina /
+    ollama-cloud (inference) and lancedb.com / lancedb.io (LanceDB
+    Cloud) so the URL denylist tracks the embedding + vector ecosystem."""
+    settings = Settings(LLM_BASE_URL=host)  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError):
+        assert_local_only(settings, env={})

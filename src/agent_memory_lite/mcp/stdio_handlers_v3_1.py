@@ -45,9 +45,13 @@ def _coerce_limit(raw: object, *, hi: int = 50) -> int | None:
 
 
 def _handle_propose_experiments(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args, intent="read")
     limit = _coerce_limit(args.get("limit"))
     persist = _coerce_bool(args.get("persist"), default=False)
+    # Round-4 audit: persist=true WRITES memory_candidate rows, so it
+    # needs write intent — a strict project chat must not seed candidates
+    # into a foreign workspace. persist=false is a pure read (computing
+    # proposals), and cross-workspace reads stay allowed.
+    workspace_id = _workspace_from_args(args, intent="write" if persist else "read")
     conn = _runtime.db_for(workspace_id)
     from agent_memory_lite.maintenance.experiment_proposal import (  # noqa: PLC0415
         find_proposal_candidates,

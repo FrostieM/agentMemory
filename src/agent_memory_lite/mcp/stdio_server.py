@@ -25,6 +25,7 @@ from mcp import types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
+from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.mcp.stdio_guards import _workspace_from_args
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
@@ -153,6 +154,12 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.
 async def _run() -> None:
     settings = _runtime.settings
     configure_logging(settings.log_level)
+    # Local-only guard: the MCP stdio server is a first-class entry point
+    # (Claude Code / Cursor launch it directly), so it must enforce the
+    # same no-cloud boundary as the HTTP service's create_app. Without
+    # this the embedding / LLM / vector clients it drives would honor a
+    # cloud EMBEDDING_BASE_URL / HF_ENDPOINT / proxy env var unchecked.
+    assert_local_only(settings)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await _server.run(
             read_stream,

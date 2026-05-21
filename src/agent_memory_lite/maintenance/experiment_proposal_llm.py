@@ -117,6 +117,7 @@ def llm_body_for_insight(
             f"{base_url.rstrip('/')}/api/generate",
             json={"model": model, "prompt": prompt, "stream": False},
             timeout=timeout_sec(),
+            trust_env=False,
         )
         r.raise_for_status()
         payload = r.json()

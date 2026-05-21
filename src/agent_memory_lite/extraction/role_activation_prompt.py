@@ -142,6 +142,7 @@ def fetch_top_capabilities(
             json={"workspace_id": workspace_id, "query": query, "limit": limit},
             headers=headers or {},
             timeout=timeout,
+            trust_env=False,
         )
         if response.status_code != 200:
             return None

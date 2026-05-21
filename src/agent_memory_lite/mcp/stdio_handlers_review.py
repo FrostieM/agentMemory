@@ -45,19 +45,23 @@ def _handle_list_candidates(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_promote_candidate(args: dict[str, Any]) -> dict[str, Any]:
-    # When workspace_id is provided, route through the registry so a
-    # misconfigured anchor does not silently mutate the wrong DB. Anchor
-    # remains the fallback for callers that omit the field.
-    ws = args.get("workspace_id")
-    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
+    # Round-4 audit: promote_memory_candidate WRITES (status update +
+    # decision/theory/behavior rows + audit). Guard with write intent so
+    # a strict project chat cannot promote into a foreign workspace, then
+    # route through the registry so a misconfigured anchor does not
+    # silently mutate the wrong DB.
+    workspace_id = _workspace_from_args(args, intent="write")
+    conn = _runtime.db_for(workspace_id)
     return _candidate_payload(
         promote_memory_candidate(conn, candidate_id=str(args["candidate_id"]))
     )
 
 
 def _handle_reject_candidate(args: dict[str, Any]) -> dict[str, Any]:
-    ws = args.get("workspace_id")
-    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
+    # Round-4 audit: reject_memory_candidate WRITES (status + audit row).
+    # Write-intent guard before routing — see _handle_promote_candidate.
+    workspace_id = _workspace_from_args(args, intent="write")
+    conn = _runtime.db_for(workspace_id)
     return _candidate_payload(reject_memory_candidate(conn, candidate_id=str(args["candidate_id"])))
 
 
@@ -135,9 +139,11 @@ def _handle_list_maintenance_events(args: dict[str, Any]) -> dict[str, Any]:
 def _handle_resolve_maintenance_event(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.models.enums import MaintenanceEventStatus  # noqa: PLC0415
 
+    # Round-4 audit: resolve_maintenance_event WRITES (status +
+    # resolved_at + audit). Write-intent guard before routing to a DB.
+    workspace_id = _workspace_from_args(args, intent="write")
+    conn = _runtime.db_for(workspace_id)
     status = MaintenanceEventStatus(args.get("status", "resolved"))
-    ws = args.get("workspace_id")
-    conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
     event = resolve_maintenance_event(
         conn,
         event_id=str(args["event_id"]),

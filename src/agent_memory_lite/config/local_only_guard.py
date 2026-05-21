@@ -40,6 +40,10 @@ CLOUD_DENYLIST: frozenset[str] = frozenset(
         "api.cerebras.ai",
         "api.lepton.ai",
         "api.runpod.io",
+        # Round-3 re-audit: embedding-provider + Ollama-cloud hosts.
+        "api.voyageai.com",
+        "api.jina.ai",
+        "ollama.com",
     }
 )
 
@@ -53,6 +57,8 @@ CLOUD_DENYLIST_SUFFIXES: tuple[str, ...] = (
     ".qdrant.io",
     ".chromadb.cloud",
     ".turbopuffer.com",
+    ".lancedb.com",
+    ".lancedb.io",
 )
 
 TELEMETRY_KILL_LIST: tuple[str, ...] = (

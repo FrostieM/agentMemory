@@ -311,3 +311,69 @@ def test_maybe_compat_dispatch_allows_anchor_write(monkeypatch: pytest.MonkeyPat
         {"workspace_id": "ws-anchor", "title": "legit", "decision_text": "x"},
     )
     assert result == sentinel
+
+
+# ---------- RE-AUDIT HIGH: v3.1 / review MCP write handlers missed the guard ----------
+#
+# A re-audit found four MCP handlers that route to a caller-supplied
+# workspace_id via _runtime.db_for(ws) and WRITE, with no
+# _ensure_workspace_writable: memory_propose_experiments (persist=true),
+# memory_promote_candidate, memory_reject_candidate and
+# memory_resolve_maintenance_event. Each now calls
+# _workspace_from_args(intent="write") before touching a DB.
+
+
+def test_mcp_promote_candidate_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory_promote_candidate writes (status + decision/theory/behavior
+    rows + audit) — a foreign workspace_id under strict mode must be
+    rejected before _runtime.db_for opens the DB."""
+    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
+        stdio_handlers_review._handle_promote_candidate(
+            {"workspace_id": "ws-victim", "candidate_id": "c1"}
+        )
+
+
+def test_mcp_reject_candidate_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory_reject_candidate writes a status update + audit row."""
+    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
+        stdio_handlers_review._handle_reject_candidate(
+            {"workspace_id": "ws-victim", "candidate_id": "c1"}
+        )
+
+
+def test_mcp_resolve_maintenance_event_blocks_foreign_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory_resolve_maintenance_event writes status + resolved_at + audit."""
+    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
+        stdio_handlers_review._handle_resolve_maintenance_event(
+            {"workspace_id": "ws-victim", "event_id": "e1"}
+        )
+
+
+def test_mcp_propose_experiments_persist_blocks_foreign_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory_propose_experiments with persist=true writes memory_candidate
+    rows — that path now requires write intent. (persist=false stays a
+    cross-workspace-allowed read.)"""
+    from agent_memory_lite.mcp import stdio_handlers_v3_1  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
+        stdio_handlers_v3_1._handle_propose_experiments(
+            {"workspace_id": "ws-victim", "persist": True}
+        )

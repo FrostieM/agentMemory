@@ -129,6 +129,7 @@ def llm_distill_cluster(
             f"{base_url.rstrip('/')}/api/generate",
             json={"model": model, "prompt": prompt, "stream": False},
             timeout=timeout_sec(),
+            trust_env=False,
         )
         r.raise_for_status()
         payload = r.json()
