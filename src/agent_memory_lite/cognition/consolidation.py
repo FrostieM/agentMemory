@@ -196,6 +196,15 @@ class InsightDraft:
     signal_tokens_csv: str
 
 
+# v3.7 memory-quality: the heuristic fallback summary below is a
+# word-frequency token bag ("Recurring theme (N episodes): a, b"), not a
+# real insight. consolidate_workspace skips persisting an insight whose
+# summary matches this — otherwise every pass regenerates the same brief
+# noise the operator must reject. compaction/promote_insight_to_behavior.py
+# keeps its own copy for the promotion gate (sibling defense-in-depth).
+_HEURISTIC_NOISE_RE = re.compile(r"^\s*Recurring theme\s*\(\d+\s*episode", re.IGNORECASE)
+
+
 def _heuristic_summary(cluster: Cluster, signal: list[str]) -> str:
     """Legacy word-frequency summary — used as fallback when LLM is off
     or unreachable."""
@@ -401,6 +410,9 @@ class ConsolidationReport:
     episodes_seen: int
     clusters_found: int
     insights_written: int
+    # v3.7: clusters whose only summary was word-frequency heuristic
+    # noise — skipped, not persisted (see _HEURISTIC_NOISE_RE).
+    insights_skipped: int = 0
 
 
 def consolidate_workspace(
@@ -424,12 +436,22 @@ def consolidate_workspace(
         )
     clusters = cluster_episodes(episodes)
     insights_written = 0
+    insights_skipped = 0
     # Phase 3: precompute pinned behavior token sets so we can detect
     # clusters that re-encode an already-installed rule.
     pinned_behavior_tokens = _pinned_behavior_token_sets(conn, workspace_id=workspace_id)
     for cluster in clusters[:max_insights]:
         try:
             draft = distill_cluster(cluster)
+            # v3.7 memory-quality: a cluster whose only summary is the
+            # word-frequency heuristic fallback ("Recurring theme (N
+            # episodes): tok, tok") is a token bag, not an insight.
+            # Persisting it just regenerates the same brief noise every
+            # pass — skip it. A real insight needs the LLM "Pattern: ..."
+            # distillation (or any non-heuristic summary).
+            if _HEURISTIC_NOISE_RE.match(draft.summary):
+                insights_skipped += 1
+                continue
             insight_type = (
                 "behavior_reinforcement"
                 if _matches_pinned_behavior(cluster.signal_tokens, pinned_behavior_tokens)
@@ -452,4 +474,5 @@ def consolidate_workspace(
         episodes_seen=len(episodes),
         clusters_found=len(clusters),
         insights_written=insights_written,
+        insights_skipped=insights_skipped,
     )

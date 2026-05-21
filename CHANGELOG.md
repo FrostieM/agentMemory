@@ -9,6 +9,57 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.7.0 — 2026-05-21 (audit re-audit hardening + orphan-vector self-cleaning)
+
+A deep adversarial re-audit of the API/MCP and local-only-security
+sectors closed the holes the 3.6.0 sweep's first pass missed, and a new
+brain-pass loop makes the vector store self-maintaining.
+
+### Added
+
+- **`prune-orphan-vectors` brain loop (8th brain-pass step).** SQLite
+  (chunks) and LanceDB (vectors) have no cross-store transaction, so a
+  chunk delete or an interrupted compound write can leave a vector with
+  no backing chunk — an orphan that wastes a top-K search slot on a
+  dead hit. Every brain pass now diffs the vector ids against the chunk
+  ids and deletes the surplus, capped per pass. Flags
+  `MEMORY_VECTOR_PRUNE_ENABLED` (default ON) and
+  `MEMORY_VECTOR_PRUNE_MAX_PER_PASS` (default 2000); the count surfaces
+  on `BrainPassReport.vectors_pruned`.
+
+### Fixed — security re-audit (API / MCP + local-only boundary)
+
+- **The MCP stdio server ran no local-only guard.** `python -m
+  agent_memory_lite.mcp.stdio_server` never called `assert_local_only`,
+  so a cloud `EMBEDDING_BASE_URL` / `HF_ENDPOINT` / proxy would ship
+  data off-machine on the MCP path. `_run()` now runs the guard at
+  startup, mirroring the HTTP `create_app`.
+- **Cross-workspace write holes.** The v2-compat shim and several MCP
+  write handlers (promote / reject candidate, resolve / claim / dismiss
+  maintenance event, compact_trigger, propose_experiments persist)
+  routed to a caller-supplied workspace with no isolation guard. All now
+  guard with write intent before touching a DB; the 5 canonical HTTP
+  write routes regained `ensure_workspace_writable`.
+- **Local-only guard widened.** It now audits `HF_ENDPOINT` /
+  `HF_HUB_ENDPOINT` / `OLLAMA_HOST` / `MEMORY_HTTP_BASE_URL` and the
+  `HTTP(S)_PROXY` env vars (a proxy is a transport-level redirect the
+  URL checks could not see); every httpx call pins `trust_env=False`;
+  the cloud denylist gained more inference / vector hosts.
+
+### Fixed — memory quality
+
+- **Consolidation no longer regenerates word-frequency noise insights.**
+  When the LLM consolidation path is unavailable, the heuristic fallback
+  produces a "Recurring theme (N episodes): tok, tok" token bag; that is
+  now skipped at creation instead of piling a fresh noise candidate into
+  the review queue every pass.
+- The whole `tests/e2e` suite — red since the v3.5 OriginGuard landed
+  (every `TestClient` sent `Host: testserver`) — is green again.
+
+This is a security-hardening + memory-quality release; it is not a
+"production-ready" claim — see the adversarial-audit bar in the
+contract.
+
 ## 3.6.0 — 2026-05-20 (full project audit by AI agents — 8 sectors, 28 fixes, 7 security holes closed)
 
 A round-robin audit by 23 parallel AI agent runs swept the entire

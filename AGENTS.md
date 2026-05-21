@@ -49,7 +49,7 @@ that returns full bodies (~500-2000 tokens). The compact surface is
 the documented path; legacy stays registered for backwards-compat and
 retires at v4.0.
 
-**v3.0.0-final adds 7 background loops that compose on the compact
+**The memory brain runs 8 background loops that compose on the compact
 surface (every one flag-gated, default ON, byte-equivalent rollback):**
 
 | Phase | What it does | Where it surfaces |
@@ -61,6 +61,7 @@ surface (every one flag-gated, default ON, byte-equivalent rollback):**
 | 5 — Self-Model | per-workspace 50-150 word identity narrative + invariants + uncertainties; refreshed from top outcome-weighted decisions | brief FIRST section, `/ui` rail card |
 | 6 — Bi-Temporal | `valid_from` / `valid_to` separate from `created_at` / `updated_at`; brief filters by `now()` so expired decisions drop | every read tool accepts `as_of` |
 | 7 — Recall | `memory_recall(topic, depth, outcome_floor)` — spreading activation over `soft_edges ∪ capability_links ∪ causal_links` | MCP tool, `/ui/recall` |
+| 8 — Vector Prune (v3.7) | every brain pass diffs LanceDB vector ids against SQLite chunk ids and deletes orphan vectors (chunk row gone — a SQLite/LanceDB delete split) so the vector store stays self-clean | `BrainPassReport.vectors_pruned` |
 
 ### Discipline rules — call these FIRST (override any reflex)
 

@@ -67,13 +67,28 @@ def _seed_pinned_behavior(conn: sqlite3.Connection, *, id_: str, rule: str) -> N
     conn.commit()
 
 
+@pytest.fixture
+def llm_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force consolidation's LLM path to return a real 'Pattern:' summary.
+
+    v3.7: consolidate_workspace skips persisting an insight whose summary
+    is the word-frequency heuristic fallback. Tests that need an insight
+    to land patch the LLM distiller to return a non-heuristic summary.
+    """
+    monkeypatch.setattr(
+        "agent_memory_lite.cognition.consolidation_llm.llm_distill_cluster",
+        lambda **_kw: "Pattern: a real distilled consolidation insight.",
+    )
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "true")
+
+
 # ============================================================
 # evidence-episode feedback boost
 # ============================================================
 
 
 def test_consolidation_writes_implicit_feedback_for_each_episode(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection, llm_pattern: None
 ) -> None:
     """4 episodes with shared tokens -> 1 cluster -> 1 insight -> 4 feedback rows."""
     for i in range(4):
@@ -91,7 +106,7 @@ def test_consolidation_writes_implicit_feedback_for_each_episode(
         assert row["usefulness"] == pytest.approx(0.4, abs=1e-3)
 
 
-def test_consolidation_emits_one_insight(conn: sqlite3.Connection) -> None:
+def test_consolidation_emits_one_insight(conn: sqlite3.Connection, llm_pattern: None) -> None:
     for i in range(3):
         _seed_episode(conn, id_=f"ep_{i}", raw_text="calibrator volatility threshold tuning")
     consolidate_workspace(conn, workspace_id="ws")
@@ -116,7 +131,7 @@ def test_matches_pinned_behavior_jaccard_threshold() -> None:
 
 
 def test_cluster_matching_pinned_behavior_gets_reinforcement_type(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection, llm_pattern: None
 ) -> None:
     # Overlap needs Jaccard >= 0.6 between cluster signal_tokens and behavior
     # tokens. Use a tight, low-noise rule so all 3+ shared tokens dominate the
@@ -141,7 +156,7 @@ def test_cluster_matching_pinned_behavior_gets_reinforcement_type(
 
 
 def test_cluster_not_matching_behavior_gets_consolidation_type(
-    conn: sqlite3.Connection,
+    conn: sqlite3.Connection, llm_pattern: None
 ) -> None:
     _seed_pinned_behavior(conn, id_="beh_kelly", rule="kelly sizing capped at quarter")
     for i in range(3):

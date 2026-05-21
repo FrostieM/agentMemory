@@ -172,21 +172,23 @@ request flow as it happens. Layout:
   to switch context without restarting the service. In hub mode the
   same service serves every project.
 
-## Status — 3.0.0
+## Status — 3.7.0
 
-Latest tag: **v3.0.0** (2026-05-19) — memory as a brain. Outcome-aware
-retrieval, Hebbian associations, PreToolUse reflexes, identity self-
-model, bi-temporal facts, spreading-activation recall. See
-[`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) for the 7-phase
-breakdown. The 2026-05-19 agent-UX follow-ups (registry-routed MCP
-handlers, sticky-brief, Move 5 ``decision_neighbors``, aging-decision
-ping, deprecation-notice dedup) land on top of the 3.0.0 line.
-Every memory feature is on by default;
-flag-off parity invariants in `tests/invariants/` lock the legacy
-byte-equivalent path for any operator who wants to peel a layer
-off. The pre-2.0.0 incremental development history is preserved
-verbatim in [`docs/CHANGELOG_LEGACY.md`](docs/CHANGELOG_LEGACY.md)
-for traceability.
+Latest tag: **v3.7.0** (2026-05-21) — security re-audit hardening +
+memory-quality. The "memory as a brain" core (outcome-aware retrieval,
+Hebbian associations, PreToolUse reflexes, identity self-model,
+bi-temporal facts, spreading-activation recall) shipped in the 3.0.0
+line; 3.1–3.6 added the v3.1 research vectors, MemBench, and a full
+8-sector AI-agent audit; 3.7.0 closes the API/MCP + local-only
+re-audit findings and adds an 8th brain loop — `prune-orphan-vectors`
+("sleep cleaning" that keeps the vector store self-clean). See
+[`CHANGELOG.md`](CHANGELOG.md) for the per-release breakdown and
+[`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md) for the brain-loop
+table. Every memory feature is on by default; flag-off parity
+invariants in `tests/invariants/` lock the legacy byte-equivalent
+path for any operator who wants to peel a layer off. The pre-2.0.0
+incremental development history is preserved verbatim in
+[`docs/CHANGELOG_LEGACY.md`](docs/CHANGELOG_LEGACY.md) for traceability.
 
 For the full breakdown see [`CHANGELOG.md`](CHANGELOG.md). The
 incremental development trail (1.x → 2.1.x → 2.2.x) that produced

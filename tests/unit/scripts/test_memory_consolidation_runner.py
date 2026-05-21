@@ -78,7 +78,18 @@ def test_load_registry_parses_workspaces_array(tmp_path: Path) -> None:
 # ============================================================
 
 
-def test_run_one_happy_path(tmp_path: Path) -> None:
+def test_run_one_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # v3.7: consolidate_workspace skips persisting an insight whose only
+    # summary is the word-frequency heuristic fallback ("Recurring theme
+    # (N episodes): ..."). Force the LLM distiller to return a real
+    # "Pattern:" summary so the happy-path insight actually lands —
+    # mirrors the llm_pattern fixture used by the consolidation unit
+    # tests.
+    monkeypatch.setattr(
+        "agent_memory_lite.cognition.consolidation_llm.llm_distill_cluster",
+        lambda **_kw: "Pattern: a real distilled consolidation insight.",
+    )
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "true")
     db = tmp_path / "ws.db"
     _make_db(db)
     _seed_episode(db, workspace_id="ws", raw_text="kelly sizing review one", episode_id="e1")

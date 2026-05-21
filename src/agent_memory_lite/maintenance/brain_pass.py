@@ -1,4 +1,4 @@
-"""v3.0.0-final: run all 7 memory-brain maintenance loops for one workspace.
+"""Run the memory-brain maintenance loops for one workspace.
 
 This module is the single integration point that keeps the brain alive
 between sessions. It runs from the existing trigger-on-traffic
@@ -9,18 +9,15 @@ in-process MCP local fallback runs), the scheduler checks
 thread that runs both the YAML retrieval-quality sentinels AND this
 brain pass.
 
-The pass is composed of six idempotent steps, each gated by its
-own settings flag. A failure in one step never blocks the next:
-
-  1. Phase 1 -- recompute outcome_score across knowledge tables.
-  2. Phase 2 -- distill retrieval_coactivation into soft_edges
-                (with HeLa-Mem outcome gate, prune stale log rows).
-  3. Phase 3 -- promote insights that crossed the confidence + surface
-                gate into pinned behaviors.
-  4. Phase 4 -- distill new reflex rules from low-outcome insights.
-  5. Phase 5 -- refresh the self-model narrative.
-  6. Phase 7 -- extract causal links (supersedes -> invalidated,
-                insight -> episode derived_from).
+The pass is a sequence of independent, idempotent steps, each gated by
+its own settings flag -- a failure in one step never blocks the next:
+outcome-score recompute, Hebbian soft-edge distillation, insight
+promotion, reflex-rule distillation, self-model refresh, causal-link
+extraction, DB hygiene (WAL checkpoint + periodic VACUUM), orphan-vector
+prune (v3.7 "sleep cleaning"), experiment proposal, predictive-failure
+scan, DiD + Granger causality, predictive-LR training, drift sentinel,
+and dead-behavior auto-archive. ``MEMORY_BRAIN_PASS_ENABLED`` is the
+master switch for the whole path.
 
 The whole pass is wrapped so that any uncaught exception simply
 swallows + logs; the next overdue tick retries. Returns a small
@@ -587,7 +584,7 @@ def _step_behavior_auto_archive(
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
-    """Run all six brain-maintenance steps against one workspace.
+    """Run the brain-maintenance steps against one workspace.
 
     Each step is independent + failure-soft. Returns a report capturing
     per-step row counts so the operator can see whether anything moved.

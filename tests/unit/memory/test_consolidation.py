@@ -63,6 +63,22 @@ def _seed_episode(
     return eid
 
 
+@pytest.fixture
+def llm_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force consolidation's LLM path to return a real 'Pattern:' summary.
+
+    v3.7: consolidate_workspace skips persisting an insight whose summary
+    is the word-frequency heuristic fallback ('Recurring theme (N
+    episodes): ...'). Tests that need an insight to actually land patch
+    the LLM distiller to return a non-heuristic summary.
+    """
+    monkeypatch.setattr(
+        "agent_memory_lite.cognition.consolidation_llm.llm_distill_cluster",
+        lambda **_kw: "Pattern: a real distilled consolidation insight.",
+    )
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "true")
+
+
 # ============================================================
 # Token helpers
 # ============================================================
@@ -161,7 +177,9 @@ def test_consolidate_empty_workspace_returns_zero(conn: sqlite3.Connection) -> N
     assert report.insights_written == 0
 
 
-def test_consolidate_writes_insight_for_one_cluster(conn: sqlite3.Connection) -> None:
+def test_consolidate_writes_insight_for_one_cluster(
+    conn: sqlite3.Connection, llm_pattern: None
+) -> None:
     _seed_episode(
         conn,
         workspace_id="default",
@@ -195,7 +213,7 @@ def test_consolidate_writes_insight_for_one_cluster(conn: sqlite3.Connection) ->
     assert set(evidence) == {"ep_a", "ep_b"}
 
 
-def test_consolidate_respects_window_hours(conn: sqlite3.Connection) -> None:
+def test_consolidate_respects_window_hours(conn: sqlite3.Connection, llm_pattern: None) -> None:
     # Old episode outside the 1-hour window.
     _seed_episode(
         conn,
@@ -224,7 +242,7 @@ def test_consolidate_respects_window_hours(conn: sqlite3.Connection) -> None:
     assert report.insights_written == 1
 
 
-def test_consolidate_caps_at_max_insights(conn: sqlite3.Connection) -> None:
+def test_consolidate_caps_at_max_insights(conn: sqlite3.Connection, llm_pattern: None) -> None:
     # Three distinct clusters with disjoint vocabularies so the greedy
     # Jaccard cluster doesn't merge them. Each pair shares 4 tokens and
     # has 0 overlap with the other pairs.
@@ -281,3 +299,27 @@ def test_consolidate_workspace_isolation(conn: sqlite3.Connection) -> None:
     assert report_b.episodes_seen == 1
     # ws_b had only 1 episode → no cluster forms.
     assert report_b.insights_written == 0
+
+
+def test_consolidate_skips_heuristic_noise_insight(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v3.7: when consolidation can only produce the word-frequency
+    heuristic summary (LLM off / unreachable), the insight is NOT
+    persisted — it would just regenerate the same brief noise every
+    pass. The cluster is counted in ``insights_skipped`` instead."""
+    monkeypatch.setenv("MEMORY_CONSOLIDATION_LLM_ENABLED", "false")
+    for i in range(3):
+        _seed_episode(
+            conn,
+            workspace_id="default",
+            raw_text="changelog file_indexed pre-commit hook ingest event",
+            minutes_ago=10 - i,
+            episode_id=f"ep_noise_{i}",
+        )
+    report = cons.consolidate_workspace(conn, workspace_id="default")
+    assert report.clusters_found == 1
+    assert report.insights_written == 0
+    assert report.insights_skipped == 1
+    rows = conn.execute("SELECT id FROM insights WHERE status='candidate'").fetchall()
+    assert rows == []

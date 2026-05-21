@@ -270,6 +270,30 @@ v1.10 design session. Operator runbook (heuristic patterns,
 episode-dedup bypass for pair recurrence, pinned + overwrite
 semantics, 7-flag env map): [`docs/V1_2_0.md`](docs/V1_2_0.md).
 
+**v3.0.0-final → v3.7 — the memory-brain background loops.** A single
+trigger-on-traffic brain pass (`maintenance/brain_pass.py`, gated by
+`MEMORY_BRAIN_PASS_ENABLED`, fires every `MEMORY_SENTINEL_AUTORUN_HOURS`)
+runs 8 idempotent, individually flag-gated loops:
+
+* **Phase 1-7** (v3.0.0-final) — outcome-score recompute, Hebbian
+  soft-edges, consolidation → insight promotion, reflex distillation,
+  self-model refresh, bi-temporal validity, causal-link extraction.
+  See the brain-loop table in [`docs/AGENT_CONTRACT.md`](docs/AGENT_CONTRACT.md).
+* **v3.2** — `MEMORY_CONSOLIDATION_LLM_ENABLED` swaps the word-frequency
+  consolidation summary for an Ollama "Pattern: ..." line; the
+  heuristic fallback is now SKIPPED (not persisted) so the review queue
+  never fills with regenerating "Recurring theme" token-bag noise.
+  `MEMORY_BEHAVIOR_AUTO_ARCHIVE_ENABLED` retires never-fired behaviors.
+* **v3.7 — orphan-vector prune** (`MEMORY_VECTOR_PRUNE_ENABLED`,
+  `MEMORY_VECTOR_PRUNE_MAX_PER_PASS=2000`). SQLite (chunks) and LanceDB
+  (vectors) have no cross-store transaction, so a chunk delete can
+  leave an orphan vector — dead weight that wastes a top-K search slot.
+  The 8th brain loop diffs vector ids vs chunk ids every pass and
+  deletes the surplus, capped per pass ("sleep cleaning").
+
+The complete env-flag list — every loop plus every threshold — lives
+inline in [`.env.example`](.env.example).
+
 ## Operations
 
 For day-to-day operator workflow — upgrade procedure, service
@@ -348,7 +372,7 @@ that returns full bodies (~500-2000 tokens). The compact surface is
 the documented path; legacy stays registered for backwards-compat and
 retires at v4.0.
 
-**v3.0.0-final adds 7 background loops that compose on the compact
+**The memory brain runs 8 background loops that compose on the compact
 surface (every one flag-gated, default ON, byte-equivalent rollback):**
 
 | Phase | What it does | Where it surfaces |
@@ -360,6 +384,7 @@ surface (every one flag-gated, default ON, byte-equivalent rollback):**
 | 5 — Self-Model | per-workspace 50-150 word identity narrative + invariants + uncertainties; refreshed from top outcome-weighted decisions | brief FIRST section, `/ui` rail card |
 | 6 — Bi-Temporal | `valid_from` / `valid_to` separate from `created_at` / `updated_at`; brief filters by `now()` so expired decisions drop | every read tool accepts `as_of` |
 | 7 — Recall | `memory_recall(topic, depth, outcome_floor)` — spreading activation over `soft_edges ∪ capability_links ∪ causal_links` | MCP tool, `/ui/recall` |
+| 8 — Vector Prune (v3.7) | every brain pass diffs LanceDB vector ids against SQLite chunk ids and deletes orphan vectors (chunk row gone — a SQLite/LanceDB delete split) so the vector store stays self-clean | `BrainPassReport.vectors_pruned` |
 
 ### Discipline rules — call these FIRST (override any reflex)
 
