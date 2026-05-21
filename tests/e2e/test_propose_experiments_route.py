@@ -43,7 +43,7 @@ def test_propose_experiments_get_empty_workspace(client: TestClient) -> None:
 
 def test_propose_experiments_post_empty_workspace(client: TestClient) -> None:
     """POST on empty workspace persists nothing, returns 200."""
-    r = client.post("/memory/propose_experiments", params={"workspace_id": "default"})
+    r = client.post("/memory/propose_experiments", params={"workspace_id": "default"}, json={})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["persisted"] == 0
@@ -76,7 +76,7 @@ def test_propose_experiments_post_respects_disabled_flag(
     """Vector1-audit-2 M5: when the feature flag is off, POST returns
     empty (no writes) — same shape as no insights but explicitly safe."""
     monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_ENABLED", "false")
-    r = client.post("/memory/propose_experiments", params={"workspace_id": "default"})
+    r = client.post("/memory/propose_experiments", params={"workspace_id": "default"}, json={})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["proposals"] == []

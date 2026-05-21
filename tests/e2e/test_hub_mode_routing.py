@@ -162,8 +162,11 @@ def test_hub_mode_post_routes_by_body_workspace_id(hub_setup) -> None:
     assert "Routing test decision" not in titles_a
 
 
-def test_explicit_db_path_header_wins(hub_setup, tmp_path: Path) -> None:
-    """An explicit X-Memory-DB-Path header bypasses registry lookup."""
+def test_unregistered_db_path_header_is_rejected(hub_setup, tmp_path: Path) -> None:
+    """v3.5 sector-4 audit: an X-Memory-DB-Path that is not in the
+    workspace registry is rejected (400). The header can no longer
+    bypass the registry to point the service at an arbitrary SQLite file
+    on disk — it must name a registered workspace."""
     client, _, _ = hub_setup
     rogue = tmp_path / "rogue" / "memory.db"
     _seed_workspace_db(rogue, "rogue")
@@ -172,7 +175,8 @@ def test_explicit_db_path_header_wins(hub_setup, tmp_path: Path) -> None:
         params={"workspace_id": "ws_b"},
         headers={"X-Memory-DB-Path": str(rogue)},
     )
-    assert response.status_code == 200
+    assert response.status_code == 400, response.text
+    assert "registry" in response.json()["detail"]
 
 
 def test_project_mode_does_not_route(project_setup: TestClient) -> None:
