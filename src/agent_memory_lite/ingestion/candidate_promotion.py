@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 
 from agent_memory_lite.api.errors import ValidationError
+from agent_memory_lite.extraction.trust_gate import passes_trust_gate
 from agent_memory_lite.ingestion.core_memory_writer import write_core_memory
 from agent_memory_lite.ingestion.decision_writer import write_decision
 from agent_memory_lite.ingestion.procedural_writer import write_procedural_rule
@@ -82,7 +83,32 @@ _PROMOTERS = {
 def promote_to_target(
     conn: sqlite3.Connection, candidate: StoredMemoryCandidate
 ) -> tuple[str, str]:
-    """Run the kind-specific promoter; raise when the kind isn't promotable."""
+    """Run the kind-specific promoter; raise when the kind isn't promotable.
+
+    Round-2 audit: the trust gate used to run ONCE, at candidate-write
+    time inside ``auto_promote._filter``. Promotion — the actual
+    privilege escalation, candidate -> decision/procedural_rule/
+    core_memory — re-ran zero trust validation. A candidate whose
+    ``trust_level`` was mutated after write (a direct DB edit, a future
+    writer, or any path that skipped ``_filter``) could be promoted
+    straight into execution-shaping memory. Re-check the gate here,
+    against the STORED row, immediately before dispatch.
+
+    Only the trust gate is re-checked, not ``meets_thresholds``: a
+    low-confidence candidate that an operator explicitly chooses to
+    promote is a deliberate human override; the trust gate is a hard
+    security boundary (untrusted-doc content never becomes a rule —
+    CLAUDE.md "Untrusted documents stay untrusted") and holds even
+    against operator action.
+    """
+    if not passes_trust_gate(candidate):
+        raise ValidationError(
+            f"candidate {candidate.id} (kind={candidate.kind.value}, "
+            f"trust={candidate.trust_level.value}) fails the trust gate: "
+            "untrusted-document content cannot be promoted into "
+            "execution-shaping memory (decision / procedural_rule / "
+            "core_memory)."
+        )
     promoter = _PROMOTERS.get(candidate.kind)
     if promoter is None:
         raise ValidationError(f"candidate kind {candidate.kind.value!r} is not promotable")

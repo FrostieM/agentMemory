@@ -20,6 +20,7 @@ before.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 
@@ -65,7 +66,17 @@ def _embed_first(
     if vector is None or len(vector) == 0:
         return None
     first = vector[0]
-    return first if isinstance(first, np.ndarray) else np.asarray(first)
+    first = first if isinstance(first, np.ndarray) else np.asarray(first)
+    # Round-2 audit: a degenerate embedding — all-zero, or NaN/inf from a
+    # pathological input (e.g. text that redaction reduced to only
+    # ``<<REDACTED>>`` markers) — makes cosine similarity NaN or collapses
+    # it to 1.0. Either way a DISTINCT episode would be wrongly dropped as
+    # a duplicate. Treat a non-finite or zero-norm vector as "cannot
+    # dedup": skip dedup and let the episode be written.
+    if not bool(np.all(np.isfinite(first))) or float(np.linalg.norm(first)) == 0.0:
+        _log.warning("dedup_degenerate_vector", workspace_id=workspace_id)
+        return None
+    return first
 
 
 def maybe_dedup(
@@ -104,7 +115,10 @@ def maybe_dedup(
     if not hits:
         return None
     best = hits[0]
-    if best.score < settings.episode_dedup_threshold:
+    # Round-2 audit: a NaN score makes ``best.score < threshold`` False,
+    # which falls THROUGH and wrongly treats the row as a duplicate.
+    # Require a finite score before the threshold compare.
+    if not math.isfinite(best.score) or best.score < settings.episode_dedup_threshold:
         return None
     episode_id = _episode_id_for_chunk(conn, best.id)
     return DuplicateMatch(chunk_id=best.id, score=float(best.score), episode_id=episode_id)

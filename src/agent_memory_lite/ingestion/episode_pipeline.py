@@ -70,6 +70,20 @@ def ingest_episode(
     auto_promote_settings: Settings | None = None,
 ) -> EpisodeIngestResult:
     redacted = redact(episode_in.raw_text)
+    # Round-2 audit (CRITICAL): only raw_text used to be redacted.
+    # ``summary`` and ``label`` were written verbatim to
+    # episodes.summary / episodes.label AND mirrored onto the chunk +
+    # chunks_fts (insert_chunk_fts indexes summary). A secret placed in
+    # summary or label — e.g. ingest_episode(summary="key: sk-ant-...")
+    # — landed in SQLite cleartext and FTS-indexed. Redact them on the
+    # same pass. ``redact`` requires a non-None str, so guard the
+    # optional fields; an empty string is already a no-op.
+    redacted_summary = redact(episode_in.summary).text if episode_in.summary else episode_in.summary
+    redacted_label = redact(episode_in.label).text if episode_in.label else episode_in.label
+    if redacted_summary != episode_in.summary or redacted_label != episode_in.label:
+        episode_in = episode_in.model_copy(
+            update={"summary": redacted_summary, "label": redacted_label}
+        )
 
     if embedding_provider is not None:
         pin_or_check(conn, episode_in.workspace_id, embedding_provider)

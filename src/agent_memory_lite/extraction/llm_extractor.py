@@ -27,6 +27,20 @@ from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
 from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
 from agent_memory_lite.models.episodes import Episode
+from agent_memory_lite.redaction import redact
+
+
+def _scrub(value: str | None) -> str | None:
+    """Round-2 audit: re-redact LLM-extractor output. The episode
+    raw_text is redacted upstream, but the Ollama model can echo a
+    secret from the prompt into ``subject`` / ``evidence`` / ``object``;
+    those fields flow into ``memory_candidates`` rows + the audit log
+    without ever passing the redactor again. Scrub on the way out.
+    ``redact`` rejects None, so guard the optional field."""
+    if not value:
+        return value
+    return redact(value).text
+
 
 _log = get_logger("extraction.llm")
 _DEFAULT_TIMEOUT = 30.0
@@ -155,12 +169,16 @@ class OllamaExtractor:
                 continue
             if kind == MemoryCandidateKind.CORRECTION and not episode_is_user_message:
                 continue
+            raw_object = item.get("object")
             data: dict[str, Any] = {
                 "kind": kind,
-                "subject": str(item.get("subject", "")),
-                "predicate": str(item.get("predicate", "")),
-                "object": item.get("object"),
-                "evidence": str(item.get("evidence", "")),
+                # Round-2 audit: scrub the model-returned free-text
+                # fields — the LLM can echo a secret the redactor on
+                # raw_text already removed.
+                "subject": _scrub(str(item.get("subject", ""))),
+                "predicate": _scrub(str(item.get("predicate", ""))),
+                "object": _scrub(str(raw_object)) if raw_object is not None else None,
+                "evidence": _scrub(str(item.get("evidence", ""))),
                 "confidence": float(item.get("confidence", 0.0)),
                 "importance": float(item.get("importance", 0.0)),
                 "trust_level": TrustLevel.AGENT_INFERRED,

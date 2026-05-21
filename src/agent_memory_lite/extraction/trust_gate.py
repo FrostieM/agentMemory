@@ -9,7 +9,7 @@ decisions can be promoted there.
 from __future__ import annotations
 
 from agent_memory_lite.extraction.thresholds import CORE_PROMOTION_TRUST
-from agent_memory_lite.models.candidates import MemoryCandidate
+from agent_memory_lite.models.candidates import MemoryCandidate, StoredMemoryCandidate
 from agent_memory_lite.models.enums import MemoryCandidateKind, TrustLevel
 
 # v3.5 sector-3 audit-followup: expanded list of kinds that an
@@ -31,7 +31,12 @@ PROMOTABLE_KINDS: frozenset[MemoryCandidateKind] = frozenset(
 )
 
 
-def passes_trust_gate(candidate: MemoryCandidate) -> bool:
+def passes_trust_gate(candidate: MemoryCandidate | StoredMemoryCandidate) -> bool:
+    """Round-2 audit: accepts ``StoredMemoryCandidate`` too. The gate
+    only reads ``trust_level`` + ``kind``, both present on the stored
+    shape — widening the type lets ``promote_to_target`` re-run the
+    check against the row it is about to promote, not just at
+    candidate-write time."""
     if candidate.trust_level == TrustLevel.UNTRUSTED_DOC:
         return candidate.kind not in PROMOTABLE_KINDS
     if candidate.kind in PROMOTABLE_KINDS:
