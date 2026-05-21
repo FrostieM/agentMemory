@@ -212,11 +212,13 @@ def test_narrative_uses_natural_english_joins(conn: sqlite3.Connection) -> None:
     _seed_decision(conn, "dec_3", "Run paper before live", outcome=0.5)
     model = refresh_self_model(conn, workspace_id="ws")
     assert model is not None
-    # Three invariants -> Oxford comma join.
+    # Three invariants -> Oxford comma join. Round-2 audit (H3): each
+    # decision snippet is now quoted so injected imperative text reads
+    # as referenced data, not the agent's own voice.
     assert (
-        "Use quarter-Kelly sizing, Calibrate per strategy weekly, and Run paper before live"
-        in model.identity_text
-    )
+        '"Use quarter-Kelly sizing", "Calibrate per strategy weekly", '
+        'and "Run paper before live"'
+    ) in model.identity_text
 
 
 def test_narrative_skips_trigger_scaffolded_rule(conn: sqlite3.Connection) -> None:
@@ -270,7 +272,8 @@ def test_narrative_singular_when_one_invariant(conn: sqlite3.Connection) -> None
     _seed_decision(conn, "dec_only", "Single invariant", outcome=0.8)
     model = refresh_self_model(conn, workspace_id="ws")
     assert model is not None
-    assert "My invariant is Single invariant" in model.identity_text
+    # Round-2 audit (H3): the snippet is quoted — singular phrasing kept.
+    assert 'My invariant is "Single invariant"' in model.identity_text
 
 
 def test_narrative_handles_uncertainty(conn: sqlite3.Connection) -> None:

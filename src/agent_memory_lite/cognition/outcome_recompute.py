@@ -60,9 +60,16 @@ def compute_outcome(inputs: OutcomeInputs) -> float:
     """
     if inputs.archived:
         return -1.0
+    # Round-2 audit (H1): clamp the EWMA INPUT, not only the return.
+    # Most adapters read ``feedback_ewma`` straight from a DB column
+    # (or derive it from a ``confidence`` column) — a malformed row
+    # with confidence=3.0 yields ewma=5.0. The final ``_clamp`` saves
+    # the return, but clamping here keeps ``adjustment`` itself in a
+    # sane range so the math is well-behaved regardless of caller.
+    ewma = _clamp(inputs.feedback_ewma)
     weight = evidence_weight(inputs.usage_count)
     stale = staleness_factor(inputs.age_days)
-    adjustment = inputs.feedback_ewma * weight * stale
+    adjustment = ewma * weight * stale
     if inputs.superseded:
         adjustment += SUPERSEDED_PENALTY
     if inputs.rejected:

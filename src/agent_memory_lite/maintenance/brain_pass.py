@@ -29,14 +29,44 @@ report for telemetry / hygiene dashboards.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.utils.time import iso_now
 
 _log = logging.getLogger(__name__)
+
+
+@contextlib.contextmanager
+def _immediate_tx(conn: sqlite3.Connection) -> Iterator[None]:
+    """BEGIN IMMEDIATE / COMMIT around a write loop — but a no-op when
+    the connection is ALREADY inside a transaction.
+
+    Round-2 audit (M2): the per-step persist loops issued a raw
+    ``conn.execute("BEGIN IMMEDIATE")``. If an earlier brain_pass step
+    left a transaction open, that raw BEGIN raises
+    ``OperationalError: cannot start a transaction within a
+    transaction`` and the step's ``except: ROLLBACK`` then discards the
+    OUTER transaction's uncommitted work. When already nested, the
+    writes simply ride the outer transaction and the outer owner
+    commits. IMMEDIATE is kept for the un-nested case to acquire the
+    write lock up front (avoids 'database is locked' against a
+    concurrent MCP persist call)."""
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
 
 
 @dataclass(slots=True)
@@ -309,14 +339,9 @@ def _step_experiment_proposal(
         report.experiment_proposals = len(proposals)
         if not proposals:
             return
-        try:
-            conn.execute("BEGIN IMMEDIATE")
+        with _immediate_tx(conn):
             for proposal in proposals:
                 persist_proposal(conn, workspace_id=workspace_id, proposal=proposal)
-            conn.execute("COMMIT")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
     except Exception as exc:
         report.errors.append(f"experiment_proposal:{exc}")
 
@@ -360,12 +385,10 @@ def _step_predictive_failure(
         if warnings:
             ep_id = _latest_episode_id(conn, workspace_id)
             if ep_id:
-                # Final-audit H2 fix: BEGIN IMMEDIATE / COMMIT around
-                # the persist loop to match HTTP/MCP semantics and
-                # avoid "database is locked" against concurrent
-                # MCP persist calls.
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
+                # _immediate_tx: BEGIN IMMEDIATE around the persist loop
+                # to match HTTP/MCP semantics, but a no-op when already
+                # nested (Round-2 audit M2).
+                with _immediate_tx(conn):
                     for warning in warnings:
                         persist_warning(
                             conn,
@@ -373,10 +396,6 @@ def _step_predictive_failure(
                             warning=warning,
                             source_episode_id=ep_id,
                         )
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
     except sqlite3.OperationalError as exc:
         report.predictive_warnings_available = False
         report.errors.append(f"predictive_failure:{exc}")
@@ -565,4 +584,29 @@ def run_brain_pass(
             workspace_id,
             ";".join(report.errors),
         )
+        # Round-2 audit (M1): the BrainPassReport is discarded by the
+        # sentinel scheduler — a permanently-failing step is otherwise
+        # invisible (only this log line). Persist a maintenance_event so
+        # /health and the hygiene report surface a brain step that is
+        # silently broken every tick. Failure-soft: observability
+        # writing must never abort the pass.
+        try:
+            from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+                write_maintenance_event,
+            )
+            from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+            from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
+
+            write_maintenance_event(
+                conn,
+                MaintenanceEventIn(
+                    workspace_id=workspace_id,
+                    kind="brain_pass_step_failed",
+                    severity=MaintenanceSeverity.WARNING,
+                    summary=f"{len(report.errors)} brain-pass step(s) failed this tick",
+                    details={"errors": report.errors[:20]},
+                ),
+            )
+        except Exception:  # pragma: no cover - observability is best-effort
+            pass
     return report

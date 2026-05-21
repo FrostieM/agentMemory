@@ -115,9 +115,17 @@ def distill_workspace(
         groups.setdefault(row["query_hash"], []).append(row)
     upserted = 0
     gated = 0
+    # Round-2 audit (M3): the i<j pair loop below is O(N^2) in the group
+    # size. A single query that logged 500 co-activations would
+    # enumerate ~125k upsert_soft_edge calls in one synchronous pass on
+    # a background thread (long lock hold / DoS). ``items`` is already
+    # rank-ordered by the SELECT, so cap to the top-N most-relevant
+    # co-activations per group — bounds the pair count at N*(N-1)/2.
+    max_group_items = 20
     for items in groups.values():
         if len(items) < min_group_size:
             continue
+        items = items[:max_group_items]
         for i in range(len(items)):
             for j in range(i + 1, len(items)):
                 a, b = items[i], items[j]

@@ -23,6 +23,7 @@ The promotion is **append-only**:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 
@@ -31,6 +32,26 @@ from agent_memory_lite.utils.time import iso_now
 
 MIN_CONFIDENCE = 0.7
 MIN_SURFACE_EVENTS = 2
+
+# Round-2 audit (H2): consolidation's heuristic fallback
+# (consolidation._heuristic_summary) emits a token-frequency CSV —
+# "Recurring theme (5 episodes): docs, changelog, file_indexed". That
+# is a token bag, never an operating rule. It is written at
+# confidence=0.55 so it normally can't pass the gate, but if any path
+# bumps the confidence it would install a GARBAGE pinned behavior that
+# then rides every brief. Refuse to promote an insight whose summary
+# is this heuristic-fallback shape. LLM-distilled consolidation
+# insights ("Pattern: ...") and behavior_reinforcement insights are
+# unaffected — they don't match this regex.
+_HEURISTIC_NOISE_RE = re.compile(r"^\s*Recurring theme\s*\(\d+\s*episode", re.IGNORECASE)
+
+
+def _is_promotable_summary(summary: str | None) -> bool:
+    """False for an empty summary or the heuristic token-CSV shape."""
+    text = (summary or "").strip()
+    if not text:
+        return False
+    return _HEURISTIC_NOISE_RE.match(text) is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +85,9 @@ def _eligible_insights(conn: sqlite3.Connection, *, workspace_id: str) -> list[s
         ).fetchall()
     except sqlite3.OperationalError:
         return []
-    return rows
+    # H2 gate: drop heuristic token-CSV insights — they must never
+    # become a pinned behavior even if their confidence was bumped.
+    return [r for r in rows if _is_promotable_summary(r["summary"])]
 
 
 def _behavior_already_exists(
