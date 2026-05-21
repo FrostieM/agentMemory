@@ -170,10 +170,18 @@ def _read_tail(path: Path, tail_lines: int) -> list[str]:
             return f.readlines()[-tail_lines:]
 
     chunk_size = 64 * 1024
+    # Round-2 audit: the loop's only stop condition was "saw tail_lines
+    # newlines". A transcript that is one giant line with no \n never
+    # satisfies it, so the whole file streamed into memory — a multi-GB
+    # newline-free JSONL stalls the agent's prompt. Add a hard byte
+    # ceiling: 8 MB is far more than tail_lines of well-formed JSONL.
+    max_tail_bytes = 8 * 1024 * 1024
     accumulated = bytearray()
     with path.open("rb") as f:
         pos = size
-        while pos > 0 and accumulated.count(b"\n") <= tail_lines:
+        while (
+            pos > 0 and accumulated.count(b"\n") <= tail_lines and len(accumulated) < max_tail_bytes
+        ):
             read = min(chunk_size, pos)
             pos -= read
             f.seek(pos)

@@ -159,6 +159,29 @@ def _list_registry_entries() -> list[dict[str, object]]:
     return entries if isinstance(entries, list) else []
 
 
+def _safe_registry_path(raw: str) -> str:
+    """Round-2 audit: a registry entry's ``db_path`` / ``vector_path`` is
+    fed to ``sqlite3.connect`` and the ``X-Memory-DB-Path`` header. The
+    registry file (``~/.agent_memory/workspaces.json``) is itself the
+    trust root — a process that can rewrite it already has home-dir
+    write access, so full root-confinement buys little AND would break
+    the multi-project design (a project DB legitimately lives wherever
+    its project lives). We reject only the shapes that are never a
+    legitimate local DB path: UNC / network paths, null bytes, and
+    non-absolute paths (which resolve unpredictably against cwd). A
+    rejected value returns '' so the hook routes WITHOUT the header and
+    the service falls back to its anchor DB rather than opening an
+    attacker-chosen file."""
+    raw = (raw or "").strip()
+    if not raw or "\x00" in raw:
+        return ""
+    if raw.startswith(("\\\\", "//")):  # UNC / network share
+        return ""
+    if not os.path.isabs(raw):
+        return ""
+    return raw
+
+
 def _resolve_from_registry(cwd: Path) -> dict[str, str] | None:
     """Walk up from cwd; if a parent matches a registered project_root, return it.
 
@@ -179,8 +202,8 @@ def _resolve_from_registry(cwd: Path) -> dict[str, str] | None:
             if project_root and project_root.casefold() == target.casefold():
                 return {
                     "workspace_id": str(entry.get("id", "")),
-                    "db_path": str(entry.get("db_path", "")),
-                    "vector_path": str(entry.get("vector_path", "")),
+                    "db_path": _safe_registry_path(str(entry.get("db_path", ""))),
+                    "vector_path": _safe_registry_path(str(entry.get("vector_path", ""))),
                 }
     return None
 
@@ -770,13 +793,35 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
     if vector_path:
         headers["X-Memory-Vector-Path"] = vector_path
 
+    # Round-2 audit: stream the response with a hard byte cap. The hook
+    # runs on EVERY prompt; a buggy or hostile local service returning a
+    # multi-GB body would otherwise be fully buffered into memory and
+    # injected verbatim into the agent's context. The get_context
+    # envelope is normally a few KB — 16 MB is a pure DoS ceiling.
+    max_response_bytes = 16 * 1024 * 1024
     try:
-        response = httpx.post(
+        with httpx.stream(
+            "POST",
             f"{DEFAULT_BASE}/memory/get_context",
             json=payload,
             headers=headers,
             timeout=DEFAULT_TIMEOUT,
-        )
+        ) as response:
+            status_code = response.status_code
+            body_bytes = bytearray()
+            oversized = False
+            for chunk in response.iter_bytes():
+                body_bytes += chunk
+                if len(body_bytes) > max_response_bytes:
+                    oversized = True
+                    break
+        if oversized:
+            _emit_notice(
+                "agent-memory-lite returned an oversized response "
+                f"(>{max_response_bytes // (1024 * 1024)} MB) — ignoring it. "
+                "The local service is likely misbehaving; check its console."
+            )
+            return 0
     except httpx.ConnectError:
         # HTTP service down — fall back to direct SQLite + FTS so the
         # agent still sees core_memory / behavior_instructions / active
@@ -826,8 +871,12 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
         )
         return 0
 
-    if response.status_code == 400:
-        body_text = response.text[:300].replace("\n", " ")
+    # ``status_code`` + ``body_bytes`` were captured inside the stream
+    # block above; the response is closed now, so do not touch
+    # ``response.text`` / ``.json()`` (they would re-read a spent stream).
+    body_text_full = bytes(body_bytes).decode("utf-8", errors="replace")
+    if status_code == 400:
+        body_text = body_text_full[:300].replace("\n", " ")
         _emit_notice(
             f"agent-memory-lite rejected workspace_id={workspace!r} (400). "
             "The service is in strict mode but this hook routes via "
@@ -836,13 +885,13 @@ def main() -> int:  # noqa: PLR0915 - linear hook flow with explicit early retur
             f"or set MEMORY_HUB_MODE=true. Server detail: {body_text}"
         )
         return 0
-    if response.status_code >= 400:
-        body_text = response.text[:200].replace("\n", " ")
-        _emit_notice(f"agent-memory-lite returned HTTP {response.status_code}: {body_text}")
+    if status_code >= 400:
+        body_text = body_text_full[:200].replace("\n", " ")
+        _emit_notice(f"agent-memory-lite returned HTTP {status_code}: {body_text}")
         return 0
 
     try:
-        body = response.json()
+        body = json.loads(body_text_full)
     except json.JSONDecodeError:
         _emit_notice("agent-memory-lite returned non-JSON")
         return 0

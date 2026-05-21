@@ -141,6 +141,24 @@ def _list_registry() -> list[dict[str, object]]:
     return entries if isinstance(entries, list) else []
 
 
+def _safe_registry_path(raw: str) -> str:
+    """Round-2 audit: reject registry db_path / vector_path shapes that
+    are never a legitimate local DB path — UNC / network paths, null
+    bytes, non-absolute paths. The registry file is the trust root, so
+    full root-confinement buys little and would break the multi-project
+    design; this only blocks the unambiguously-malicious shapes. A
+    rejected value returns '' → the hook routes without the header and
+    the service falls back to its anchor DB."""
+    raw = (raw or "").strip()
+    if not raw or "\x00" in raw:
+        return ""
+    if raw.startswith(("\\\\", "//")):  # UNC / network share
+        return ""
+    if not os.path.isabs(raw):
+        return ""
+    return raw
+
+
 def _resolve_workspace_from_cwd(cwd: Path) -> tuple[str, str, str]:
     """Walk cwd parents; return (workspace_id, db_path, vector_path) on hit, else empty strings."""
     entries = _list_registry()
@@ -156,8 +174,8 @@ def _resolve_workspace_from_cwd(cwd: Path) -> tuple[str, str, str]:
             if root and root == target:
                 return (
                     str(entry.get("id", "")),
-                    str(entry.get("db_path", "")),
-                    str(entry.get("vector_path", "")),
+                    _safe_registry_path(str(entry.get("db_path", ""))),
+                    _safe_registry_path(str(entry.get("vector_path", ""))),
                 )
     return ("", "", "")
 
@@ -352,8 +370,10 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
         # registry so the HTTP service routes there via X-Memory-DB-Path.
         for entry in _list_registry():
             if isinstance(entry, dict) and entry.get("id") == workspace:
-                db_path = db_path or str(entry.get("db_path") or "")
-                vector_path = vector_path or str(entry.get("vector_path") or "")
+                db_path = db_path or _safe_registry_path(str(entry.get("db_path") or ""))
+                vector_path = vector_path or _safe_registry_path(
+                    str(entry.get("vector_path") or "")
+                )
                 break
         used_global_fallback = True
 

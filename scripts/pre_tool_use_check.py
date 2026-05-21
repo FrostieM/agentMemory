@@ -94,6 +94,22 @@ def _load_registry_entries() -> list[dict[str, Any]]:
     return entries if isinstance(entries, list) else []
 
 
+def _safe_registry_path(raw: str) -> str:
+    """Round-2 audit: reject registry db_path shapes that are never a
+    legitimate local DB path — UNC / network paths, null bytes,
+    non-absolute paths. The registry file is the trust root, so this
+    only blocks the unambiguously-malicious shapes; a rejected value
+    returns '' so the caller treats the entry as unroutable."""
+    raw = (raw or "").strip()
+    if not raw or "\x00" in raw:
+        return ""
+    if raw.startswith(("\\\\", "//")):  # UNC / network share
+        return ""
+    if not os.path.isabs(raw):
+        return ""
+    return raw
+
+
 def _resolve_workspace(cwd: str) -> tuple[str, str] | None:
     """Walk up from ``cwd`` until a registered project_root matches.
 
@@ -108,7 +124,7 @@ def _resolve_workspace(cwd: str) -> tuple[str, str] | None:
     if explicit:
         for entry in entries:
             if isinstance(entry, dict) and entry.get("id") == explicit:
-                db = str(entry.get("db_path", ""))
+                db = _safe_registry_path(str(entry.get("db_path", "")))
                 if db:
                     return explicit, db
     target = Path(cwd).resolve() if cwd else Path.cwd().resolve()
@@ -120,7 +136,7 @@ def _resolve_workspace(cwd: str) -> tuple[str, str] | None:
             root = str(entry.get("project_root", "")).rstrip("\\/").casefold()
             if root and root == target_str:
                 wid = str(entry.get("id", ""))
-                db = str(entry.get("db_path", ""))
+                db = _safe_registry_path(str(entry.get("db_path", "")))
                 if wid and db:
                     return wid, db
     return None

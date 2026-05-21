@@ -24,8 +24,9 @@ import os
 from urllib.parse import urlparse
 
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
+from starlette.responses import Response
 
 _LOOPBACK_HOSTS: frozenset[str] = frozenset(
     {"127.0.0.1", "localhost", "::1", ""}  # empty = no Host header (HTTP/2 path)
@@ -49,7 +50,9 @@ def _allow_remote() -> bool:
 
 
 class OriginGuardMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         if _allow_remote():
             return await call_next(request)
         host_ok = _is_loopback(request.headers.get("host"))
