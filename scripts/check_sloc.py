@@ -151,11 +151,10 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # work scheduled for the v3.1 cycle. Listed in size-DESC order
         # so v3.1 can knock out the worst offenders first:
         #
-        # Core brief composition (Phase 1 outcome filter + Phase 3
-        # recent insights + Phase 5 self-model intro + brain rail data):
-        # * cognition/brief.py (502)
-        #     -> brief_main.py + brief_sections_organ.py +
-        #        brief_sections_classic.py + brief_render.py.
+        # cognition/brief.py was decomposed in v3.7 (-> brief_models /
+        # brief_tokens / brief_sticky / brief_cache / brief_sections_* /
+        # brief_assembly / brief_compose / brief_skill) and removed from
+        # this set.
         # * cognition/lint.py (392)
         #     -> lint_main.py + _watch_outs.py + _reflexes.py +
         #        _discipline.py.
@@ -166,7 +165,6 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # * cognition/digest_worker.py (323)
         # * cognition/impact_check.py (278)
         # * cognition/outcome_recompute.py (167)
-        "cognition/brief.py",
         "cognition/lint.py",
         "cognition/self_model.py",
         "cognition/consolidation.py",

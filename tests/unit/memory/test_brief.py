@@ -441,12 +441,16 @@ def test_compose_brief_cache_respects_max_tokens(conn: sqlite3.Connection) -> No
 def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
     """Cache evicts oldest entry when size exceeds _BRIEF_CACHE_MAX."""
     from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
+    from agent_memory_lite.cognition import brief_cache  # noqa: PLC0415
 
     brief_mod._BRIEF_CACHE.clear()
-    # Force a small cache to keep the test fast.
-    original_max = brief_mod._BRIEF_CACHE_MAX
+    # Force a small cache to keep the test fast. v3.7: _cache_remember
+    # reads _BRIEF_CACHE_MAX from brief_cache (its decomposition home),
+    # so the override has to be set there, not on the brief facade
+    # (rebinding the facade's int name wouldn't reach _cache_remember).
+    original_max = brief_cache._BRIEF_CACHE_MAX
     try:
-        brief_mod._BRIEF_CACHE_MAX = 3
+        brief_cache._BRIEF_CACHE_MAX = 3
         for ws_idx in range(5):
             _seed_decision(
                 conn, id=f"dec_{ws_idx}", workspace_id=f"ws_{ws_idx}", title=f"T{ws_idx}"
@@ -454,7 +458,7 @@ def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
             compose_brief(conn, workspace_id=f"ws_{ws_idx}")
         assert len(brief_mod._BRIEF_CACHE) <= 3
     finally:
-        brief_mod._BRIEF_CACHE_MAX = original_max
+        brief_cache._BRIEF_CACHE_MAX = original_max
 
 
 # ============================================================
