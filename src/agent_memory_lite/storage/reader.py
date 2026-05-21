@@ -52,6 +52,7 @@ _KIND_TABLES = {
     "insight": ("insights", "id"),
     "code_digest": ("code_digests", "id"),
     "chunk": ("chunks", "id"),
+    "plan_step": ("plan_steps", "id"),
 }
 
 
@@ -66,6 +67,7 @@ _KIND_FTS_COLUMNS = {
     "task": ["task_id", "goal", "goal_one_line", "next_action"],
     "insight": ["summary", "gist", "proposed_action"],
     "code_digest": ["file_path", "purpose_short", "narrative"],
+    "plan_step": ["title", "body"],
 }
 
 
@@ -76,7 +78,7 @@ _KIND_FTS_COLUMNS = {
 
 _OUTCOME_KINDS = {"decision", "theory", "behavior", "skill", "insight", "chunk"}
 # Phase 6: kinds that carry bi-temporal validity columns.
-_BI_TEMPORAL_KINDS = {"decision", "theory", "behavior", "concept", "insight"}
+_BI_TEMPORAL_KINDS = {"decision", "theory", "behavior", "concept", "insight", "plan_step"}
 
 
 def _require_known_kind(kind: str) -> None:

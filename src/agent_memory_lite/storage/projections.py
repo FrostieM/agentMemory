@@ -210,6 +210,19 @@ def project_chunk(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def project_plan_step(row: sqlite3.Row) -> dict[str, Any]:
+    """Token target: ~25. {id, task_id, title, status, rank, parent_step_id}."""
+    return {
+        "id": _row_get(row, "id"),
+        "kind": "plan_step",
+        "task_id": _row_get(row, "task_id"),
+        "title": _row_get(row, "title", ""),
+        "status": _row_get(row, "status", "pending"),
+        "rank": _row_get(row, "rank"),
+        "parent_step_id": _row_get(row, "parent_step_id"),
+    }
+
+
 # ============================================================
 # Dispatch by kind
 # ============================================================
@@ -225,6 +238,7 @@ _PROJECTORS = {
     "insight": project_insight,
     "code_digest": project_code_digest,
     "chunk": project_chunk,
+    "plan_step": project_plan_step,
 }
 
 

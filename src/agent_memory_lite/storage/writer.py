@@ -41,6 +41,7 @@ _KIND_META: dict[str, tuple[str, str | None, str | None]] = {
     "insight": ("insights", "summary", "gist"),
     "code_digest": ("code_digests", "narrative", "purpose_short"),
     "chunk": ("chunks", "text", "gist"),
+    "plan_step": ("plan_steps", None, None),
 }
 
 # Columns that allow archiving via status='archived' vs is_archived=1.
@@ -59,6 +60,7 @@ _HAS_UPDATED_AT = {
     "task",
     "insight",
     "code_digest",
+    "plan_step",
 }
 
 
@@ -81,6 +83,7 @@ _PREFIXES = {
     "insight": "insight",
     "code_digest": "digest",
     "chunk": "chk",
+    "plan_step": "pstep",
 }
 
 
@@ -212,7 +215,7 @@ def _audit(
 # ============================================================
 
 
-_BI_TEMPORAL_WRITE_KINDS = {"decision", "theory", "concept", "behavior", "insight"}
+_BI_TEMPORAL_WRITE_KINDS = {"decision", "theory", "concept", "behavior", "insight", "plan_step"}
 
 
 def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:

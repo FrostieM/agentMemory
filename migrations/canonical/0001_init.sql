@@ -128,6 +128,37 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 
 -- ============================================================
+-- Plan steps (a task's plan as first-class, ordered rows)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS plan_steps (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    parent_step_id TEXT,
+    rank REAL NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'active', 'done', 'blocked', 'skipped')),
+    supersedes_step_id TEXT,
+    source_episode_id TEXT,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(parent_step_id) REFERENCES plan_steps(id),
+    FOREIGN KEY(supersedes_step_id) REFERENCES plan_steps(id),
+    FOREIGN KEY(source_episode_id) REFERENCES episodes(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_steps_task
+    ON plan_steps(workspace_id, task_id, rank);
+CREATE INDEX IF NOT EXISTS idx_plan_steps_status
+    ON plan_steps(workspace_id, task_id, status);
+
+
+-- ============================================================
 -- Decisions (architectural choices)
 -- ============================================================
 
