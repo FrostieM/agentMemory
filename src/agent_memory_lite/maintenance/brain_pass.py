@@ -88,6 +88,8 @@ class BrainPassReport:
     causal_derived: int = 0
     wal_checkpoint_pages: int = 0
     vacuum_ran: bool = False
+    # v3.6 Phase-2: orphan chunk-vectors deleted this pass (sleep cleaning).
+    vectors_pruned: int = 0
     experiment_proposals: int = 0
     predictive_warnings: int = 0
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
@@ -133,6 +135,7 @@ class BrainPassReport:
             "causal_derived": self.causal_derived,
             "wal_checkpoint_pages": self.wal_checkpoint_pages,
             "vacuum_ran": self.vacuum_ran,
+            "vectors_pruned": self.vectors_pruned,
             "experiment_proposals": self.experiment_proposals,
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
@@ -311,6 +314,42 @@ def _step_db_hygiene(conn: sqlite3.Connection, workspace_id: str, report: BrainP
             report.errors.extend(f"db_hygiene:{e}" for e in hygiene.errors)
     except Exception as exc:
         report.errors.append(f"db_hygiene:{exc}")
+
+
+def _step_prune_vectors(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Delete orphan chunk-vectors -- vectors whose chunk row is gone.
+
+    The "sleep cleaning" loop. SQLite and LanceDB have no cross-store
+    transaction, so chunk deletes / interrupted compound writes leave
+    vectors with no backing chunk -- dead weight that wastes top-K
+    search slots. Failure-soft like every other step."""
+    if not settings.vector_prune_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.vector_prune import (  # noqa: PLC0415
+            prune_orphan_vectors,
+        )
+        from agent_memory_lite.vector_store.factory import (  # noqa: PLC0415
+            get_vector_store,
+        )
+
+        store = get_vector_store(settings)
+        try:
+            report.vectors_pruned = prune_orphan_vectors(
+                conn,
+                store,
+                workspace_id=workspace_id,
+                max_delete=settings.vector_prune_max_per_pass,
+            )
+        finally:
+            store.close()
+    except Exception as exc:
+        report.errors.append(f"prune_vectors:{exc}")
 
 
 def _step_experiment_proposal(
@@ -562,6 +601,7 @@ def run_brain_pass(
     _step_self_model(conn, workspace_id, settings, report)
     _step_causal(conn, workspace_id, settings, report)
     _step_db_hygiene(conn, workspace_id, report)
+    _step_prune_vectors(conn, workspace_id, settings, report)
     _step_experiment_proposal(conn, workspace_id, report)
     # v3.4 #1: autonomous loop reads V1 candidates emitted by the
     # step above and promotes the confident ones to theories BEFORE

@@ -181,6 +181,16 @@ class Settings(BaseSettings):
     hebbian_log_retention_days: int = Field(
         14, ge=1, le=90, validation_alias="MEMORY_HEBBIAN_LOG_RETENTION_DAYS"
     )
+    # v3.6 Phase-2: prune orphan chunk-vectors -- vectors whose chunk row
+    # was deleted (SQLite/LanceDB split, interrupted compound write) and
+    # left behind. The brain pass diffs vector ids vs chunk ids every
+    # tick and deletes the surplus -- the "sleep cleaning" loop. Default
+    # ON; the flag is a byte-equivalent rollback. The per-pass cap bounds
+    # a pathological backlog to a safe delete size.
+    vector_prune_enabled: bool = Field(True, validation_alias="MEMORY_VECTOR_PRUNE_ENABLED")
+    vector_prune_max_per_pass: int = Field(
+        2000, ge=1, le=100000, validation_alias="MEMORY_VECTOR_PRUNE_MAX_PER_PASS"
+    )
     # v3.0.0-final Phase 3: consolidation feedback. Each consolidation
     # insight surfaces in brief, boosts its evidence-episode usefulness,
     # and -- when confidence + surface_count cross the gate -- auto-
