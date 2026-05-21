@@ -9,14 +9,21 @@ table and appended to ``audit_log`` by writer.py — history comes free.
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any
 
 from agent_memory_lite.models.plan_step import PlanStepIn, PlanStepStatus
 from agent_memory_lite.repositories.plan_step_repo import max_rank
 from agent_memory_lite.storage import writer
-from agent_memory_lite.utils.time import iso_now
 
 _RANK_GAP = 1.0
+
+
+def _utc_now() -> str:
+    """ISO-8601 UTC with a ``Z`` suffix — matches the format storage/writer.py
+    stamps on valid_from / created_at / updated_at, so a plan step's
+    bi-temporal columns stay lexicographically comparable."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def add_plan_step(
@@ -104,6 +111,6 @@ def remove_plan_step(
         workspace_id=workspace_id,
         kind="plan_step",
         object_id=step_id,
-        fields={"valid_to": iso_now()},
+        fields={"valid_to": _utc_now()},
         agent_id=agent_id,
     )

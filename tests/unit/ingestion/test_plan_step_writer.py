@@ -97,3 +97,21 @@ def test_writes_are_versioned(conn: sqlite3.Connection) -> None:
     set_plan_step_status(conn, workspace_id="ws", step_id=sid, status="done")
     versions = writer.list_versions(conn, workspace_id="ws", kind="plan_step", object_id=sid)
     assert len(versions) >= 2
+
+
+def test_edit_ops_on_missing_step_return_none(conn: sqlite3.Connection) -> None:
+    """set / move / remove on an unknown step id are no-ops returning None."""
+    assert set_plan_step_status(conn, workspace_id="ws", step_id="nope", status="done") is None
+    assert move_plan_step(conn, workspace_id="ws", step_id="nope", rank=1.0) is None
+    assert remove_plan_step(conn, workspace_id="ws", step_id="nope") is None
+
+
+def test_add_plan_step_with_parent(conn: sqlite3.Connection) -> None:
+    """A sub-step carries its parent_step_id through the writer."""
+    root = _add(conn, title="root")
+    out = add_plan_step(
+        conn,
+        step_in=PlanStepIn(workspace_id="ws", task_id="t1", title="child", parent_step_id=root),
+    )
+    assert out is not None
+    assert out["parent_step_id"] == root

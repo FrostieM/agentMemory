@@ -17,6 +17,7 @@ from agent_memory_lite.storage.projections import (
     project_decision,
     project_episode,
     project_insight,
+    project_plan_step,
     project_skill,
     project_task,
     project_theory,
@@ -75,6 +76,26 @@ def test_project_decision_compact_shape() -> None:
     assert out["pinned"] is True
     assert "decision_text" not in out
     assert "rationale" not in out
+
+
+def test_project_plan_step_compact_shape() -> None:
+    row = _row(
+        id="pstep_x",
+        task_id="t1",
+        title="Write the migration",
+        body="full step body",
+        status="active",
+        rank=2.0,
+        parent_step_id=None,
+    )
+    out = project_plan_step(row)
+    assert out["id"] == "pstep_x"
+    assert out["kind"] == "plan_step"
+    assert out["task_id"] == "t1"
+    assert out["title"] == "Write the migration"
+    assert out["status"] == "active"
+    assert out["rank"] == 2.0
+    assert "body" not in out
 
 
 def test_project_theory_falls_back_to_claim_when_gist_missing() -> None:
