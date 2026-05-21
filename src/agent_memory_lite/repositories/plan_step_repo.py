@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.models.plan_step import PlanStep
+from agent_memory_lite.models.plan_step import PlanStep, PlanStepStatus
 
 
 def _row_to_plan_step(row: sqlite3.Row) -> PlanStep:
@@ -38,7 +38,7 @@ def insert_plan_step_row(
     task_id: str,
     title: str,
     body: str,
-    status: str,
+    status: PlanStepStatus,
     parent_step_id: str | None,
     rank: float,
     supersedes_step_id: str | None,
@@ -104,7 +104,7 @@ def update_plan_step_row(
     step_id: str,
     title: str,
     body: str,
-    status: str,
+    status: PlanStepStatus,
     parent_step_id: str | None,
     rank: float,
     supersedes_step_id: str | None,
@@ -139,4 +139,6 @@ def max_rank(conn: sqlite3.Connection, workspace_id: str, task_id: str) -> float
         "SELECT MAX(rank) AS m FROM plan_steps WHERE workspace_id = ? AND task_id = ?",
         (workspace_id, task_id),
     ).fetchone()
-    return None if row is None else row["m"]
+    # MAX() always yields one row — m is NULL when the plan has no steps.
+    highest: float | None = row["m"]
+    return highest

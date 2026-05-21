@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.models.plan_step import PlanStep
+from agent_memory_lite.models.plan_step import PlanStep, PlanStepIn, PlanStepStatus
 from agent_memory_lite.repositories.plan_step_repo import (
     get_plan_step,
     insert_plan_step_row,
@@ -24,7 +24,7 @@ def _insert_step(
     step_id: str,
     rank: float,
     task_id: str = "t1",
-    status: str = "pending",
+    status: PlanStepStatus = "pending",
 ) -> None:
     insert_plan_step_row(
         conn,
@@ -116,3 +116,44 @@ def test_max_rank(applied_conn: sqlite3.Connection) -> None:
     _insert_step(applied_conn, step_id="a", rank=1.0)
     _insert_step(applied_conn, step_id="b", rank=4.5)
     assert max_rank(applied_conn, "ws", "t1") == 4.5
+
+
+def test_insert_with_parent_and_supersedes(applied_conn: sqlite3.Connection) -> None:
+    """Self-referential columns: a sub-step points at its parent, and a
+    re-planned step points at the one it supersedes."""
+    _insert_step(applied_conn, step_id="root", rank=1.0)
+    insert_plan_step_row(
+        applied_conn,
+        step_id="child",
+        workspace_id="ws",
+        task_id="t1",
+        title="child step",
+        body="",
+        status="pending",
+        parent_step_id="root",
+        rank=2.0,
+        supersedes_step_id="root",
+        source_episode_id=None,
+        valid_from="2026-05-21T00:00:00Z",
+        timestamp="2026-05-21T00:00:00Z",
+    )
+    child = get_plan_step(applied_conn, "ws", "child")
+    assert child is not None
+    assert child.parent_step_id == "root"
+    assert child.supersedes_step_id == "root"
+
+
+def test_workspace_isolation(applied_conn: sqlite3.Connection) -> None:
+    """A step is invisible from another workspace."""
+    _insert_step(applied_conn, step_id="ps1", rank=1.0)
+    assert get_plan_step(applied_conn, "other", "ps1") is None
+    assert list_plan_steps(applied_conn, "other", "t1") == []
+
+
+def test_plan_step_in_defaults() -> None:
+    """PlanStepIn fills the writer-facing defaults."""
+    step_in = PlanStepIn(task_id="t1", title="do the thing")
+    assert step_in.status == "pending"
+    assert step_in.rank is None
+    assert step_in.body == ""
+    assert step_in.parent_step_id is None

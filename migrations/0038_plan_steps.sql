@@ -29,10 +29,11 @@ CREATE TABLE IF NOT EXISTS plan_steps (
     rank REAL NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'active', 'done', 'blocked', 'skipped')),
     supersedes_step_id TEXT,
     source_episode_id TEXT,
-    valid_from TEXT,
+    valid_from TEXT NOT NULL,
     valid_to TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -45,6 +46,6 @@ CREATE TABLE IF NOT EXISTS plan_steps (
 CREATE INDEX IF NOT EXISTS idx_plan_steps_task
     ON plan_steps(workspace_id, task_id, rank);
 
--- Find the active step / all blocked steps without a table scan.
+-- Find a plan's active / blocked steps without a table scan.
 CREATE INDEX IF NOT EXISTS idx_plan_steps_status
-    ON plan_steps(workspace_id, status);
+    ON plan_steps(workspace_id, task_id, status);

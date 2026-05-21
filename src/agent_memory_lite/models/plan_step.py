@@ -41,7 +41,7 @@ class PlanStep(BaseModel):
     rank: float
     supersedes_step_id: str | None
     source_episode_id: str | None
-    valid_from: str | None
+    valid_from: str
     valid_to: str | None
     created_at: str
     updated_at: str
