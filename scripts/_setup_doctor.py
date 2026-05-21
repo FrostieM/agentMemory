@@ -277,6 +277,81 @@ def run_all(registry_path: Path, *, migrations_dir: Path) -> list[WorkspaceRepor
     return [run_workspace_check(e, migrations_dir=migrations_dir) for e in entries]
 
 
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a dotenv file into a flat dict; comments and blank lines ignored."""
+    out: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _manifest_workspace(db_path: Path) -> str | None:
+    """Read the owning workspace_id out of a DB's workspace_manifest row."""
+    try:
+        conn = sqlite3.connect(db_path)
+        row = conn.execute("SELECT workspace_id FROM workspace_manifest WHERE id = 1").fetchone()
+        conn.close()
+    except sqlite3.Error:
+        return None
+    return str(row[0]) if row and row[0] else None
+
+
+def check_env_http_workspace(repo_root: Path) -> WorkspaceReport:
+    """Check the repo's own .env against the DB manifest it points at.
+
+    The HTTP service (``python -m agent_memory_lite``) bootstraps its
+    workspace from ``.env``'s ``MEMORY_WORKSPACE_ID``; the DB manifest is
+    stamped from the MCP / setup workspace. When they drift the service
+    raises ``WorkspaceManifestError`` on startup and never binds. setup
+    only ever wrote the workspace into ``.claude/settings.json`` (the MCP
+    path), so the drift stayed invisible until the operator tried to
+    start the service. Surfaced as its own report row -- it is a single
+    file, not a per-registry workspace.
+    """
+    report = WorkspaceReport(workspace_id="<HTTP service .env>", project_root=str(repo_root))
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        report.findings.append(
+            Finding("ok", "clean", ".env absent - HTTP service uses built-in settings defaults")
+        )
+        return report
+    env = _parse_env_file(env_path)
+    env_ws = env.get("MEMORY_WORKSPACE_ID", "default")
+    db_raw = env.get("MEMORY_DB_PATH", "./.agent_memory/memory.db")
+    db_path = Path(db_raw)
+    if not db_path.is_absolute():
+        db_path = (repo_root / db_path).resolve()
+    if not db_path.exists():
+        report.findings.append(
+            Finding("ok", "clean", f".env workspace={env_ws!r}; DB not created yet")
+        )
+        return report
+    manifest_ws = _manifest_workspace(db_path)
+    if manifest_ws is None:
+        report.findings.append(
+            Finding("ok", "clean", f".env workspace={env_ws!r}; DB has no manifest row")
+        )
+    elif manifest_ws != env_ws:
+        report.findings.append(
+            Finding(
+                "critical",
+                "env_workspace_manifest_mismatch",
+                f".env MEMORY_WORKSPACE_ID={env_ws!r} != DB manifest {manifest_ws!r} -- "
+                f"'python -m agent_memory_lite' will crash with WorkspaceManifestError. "
+                f"Re-run setup_agent.py to align .env (or set MEMORY_WORKSPACE_ID={manifest_ws!r}).",
+            )
+        )
+    else:
+        report.findings.append(
+            Finding("ok", "clean", f".env workspace={env_ws!r} matches DB manifest")
+        )
+    return report
+
+
 _SEVERITY_GLYPH = {"ok": "OK ", "warning": "WARN", "critical": "FAIL"}
 
 
@@ -340,8 +415,12 @@ def main(*, as_json: bool = False) -> int:
         os.environ.get("MEMORY_WORKSPACES_FILE")
         or (Path.home() / ".agent_memory" / "workspaces.json")
     )
-    migrations_dir = Path(__file__).resolve().parents[1] / "migrations"
-    reports = run_all(registry_path, migrations_dir=migrations_dir)
+    repo_root = Path(__file__).resolve().parents[1]
+    migrations_dir = repo_root / "migrations"
+    reports = [
+        check_env_http_workspace(repo_root),
+        *run_all(registry_path, migrations_dir=migrations_dir),
+    ]
     print((render_json if as_json else render_text)(reports))
     return exit_code_for(reports)
 

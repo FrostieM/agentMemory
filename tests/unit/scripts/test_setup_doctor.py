@@ -218,3 +218,80 @@ def test_render_text_emits_summary_line(tmp_workspace, tmp_path) -> None:
     text = _doctor.render_text([report])
     assert "Summary:" in text
     assert "ok=1" in text
+
+
+# ============================================================
+# check_env_http_workspace — .env <-> DB manifest drift (v3.7)
+# ============================================================
+
+
+def _make_repo_env(
+    tmp_path: Path,
+    *,
+    env_workspace: str,
+    manifest_workspace: str | None = None,
+    make_db: bool = True,
+) -> Path:
+    """Build a fake repo dir: a .env file and (optionally) a DB whose
+    workspace_manifest row carries ``manifest_workspace``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text(
+        "# local-only memory service\n"
+        f"MEMORY_WORKSPACE_ID={env_workspace}\n"
+        "MEMORY_DB_PATH=./.agent_memory/memory.db\n",
+        encoding="utf-8",
+    )
+    if make_db:
+        db = repo / ".agent_memory" / "memory.db"
+        db.parent.mkdir()
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE workspace_manifest ("
+            "id INTEGER PRIMARY KEY CHECK(id = 1), workspace_id TEXT NOT NULL, "
+            "db_uuid TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        if manifest_workspace is not None:
+            conn.execute(
+                "INSERT INTO workspace_manifest VALUES (1, ?, 'uuid', 'now', 'now')",
+                (manifest_workspace,),
+            )
+        conn.commit()
+        conn.close()
+    return repo
+
+
+def test_env_workspace_matches_manifest_is_ok(tmp_path) -> None:
+    repo = _make_repo_env(tmp_path, env_workspace="proj", manifest_workspace="proj")
+    report = _doctor.check_env_http_workspace(repo)
+    assert report.status == "ok"
+
+
+def test_env_workspace_mismatch_is_critical(tmp_path) -> None:
+    """The exact crash this v3.7 follow-up closes: .env says 'default'
+    but the DB manifest is a named workspace -> HTTP service won't start."""
+    repo = _make_repo_env(tmp_path, env_workspace="default", manifest_workspace="proj")
+    report = _doctor.check_env_http_workspace(repo)
+    assert report.status == "critical"
+    assert any(f.code == "env_workspace_manifest_mismatch" for f in report.findings)
+
+
+def test_env_without_db_is_ok(tmp_path) -> None:
+    """No DB yet -> nothing to mismatch; it will be created consistent."""
+    repo = _make_repo_env(tmp_path, env_workspace="default", make_db=False)
+    report = _doctor.check_env_http_workspace(repo)
+    assert report.status == "ok"
+
+
+def test_env_db_without_manifest_row_is_ok(tmp_path) -> None:
+    """DB exists but no manifest stamped yet -> no drift to report."""
+    repo = _make_repo_env(tmp_path, env_workspace="default", manifest_workspace=None)
+    report = _doctor.check_env_http_workspace(repo)
+    assert report.status == "ok"
+
+
+def test_env_check_absent_env_file_is_ok(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    report = _doctor.check_env_http_workspace(repo)
+    assert report.status == "ok"

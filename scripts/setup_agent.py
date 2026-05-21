@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -720,6 +721,63 @@ def write_env(diag: Diagnosis) -> None:
         ok(f"set OLLAMA_PROBE_SKIP={desired_skip} in .env")
 
 
+def align_env_workspace(repo_root: Path = REPO_ROOT, *, fallback: str | None = None) -> None:
+    """Keep ``.env``'s ``MEMORY_WORKSPACE_ID`` in lockstep with the repo DB manifest.
+
+    The HTTP service (``python -m agent_memory_lite``) reads its bootstrap
+    workspace from ``.env``; the DB manifest is stamped from the MCP /
+    setup workspace. Before v3.7 setup only wrote the workspace into
+    ``.claude/settings.json`` (the MCP path), so a dogfooded repo whose
+    DB manifest is a named workspace crashed the HTTP service with
+    ``WorkspaceManifestError`` on startup. setup owns both surfaces, so
+    it rewrites the ``.env`` line to match.
+
+    The repo DB manifest is the ground truth when it exists; otherwise
+    ``fallback`` (the workspace this run configures) keeps a fresh
+    ``--workspace`` install consistent. No-op when nothing needs changing.
+    """
+    env_path = repo_root / ".env"
+    if not env_path.exists():
+        return
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    env: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key, _, value = stripped.partition("=")
+            env[key.strip()] = value.strip()
+
+    db_raw = env.get("MEMORY_DB_PATH", "./.agent_memory/memory.db")
+    db_path = Path(db_raw)
+    if not db_path.is_absolute():
+        db_path = (repo_root / db_path).resolve()
+
+    target = fallback
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(db_path)
+            row = conn.execute(
+                "SELECT workspace_id FROM workspace_manifest WHERE id = 1"
+            ).fetchone()
+            conn.close()
+        except sqlite3.Error:
+            row = None
+        if row and row[0]:
+            target = str(row[0])
+
+    if target is None or env.get("MEMORY_WORKSPACE_ID") == target:
+        return
+    if any(ln.startswith("MEMORY_WORKSPACE_ID=") for ln in lines):
+        new_lines = [
+            f"MEMORY_WORKSPACE_ID={target}" if ln.startswith("MEMORY_WORKSPACE_ID=") else ln
+            for ln in lines
+        ]
+    else:
+        new_lines = [*lines, f"MEMORY_WORKSPACE_ID={target}"]
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    ok(f"aligned .env MEMORY_WORKSPACE_ID={target} (HTTP service / DB manifest)")
+
+
 # ---------- contract markdown ----------
 
 
@@ -1238,6 +1296,9 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear CLI argparser; readable as
             workspace_id=workspace_id,
             seed_bootstrap=not args.no_seed_memory_bootstrap,
         )
+        # Keep the repo's own .env (the HTTP service's bootstrap config)
+        # aligned with the repo DB manifest.
+        align_env_workspace(fallback=workspace_id if project_root == REPO_ROOT else None)
         section("Done (project mode)")
         print(
             f"This project ({project_root.name}) now has its own memory at\n"
@@ -1262,6 +1323,10 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear CLI argparser; readable as
             db_path=diag.db_path,
             workspace_id=global_workspace_id,
         )
+
+    # Keep the repo's own .env (the HTTP service's bootstrap config)
+    # aligned with the repo DB manifest.
+    align_env_workspace(fallback=global_workspace_id)
 
     if diag.runtimes["claude-code"]:
         configure_claude_code(diag, install_hook=not args.no_hook)

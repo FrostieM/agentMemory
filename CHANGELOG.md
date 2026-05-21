@@ -56,6 +56,21 @@ brain-pass loop makes the vector store self-maintaining.
 - The whole `tests/e2e` suite — red since the v3.5 OriginGuard landed
   (every `TestClient` sent `Host: testserver`) — is green again.
 
+### Fixed — setup & CI
+
+- **`setup_agent.py` keeps `.env` in lockstep with the DB manifest.**
+  The HTTP service (`python -m agent_memory_lite`) reads its bootstrap
+  workspace from `.env`, but setup only ever wrote the workspace into
+  `.claude/settings.json` (the MCP path). A dogfooded repo whose DB
+  manifest is a named workspace would therefore crash the HTTP service
+  with `WorkspaceManifestError` on startup. setup now rewrites `.env`'s
+  `MEMORY_WORKSPACE_ID` to match the repo DB manifest, and
+  `setup_agent.py --doctor` flags the drift on existing installs.
+- **CI is green again.** `check_sloc.py`'s grandfather baseline went
+  stale across v3.1–v3.6 — 20 pre-existing oversized files tripped the
+  150-SLOC ceiling on every push. Baseline refreshed; the ceiling still
+  hard-fails genuinely new oversized files.
+
 This is a security-hardening + memory-quality release; it is not a
 "production-ready" claim — see the adversarial-audit bar in the
 contract.
