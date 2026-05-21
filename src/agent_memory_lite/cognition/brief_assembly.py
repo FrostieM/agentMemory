@@ -22,6 +22,7 @@ from agent_memory_lite.cognition.brief_sections_organ import (
     _build_associates,
     _build_recent_insights,
 )
+from agent_memory_lite.cognition.brief_sections_plan import _build_active_plan
 from agent_memory_lite.cognition.brief_sections_watch import (
     _build_aging_decisions,
     _build_blindspots,
@@ -53,6 +54,7 @@ def _build_all_sections(
         _build_identity(conn, workspace_id, budgets["identity"]),
         _build_pinned_behaviors(conn, workspace_id, budgets["behaviors"]),
         _build_top_decisions(conn, workspace_id, budgets["decisions"]),
+        _build_active_plan(conn, workspace_id, budgets["active_plan"]),
         _build_state(conn, workspace_id, budgets["state"]),
         _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
         _build_associates(conn, workspace_id, budgets["associates"]),

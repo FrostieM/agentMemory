@@ -10,6 +10,7 @@ import pytest
 
 from agent_memory_lite.cognition.brief import (
     DEFAULT_TOKEN_BUDGET,
+    _build_active_plan,
     approx_tokens,
     compose_brief,
     fetch_skill_body,
@@ -110,6 +111,31 @@ def _seed_task(conn: sqlite3.Connection, **kwargs) -> None:
            (id, workspace_id, task_id, goal, goal_one_line, status, next_action, updated_at)
            VALUES (:id, :workspace_id, :task_id, :goal, :goal_one_line,
                    :status, :next_action, :updated_at)""",
+        defaults,
+    )
+    conn.commit()
+
+
+def _seed_plan_step(conn: sqlite3.Connection, **kwargs) -> None:
+    defaults = {
+        "id": "pstep_x",
+        "workspace_id": "ws",
+        "task_id": "t1",
+        "rank": 1.0,
+        "title": "A step",
+        "body": "",
+        "status": "pending",
+        "valid_from": "2026-05-21T00:00:00Z",
+        "created_at": "2026-05-21T00:00:00Z",
+        "updated_at": "2026-05-21T00:00:00Z",
+    }
+    defaults.update(kwargs)
+    conn.execute(
+        """INSERT INTO plan_steps
+           (id, workspace_id, task_id, rank, title, body, status,
+            valid_from, created_at, updated_at)
+           VALUES (:id, :workspace_id, :task_id, :rank, :title, :body, :status,
+                   :valid_from, :created_at, :updated_at)""",
         defaults,
     )
     conn.commit()
@@ -265,6 +291,153 @@ def test_compose_brief_with_task(conn: sqlite3.Connection) -> None:
     assert "Finish v3 Phase 1" in brief.body_md
     assert "Write writer module" in brief.body_md
     assert "in_progress" in brief.body_md
+
+
+def test_compose_brief_renders_active_plan(conn: sqlite3.Connection) -> None:
+    """An in-progress task with plan steps surfaces a compact pinned plan:
+    goal + done count, the active step, and the next pending title."""
+    _seed_task(conn, id="task_p", task_id="tp", goal_one_line="Ship the plan feature")
+    _seed_plan_step(conn, id="ps_done", task_id="tp", rank=1.0, title="design", status="done")
+    _seed_plan_step(
+        conn,
+        id="ps_active",
+        task_id="tp",
+        rank=2.0,
+        title="write the writer",
+        body="route through writer.py",
+        status="active",
+    )
+    _seed_plan_step(conn, id="ps_next", task_id="tp", rank=3.0, title="add tests", status="pending")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Active plan" in brief.body_md
+    assert "Ship the plan feature" in brief.body_md
+    assert "1/3 done" in brief.body_md
+    assert "→ doing: write the writer" in brief.body_md
+    assert "route through writer.py" in brief.body_md  # the active step's body
+    assert "next: add tests" in brief.body_md
+
+
+def test_compose_brief_active_plan_skipped_when_no_steps(conn: sqlite3.Connection) -> None:
+    """An in-progress task with no plan steps → no Active plan section."""
+    _seed_task(conn, status="in_progress")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Active plan" not in brief.body_md
+
+
+def test_compose_brief_active_plan_skipped_and_blocked(conn: sqlite3.Connection) -> None:
+    """Skipped steps are excluded from the done/total count; a blocked
+    step is surfaced so the agent sees what is stuck."""
+    _seed_task(conn, id="task_b", task_id="tb", goal_one_line="Mixed-status plan")
+    _seed_plan_step(conn, id="b_done", task_id="tb", rank=1.0, title="done step", status="done")
+    _seed_plan_step(
+        conn, id="b_skip", task_id="tb", rank=2.0, title="skipped step", status="skipped"
+    )
+    _seed_plan_step(
+        conn, id="b_block", task_id="tb", rank=3.0, title="stuck step", status="blocked"
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "1/2 done" in brief.body_md  # 3 steps, 1 skipped → 2 counted, 1 done
+    assert "blocked: stuck step" in brief.body_md
+    assert "skipped step" not in brief.body_md
+
+
+def test_compose_brief_active_plan_caps_next_steps(conn: sqlite3.Connection) -> None:
+    """The brief shows at most the next 2 pending steps; the rest stay
+    fetch-on-demand."""
+    _seed_task(conn, id="task_c", task_id="tc", goal_one_line="Capped plan")
+    _seed_plan_step(conn, id="c_active", task_id="tc", rank=1.0, title="current", status="active")
+    for i in range(4):
+        _seed_plan_step(
+            conn,
+            id=f"c_p{i}",
+            task_id="tc",
+            rank=float(i + 2),
+            title=f"pending {i}",
+            status="pending",
+        )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "→ doing: current" in brief.body_md  # active step, empty body
+    assert brief.body_md.count("next: pending") == 2
+
+
+def test_compose_brief_active_plan_long_title_keeps_doing_line(
+    conn: sqlite3.Connection,
+) -> None:
+    """A verbose in-progress title is word-capped, never dropped — the
+    → doing: line is the most useful line in the section."""
+    _seed_task(conn, id="task_lt", task_id="tlt", goal_one_line="long title plan")
+    long_title = " ".join(f"word{i}" for i in range(40))
+    _seed_plan_step(
+        conn, id="lt_active", task_id="tlt", rank=1.0, title=long_title, status="active"
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Active plan" in brief.body_md
+    assert "→ doing: word0 word1" in brief.body_md  # capped, not dropped
+    assert "word9..." in brief.body_md  # truncation marker
+    assert "word39" not in brief.body_md  # tail dropped
+
+
+def test_compose_brief_active_plan_caps_long_body(conn: sqlite3.Connection) -> None:
+    """A verbose active-step body is word-capped so it cannot crowd the
+    section's budget."""
+    _seed_task(conn, id="task_lb", task_id="tlb", goal_one_line="plan")
+    long_body = " ".join(f"b{i}" for i in range(40))
+    _seed_plan_step(
+        conn,
+        id="lb_active",
+        task_id="tlb",
+        rank=1.0,
+        title="step",
+        body=long_body,
+        status="active",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "b0 b1" in brief.body_md
+    assert "b39" not in brief.body_md  # tail dropped
+
+
+def test_compose_brief_active_plan_single_doing_line(conn: sqlite3.Connection) -> None:
+    """The schema permits several active steps; the brief shows only the
+    first (by rank) so extra in-progress lines cannot crowd the section."""
+    _seed_task(conn, id="task_ma", task_id="tma", goal_one_line="multi active plan")
+    _seed_plan_step(conn, id="ma_1", task_id="tma", rank=1.0, title="first active", status="active")
+    _seed_plan_step(
+        conn, id="ma_2", task_id="tma", rank=2.0, title="second active", status="active"
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert brief.body_md.count("→ doing:") == 1
+    assert "→ doing: first active" in brief.body_md
+
+
+def test_compose_brief_active_plan_skipped_when_all_skipped(
+    conn: sqlite3.Connection,
+) -> None:
+    """A plan whose live steps are all skipped would render '0/0 done' —
+    pure noise; the section is dropped instead."""
+    _seed_task(conn, id="task_sk", task_id="tsk", goal_one_line="all skipped plan")
+    _seed_plan_step(conn, id="sk_1", task_id="tsk", rank=1.0, title="skip a", status="skipped")
+    _seed_plan_step(conn, id="sk_2", task_id="tsk", rank=2.0, title="skip b", status="skipped")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Active plan" not in brief.body_md
+
+
+def test_active_plan_dropped_when_doing_line_will_not_fit(conn: sqlite3.Connection) -> None:
+    """A budget too tight to keep the in-progress line drops the whole
+    section — a header with the current step missing would mislead more
+    than it informs."""
+    _seed_task(conn, id="task_tb", task_id="ttb", goal_one_line="tight budget plan")
+    _seed_plan_step(
+        conn,
+        id="tb_active",
+        task_id="ttb",
+        rank=1.0,
+        title="the current in-progress step",
+        status="active",
+    )
+    # budget 12 keeps the header + count line but not the → doing: line.
+    assert _build_active_plan(conn, "ws", budget=12).lines == []
+    # budget 3 keeps only the header.
+    assert _build_active_plan(conn, "ws", budget=3).lines == []
 
 
 def test_compose_brief_respects_budget(conn: sqlite3.Connection) -> None:

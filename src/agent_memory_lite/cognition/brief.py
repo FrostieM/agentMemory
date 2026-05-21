@@ -59,6 +59,7 @@ from agent_memory_lite.cognition.brief_sections_organ import (
     _build_recent_insights,
     iso_now_for_brief,
 )
+from agent_memory_lite.cognition.brief_sections_plan import _build_active_plan
 from agent_memory_lite.cognition.brief_sections_watch import (
     _build_aging_decisions,
     _build_blindspots,
@@ -104,6 +105,7 @@ __all__ = [
     "BriefSection",
     "_applies_to_csv",
     "_brief_env_signature",
+    "_build_active_plan",
     "_build_aging_decisions",
     "_build_all_sections",
     "_build_associates",
