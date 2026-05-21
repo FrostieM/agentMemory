@@ -96,6 +96,12 @@ ignore = ["PLR0913", "PLR2004", "E501"]
 "google.generativeai".msg = "Cloud LLM SDK forbidden by local-only policy."
 "mistralai".msg = "Cloud LLM SDK forbidden by local-only policy."
 "groq".msg = "Cloud LLM SDK forbidden by local-only policy."
+"together".msg = "Cloud LLM SDK forbidden by local-only policy."
+"replicate".msg = "Cloud LLM SDK forbidden by local-only policy."
+"fireworks".msg = "Cloud LLM SDK forbidden by local-only policy."
+"cerebras".msg = "Cloud LLM SDK forbidden by local-only policy."
+"boto3".msg = "AWS SDK (Bedrock inference) forbidden by local-only policy."
+"tiktoken".msg = "OpenAI tokenizer (fetches encodings off-machine) forbidden; use utils.tokens."
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR0915", "S101", "PLR2004"]

@@ -71,14 +71,32 @@ TELEMETRY_KILL_LIST: tuple[str, ...] = (
 # model is "audit every outbound URL", but a client library can read an
 # env var the guard never sees:
 #   * OLLAMA_HOST   — the Ollama client honors it directly.
-#   * HF_ENDPOINT   — sentence-transformers / huggingface_hub use it as
-#                     the model-download base, so HF_ENDPOINT=https://evil
-#                     leaks the request (and model name) off-machine on
-#                     the FIRST embedding load even though llm_base_url /
-#                     embedding_base_url are loopback.
+#   * HF_ENDPOINT / HF_HUB_ENDPOINT — sentence-transformers and
+#                     huggingface_hub read either as the model-download
+#                     base, so =https://evil leaks the request (and the
+#                     model name) off-machine on the FIRST embedding load
+#                     even though llm_base_url / embedding_base_url are
+#                     loopback. HF_HUB_ENDPOINT is the alias older
+#                     huggingface_hub / sentence-transformers pins honor.
 # Each is parsed + checked against the denylist + loopback rule, exactly
 # like a Settings URL field.
-PROVIDER_HOST_ENV_VARS: tuple[str, ...] = ("OLLAMA_HOST", "HF_ENDPOINT")
+PROVIDER_HOST_ENV_VARS: tuple[str, ...] = ("OLLAMA_HOST", "HF_ENDPOINT", "HF_HUB_ENDPOINT")
+
+# Round-3 audit: httpx clients — and huggingface_hub's OWN internal HTTP
+# session, which the guard cannot pass options to — honor the standard
+# proxy env vars. A proxy is a TRANSPORT-level redirect the URL checks
+# above cannot see: HTTPS_PROXY=https://<cloud> silently tunnels a
+# loopback-looking request off-machine. A configured proxy is therefore
+# checked against the denylist + loopback rule exactly like a provider
+# host. (Our own httpx clients additionally pass trust_env=False.)
+PROXY_ENV_VARS: tuple[str, ...] = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 
 
 class LocalOnlyError(RuntimeError):
@@ -98,6 +116,25 @@ def _host_is_denylisted(host: str) -> bool:
     if h in CLOUD_DENYLIST:
         return True
     return any(h.endswith(suffix) for suffix in CLOUD_DENYLIST_SUFFIXES)
+
+
+def _assert_env_host_local(var: str, raw: str, *, relax_loopback: bool) -> None:
+    """Apply the denylist + loopback rules to a host-bearing env var value.
+
+    Accepts a bare ``host:port`` or a full URL. A denylisted host is
+    always rejected; a non-loopback host is rejected unless the loopback
+    requirement is relaxed — identical treatment to a Settings URL field.
+    """
+    value = raw.strip()
+    if not value:
+        return
+    parsed_host = urlparse(value if "://" in value else f"http://{value}").hostname or ""
+    if not parsed_host:
+        return
+    if _host_is_denylisted(parsed_host):
+        raise LocalOnlyError(f"{var}={raw!r} matches the cloud provider denylist")
+    if not relax_loopback and not _host_is_local(parsed_host):
+        raise LocalOnlyError(f"{var}={raw!r} is not a loopback address (host={parsed_host})")
 
 
 def assert_local_only(settings: Settings, env: dict[str, str] | None = None) -> None:
@@ -124,22 +161,12 @@ def assert_local_only(settings: Settings, env: dict[str, str] | None = None) -> 
         if not relax_loopback and not _host_is_local(host):
             raise LocalOnlyError(f"{name}={url!r} is not a loopback address (host={host})")
 
-    # Audit every provider-SDK host env var the same way as a Settings
-    # URL field — see PROVIDER_HOST_ENV_VARS. A denylisted host is always
-    # rejected; a non-loopback one is rejected unless the loopback
-    # requirement is relaxed.
-    for var in PROVIDER_HOST_ENV_VARS:
-        raw = (env_map.get(var) or "").strip()
-        if not raw:
-            continue
-        # The value may be a bare host:port or a full URL.
-        parsed_host = urlparse(raw if "://" in raw else f"http://{raw}").hostname or ""
-        if not parsed_host:
-            continue
-        if _host_is_denylisted(parsed_host):
-            raise LocalOnlyError(f"{var}={raw!r} matches the cloud provider denylist")
-        if not relax_loopback and not _host_is_local(parsed_host):
-            raise LocalOnlyError(f"{var}={raw!r} is not a loopback address (host={parsed_host})")
+    # Audit every provider-SDK host env var AND proxy env var the same
+    # way as a Settings URL field — see PROVIDER_HOST_ENV_VARS /
+    # PROXY_ENV_VARS. A denylisted host is always rejected; a non-loopback
+    # one is rejected unless the loopback requirement is relaxed.
+    for var in (*PROVIDER_HOST_ENV_VARS, *PROXY_ENV_VARS):
+        _assert_env_host_local(var, env_map.get(var) or "", relax_loopback=relax_loopback)
 
     for var in TELEMETRY_KILL_LIST:
         if env_map.get(var):

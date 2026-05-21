@@ -94,7 +94,7 @@ def call_llm_narrative(
     """
     base_url = settings.llm_base_url.rstrip("/")
     try:
-        with httpx.Client(timeout=timeout_sec) as client:
+        with httpx.Client(timeout=timeout_sec, trust_env=False) as client:
             response = client.post(
                 f"{base_url}/api/chat",
                 json={

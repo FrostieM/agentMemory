@@ -58,7 +58,7 @@ def extract_lessons(
 
 def _call_ollama(*, base_url: str, model: str, prompt: str, timeout: float) -> str:
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
             response = client.post(
                 f"{base_url.rstrip('/')}/api/chat",
                 json={

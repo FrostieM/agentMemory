@@ -50,7 +50,7 @@ def probe_ollama(settings: Settings) -> None:
     if settings.ollama_probe_skip:
         return
     try:
-        with httpx.Client(timeout=5.0) as client:
+        with httpx.Client(timeout=5.0, trust_env=False) as client:
             response = client.get(f"{settings.llm_base_url.rstrip('/')}/api/tags")
             response.raise_for_status()
     except httpx.HTTPError as exc:
@@ -109,7 +109,7 @@ class OllamaExtractor:
 
     def _call_chat(self, prompt: str) -> str:
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, trust_env=False) as client:
                 response = client.post(
                     f"{self._base_url}/api/chat",
                     json={

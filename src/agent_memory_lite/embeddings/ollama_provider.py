@@ -48,7 +48,7 @@ class OllamaProvider(EmbeddingProvider):
 
     def probe(self) -> None:
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, trust_env=False) as client:
                 response = client.get(f"{self._base_url}/api/tags")
                 response.raise_for_status()
         except httpx.HTTPError as exc:
@@ -63,7 +63,7 @@ class OllamaProvider(EmbeddingProvider):
     def _post_embed(self, texts: list[str]) -> np.ndarray:
         payload = {"model": self._model_name, "input": texts}
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, trust_env=False) as client:
                 response = client.post(f"{self._base_url}/api/embed", json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:

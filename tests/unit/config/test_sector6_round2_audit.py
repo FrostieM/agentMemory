@@ -18,10 +18,22 @@ A follow-up re-audit found a sibling of F2:
         guard now audits every entry in PROVIDER_HOST_ENV_VARS, not
         OLLAMA_HOST alone.
 
+A third re-audit round (proxy + alias) found:
+  R3a — HF_HUB_ENDPOINT is the alias older huggingface_hub /
+        sentence-transformers pins read instead of HF_ENDPOINT — an
+        equivalent off-machine model-download redirect.
+  R3b — the standard proxy env vars (HTTP_PROXY / HTTPS_PROXY /
+        ALL_PROXY) were uninspected. A proxy is a transport-level
+        redirect the URL checks cannot see, so a cloud proxy tunnels a
+        loopback-looking request off-machine. The guard now audits the
+        proxy vars, and every httpx client pins trust_env=False.
+
 This file locks each fix so a re-audit finds nothing.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -153,3 +165,96 @@ def test_hf_endpoint_non_loopback_blocked_when_not_relaxed() -> None:
     settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
     with pytest.raises(LocalOnlyError, match="HF_ENDPOINT"):
         assert_local_only(settings, env={"HF_ENDPOINT": "http://192.168.1.50:8080"})
+
+
+# ---------- R3a (re-audit): HF_HUB_ENDPOINT, the HF_ENDPOINT alias ----------
+
+
+def test_hf_hub_endpoint_cloud_redirect_rejected() -> None:
+    """HF_HUB_ENDPOINT is the alias older huggingface_hub / sentence-
+    transformers pins read instead of HF_ENDPOINT — equally an off-machine
+    model-download redirect, so it must be on the audited set."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="HF_HUB_ENDPOINT"):
+        assert_local_only(settings, env={"HF_HUB_ENDPOINT": "https://huggingface.co"})
+
+
+def test_hf_hub_endpoint_loopback_passes() -> None:
+    """A loopback HF_HUB_ENDPOINT is fine."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    assert_local_only(settings, env={"HF_HUB_ENDPOINT": "http://127.0.0.1:8080"})
+
+
+# ---------- R3b (re-audit): proxy env vars are a transport-level redirect ----------
+
+
+@pytest.mark.parametrize("proxy_var", ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"])
+def test_proxy_env_cloud_redirect_rejected(proxy_var: str) -> None:
+    """httpx — and huggingface_hub's own session — honor HTTP_PROXY /
+    HTTPS_PROXY / ALL_PROXY. A cloud proxy tunnels a loopback-looking
+    request off-machine; the guard never sees a non-local URL. A
+    denylisted proxy host must therefore be rejected."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match=proxy_var):
+        assert_local_only(settings, env={proxy_var: "https://api.openai.com"})
+
+
+def test_proxy_env_lowercase_variant_audited() -> None:
+    """The lowercase proxy var names (httpx reads both cases) are audited
+    too — a denylisted vector host via https_proxy is rejected."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="https_proxy"):
+        assert_local_only(settings, env={"https_proxy": "https://tenant.pinecone.io"})
+
+
+def test_proxy_env_non_loopback_blocked_when_not_relaxed() -> None:
+    """A non-cloud non-loopback proxy is blocked under default local_only
+    mode — a strict local-only service must not funnel through a LAN
+    proxy unless the operator explicitly opts in."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="loopback"):
+        assert_local_only(settings, env={"HTTP_PROXY": "http://192.168.1.9:3128"})
+
+
+def test_proxy_env_loopback_passes() -> None:
+    """A loopback proxy (a local debugging proxy) is allowed."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    assert_local_only(settings, env={"HTTP_PROXY": "http://127.0.0.1:8888"})
+
+
+def test_proxy_env_cloud_rejected_even_when_remote_providers_relaxed() -> None:
+    """ALLOW_REMOTE_PROVIDERS relaxes the loopback requirement, so an
+    on-prem proxy is allowed — but a cloud proxy is STILL rejected; the
+    denylist is unconditional."""
+    s_onprem = Settings(  # type: ignore[call-arg]
+        ALLOW_REMOTE_PROVIDERS=True,
+        LLM_BASE_URL="http://192.168.1.50:11434",
+    )
+    assert_local_only(s_onprem, env={"HTTP_PROXY": "http://192.168.1.9:3128"})
+    s_cloud = Settings(  # type: ignore[call-arg]
+        ALLOW_REMOTE_PROVIDERS=True,
+        LLM_BASE_URL="http://192.168.1.50:11434",
+    )
+    with pytest.raises(LocalOnlyError, match="denylist"):
+        assert_local_only(s_cloud, env={"HTTPS_PROXY": "https://api.openai.com"})
+
+
+# ---------- R3b (re-audit): every httpx client pins trust_env=False ----------
+
+
+def test_all_httpx_clients_disable_trust_env() -> None:
+    """Every httpx.Client / httpx.AsyncClient constructed in the package
+    must pass trust_env=False, so proxy / NETRC env vars cannot redirect
+    an outbound call past the local-only guard. A new client missing it
+    re-opens the transport-level escape hatch."""
+    import agent_memory_lite  # noqa: PLC0415
+
+    pkg_root = Path(agent_memory_lite.__file__).resolve().parent
+    offenders: list[str] = []
+    for py in pkg_root.rglob("*.py"):
+        for lineno, line in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+            if ("httpx.Client(" in line or "httpx.AsyncClient(" in line) and (
+                "trust_env=False" not in line
+            ):
+                offenders.append(f"{py.name}:{lineno}")
+    assert not offenders, f"httpx client(s) missing trust_env=False: {offenders}"

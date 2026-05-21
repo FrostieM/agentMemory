@@ -37,7 +37,7 @@ _DEFAULT_TIMEOUT = 8.0
 
 async def _call_ollama_async(prompt: str, *, base_url: str, model: str, timeout: float) -> str:
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             response = await client.post(
                 f"{base_url.rstrip('/')}/api/chat",
                 json={

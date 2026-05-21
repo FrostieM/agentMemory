@@ -47,7 +47,7 @@ def _request(
 ) -> dict[str, Any]:
     url = f"{base_url.rstrip('/')}{path}"
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
             response = client.request(method, url, **kwargs)
     except httpx.HTTPError as exc:
         return {"ok": False, "error": {"code": "transport", "message": str(exc)}}
