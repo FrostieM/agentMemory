@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 
@@ -62,26 +63,33 @@ def insert_audit(
             ),
         )
     except sqlite3.OperationalError:
-        # Legacy schema without agent_id column.
-        conn.execute(
-            """
-            INSERT INTO audit_log (
-                id, workspace_id, action, target_type, target_id,
-                source_episode_id, before_json, after_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry_id,
-                workspace_id,
-                action,
-                target_type,
-                target_id,
-                source_episode_id,
-                None if before is None else json.dumps(before, sort_keys=True),
-                None if after is None else json.dumps(after, sort_keys=True),
-                created_at,
-            ),
-        )
+        # Two degraded states reach here. (1) Legacy schema missing the
+        # 0026 agent_id column — retry the insert without it (the common,
+        # expected case). (2) The audit_log table is absent entirely (a
+        # pre-migration or partially built DB) — the retry can't succeed
+        # either, and an audit-trail write must never crash the operation
+        # it is auditing, so that case is swallowed best-effort; the
+        # in-memory AuditEntry is still returned to the caller.
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(
+                """
+                INSERT INTO audit_log (
+                    id, workspace_id, action, target_type, target_id,
+                    source_episode_id, before_json, after_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry_id,
+                    workspace_id,
+                    action,
+                    target_type,
+                    target_id,
+                    source_episode_id,
+                    None if before is None else json.dumps(before, sort_keys=True),
+                    None if after is None else json.dumps(after, sort_keys=True),
+                    created_at,
+                ),
+            )
     return AuditEntry(
         id=entry_id,
         workspace_id=workspace_id,
