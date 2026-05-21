@@ -18,7 +18,12 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from agent_memory_lite.api.deps import DbDep
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.memory import (
     ArchiveRequest,
     EditRequest,
@@ -66,6 +71,7 @@ def _err(code: str, message: str) -> Envelope:
 @router.get("/list", response_model=Envelope)
 def list_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
     limit: int = Query(default=20, ge=1, le=100),
@@ -73,6 +79,7 @@ def list_endpoint(
     status: str | None = Query(default=None),
 ) -> Envelope:
     """List rows of a kind as compact projections."""
+    ensure_workspace_readable(workspace_id, settings)
     rows = list_kind(
         conn,
         workspace_id=workspace_id,
@@ -87,12 +94,14 @@ def list_endpoint(
 @router.get("/get", response_model=Envelope)
 def get_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
     id: str = Query(min_length=1),  # noqa: A002 -- wire-shape field name
     fields: str | None = Query(default=None, description="Comma-separated extra columns"),
 ) -> Envelope:
     """Fetch one row by id. Returns compact projection by default."""
+    ensure_workspace_readable(workspace_id, settings)
     field_list = [f.strip() for f in fields.split(",")] if fields else None
     obj = get_object(conn, workspace_id=workspace_id, kind=kind, object_id=id, fields=field_list)
     if obj is None:
@@ -103,11 +112,13 @@ def get_endpoint(
 @router.get("/count", response_model=Envelope)
 def count_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
     pinned_only: bool = Query(default=False),
     status: str | None = Query(default=None),
 ) -> Envelope:
+    ensure_workspace_readable(workspace_id, settings)
     n = count_kind(
         conn, workspace_id=workspace_id, kind=kind, pinned_only=pinned_only, status=status
     )
@@ -120,7 +131,8 @@ def count_endpoint(
 
 
 @router.post("/search", response_model=Envelope)
-def search_endpoint(req: SearchRequest, conn: DbDep) -> Envelope:
+def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_readable(req.workspace_id, settings)
     hits = search(
         conn,
         workspace_id=req.workspace_id,
@@ -138,8 +150,18 @@ def search_endpoint(req: SearchRequest, conn: DbDep) -> Envelope:
 # ============================================================
 
 
+# Round-2 audit (CRITICAL): the canonical write routes below dropped
+# the ``ensure_workspace_writable`` guard their legacy predecessors
+# (decisions.py / pin.py / archive.py) carried. A strict project chat
+# could POST /memory/write {"workspace_id":"victim"} and mutate
+# another project's memory — a direct breach of the first-class
+# workspace-isolation invariant. Every write route now re-checks the
+# guard before touching the storage layer.
+
+
 @router.post("/write", response_model=Envelope)
-def write_endpoint(req: WriteRequest, conn: DbDep) -> Envelope:
+def write_endpoint(req: WriteRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_writable(req.workspace_id, settings)
     out = write(
         conn,
         workspace_id=req.workspace_id,
@@ -154,7 +176,8 @@ def write_endpoint(req: WriteRequest, conn: DbDep) -> Envelope:
 
 
 @router.post("/edit", response_model=Envelope)
-def edit_endpoint(req: EditRequest, conn: DbDep) -> Envelope:
+def edit_endpoint(req: EditRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_writable(req.workspace_id, settings)
     out = edit(
         conn,
         workspace_id=req.workspace_id,
@@ -169,7 +192,8 @@ def edit_endpoint(req: EditRequest, conn: DbDep) -> Envelope:
 
 
 @router.post("/pin", response_model=Envelope)
-def pin_endpoint(req: PinRequest, conn: DbDep) -> Envelope:
+def pin_endpoint(req: PinRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_writable(req.workspace_id, settings)
     out = pin(
         conn,
         workspace_id=req.workspace_id,
@@ -184,7 +208,8 @@ def pin_endpoint(req: PinRequest, conn: DbDep) -> Envelope:
 
 
 @router.post("/archive", response_model=Envelope)
-def archive_endpoint(req: ArchiveRequest, conn: DbDep) -> Envelope:
+def archive_endpoint(req: ArchiveRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_writable(req.workspace_id, settings)
     out = archive(
         conn,
         workspace_id=req.workspace_id,
@@ -206,6 +231,7 @@ def archive_endpoint(req: ArchiveRequest, conn: DbDep) -> Envelope:
 @router.get("/brief", response_model=Envelope)
 def brief_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     task: str | None = Query(default=None),
     max_tokens: int = Query(default=500, ge=100, le=2000),
@@ -219,6 +245,7 @@ def brief_endpoint(
     (default 200) so long chats stop paying the full token tax on every
     prompt.
     """
+    ensure_workspace_readable(workspace_id, settings)
     b = compose_brief(
         conn,
         workspace_id=workspace_id,
@@ -237,8 +264,9 @@ def brief_endpoint(
 
 
 @router.post("/lint", response_model=Envelope)
-def lint_endpoint(req: LintRequest, conn: DbDep) -> Envelope:
+def lint_endpoint(req: LintRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     """Pre-task advisory. Wraps enforcement/dispatch with canonical retrievals."""
+    ensure_workspace_readable(req.workspace_id, settings)
     result = run_lint(
         conn,
         workspace_id=req.workspace_id,
@@ -253,9 +281,11 @@ def lint_endpoint(req: LintRequest, conn: DbDep) -> Envelope:
 def invoke_skill_endpoint(
     skill_id: str,
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
 ) -> Envelope:
     """Return skill body_md and bump usage_count. Used by memory_invoke_skill."""
+    ensure_workspace_readable(workspace_id, settings)
     out = fetch_skill_body(conn, workspace_id=workspace_id, skill_id=skill_id)
     if out is None:
         return _err("not_found", f"skill:{skill_id} not in {workspace_id}")
@@ -265,6 +295,7 @@ def invoke_skill_endpoint(
 @router.get("/impact_check", response_model=Envelope)
 def impact_check_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     file_path: str = Query(min_length=1),
     callers_limit: int = Query(default=20, ge=1, le=100),
@@ -284,6 +315,7 @@ def impact_check_endpoint(
 
     Failure-soft: schema mismatch or missing file → not_indexed.
     """
+    ensure_workspace_readable(workspace_id, settings)
     report = impact_check(
         conn,
         workspace_id=workspace_id,
@@ -295,7 +327,8 @@ def impact_check_endpoint(
 
 
 @router.post("/rollback", response_model=Envelope)
-def rollback_endpoint(req: RollbackRequest, conn: DbDep) -> Envelope:
+def rollback_endpoint(req: RollbackRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
+    ensure_workspace_writable(req.workspace_id, settings)
     out = rollback(
         conn,
         workspace_id=req.workspace_id,
@@ -313,10 +346,12 @@ def rollback_endpoint(req: RollbackRequest, conn: DbDep) -> Envelope:
 @router.get("/versions", response_model=Envelope)
 def versions_endpoint(
     conn: DbDep,
+    settings: SettingsDep,
     workspace_id: str = Query(min_length=1),
     kind: str = Query(min_length=1),
     id: str = Query(min_length=1),  # noqa: A002 -- wire-shape field name
 ) -> Envelope:
     """List version history for a target, newest first."""
+    ensure_workspace_readable(workspace_id, settings)
     rows = list_versions(conn, workspace_id=workspace_id, kind=kind, object_id=id)
     return _ok(rows)

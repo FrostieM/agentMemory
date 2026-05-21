@@ -575,6 +575,31 @@ COMPAT_HANDLERS: dict[str, _Handler] = {
 }
 
 
+# Round-2 audit (CRITICAL): the v2-compat shim replaced native MCP
+# handlers that enforced workspace isolation via ``_with_workspace``.
+# The shim's write-class handlers reached ``storage.writer`` directly
+# with no guard — a strict project chat could call
+# ``memory_write_decision(workspace_id="victim")`` and mutate another
+# project's memory. These are the write-class shim tools that MUST be
+# re-guarded; read-class shims (get_object / search / list_*) stay
+# unguarded because cross-workspace reads are intentionally allowed.
+_WRITE_COMPAT_TOOLS: frozenset[str] = frozenset(
+    {
+        "memory_ingest_episode",
+        "memory_record_with_evidence",
+        "memory_write_decision",
+        "memory_write_theory",
+        "memory_upsert_concept",
+        "memory_upsert_behavior_instruction",
+        "memory_upsert_agent_role",
+        "memory_upsert_agent_skill",
+        "memory_upsert_agent_playbook",
+        "memory_archive",
+        "memory_pin",
+    }
+)
+
+
 def compat_dispatch(
     conn: sqlite3.Connection, name: str, args: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -587,6 +612,19 @@ def compat_dispatch(
     handler = COMPAT_HANDLERS.get(name)
     if handler is None:
         return None
+    # Enforce workspace isolation for write-class shims BEFORE the try
+    # block so a blocked write surfaces as the real isolation error,
+    # not a mangled ``shim_internal_error``. Only guard when an explicit
+    # workspace_id is passed — absent means the handler defaults to the
+    # anchor, which is always writable.
+    if name in _WRITE_COMPAT_TOOLS:
+        target_ws = args.get("workspace_id")
+        if target_ws:
+            from agent_memory_lite.mcp.stdio_guards import (  # noqa: PLC0415
+                _ensure_workspace_writable,
+            )
+
+            _ensure_workspace_writable(str(target_ws))
     try:
         return handler(conn, args)
     except Exception as exc:  # never let shim raise — return envelope

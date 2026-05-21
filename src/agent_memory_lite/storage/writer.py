@@ -254,6 +254,12 @@ def _build_column_payload(
     if kind == "code_digest":
         base["last_indexed_at"] = payload.get("last_indexed_at") or now
     base.update(payload)
+    # Round-2 audit (CRITICAL): payload must not override the row's
+    # identity or workspace — the function args are the source of
+    # truth. Without this re-assert, payload={"workspace_id":"other"}
+    # silently retargets the write into a foreign workspace.
+    base["id"] = object_id
+    base["workspace_id"] = workspace_id
     gist = _compute_gist(payload, kind)
     meta = _KIND_META[kind]
     _, _, gist_col = meta
@@ -262,12 +268,32 @@ def _build_column_payload(
     return base
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Real column names of ``table`` — used to whitelist agent-supplied
+    payload / fields keys before they are interpolated as SQL column
+    names. ``table`` is always a hard-coded value from ``_KIND_META``,
+    never user input, so the f-string here is safe."""
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row[1]) for row in rows}
+
+
 def _insert_or_replace(conn: sqlite3.Connection, *, table: str, columns: dict[str, Any]) -> None:
-    cols = list(columns.keys())
+    # Round-2 audit (HIGH): ``columns`` keys originate from the
+    # agent-supplied WriteRequest.payload and were interpolated
+    # straight into the INSERT column list. A key like
+    # ``"id); DROP TABLE decisions;--"`` was a SQL-injection primitive;
+    # a plain typo'd key raised a raw OperationalError that leaked SQL
+    # text to the client. Whitelist against the table's real columns;
+    # silently drop anything that is not a column.
+    valid = _table_columns(conn, table)
+    safe = {k: v for k, v in columns.items() if k in valid}
+    if not safe:
+        raise ValueError(f"payload has no column matching table {table!r}")
+    cols = list(safe.keys())
     cols_csv = ", ".join(cols)
     placeholders = ", ".join("?" for _ in cols)
     sql = f"INSERT OR REPLACE INTO {table} ({cols_csv}) VALUES ({placeholders})"
-    conn.execute(sql, [columns[c] for c in cols])
+    conn.execute(sql, [safe[c] for c in cols])
 
 
 def write(
@@ -337,6 +363,14 @@ def edit(
     if kind not in _KIND_META or not fields:
         return None
     table, _, _ = _KIND_META[kind]
+    # Round-2 audit (HIGH): ``fields`` keys are interpolated into the
+    # UPDATE SET clause below — the same SQL-column-injection vector as
+    # _insert_or_replace. Whitelist against the table's real columns
+    # before building the clause; drop unknown keys, and if nothing
+    # valid remains treat it as a no-op edit.
+    fields = {k: v for k, v in fields.items() if k in _table_columns(conn, table)}
+    if not fields:
+        return None
     prior = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),
