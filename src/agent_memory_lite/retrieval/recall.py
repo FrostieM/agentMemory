@@ -24,6 +24,7 @@ the full path; the MCP skeleton from Phase 2 simply re-routes here.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -57,7 +58,18 @@ def _combined_score(activation: float, outcome_score: float) -> float:
     The (1 + outcome) factor turns the [-1, 1] outcome band into a [0, 2]
     multiplier so a high-activation low-outcome row sinks beneath a
     medium-activation high-outcome row.
+
+    Round-2 re-audit: ``max``/``min`` do not contain NaN — a non-finite
+    ``outcome_score`` (a NaN stored in the DB column) or ``activation``
+    survives and then scrambles ``out.sort`` in ``recall`` (a non-finite
+    sort key gives undefined order). Neutralise both: a non-finite
+    outcome is treated as 0.0 (neutral multiplier), a non-finite
+    activation as 0.0 (the hit sinks).
     """
+    if not math.isfinite(outcome_score):
+        outcome_score = 0.0
+    if not math.isfinite(activation):
+        activation = 0.0
     return activation * (1.0 + max(-1.0, min(1.0, outcome_score)))
 
 

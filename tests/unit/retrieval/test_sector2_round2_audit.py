@@ -175,3 +175,30 @@ def test_clamp_keeps_sort_well_ordered() -> None:
     # Sorting must not raise and must be a total order.
     ordered = sorted(scores, reverse=True)
     assert ordered == sorted(ordered, reverse=True)
+
+
+# ---------- re-audit follow-up: recall._combined_score NaN ----------
+
+
+def test_combined_score_neutralizes_non_finite() -> None:
+    """Round-2 RE-AUDIT: the _clamp fix targeted scoring.py but missed
+    recall._combined_score, which used a raw inline max/min. A non-finite
+    outcome_score (a NaN in the DB column) survived and scrambled
+    recall's out.sort. Both inputs must now be neutralised."""
+    from agent_memory_lite.retrieval.recall import _combined_score  # noqa: PLC0415
+
+    # Every combination of a non-finite input must yield a finite score.
+    for activation, outcome in (
+        (0.8, float("nan")),
+        (0.8, float("inf")),
+        (0.8, float("-inf")),
+        (float("nan"), 0.5),
+        (float("inf"), 0.5),
+        (float("nan"), float("nan")),
+    ):
+        score = _combined_score(activation, outcome)
+        assert math.isfinite(score), f"_combined_score({activation},{outcome}) = {score}"
+    # Finite inputs still compute normally: 0.8 * (1 + 0.5) == 1.2.
+    assert _combined_score(0.8, 0.5) == pytest.approx(1.2)
+    # A non-finite outcome collapses to the neutral 0.0 → 0.8 * 1.0.
+    assert _combined_score(0.8, float("nan")) == pytest.approx(0.8)

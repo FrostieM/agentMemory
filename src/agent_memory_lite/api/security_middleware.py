@@ -54,9 +54,16 @@ _SECURITY_HEADERS: dict[str, str] = {
 class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # CSRF guard — POST to a mutating /memory/* route must be JSON.
-        # Scoped to POST: a browser <form> can only issue GET/POST, so
-        # PUT/PATCH/DELETE are not form-reachable and a bodyless DELETE
-        # legitimately carries no Content-Type.
+        # Scoped to POST by design (Round-2 re-audit reviewed this):
+        # * The no-JS CSRF vector is an auto-submitting HTML <form>,
+        #   and a <form> can only issue GET or POST — never PUT / PATCH
+        #   / DELETE. So those verbs are not form-reachable.
+        # * A cross-origin fetch() CAN issue DELETE, but the browser
+        #   then attaches an Origin header that OriginGuardMiddleware
+        #   rejects. DELETE /memory/workspaces/{id} therefore rests on
+        #   OriginGuard, not on this check.
+        # * The content-type test cannot extend to DELETE anyway — a
+        #   bodyless DELETE legitimately carries no Content-Type.
         if request.method == "POST" and request.url.path.startswith("/memory/"):
             ctype = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
             if ctype != "application/json":

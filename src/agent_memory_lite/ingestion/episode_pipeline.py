@@ -61,6 +61,28 @@ class EpisodeIngestResult:
     duplicate_similarity: float = 0.0
 
 
+def _redact_metadata(value: object) -> object:
+    """Recursively redact secret-shaped substrings in a metadata value.
+
+    Round-2 re-audit: ``EpisodeIn.metadata`` was persisted cleartext —
+    only raw_text / summary / label were redacted. metadata is written
+    verbatim to ``episodes.metadata_json``, returned by ``get_episode``
+    / ``list_recent_episodes``, and rendered in the UI, so a secret in
+    a metadata value (``metadata={"note": "key: sk-ant-..."}``) leaked.
+    The redaction pass was field-enumerated, not recursive — this walks
+    the nested dict/list structure. Non-secret control fields
+    (``correction_role`` etc.) are untouched: ``redact`` only replaces
+    secret-shaped spans, leaving plain values exactly as they were.
+    """
+    if isinstance(value, str):
+        return redact(value).text if value else value
+    if isinstance(value, dict):
+        return {k: _redact_metadata(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_metadata(v) for v in value]
+    return value
+
+
 def ingest_episode(
     conn: sqlite3.Connection,
     episode_in: EpisodeIn,
@@ -78,11 +100,22 @@ def ingest_episode(
     # — landed in SQLite cleartext and FTS-indexed. Redact them on the
     # same pass. ``redact`` requires a non-None str, so guard the
     # optional fields; an empty string is already a no-op.
+    # Round-2 re-audit: metadata also bypassed redaction — redact it too
+    # (recursively, since it is a free-form dict).
     redacted_summary = redact(episode_in.summary).text if episode_in.summary else episode_in.summary
     redacted_label = redact(episode_in.label).text if episode_in.label else episode_in.label
-    if redacted_summary != episode_in.summary or redacted_label != episode_in.label:
+    redacted_metadata = _redact_metadata(episode_in.metadata)
+    if (
+        redacted_summary != episode_in.summary
+        or redacted_label != episode_in.label
+        or redacted_metadata != episode_in.metadata
+    ):
         episode_in = episode_in.model_copy(
-            update={"summary": redacted_summary, "label": redacted_label}
+            update={
+                "summary": redacted_summary,
+                "label": redacted_label,
+                "metadata": redacted_metadata,
+            }
         )
 
     if embedding_provider is not None:

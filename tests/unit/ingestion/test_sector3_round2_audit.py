@@ -90,6 +90,41 @@ def test_episode_without_summary_label_still_ingests(db: sqlite3.Connection) -> 
     assert result.episode.label is None
 
 
+def test_episode_metadata_is_recursively_redacted(db: sqlite3.Connection) -> None:
+    """Round-2 RE-AUDIT: EpisodeIn.metadata bypassed redaction — it was
+    written verbatim to episodes.metadata_json. A secret in a nested
+    metadata value must be redacted; non-secret control fields must
+    survive untouched."""
+    from agent_memory_lite.ingestion.episode_pipeline import ingest_episode  # noqa: PLC0415
+    from agent_memory_lite.models.episodes import EpisodeIn  # noqa: PLC0415
+
+    result = ingest_episode(
+        db,
+        EpisodeIn(
+            workspace_id="ws",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="some action",
+            metadata={
+                "note": "api_key: sk-ant-meta-DDDD",
+                "nested": {"deep": "password = 'spaced meta secret'"},
+                "tags": ["token: sk-ant-list-EEEE", "ordinary-tag"],
+                # Non-secret control field — must pass through verbatim.
+                "correction_role": "claim",
+            },
+        ),
+    )
+    md = result.episode.metadata
+    assert "sk-ant-meta-DDDD" not in str(md), "top-level metadata secret leaked"
+    assert "sk-ant-list-EEEE" not in str(md), "list-element metadata secret leaked"
+    assert "meta secret" not in str(md), "nested-dict metadata secret leaked"
+    # Control field untouched — redaction only replaces secret-shaped spans.
+    assert md["correction_role"] == "claim"
+    assert "ordinary-tag" in md["tags"]
+    # And it must not have leaked into the persisted metadata_json column.
+    row = db.execute("SELECT metadata_json FROM episodes WHERE workspace_id = 'ws'").fetchone()
+    assert "sk-ant-meta-DDDD" not in str(row[0] or "")
+
+
 # ---------- HIGH: keyword redaction \\S+ quoted-value leak ----------
 
 
