@@ -541,6 +541,97 @@ def test_compose_brief_active_plan_lists_multiple_capabilities(conn: sqlite3.Con
     assert " · " in brief.body_md  # the capabilities are separated
 
 
+def test_compose_brief_active_plan_review_flags_multiple_active(
+    conn: sqlite3.Connection,
+) -> None:
+    """Phase 5a: more than one step marked active surfaces a review nudge."""
+    _seed_task(conn, id="task_ma2", task_id="tma2", goal_one_line="multi active review")
+    _seed_plan_step(conn, id="ma2_1", task_id="tma2", rank=1.0, title="first", status="active")
+    _seed_plan_step(conn, id="ma2_2", task_id="tma2", rank=2.0, title="second", status="active")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "review: 2 steps active, finish one first" in brief.body_md
+
+
+def test_compose_brief_active_plan_review_flags_no_active_step(
+    conn: sqlite3.Connection,
+) -> None:
+    """Phase 5a: an in-progress plan with pending work but no active step
+    gets a 'no active step' review nudge (the agent lost its place)."""
+    _seed_task(conn, id="task_na", task_id="tna", goal_one_line="no active review")
+    _seed_plan_step(conn, id="na_1", task_id="tna", rank=1.0, title="done one", status="done")
+    _seed_plan_step(conn, id="na_2", task_id="tna", rank=2.0, title="pending one", status="pending")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "review: no active step, 1 pending" in brief.body_md
+
+
+def test_compose_brief_active_plan_review_flags_blocked(conn: sqlite3.Connection) -> None:
+    """Phase 5a: a blocked step surfaces a review nudge."""
+    _seed_task(conn, id="task_bl", task_id="tbl", goal_one_line="blocked review")
+    _seed_plan_step(conn, id="bl_1", task_id="tbl", rank=1.0, title="current", status="active")
+    _seed_plan_step(conn, id="bl_2", task_id="tbl", rank=2.0, title="stuck", status="blocked")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "review: 1 blocked" in brief.body_md
+
+
+def test_compose_brief_active_plan_review_silent_when_healthy(
+    conn: sqlite3.Connection,
+) -> None:
+    """Phase 5a: a healthy plan (one active step, pending work, nothing
+    blocked) gets no review nudge."""
+    _seed_task(conn, id="task_hp", task_id="thp", goal_one_line="healthy plan")
+    _seed_plan_step(conn, id="hp_1", task_id="thp", rank=1.0, title="doing now", status="active")
+    _seed_plan_step(conn, id="hp_2", task_id="thp", rank=2.0, title="later", status="pending")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "→ doing: doing now" in brief.body_md
+    assert "review:" not in brief.body_md
+
+
+def test_compose_brief_active_plan_review_combines_nudges(conn: sqlite3.Connection) -> None:
+    """Phase 5a: multiple plan-health issues join into one review line."""
+    _seed_task(conn, id="task_cb", task_id="tcb", goal_one_line="combined review")
+    _seed_plan_step(conn, id="cb_1", task_id="tcb", rank=1.0, title="a", status="active")
+    _seed_plan_step(conn, id="cb_2", task_id="tcb", rank=2.0, title="b", status="active")
+    _seed_plan_step(conn, id="cb_3", task_id="tcb", rank=3.0, title="c", status="blocked")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "2 steps active, finish one first" in brief.body_md
+    assert "1 blocked" in brief.body_md
+    review_lines = [ln for ln in brief.body_md.splitlines() if ln.startswith("review:")]
+    assert len(review_lines) == 1  # both nudges on one line
+
+
+def test_active_plan_review_yields_to_doing_under_budget(conn: sqlite3.Connection) -> None:
+    """Phase 5a: the review nudge is a lower-priority line placed after
+    the in-progress line. At a budget that fits the header + count +
+    doing line but not the nudge, the section still renders the step and
+    simply drops the nudge — the nudge can never evict the doing line."""
+    _seed_task(conn, id="task_ry", task_id="try", goal_one_line="review yield")
+    _seed_plan_step(conn, id="ry_1", task_id="try", rank=1.0, title="alpha", status="active")
+    _seed_plan_step(conn, id="ry_2", task_id="try", rank=2.0, title="beta", status="active")
+    section = _build_active_plan(conn, "ws", budget=18)
+    body = "\n".join(section.lines)
+    assert "→ doing: alpha" in body  # the in-progress line survives
+    assert "review:" not in body  # the nudge yields to the tighter budget
+
+
+def test_active_plan_dropped_when_only_review_survives(conn: sqlite3.Connection) -> None:
+    """Phase 5a: a budget tight enough to keep the short review nudge but
+    drop the count line must drop the whole section — a header plus a
+    bare nudge, with no task/goal identity, is not worth pinning."""
+    _seed_task(
+        conn,
+        id="task_or",
+        task_id="tor",
+        goal_one_line="a deliberately long plan goal that fills the count line",
+    )
+    _seed_plan_step(conn, id="or_1", task_id="tor", rank=1.0, title="done step", status="done")
+    _seed_plan_step(
+        conn, id="or_2", task_id="tor", rank=2.0, title="pending step", status="pending"
+    )
+    # budget 10 keeps the header + the short "review:" nudge but not the
+    # long count line — the section must drop, not render headerless.
+    assert _build_active_plan(conn, "ws", budget=10).lines == []
+
+
 def test_compose_brief_respects_budget(conn: sqlite3.Connection) -> None:
     # Seed many pinned behaviors with long lines to force budget pressure.
     for i in range(20):

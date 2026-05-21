@@ -10,6 +10,10 @@ playbooks) linked to the in-progress step via capability_links surface
 as an ``apply:`` line, so the agent applies the step's bound skill
 rather than just reading the plan.
 
+Phase 5a adds a ``review:`` line: heuristic plan-health nudges (more
+than one step active, no active step, blocked work) so memory flags a
+plan that has drifted off the rails.
+
 Free text is word-capped so a verbose title or body cannot crowd out the
 essential in-progress line; when even the capped in-progress line will
 not fit the budget, the whole section is dropped (its budget is
@@ -21,6 +25,7 @@ from __future__ import annotations
 import sqlite3
 
 from agent_memory_lite.cognition.brief_models import BriefSection
+from agent_memory_lite.cognition.brief_plan_review import _plan_review
 from agent_memory_lite.cognition.brief_tokens import fit_to_budget
 from agent_memory_lite.models.enums import CapabilityLinkTargetType
 from agent_memory_lite.models.plan_step import PlanStep
@@ -94,8 +99,8 @@ def _render_lines(
     task_id: str, goal: str, steps: list[PlanStep], active_caps: list[str]
 ) -> list[str]:
     """Compact plan render: header + done count, the in-progress step
-    (with its bound capabilities), any blocked steps, then the next
-    pending step titles.
+    (with its bound capabilities), a plan-review nudge, any blocked
+    steps, then the next pending step titles.
 
     Only the first ``active`` step (by rank) is rendered. The schema
     permits several, but the agent is doing one thing at a time; extra
@@ -112,6 +117,16 @@ def _render_lines(
     active = next((s for s in steps if s.status == "active"), None)
     if active is not None:
         lines.append(f"→ doing: {_cap_words(active.title, _TITLE_WORDS)}")
+    # Phase 5a: plan-health nudges sit right under the in-progress line
+    # (or the count line when no step is active). fit_to_budget keeps
+    # lines in list order, so a line placed AFTER the doing line cannot
+    # affect whether the doing line fits -- the nudge competes only with
+    # the apply / body / next detail below it, never with the essential
+    # in-progress line.
+    review = _plan_review(steps)
+    if review:
+        lines.append(f"review: {'; '.join(review)}")
+    if active is not None:
         # Phase 4: bound skills/roles surface right under the step so the
         # agent applies them. Placed before the body -- "how to do this
         # step" outranks the step's own descriptive detail under budget.
@@ -136,9 +151,10 @@ def _active_plan_lines(conn: sqlite3.Connection, workspace_id: str, budget: int)
 
     Empty when: no in-progress task owns live plan steps; the table is
     absent (pre-migration DB); every live step is skipped (a "0/0 done"
-    header is pure noise); or the budget is too tight to keep the
-    in-progress line (a header with the current step missing misleads
-    more than it informs -- the freed budget is then redistributed).
+    header is pure noise); or the budget is too tight to keep the count
+    line or the in-progress line (a header with the plan's identity or
+    current step missing misleads more than it informs -- the freed
+    budget is then redistributed).
     """
     try:
         row = conn.execute(_PLAN_TASK_SQL, (workspace_id,)).fetchone()
@@ -154,10 +170,13 @@ def _active_plan_lines(conn: sqlite3.Connection, workspace_id: str, budget: int)
     active_caps = _active_step_capabilities(conn, workspace_id, active) if active else []
     rendered = _render_lines(task_id, row["goal_one_line"] or "?", steps, active_caps)
     lines = fit_to_budget(rendered, budget)
-    # Invariant: a rendered plan must show the in-progress step. If the
-    # budget dropped it (or only the header survived), drop the section.
+    # Invariant: a rendered plan must keep its identity (the count line)
+    # and, when a step is active, the in-progress line. If the budget
+    # dropped either, drop the section -- a header plus a stray nudge or
+    # next line is not worth pinning.
+    shows_count = any(line.startswith("task ") for line in lines)
     shows_doing = any(line.startswith("→ doing:") for line in lines)
-    if len(lines) < 2 or (active is not None and not shows_doing):
+    if not shows_count or (active is not None and not shows_doing):
         return []
     return lines
 
