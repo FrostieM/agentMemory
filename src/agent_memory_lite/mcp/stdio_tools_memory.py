@@ -45,6 +45,7 @@ _KINDS = [
     "insight",
     "code_digest",
     "chunk",
+    "plan_step",
 ]
 
 

@@ -77,3 +77,17 @@ def test_stdio_server_strict_workspace_guard(monkeypatch: pytest.MonkeyPatch) ->
 def test_dispatch_unknown_tool_raises() -> None:
     with pytest.raises(KeyError, match="unknown MCP tool"):
         dispatch("memory_does_not_exist")
+
+
+def test_memory_kind_enums_include_plan_step() -> None:
+    """plan_step is addressable through every generic memory_* tool that
+    takes a kind from the shared _KINDS enum (get / write / edit / archive
+    use ``kind``; search uses ``kinds``)."""
+    from agent_memory_lite.mcp.stdio_tools_memory import MEMORY_TOOLS  # noqa: PLC0415
+
+    by_name = {tool.name: tool for tool in MEMORY_TOOLS}
+    for name in ("memory_get", "memory_write", "memory_edit", "memory_archive"):
+        enum = by_name[name].inputSchema["properties"]["kind"]["enum"]
+        assert "plan_step" in enum, f"{name} kind enum missing plan_step"
+    search_enum = by_name["memory_search"].inputSchema["properties"]["kinds"]["items"]["enum"]
+    assert "plan_step" in search_enum
