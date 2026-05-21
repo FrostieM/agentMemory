@@ -12,6 +12,10 @@
 # http://127.0.0.1:8765) /memory/ingest_file with workspace_id =
 # $MEMORY_WORKSPACE_ID (required env). Idempotent via content_hash.
 #
+# Files POST in parallel; any that fail the parallel batch (usually a
+# cold-start embedding timeout under contention) get one sequential
+# retry against the now-warm service before being reported failed.
+#
 # Failure policy: NEVER block the commit. If the service is unreachable
 # or the workspace_id is missing, print a notice and exit 0 — the index
 # will simply stay stale until the next successful run. The commit is
@@ -85,12 +89,13 @@ export WORKSPACE_ID
 export SERVICE_URL
 export PER_FILE_TIMEOUT
 
-# Worker: ingest ONE file. Prints "indexed" / "skipped" / "failed" on
-# stdout so the parent can count outcomes.
+# Worker: ingest ONE file. Prints one tab-separated "<outcome>\t<path>"
+# line on stdout (outcome: indexed / skipped / failed) so the parent
+# can count outcomes and identify which files to retry.
 ingest_one() {
     local path="$1"
     if [[ ! -f "$path" ]]; then
-        echo failed
+        printf 'failed\t%s\n' "$path"
         return
     fi
     local ext="${path##*.}"
@@ -131,7 +136,7 @@ PYEOF
 )
     fi
     if [[ -z "$payload" ]]; then
-        echo failed
+        printf 'failed\t%s\n' "$path"
         return
     fi
     local response
@@ -140,37 +145,69 @@ PYEOF
         -H "Content-Type: application/json" \
         --data-binary @- 2>/dev/null || true)
     if [[ -z "$response" ]]; then
-        echo failed
+        printf 'failed\t%s\n' "$path"
         return
     fi
     if echo "$response" | grep -q '"skipped":true'; then
-        echo skipped
+        printf 'skipped\t%s\n' "$path"
     else
-        echo indexed
+        printf 'indexed\t%s\n' "$path"
     fi
 }
 export -f ingest_one LANG_FOR_EXT
 
-# Parallel fan-out via xargs -P. Each worker prints exactly one line:
-# "indexed" / "skipped" / "failed". The whole pipeline is wrapped in
-# `timeout` so the hook can never exceed $MAX_TOTAL_SECONDS regardless
-# of how many cold-path embeddings stack up.
+# Parallel fan-out via xargs -P. Each worker prints exactly one
+# tab-separated line, "<outcome>\t<path>" (outcome = indexed / skipped
+# / failed). The whole pipeline is wrapped in `timeout` so the hook
+# can never exceed $MAX_TOTAL_SECONDS regardless of how many cold-path
+# embeddings stack up.
 results_file=$(mktemp)
-trap 'rm -f "$results_file"' EXIT
+final_file=$(mktemp)
+trap 'rm -f "$results_file" "$final_file"' EXIT
 
+BATCH_START=$SECONDS
 printf '%s\n' "${STAGED[@]}" | \
     timeout --preserve-status "$MAX_TOTAL_SECONDS" \
     xargs -P "$PARALLEL" -I {} bash -c 'ingest_one "{}"' > "$results_file" 2>/dev/null || true
+
+# Non-failed batch outcomes are final; carry them straight over.
+grep -v '^failed' "$results_file" > "$final_file" 2>/dev/null || true
+
+# Sequential retry of the batch's failures. The parallel batch fans
+# out $PARALLEL files at once; on a cold service (embedding model not
+# yet warm) the slowest one or two can exceed the per-file curl
+# timeout under that contention and come back "failed". The batch's
+# successful requests warm the model, so a serial retry -- one file at
+# a time, no contention -- indexes those stragglers in well under a
+# second. The loop is deadline-checked against the same
+# $MAX_TOTAL_SECONDS ceiling (a file is retried only if a full
+# per-file timeout still fits), so the hook never blocks the commit;
+# every retried path emits exactly one outcome line, keeping the
+# timed-out accounting below exact.
+# Well-formed "failed\t<path>" lines only -- a worker killed mid-write
+# by the batch `timeout` can leave a truncated token; awk drops it
+# (field 1 must equal "failed" and the path field must be non-empty).
+mapfile -t RETRY < <(awk -F'\t' '$1 == "failed" && $2 != "" {print $2}' "$results_file" 2>/dev/null || true)
+if [[ ${#RETRY[@]} -gt 0 ]]; then
+    RETRY_DEADLINE=$((BATCH_START + MAX_TOTAL_SECONDS))
+    for path in "${RETRY[@]}"; do
+        if [[ $((SECONDS + PER_FILE_TIMEOUT)) -le $RETRY_DEADLINE ]]; then
+            ingest_one "$path"
+        else
+            printf 'failed\t%s\n' "$path"  # no budget left -- keep the batch failure
+        fi
+    done >> "$final_file"
+fi
 
 # grep -c prints "0" with exit code 1 on zero matches; the previous
 # ``|| echo 0`` then appended a SECOND "0" → variable held "0\n0" and
 # the arithmetic below failed with "syntax error in expression". Use
 # `true` to swallow the exit code without appending output, then
-# default-empty to 0 so a missing results_file (timeout = no writes)
+# default-empty to 0 so a missing final_file (timeout = no writes)
 # still arithmetics cleanly.
-INGESTED=$(grep -c '^indexed$' "$results_file" 2>/dev/null || true)
-SKIPPED=$(grep -c '^skipped$' "$results_file" 2>/dev/null || true)
-FAILED=$(grep -c '^failed$' "$results_file" 2>/dev/null || true)
+INGESTED=$(grep -c '^indexed' "$final_file" 2>/dev/null || true)
+SKIPPED=$(grep -c '^skipped' "$final_file" 2>/dev/null || true)
+FAILED=$(grep -c '^failed' "$final_file" 2>/dev/null || true)
 INGESTED=${INGESTED:-0}
 SKIPPED=${SKIPPED:-0}
 FAILED=${FAILED:-0}
