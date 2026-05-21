@@ -195,22 +195,13 @@ def _check_migrations(report: WorkspaceReport, db_path: Path, migrations_dir: Pa
             Finding("critical", "migrations_table_unreadable", f"{db_path.name}: {exc}")
         )
         return
-    # Legacy-init equivalence: DBs that were created via root/0001_init don't
-    # need canonical/0001_init applied separately — those rows duplicate the
-    # same CREATE TABLE IF NOT EXISTS. We treat canonical/0001_init as
-    # "covered" when root/0001_init is in the applied set so the doctor
-    # doesn't shout false positives at every legacy workspace.
-    if "0001_init" in applied:
-        applied.add("canonical/0001_init")
-    pending: list[str] = []
-    for sub in (".", "canonical"):
-        d = migrations_dir / sub if sub != "." else migrations_dir
-        if not d.exists():
-            continue
-        for f in sorted(d.glob("*.sql")):
-            version = ("canonical/" + f.stem) if sub == "canonical" else f.stem
-            if version not in applied:
-                pending.append(version)
+    # Mirror the runtime migration runner exactly: db.migrations.apply_migrations
+    # globs ONLY the top level of migrations/ (non-recursive) and records each
+    # file by its bare stem. migrations/canonical/ is a separate consolidated-
+    # schema artifact the runner never discovers or tracks, so its files must
+    # NOT be compared against schema_migrations — doing so false-flagged every
+    # root-track DB as "canonical/000N pending" even when fully migrated.
+    pending = [f.stem for f in sorted(migrations_dir.glob("*.sql")) if f.stem not in applied]
     if pending:
         report.findings.append(
             Finding(

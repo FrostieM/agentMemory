@@ -157,21 +157,27 @@ def test_missing_enforcement_rule_warns(tmp_workspace, tmp_path) -> None:
     assert any(f.code == "missing_enforcement_rule" for f in report.findings)
 
 
-def test_legacy_0001_init_does_not_false_positive(tmp_workspace, tmp_path) -> None:
-    """The doctor must NOT flag canonical/0001_init as pending when the
-    DB has applied root 0001_init — they create the same tables."""
+def test_canonical_subdir_migrations_not_flagged(tmp_workspace, tmp_path) -> None:
+    """migrations/canonical/ is a separate consolidated-schema artifact the
+    runtime migration runner never discovers (db.migrations.apply_migrations
+    globs only the top level of migrations/). The doctor must mirror that — a
+    fully-migrated root-track DB must NOT be flagged for 'canonical/000N
+    pending' just because schema_migrations lacks canonical-prefixed rows."""
     conn = sqlite3.connect(tmp_workspace["db_path"])
     conn.execute("INSERT INTO schema_migrations VALUES ('0001_init', 'now')")
     conn.commit()
     conn.close()
     mig = tmp_path / "migrations"
     mig.mkdir()
-    (mig / "canonical").mkdir()
-    (mig / "canonical" / "0001_init.sql").write_text("CREATE TABLE IF NOT EXISTS x (id TEXT);")
+    # Root migration — present in schema_migrations, so not pending.
+    (mig / "0001_init.sql").write_text("CREATE TABLE IF NOT EXISTS x (id TEXT);")
+    # Canonical subdir carries brain-phase files the runner never tracks.
+    canon = mig / "canonical"
+    canon.mkdir()
+    (canon / "0002_outcome_loop.sql").write_text("CREATE TABLE IF NOT EXISTS y (id TEXT);")
+    (canon / "0003_hebbian.sql").write_text("CREATE TABLE IF NOT EXISTS z (id TEXT);")
     report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=mig)
-    assert not any(
-        f.code == "pending_migrations" and "0001_init" in f.detail for f in report.findings
-    )
+    assert not any(f.code == "pending_migrations" for f in report.findings)
 
 
 def test_unknown_hook_script_warns(tmp_workspace, tmp_path) -> None:
