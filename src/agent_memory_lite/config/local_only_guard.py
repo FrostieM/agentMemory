@@ -76,17 +76,27 @@ def _host_is_local(host: str) -> bool:
 
 
 def _host_is_denylisted(host: str) -> bool:
-    h = host.lower()
+    # Round-2 audit (F3): normalise a trailing-dot FQDN. ``api.openai.com.``
+    # is a valid hostname that resolves identically to ``api.openai.com``
+    # but failed both the exact-set lookup and the suffix match. Strip
+    # the trailing dot (and any casing) before matching.
+    h = host.lower().rstrip(".")
     if h in CLOUD_DENYLIST:
         return True
     return any(h.endswith(suffix) for suffix in CLOUD_DENYLIST_SUFFIXES)
 
 
 def assert_local_only(settings: Settings, env: dict[str, str] | None = None) -> None:
-    if not settings.local_only:
-        return
-    if settings.allow_remote_providers:
-        return
+    # Round-2 audit (F1): the cloud-provider DENYLIST and the telemetry
+    # kill-list are UNCONDITIONAL — "no cloud, ever" is a hard rule, not
+    # something a single ``LOCAL_ONLY=false`` / ``ALLOW_REMOTE_PROVIDERS=true``
+    # env flip can switch off. Pre-fix, either flag returned early and
+    # skipped the whole guard, so ``EMBEDDING_BASE_URL=https://api.openai.com``
+    # shipped data off-machine. Only the loopback-allow requirement
+    # (``_host_is_local``) is relaxable — that exists for the documented
+    # case of fronting the service with an on-prem, non-loopback,
+    # non-cloud host.
+    relax_loopback = (not settings.local_only) or settings.allow_remote_providers
 
     env_map = env if env is not None else dict(os.environ)
 
@@ -97,8 +107,30 @@ def assert_local_only(settings: Settings, env: dict[str, str] | None = None) -> 
             raise LocalOnlyError(f"{name}={url!r} is missing a host")
         if _host_is_denylisted(host):
             raise LocalOnlyError(f"{name}={url!r} matches the cloud provider denylist")
-        if not _host_is_local(host):
+        if not relax_loopback and not _host_is_local(host):
             raise LocalOnlyError(f"{name}={url!r} is not a loopback address (host={host})")
+
+    # Round-2 audit (F2): the Ollama client library reads ``OLLAMA_HOST``
+    # directly — a process could leave ``llm_base_url`` loopback while
+    # ``OLLAMA_HOST=https://api.together.xyz`` silently redirects every
+    # LLM call past this guard. Audit it explicitly: a denylisted
+    # OLLAMA_HOST is always rejected; a non-loopback one is rejected
+    # unless the loopback requirement is relaxed.
+    ollama_host_raw = (env_map.get("OLLAMA_HOST") or "").strip()
+    if ollama_host_raw:
+        # OLLAMA_HOST may be a bare host:port or a full URL.
+        parsed_ollama = urlparse(
+            ollama_host_raw if "://" in ollama_host_raw else f"http://{ollama_host_raw}"
+        )
+        ollama_host = parsed_ollama.hostname or ""
+        if ollama_host and _host_is_denylisted(ollama_host):
+            raise LocalOnlyError(
+                f"OLLAMA_HOST={ollama_host_raw!r} matches the cloud provider denylist"
+            )
+        if ollama_host and not relax_loopback and not _host_is_local(ollama_host):
+            raise LocalOnlyError(
+                f"OLLAMA_HOST={ollama_host_raw!r} is not a loopback address (host={ollama_host})"
+            )
 
     for var in TELEMETRY_KILL_LIST:
         if env_map.get(var):

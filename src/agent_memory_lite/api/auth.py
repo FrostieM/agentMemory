@@ -51,6 +51,14 @@ def _extract_bearer_token(value: str | None) -> str | None:
 
 
 def _audit_auth_failure(settings: Settings, request: Request, reason: str) -> None:
+    # Round-2 audit (F4): this deliberately opens the ANCHOR db_path,
+    # NOT the request's X-Memory-DB-Path target. An auth failure is a
+    # service-level event — the request was rejected before workspace
+    # routing, so there is no workspace to attribute it to. Routing the
+    # audit row by the request's own header would also let an
+    # UNAUTHENTICATED caller choose which workspace DB their
+    # auth-failure noise lands in. Central recording in the anchor DB
+    # is the correct and safer behaviour.
     if not settings.audit_api_auth_failures:
         return
     conn = open_connection(settings.db_path)

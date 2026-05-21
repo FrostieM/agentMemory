@@ -48,13 +48,31 @@ def test_rejects_openai_api_key_env(settings_factory) -> None:
         assert_local_only(s, env={"OPENAI_API_KEY": "sk-demo"})
 
 
-def test_disabled_when_local_only_false(settings_factory) -> None:
-    s = settings_factory(
+def test_local_only_false_relaxes_loopback_but_not_denylist(settings_factory) -> None:
+    """Round-2 audit (F1): LOCAL_ONLY=false / ALLOW_REMOTE_PROVIDERS=true
+    relaxes ONLY the loopback requirement — a non-cloud on-prem host is
+    allowed — but the cloud denylist and telemetry kill-list stay
+    unconditional. Pre-fix, either flag disabled the whole guard and
+    a cloud URL + cloud API key sailed through."""
+    # On-prem non-loopback host: allowed once the flag relaxes loopback.
+    s_ok = settings_factory(
+        LOCAL_ONLY="false",
+        ALLOW_REMOTE_PROVIDERS="true",
+        LLM_BASE_URL="http://192.168.1.50:11434",
+    )
+    assert_local_only(s_ok, env={})
+    # A KNOWN CLOUD host is still rejected even with both flags off.
+    s_cloud = settings_factory(
         LOCAL_ONLY="false",
         ALLOW_REMOTE_PROVIDERS="true",
         LLM_BASE_URL="https://api.openai.com",
     )
-    assert_local_only(s, env={"OPENAI_API_KEY": "sk-demo"})
+    with pytest.raises(LocalOnlyError, match="denylist"):
+        assert_local_only(s_cloud, env={})
+    # Telemetry / cloud-credential env vars are still rejected.
+    s_tel = settings_factory(LOCAL_ONLY="false", ALLOW_REMOTE_PROVIDERS="true")
+    with pytest.raises(LocalOnlyError, match="OPENAI_API_KEY"):
+        assert_local_only(s_tel, env={"OPENAI_API_KEY": "sk-demo"})
 
 
 @pytest.mark.parametrize(
