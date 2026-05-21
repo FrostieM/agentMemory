@@ -39,7 +39,7 @@ from agent_memory_lite.mcp.stdio_handlers_episodes import (
 from agent_memory_lite.mcp.stdio_handlers_memory import MEMORY_HANDLERS
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
-from agent_memory_lite.mcp.v2_compat import compat_dispatch
+from agent_memory_lite.mcp.v2_compat import _WRITE_COMPAT_TOOLS, compat_dispatch
 from agent_memory_lite.mcp.v2_compat import is_enabled as v2_compat_enabled
 from agent_memory_lite.version import __version__
 
@@ -95,11 +95,31 @@ def _maybe_compat_dispatch(name: str, args: dict[str, Any]) -> dict[str, Any] | 
     # memory_write, memory_get, etc.) always hit MEMORY_HANDLERS directly.
     if name in MEMORY_HANDLERS:
         return None
+    ws = args.get("workspace_id") if isinstance(args, dict) else None
+    # Round-2 re-audit (CRITICAL): the workspace-isolation guard MUST run
+    # here, before the try/except below. When it lived inside
+    # compat_dispatch its ValueError was caught by the `except Exception`
+    # ("shim must never raise"), which returned None — falling the call
+    # THROUGH to the separately-registered native v2 handler and
+    # re-opening the cross-workspace write hole. On a blocked write we
+    # return an explicit error ENVELOPE so _call_tool surfaces it and
+    # never reaches the native handler.
+    if ws and name in _WRITE_COMPAT_TOOLS:
+        from agent_memory_lite.mcp.stdio_guards import (  # noqa: PLC0415
+            _ensure_workspace_writable,
+        )
+
+        try:
+            _ensure_workspace_writable(str(ws))
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error": {"code": "workspace_isolation_blocked", "message": str(exc)},
+            }
     try:
         # Route via registry when the caller passed an explicit workspace_id
         # so a misconfigured anchor doesn't silently target the wrong DB.
         # Anchor remains the fallback for legacy callers that omit it.
-        ws = args.get("workspace_id") if isinstance(args, dict) else None
         conn = _runtime.db_for(str(ws)) if ws else _runtime.db()
         return compat_dispatch(conn, name, args)
     except Exception as exc:  # shim must never raise into the dispatcher

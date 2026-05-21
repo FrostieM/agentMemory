@@ -66,6 +66,20 @@ TELEMETRY_KILL_LIST: tuple[str, ...] = (
     "COHERE_API_KEY",
 )
 
+# Round-2 audit (F2 + re-audit): provider-SDK env vars that redirect
+# outbound calls WITHOUT appearing on Settings.url_fields(). The guard's
+# model is "audit every outbound URL", but a client library can read an
+# env var the guard never sees:
+#   * OLLAMA_HOST   — the Ollama client honors it directly.
+#   * HF_ENDPOINT   — sentence-transformers / huggingface_hub use it as
+#                     the model-download base, so HF_ENDPOINT=https://evil
+#                     leaks the request (and model name) off-machine on
+#                     the FIRST embedding load even though llm_base_url /
+#                     embedding_base_url are loopback.
+# Each is parsed + checked against the denylist + loopback rule, exactly
+# like a Settings URL field.
+PROVIDER_HOST_ENV_VARS: tuple[str, ...] = ("OLLAMA_HOST", "HF_ENDPOINT")
+
 
 class LocalOnlyError(RuntimeError):
     """Raised when a non-local URL or telemetry variable is detected."""
@@ -110,27 +124,22 @@ def assert_local_only(settings: Settings, env: dict[str, str] | None = None) -> 
         if not relax_loopback and not _host_is_local(host):
             raise LocalOnlyError(f"{name}={url!r} is not a loopback address (host={host})")
 
-    # Round-2 audit (F2): the Ollama client library reads ``OLLAMA_HOST``
-    # directly — a process could leave ``llm_base_url`` loopback while
-    # ``OLLAMA_HOST=https://api.together.xyz`` silently redirects every
-    # LLM call past this guard. Audit it explicitly: a denylisted
-    # OLLAMA_HOST is always rejected; a non-loopback one is rejected
-    # unless the loopback requirement is relaxed.
-    ollama_host_raw = (env_map.get("OLLAMA_HOST") or "").strip()
-    if ollama_host_raw:
-        # OLLAMA_HOST may be a bare host:port or a full URL.
-        parsed_ollama = urlparse(
-            ollama_host_raw if "://" in ollama_host_raw else f"http://{ollama_host_raw}"
-        )
-        ollama_host = parsed_ollama.hostname or ""
-        if ollama_host and _host_is_denylisted(ollama_host):
-            raise LocalOnlyError(
-                f"OLLAMA_HOST={ollama_host_raw!r} matches the cloud provider denylist"
-            )
-        if ollama_host and not relax_loopback and not _host_is_local(ollama_host):
-            raise LocalOnlyError(
-                f"OLLAMA_HOST={ollama_host_raw!r} is not a loopback address (host={ollama_host})"
-            )
+    # Audit every provider-SDK host env var the same way as a Settings
+    # URL field — see PROVIDER_HOST_ENV_VARS. A denylisted host is always
+    # rejected; a non-loopback one is rejected unless the loopback
+    # requirement is relaxed.
+    for var in PROVIDER_HOST_ENV_VARS:
+        raw = (env_map.get(var) or "").strip()
+        if not raw:
+            continue
+        # The value may be a bare host:port or a full URL.
+        parsed_host = urlparse(raw if "://" in raw else f"http://{raw}").hostname or ""
+        if not parsed_host:
+            continue
+        if _host_is_denylisted(parsed_host):
+            raise LocalOnlyError(f"{var}={raw!r} matches the cloud provider denylist")
+        if not relax_loopback and not _host_is_local(parsed_host):
+            raise LocalOnlyError(f"{var}={raw!r} is not a loopback address (host={parsed_host})")
 
     for var in TELEMETRY_KILL_LIST:
         if env_map.get(var):

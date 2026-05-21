@@ -11,6 +11,14 @@ A fresh adversarial agent audited the API & MCP layer:
              override)
   LOW      — canonical GET reads skipped ensure_workspace_readable
 
+A follow-up re-audit found one deeper bug behind CRITICAL #2:
+  RE-AUDIT CRITICAL — stdio_server._maybe_compat_dispatch wrapped the
+             shim call in ``except Exception: return None``, so the
+             v2-compat workspace guard's ValueError was swallowed and
+             the call fell THROUGH to the native v2 handler — re-opening
+             the cross-workspace write hole. The guard now runs before
+             the try/except and returns an explicit block envelope.
+
 This file locks every fix so a re-audit finds nothing.
 """
 
@@ -251,3 +259,55 @@ def test_edit_drops_unknown_field_keys(db: sqlite3.Connection) -> None:
         fields={"title": "updated", "not_a_real_column": "junk"},
     )
     assert out2 is not None
+
+
+# ---------- RE-AUDIT CRITICAL: the dispatch shim must surface the block ----------
+#
+# CRITICAL #2 added _ensure_workspace_writable inside the v2-compat shim,
+# but stdio_server._maybe_compat_dispatch wrapped the shim call in
+# ``except Exception: return None`` ("the shim must never raise"). A
+# blocked write raised ValueError -> caught -> returned None -> the call
+# fell through to the separately-registered native v2 handler, re-opening
+# the cross-workspace write hole. The guard now runs BEFORE that
+# try/except and returns an explicit error envelope.
+
+
+def test_maybe_compat_dispatch_blocks_foreign_write_with_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blocked foreign-workspace v2-compat write must return an explicit
+    error ENVELOPE from _maybe_compat_dispatch — never None. None would
+    fall the call through to the native v2 handler."""
+    from agent_memory_lite.mcp import stdio_server  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(stdio_server, "v2_compat_enabled", lambda: True)
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+
+    result = stdio_server._maybe_compat_dispatch(
+        "memory_write_decision",
+        {"workspace_id": "ws-victim", "title": "pwn", "decision_text": "x"},
+    )
+    assert result is not None, "blocked write fell through to the native handler"
+    assert result["ok"] is False
+    assert result["error"]["code"] == "workspace_isolation_blocked"
+    assert "STRICT_WORKSPACE_ISOLATION" in result["error"]["message"]
+
+
+def test_maybe_compat_dispatch_allows_anchor_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sanity: the guard does not false-positive — an anchor-workspace
+    write proceeds to compat_dispatch instead of returning the block."""
+    from agent_memory_lite.mcp import stdio_server  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(stdio_server, "v2_compat_enabled", lambda: True)
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    sentinel: dict[str, object] = {"ok": True, "dispatched": "compat"}
+    monkeypatch.setattr(stdio_server, "compat_dispatch", lambda *_a: sentinel)
+    monkeypatch.setattr(_runtime, "db_for", lambda *_a: object())
+
+    result = stdio_server._maybe_compat_dispatch(
+        "memory_write_decision",
+        {"workspace_id": "ws-anchor", "title": "legit", "decision_text": "x"},
+    )
+    assert result == sentinel

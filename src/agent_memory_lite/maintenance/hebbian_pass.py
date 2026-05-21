@@ -125,10 +125,10 @@ def distill_workspace(
     for items in groups.values():
         if len(items) < min_group_size:
             continue
-        items = items[:max_group_items]
-        for i in range(len(items)):
-            for j in range(i + 1, len(items)):
-                a, b = items[i], items[j]
+        capped = items[:max_group_items]
+        for i in range(len(capped)):
+            for j in range(i + 1, len(capped)):
+                a, b = capped[i], capped[j]
                 if a["item_kind"] == b["item_kind"] and a["item_id"] == b["item_id"]:
                     continue
                 if outcome_gate:

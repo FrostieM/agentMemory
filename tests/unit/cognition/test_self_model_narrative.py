@@ -216,8 +216,7 @@ def test_narrative_uses_natural_english_joins(conn: sqlite3.Connection) -> None:
     # decision snippet is now quoted so injected imperative text reads
     # as referenced data, not the agent's own voice.
     assert (
-        '"Use quarter-Kelly sizing", "Calibrate per strategy weekly", '
-        'and "Run paper before live"'
+        '"Use quarter-Kelly sizing", "Calibrate per strategy weekly", and "Run paper before live"'
     ) in model.identity_text
 
 

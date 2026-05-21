@@ -10,6 +10,14 @@ A fresh adversarial agent audited the security boundary:
   F3 — the denylist was exact-match; a trailing-dot FQDN
        (api.openai.com.) resolved identically but bypassed it
 
+A follow-up re-audit found a sibling of F2:
+  F2b — HF_ENDPOINT is honored by sentence-transformers /
+        huggingface_hub as the model-download base, so HF_ENDPOINT
+        pointed at a cloud host leaks the first embedding load (and the
+        model name) off-machine even when llm_base_url is loopback. The
+        guard now audits every entry in PROVIDER_HOST_ENV_VARS, not
+        OLLAMA_HOST alone.
+
 This file locks each fix so a re-audit finds nothing.
 """
 
@@ -115,3 +123,33 @@ def test_ollama_host_non_loopback_blocked_when_not_relaxed() -> None:
     settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
     with pytest.raises(LocalOnlyError, match="OLLAMA_HOST"):
         assert_local_only(settings, env={"OLLAMA_HOST": "http://192.168.1.50:11434"})
+
+
+# ---------- F2b (re-audit): HF_ENDPOINT is audited too ----------
+
+
+def test_hf_endpoint_cloud_redirect_rejected() -> None:
+    """HF_ENDPOINT is the model-download base for sentence-transformers /
+    huggingface_hub. A cloud HF_ENDPOINT leaks the first embedding load
+    off-machine and must be rejected even when llm_base_url is loopback."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="HF_ENDPOINT"):
+        assert_local_only(settings, env={"HF_ENDPOINT": "https://huggingface.co"})
+    # Bare host:port form is parsed too.
+    with pytest.raises(LocalOnlyError, match="HF_ENDPOINT"):
+        assert_local_only(settings, env={"HF_ENDPOINT": "api-inference.huggingface.co:443"})
+
+
+def test_hf_endpoint_loopback_passes() -> None:
+    """A loopback HF_ENDPOINT (an on-box model mirror) is fine."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    assert_local_only(settings, env={"HF_ENDPOINT": "http://127.0.0.1:8080"})
+    assert_local_only(settings, env={"HF_ENDPOINT": "localhost:8080"})
+
+
+def test_hf_endpoint_non_loopback_blocked_when_not_relaxed() -> None:
+    """A non-cloud non-loopback HF_ENDPOINT is blocked under default
+    local_only mode."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="HF_ENDPOINT"):
+        assert_local_only(settings, env={"HF_ENDPOINT": "http://192.168.1.50:8080"})
