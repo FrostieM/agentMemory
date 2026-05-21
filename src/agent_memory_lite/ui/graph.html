@@ -111,8 +111,23 @@
   };
 
   function status(msg, isError = false) {
-    // Phase 4.1: msg may already contain HTML (e.g. spinner span); inject as-is.
-    $("#status").innerHTML = isError ? `<span class="error">${msg}</span>` : msg;
+    // Phase 4.1: the non-error path may carry intentional internal HTML
+    // (e.g. a spinner span) so it is injected as-is.
+    // Round-2 audit: the error path used to interpolate `msg` into an
+    // innerHTML template. `msg` there is an error string (`e.message`,
+    // server text) — build the span with textContent so a stray `<`
+    // can never become markup, even if a future caller passes
+    // DB-derived text as an error.
+    const el = $("#status");
+    if (isError) {
+      el.textContent = "";
+      const span = document.createElement("span");
+      span.className = "error";
+      span.textContent = String(msg ?? "");
+      el.appendChild(span);
+    } else {
+      el.innerHTML = msg;
+    }
   }
 
   function renderLegend(langs, softKindsPresent) {

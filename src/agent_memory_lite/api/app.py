@@ -18,6 +18,7 @@ from agent_memory_lite.api.auth import install_api_token_guard
 from agent_memory_lite.api.body_size_limit_middleware import BodySizeLimitMiddleware
 from agent_memory_lite.api.errors import install_handlers
 from agent_memory_lite.api.origin_guard_middleware import OriginGuardMiddleware
+from agent_memory_lite.api.security_middleware import SecurityMiddleware
 from agent_memory_lite.api.workspace_routing_middleware import WorkspaceRoutingMiddleware
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.settings import Settings, get_settings
@@ -62,6 +63,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     install_handlers(app)
     install_api_token_guard(app, settings)
+    # v3.6 sector-7 Round-2: outermost middleware. Adds CSP /
+    # X-Frame-Options / X-Content-Type-Options to every response
+    # (incl. inner-middleware errors) and rejects non-JSON POSTs to
+    # /memory/* — a by-design CSRF guard since a browser <form> cannot
+    # send Content-Type: application/json. Registered FIRST so its
+    # response headers wrap the OriginGuard 403 / BodySizeLimit 413 too.
+    app.add_middleware(SecurityMiddleware)
     # v3.5 sector-6+7 audit-followup: refuse browser requests whose
     # Origin / Host header doesn't point at loopback. Defeats DNS-
     # rebinding + cross-site form-POST attacks against the local
@@ -74,9 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # GBs and either pin the embedding worker or fill the WAL. Default
     # 10 MB covers legitimate code/episode ingest; raise via env when
     # ingesting larger documents on purpose.
-    app.add_middleware(
-        BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
-    )
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
     # Hub mode: route /memory/* requests to the workspace_id's own DB
     # automatically when the caller did not pass an explicit
     # X-Memory-DB-Path header. No-op when hub_mode is off, so project

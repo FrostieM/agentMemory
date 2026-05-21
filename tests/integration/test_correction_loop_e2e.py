@@ -21,7 +21,10 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client(app_factory) -> Iterator[TestClient]:
     app = app_factory(MEMORY_WORKSPACE_ID="ws-loop")
-    with TestClient(app) as c:
+    # base_url must be loopback: OriginGuardMiddleware (v3.6) rejects a
+    # non-loopback Host header, and TestClient defaults to
+    # Host=testserver which the guard correctly 403s as DNS-rebinding.
+    with TestClient(app, base_url="http://127.0.0.1") as c:
         yield c
 
 
@@ -216,7 +219,8 @@ def test_loop_disabled_when_flag_off(app_factory) -> None:
         MEMORY_WORKSPACE_ID="ws-disabled",
         MEMORY_CORRECTION_DETECT_ENABLED="false",
     )
-    with TestClient(app) as client:
+    # Loopback base_url — see the `client` fixture note on OriginGuard.
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         claim_id = _ingest_in(
             client,
             "ws-disabled",
