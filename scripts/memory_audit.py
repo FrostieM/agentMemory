@@ -7,6 +7,7 @@ Repairs require explicit flags and should normally use --backup-first.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import shutil
 import sqlite3
@@ -28,6 +29,15 @@ from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.factory import get_vector_store
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 from agent_memory_lite.vector_store.reindex import reindex_chunks, repair_chunk_embedding_refs
+
+# Force UTF-8 stdout/stderr — the audit's JSON / human output can carry
+# non-ASCII memory content (e.g. → / ≤ glyphs from stored decisions or
+# episodes) that crashes a default Windows cp1252 console with
+# UnicodeEncodeError. Mirrors scripts/acceptance_gate.py.
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+with contextlib.suppress(AttributeError, ValueError):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 
 
 def _parser() -> argparse.ArgumentParser:
