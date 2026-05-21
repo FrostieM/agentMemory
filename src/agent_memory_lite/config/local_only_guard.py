@@ -44,6 +44,12 @@ CLOUD_DENYLIST: frozenset[str] = frozenset(
         "api.voyageai.com",
         "api.jina.ai",
         "ollama.com",
+        # Round-5 re-audit: next tier of inference endpoints.
+        "api.anyscale.com",
+        "api.novita.ai",
+        "api.sambanova.ai",
+        "api.hyperbolic.xyz",
+        "inference.ai21.com",
     }
 )
 
@@ -84,9 +90,20 @@ TELEMETRY_KILL_LIST: tuple[str, ...] = (
 #                     even though llm_base_url / embedding_base_url are
 #                     loopback. HF_HUB_ENDPOINT is the alias older
 #                     huggingface_hub / sentence-transformers pins honor.
+#   * MEMORY_HTTP_BASE_URL / AGENT_MEMORY_HTTP_BASE_URL — the MCP->HTTP
+#                     delegation target (stdio_env._memory_http_base_url).
+#                     The stdio MCP server POSTs episodes / decisions
+#                     there, so a remote value ships the payload
+#                     off-machine. Not a Settings URL field.
 # Each is parsed + checked against the denylist + loopback rule, exactly
 # like a Settings URL field.
-PROVIDER_HOST_ENV_VARS: tuple[str, ...] = ("OLLAMA_HOST", "HF_ENDPOINT", "HF_HUB_ENDPOINT")
+PROVIDER_HOST_ENV_VARS: tuple[str, ...] = (
+    "OLLAMA_HOST",
+    "HF_ENDPOINT",
+    "HF_HUB_ENDPOINT",
+    "MEMORY_HTTP_BASE_URL",
+    "AGENT_MEMORY_HTTP_BASE_URL",
+)
 
 # Round-3 audit: httpx clients — and huggingface_hub's OWN internal HTTP
 # session, which the guard cannot pass options to — honor the standard

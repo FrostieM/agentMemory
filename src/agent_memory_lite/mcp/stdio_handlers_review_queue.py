@@ -21,7 +21,11 @@ def _handle_review_queue(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_compact_trigger(args: dict[str, Any]) -> dict[str, Any]:
-    workspace_id = _workspace_from_args(args, intent="read")
+    # Round-5 audit: check_compaction_threshold WRITES a compaction_due
+    # maintenance event when the workspace is overdue, so the probe needs
+    # write intent — a strict project chat must not insert events into a
+    # foreign workspace's DB.
+    workspace_id = _workspace_from_args(args, intent="write")
     return check_compaction_threshold(
         _runtime.db_for(workspace_id),
         workspace_id=workspace_id,

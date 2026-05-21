@@ -308,12 +308,40 @@ def test_all_httpx_calls_disable_trust_env() -> None:
         "https://ollama.com/library/foo",
         "https://acct.lancedb.com",
         "https://db.lancedb.io/v1",
+        "https://api.anyscale.com/v1",
+        "https://api.novita.ai/v3",
+        "https://api.sambanova.ai/v1",
+        "https://api.hyperbolic.xyz/v1",
+        "https://inference.ai21.com/v1",
     ],
 )
-def test_rejects_round3_denylist_additions(host: str) -> None:
-    """Round-3/4 re-audit widened the denylist with voyageai / jina /
-    ollama-cloud (inference) and lancedb.com / lancedb.io (LanceDB
-    Cloud) so the URL denylist tracks the embedding + vector ecosystem."""
+def test_rejects_denylist_reaudit_additions(host: str) -> None:
+    """Round-3/4/5 re-audits widened the denylist: voyageai / jina /
+    ollama-cloud, lancedb.com / lancedb.io (LanceDB Cloud), and the
+    anyscale / novita / sambanova / hyperbolic / ai21 inference tier — so
+    the URL denylist tracks the embedding + vector + inference ecosystem."""
     settings = Settings(LLM_BASE_URL=host)  # type: ignore[call-arg]
     with pytest.raises(LocalOnlyError):
         assert_local_only(settings, env={})
+
+
+# ---------- R4 (re-audit): MEMORY_HTTP_BASE_URL delegation target is audited ----------
+
+
+def test_memory_http_base_url_cloud_redirect_rejected() -> None:
+    """MEMORY_HTTP_BASE_URL / AGENT_MEMORY_HTTP_BASE_URL override the
+    MCP->HTTP delegation target (stdio_env._memory_http_base_url) — the
+    stdio server POSTs episodes / decisions there, so a remote value
+    ships the payload off-machine. Both are now audited like a Settings
+    URL field even though they never appear on Settings.url_fields()."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    with pytest.raises(LocalOnlyError, match="MEMORY_HTTP_BASE_URL"):
+        assert_local_only(settings, env={"MEMORY_HTTP_BASE_URL": "https://api.openai.com"})
+    with pytest.raises(LocalOnlyError, match="AGENT_MEMORY_HTTP_BASE_URL"):
+        assert_local_only(settings, env={"AGENT_MEMORY_HTTP_BASE_URL": "http://192.168.1.9:8765"})
+
+
+def test_memory_http_base_url_loopback_passes() -> None:
+    """A loopback MCP->HTTP delegation target is fine."""
+    settings = Settings(LLM_BASE_URL="http://127.0.0.1:11434")  # type: ignore[call-arg]
+    assert_local_only(settings, env={"MEMORY_HTTP_BASE_URL": "http://127.0.0.1:8765"})

@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_readable
+from agent_memory_lite.api.deps import (
+    DbDep,
+    SettingsDep,
+    ensure_workspace_readable,
+    ensure_workspace_writable,
+)
 from agent_memory_lite.api.schemas.review_queue import (
     CompactTriggerRequest,
     CompactTriggerResponse,
@@ -58,11 +63,11 @@ def review_queue_route(
 def compact_trigger_route(
     body: CompactTriggerRequest, conn: DbDep, settings: SettingsDep
 ) -> CompactTriggerResponse:
-    # The probe is read-mostly (it only writes a maintenance event
-    # when overdue), but treat it as a writable side effect through
-    # ensure_workspace_readable so cross-workspace probes from
-    # project mode are still allowed.
-    ensure_workspace_readable(body.workspace_id, settings)
+    # Round-5 audit: the probe WRITES a compaction_due maintenance event
+    # when the workspace is overdue, so it is guarded as a write — a
+    # strict project chat must not insert events into a foreign
+    # workspace. (The MCP twin _handle_compact_trigger guards the same.)
+    ensure_workspace_writable(body.workspace_id, settings)
     result = check_compaction_threshold(
         conn,
         workspace_id=body.workspace_id,

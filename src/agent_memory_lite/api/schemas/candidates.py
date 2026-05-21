@@ -55,3 +55,8 @@ class CandidateActionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str = Field(min_length=1)
+    # Round-5 audit: promote / reject WRITE. workspace_id makes the
+    # action target guardable — None resolves to the service anchor, an
+    # explicit foreign value is blocked under strict isolation. Optional
+    # so existing callers stay wire-compatible.
+    workspace_id: str | None = None

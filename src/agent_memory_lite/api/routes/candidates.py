@@ -8,6 +8,7 @@ from agent_memory_lite.api.deps import (
     DbDep,
     SettingsDep,
     ensure_workspace_readable,
+    ensure_workspace_writable,
 )
 from agent_memory_lite.api.schemas.candidates import (
     CandidateActionRequest,
@@ -84,6 +85,9 @@ def list_candidates_route(
 def promote_candidate_route(
     body: CandidateActionRequest, conn: DbDep, settings: SettingsDep
 ) -> CandidateResponse:
+    # Round-5 audit: promote WRITES (status + decision/theory/behavior
+    # rows + audit). None workspace_id resolves to the service anchor.
+    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
     candidate = promote_memory_candidate(conn, candidate_id=body.candidate_id)
     # v1.4 implicit feedback: promote is an explicit "useful" signal.
     if candidate.promoted_target_id and candidate.promoted_target_type:
@@ -100,5 +104,9 @@ def promote_candidate_route(
 
 
 @router.post("/memory/reject_candidate", response_model=CandidateResponse)
-def reject_candidate_route(body: CandidateActionRequest, conn: DbDep) -> CandidateResponse:
+def reject_candidate_route(
+    body: CandidateActionRequest, conn: DbDep, settings: SettingsDep
+) -> CandidateResponse:
+    # Round-5 audit: reject WRITES (status + audit row).
+    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
     return _candidate_response(reject_memory_candidate(conn, candidate_id=body.candidate_id))

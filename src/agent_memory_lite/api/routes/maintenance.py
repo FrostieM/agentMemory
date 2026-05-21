@@ -14,6 +14,7 @@ from agent_memory_lite.api.deps import (
     DbDep,
     SettingsDep,
     ensure_workspace_readable,
+    ensure_workspace_writable,
 )
 from agent_memory_lite.api.errors import NotFoundError, ValidationError
 from agent_memory_lite.api.schemas.maintenance import (
@@ -80,7 +81,10 @@ def list_maintenance_events_route(
 def resolve_maintenance_event_route(
     body: ResolveMaintenanceEventRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> MaintenanceEventResponse:
+    # Round-5 audit: resolve WRITES status + resolved_at + audit.
+    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
     if body.status not in {MaintenanceEventStatus.RESOLVED, MaintenanceEventStatus.IGNORED}:
         raise ValidationError("maintenance event can only be resolved or ignored")
     event = resolve_maintenance_event(
@@ -98,9 +102,12 @@ def resolve_maintenance_event_route(
 def claim_maintenance_event_route(
     body: ClaimMaintenanceEventRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> MaintenanceEventResponse:
     """v3.4 #6 — operator claims an event for triage. Does not touch
     substrate ``status`` because the underlying drift is still real."""
+    # Round-5 audit: claim WRITES assigned_to / claimed_at / audit.
+    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
     event = claim_maintenance_event(
         conn,
         event_id=body.event_id,
@@ -117,10 +124,13 @@ def claim_maintenance_event_route(
 def dismiss_maintenance_event_route(
     body: DismissMaintenanceEventRequest,
     conn: DbDep,
+    settings: SettingsDep,
 ) -> MaintenanceEventResponse:
     """v3.4 #6 — operator marks the ticket non-actionable. The substrate
     drift may still be real; this is purely an operator-queue decision
     so the same finding does not block the queue forever."""
+    # Round-5 audit: dismiss WRITES dismissed_at / audit.
+    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
     event = dismiss_maintenance_event(
         conn,
         event_id=body.event_id,

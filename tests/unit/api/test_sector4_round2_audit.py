@@ -377,3 +377,88 @@ def test_mcp_propose_experiments_persist_blocks_foreign_workspace(
         stdio_handlers_v3_1._handle_propose_experiments(
             {"workspace_id": "ws-victim", "persist": True}
         )
+
+
+# ---------- ROUND-5 RE-AUDIT: compact_trigger + HTTP candidate/maintenance writes ----------
+#
+# A round-5 re-audit found one more MCP handler of the same class
+# (_handle_compact_trigger — check_compaction_threshold writes a
+# maintenance event) plus the HTTP candidate / maintenance action routes,
+# which write but carried no workspace-isolation guard. compact_trigger
+# now guards with write intent; the HTTP action requests gained an
+# optional workspace_id and the routes call ensure_workspace_writable.
+
+
+def test_mcp_compact_trigger_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """memory_compact_trigger writes a compaction_due maintenance event
+    when overdue — a foreign workspace_id under strict mode is rejected."""
+    from agent_memory_lite.mcp import stdio_handlers_review_queue  # noqa: PLC0415
+    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
+
+    monkeypatch.setattr(_runtime, "settings", _strict_settings())
+    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
+        stdio_handlers_review_queue._handle_compact_trigger({"workspace_id": "ws-victim"})
+
+
+def test_http_promote_candidate_blocks_foreign_workspace(db: sqlite3.Connection) -> None:
+    """POST /memory/promote_candidate into a foreign workspace is rejected."""
+    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
+    from agent_memory_lite.api.routes.candidates import promote_candidate_route  # noqa: PLC0415
+    from agent_memory_lite.api.schemas.candidates import CandidateActionRequest  # noqa: PLC0415
+
+    req = CandidateActionRequest(candidate_id="c1", workspace_id="ws-victim")
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        promote_candidate_route(req, db, _strict_settings())
+
+
+def test_http_reject_candidate_blocks_foreign_workspace(db: sqlite3.Connection) -> None:
+    """POST /memory/reject_candidate into a foreign workspace is rejected."""
+    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
+    from agent_memory_lite.api.routes.candidates import reject_candidate_route  # noqa: PLC0415
+    from agent_memory_lite.api.schemas.candidates import CandidateActionRequest  # noqa: PLC0415
+
+    req = CandidateActionRequest(candidate_id="c1", workspace_id="ws-victim")
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        reject_candidate_route(req, db, _strict_settings())
+
+
+def test_http_compact_trigger_blocks_foreign_workspace(db: sqlite3.Connection) -> None:
+    """POST /memory/compact_trigger into a foreign workspace is rejected."""
+    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
+    from agent_memory_lite.api.routes.review_queue import compact_trigger_route  # noqa: PLC0415
+    from agent_memory_lite.api.schemas.review_queue import CompactTriggerRequest  # noqa: PLC0415
+
+    req = CompactTriggerRequest(workspace_id="ws-victim")
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        compact_trigger_route(req, db, _strict_settings())
+
+
+def test_http_maintenance_action_routes_block_foreign_workspace(db: sqlite3.Connection) -> None:
+    """resolve / claim / dismiss maintenance-event routes carry the guard."""
+    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
+    from agent_memory_lite.api.routes.maintenance import (  # noqa: PLC0415
+        claim_maintenance_event_route,
+        dismiss_maintenance_event_route,
+        resolve_maintenance_event_route,
+    )
+    from agent_memory_lite.api.schemas.maintenance import (  # noqa: PLC0415
+        ClaimMaintenanceEventRequest,
+        DismissMaintenanceEventRequest,
+        ResolveMaintenanceEventRequest,
+    )
+
+    s = _strict_settings()
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        resolve_maintenance_event_route(
+            ResolveMaintenanceEventRequest(event_id="e1", workspace_id="ws-victim"), db, s
+        )
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        claim_maintenance_event_route(
+            ClaimMaintenanceEventRequest(event_id="e1", assigned_to="op", workspace_id="ws-victim"),
+            db,
+            s,
+        )
+    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
+        dismiss_maintenance_event_route(
+            DismissMaintenanceEventRequest(event_id="e1", workspace_id="ws-victim"), db, s
+        )

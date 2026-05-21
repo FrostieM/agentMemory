@@ -28,6 +28,14 @@ _HTTP_GET_CONTEXT_DEFAULT_TIMEOUT_SECONDS = 2.0
 _HTTP_SEARCH_DEFAULT_TIMEOUT_SECONDS = 5.0
 _HTTP_WRITE_DEFAULT_TIMEOUT_SECONDS = 30.0
 
+# Round-5 audit: defense-in-depth. urllib.request.urlopen honors the
+# HTTP(S)_PROXY env vars via getproxies(); an opener with an empty
+# ProxyHandler ignores them, so this delegation call never tunnels
+# through a proxy. The local-only guard already rejects a cloud proxy at
+# startup -- this isolates the call site too, mirroring trust_env=False
+# on the httpx clients.
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 
 def _http_memory_request(
     *,
@@ -64,7 +72,7 @@ def _http_memory_request(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _NO_PROXY_OPENER.open(request, timeout=timeout) as response:
             raw_body: Any = json.loads(response.read().decode("utf-8"))
     except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
         _log.warning("MCP %s HTTP delegation failed; using local fallback: %s", log_label, exc)

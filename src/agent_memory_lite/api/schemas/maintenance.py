@@ -68,6 +68,11 @@ class ResolveMaintenanceEventRequest(BaseModel):
 
     event_id: str = Field(min_length=1)
     status: MaintenanceEventStatus = MaintenanceEventStatus.RESOLVED
+    # Round-5 audit: resolve / claim / dismiss WRITE. workspace_id makes
+    # the action target guardable — None resolves to the service anchor,
+    # an explicit foreign value is blocked under strict isolation.
+    # Optional so existing callers stay wire-compatible.
+    workspace_id: str | None = None
 
 
 class ClaimMaintenanceEventRequest(BaseModel):
@@ -78,6 +83,8 @@ class ClaimMaintenanceEventRequest(BaseModel):
     event_id: str = Field(min_length=1)
     assigned_to: str = Field(min_length=1, max_length=128)
     action_notes: str | None = Field(default=None, max_length=2000)
+    # Round-5 audit: see ResolveMaintenanceEventRequest.workspace_id.
+    workspace_id: str | None = None
 
 
 class DismissMaintenanceEventRequest(BaseModel):
@@ -89,3 +96,5 @@ class DismissMaintenanceEventRequest(BaseModel):
 
     event_id: str = Field(min_length=1)
     action_notes: str | None = Field(default=None, max_length=2000)
+    # Round-5 audit: see ResolveMaintenanceEventRequest.workspace_id.
+    workspace_id: str | None = None
