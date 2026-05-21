@@ -125,6 +125,28 @@ def test_episode_metadata_is_recursively_redacted(db: sqlite3.Connection) -> Non
     assert "sk-ant-meta-DDDD" not in str(row[0] or "")
 
 
+def test_episode_metadata_redacts_secret_dict_keys(db: sqlite3.Connection) -> None:
+    """Round-2 final verification: a secret used as a metadata dict KEY
+    (an odd shape, but possible) must also be redacted — _redact_metadata
+    walks keys, not just values. A normal key is untouched."""
+    from agent_memory_lite.ingestion.episode_pipeline import ingest_episode  # noqa: PLC0415
+    from agent_memory_lite.models.episodes import EpisodeIn  # noqa: PLC0415
+
+    result = ingest_episode(
+        db,
+        EpisodeIn(
+            workspace_id="ws",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="key-shaped secret test",
+            metadata={"api_key: sk-ant-keyshape-FFFF": "v", "plain_key": "ok"},
+        ),
+    )
+    md = result.episode.metadata
+    assert "sk-ant-keyshape-FFFF" not in str(md), "secret-shaped metadata KEY leaked"
+    # A normal key passes through verbatim.
+    assert md.get("plain_key") == "ok"
+
+
 # ---------- HIGH: keyword redaction \\S+ quoted-value leak ----------
 
 

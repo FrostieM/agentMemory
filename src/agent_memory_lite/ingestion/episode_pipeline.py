@@ -73,11 +73,19 @@ def _redact_metadata(value: object) -> object:
     the nested dict/list structure. Non-secret control fields
     (``correction_role`` etc.) are untouched: ``redact`` only replaces
     secret-shaped spans, leaving plain values exactly as they were.
+
+    Round-2 final verification: dict KEYS are redacted too, not just
+    values — a secret used as a metadata key (an odd but possible
+    shape) would otherwise survive. A normal key like ``"note"`` does
+    not match any secret pattern, so it passes through unchanged.
     """
     if isinstance(value, str):
         return redact(value).text if value else value
     if isinstance(value, dict):
-        return {k: _redact_metadata(v) for k, v in value.items()}
+        return {
+            (redact(k).text if isinstance(k, str) and k else k): _redact_metadata(v)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact_metadata(v) for v in value]
     return value
