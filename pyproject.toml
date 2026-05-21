@@ -155,14 +155,17 @@ markers = [
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:passlib.*",
-    # Python 3.14 raises `sqlite3.Connection.__del__` warnings when a
-    # connection is collected without an explicit close — pytest then
-    # attributes the warning to whichever test was running at GC time,
-    # which is flaky and bleeds across tests (e.g. test_strip_idempotent
-    # and test_digest_worker on the agent-memory-lite suite). The actual
+    # sqlite3.Connection finalizer warnings: when a connection is
+    # collected without an explicit close, the interpreter raises an
+    # unraisable warning during __del__ and pytest attributes it to
+    # whichever test was running at GC time — flaky, bleeds across
+    # tests (e.g. test_strip_idempotent, test_digest_worker). The actual
     # exception in the warning is ``None``; nothing real breaks. The
-    # right fix is per-test connection close, but the flake bites
-    # different tests each run, so silence here and revisit if a
-    # genuine sqlite finalizer bug appears.
+    # right fix is per-test connection close, but the flake bites a
+    # different test each run. The message wording differs by CPython
+    # version, so BOTH forms are silenced (CI runs 3.13, dev on 3.14):
+    #   * 3.14 -> "Exception ignored while finalizing database connection"
+    #   * 3.13 -> "Exception ignored in: <sqlite3.Connection object ...>"
     "ignore:Exception ignored while finalizing database connection:pytest.PytestUnraisableExceptionWarning",
+    "ignore:Exception ignored in. <sqlite3:pytest.PytestUnraisableExceptionWarning",
 ]
