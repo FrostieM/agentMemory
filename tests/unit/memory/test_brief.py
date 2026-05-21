@@ -742,15 +742,7 @@ def test_compose_brief_cache_invalidates_on_plan_step_write(conn: sqlite3.Connec
     from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
 
     brief_mod._BRIEF_CACHE.clear()
-    # Early task timestamp so the fingerprint's global MAX(updated_at) is
-    # driven by the plan_step writes below, not by the task row.
-    _seed_task(
-        conn,
-        id="task_pf",
-        task_id="tpf",
-        goal_one_line="fingerprint plan",
-        updated_at="2026-05-20T00:00:00Z",
-    )
+    _seed_task(conn, id="task_pf", task_id="tpf", goal_one_line="fingerprint plan")
     _seed_plan_step(conn, id="pf_1", task_id="tpf", rank=1.0, title="step one", status="active")
     first = compose_brief(conn, workspace_id="ws")
     _seed_plan_step(
@@ -775,15 +767,7 @@ def test_compose_brief_cache_invalidates_on_capability_link_write(
     from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
 
     brief_mod._BRIEF_CACHE.clear()
-    # Early task timestamp so the fingerprint's global MAX(updated_at) is
-    # driven by the plan_step + capability_link writes, not the task row.
-    _seed_task(
-        conn,
-        id="task_cf",
-        task_id="tcf",
-        goal_one_line="caplink plan",
-        updated_at="2026-05-20T00:00:00Z",
-    )
+    _seed_task(conn, id="task_cf", task_id="tcf", goal_one_line="caplink plan")
     _seed_plan_step(conn, id="cf_active", task_id="tcf", rank=1.0, title="working", status="active")
     first = compose_brief(conn, workspace_id="ws")
     _seed_capability_link(conn, id="cl_fp", target_id="cf_active", capability_name="bound-skill")
@@ -814,8 +798,9 @@ def test_fingerprint_row_count_is_linear_not_cartesian(
     conn: sqlite3.Connection,
 ) -> None:
     """A workspace with 30 rows across watched tables must NOT cause a
-    blow-up. Cartesian product would synthesise 30^5 ~ 24M rows for
-    one MAX; UNION ALL stays at ~30.
+    blow-up. Chained LEFT JOINs would synthesise a 30^5 cross-product
+    for one MAX; the per-table scalar sub-queries each scan only their
+    own table.
     """
     import time  # noqa: PLC0415
 
@@ -855,10 +840,9 @@ def test_fingerprint_flips_on_mutation(conn: sqlite3.Connection) -> None:
     must flip the fingerprint. The cache is keyed on this value, so
     a stale brief cannot survive a write.
 
-    All inserts use ISO-8601 timestamps so the MAX() over UNION ALL
-    walks them in real time order — the test fixture's default
-    placeholder ``'ts'`` is lexicographically *larger* than any
-    ISO string and would mask later mutations under MAX.
+    The fingerprint hashes each table's own ``MAX`` independently, so a
+    write to any one table flips its field of the hash regardless of
+    the others' timestamps.
     """
     from agent_memory_lite.cognition.brief import (  # noqa: PLC0415
         _workspace_fingerprint,

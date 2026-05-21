@@ -84,72 +84,63 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
 
 
 def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
-    """Hash the cardinal mutation timestamps that affect the brief.
+    """Hash the per-table mutation timestamps that affect the brief.
 
     Reads ``MAX(updated_at)`` from decisions / behaviors / tasks /
     code_digests / capability_links / plan_steps and ``MAX(created_at)``
-    from episodes for the workspace. Any write in those tables changes
-    at least one of those maxima, so the fingerprint flips → cache miss
-    on next call.
+    from episodes for the workspace, then hashes the per-table maxima
+    together. A write to any of those tables moves that table's own
+    maximum, so the fingerprint flips → cache miss on next call.
+
+    Per-table, not a single global ``MAX``: a global max hides a write
+    to one table behind a higher timestamp in another -- including the
+    mixed ``Z`` / ``+00:00`` timestamp formats across writers, where
+    ``+00:00`` sorts below ``Z`` within the same second. Hashing each
+    table's own max removes that cross-table / cross-format masking. A
+    residual gap remains: a write that does not advance its table's
+    ``MAX`` -- a repeat write inside the same wall-clock second, or a
+    back-dated row -- is not detected. That is irreducible at second
+    timestamp granularity and affects every table equally.
 
     Returns the first 12 chars of SHA1 (collision-safe at this cache
     size). On any SQL error returns a unique sentinel so the call
     bypasses the cache instead of returning stale content.
 
-    Implementation note (bug fix 2026-05-18): an earlier revision used
-    five chained ``LEFT JOIN``s on a single placeholder row, which
-    becomes a Cartesian product over decisions x behaviors x tasks x
-    code_digests x episodes. On a moderately busy workspace the
-    fingerprint took ~2 minutes -- long enough that the memory brief hook
-    timed out before ever rendering. UNION ALL over five small index-
-    seek scans returns the same answer in < 5 ms.
+    The maxima come from independent scalar sub-queries, each a small
+    index-seek scan -- never chained ``LEFT JOIN``s, which a 2026-05-18
+    bug fix found became a Cartesian product that took ~2 minutes on a
+    busy workspace.
     """
-    # capability_links + plan_steps feed the brief's active-plan section
-    # (Phase 3/4); decisions / behaviors / tasks / code_digests / episodes
-    # feed the rest. A write in ANY of them must flip the fingerprint.
-    #
-    # Optional tables are added only when present -- an absent table
-    # would fail the whole query. The candidates table is named
-    # ``memory_candidates`` in legacy DBs and ``candidates`` in
+    # Optional tables -- added only when present. The candidates table
+    # is named ``memory_candidates`` in legacy DBs and ``candidates`` in
     # canonical; ``plan_steps`` (migration 0038) may be absent on a
-    # pre-migration DB.
+    # pre-migration DB. capability_links + plan_steps feed the brief's
+    # active-plan section (Phase 3/4); the rest feed the other sections.
     optional: list[str] = []
     cand_table = next((n for n in ("memory_candidates", "candidates") if _has_table(conn, n)), "")
     if cand_table:
         optional.append(cand_table)
     if _has_table(conn, "plan_steps"):
         optional.append("plan_steps")
-    extra_clause = "".join(
-        f"  UNION ALL SELECT updated_at FROM {t} WHERE workspace_id = ?\n" for t in optional
-    )
-    # 6 fixed tables + one placeholder per optional table. Every
-    # placeholder binds the same workspace_id, so only the count matters.
-    params: list[str] = [workspace_id] * (6 + len(optional))
+    # One scalar sub-query per table -- episodes keys on created_at, the
+    # rest on updated_at; each binds the same workspace_id.
+    subqueries = [
+        "(SELECT MAX(updated_at) FROM decisions WHERE workspace_id = ?)",
+        "(SELECT MAX(updated_at) FROM behaviors WHERE workspace_id = ?)",
+        "(SELECT MAX(updated_at) FROM tasks WHERE workspace_id = ?)",
+        "(SELECT MAX(updated_at) FROM code_digests WHERE workspace_id = ?)",
+        "(SELECT MAX(created_at) FROM episodes WHERE workspace_id = ?)",
+        "(SELECT MAX(updated_at) FROM capability_links WHERE workspace_id = ?)",
+    ]
+    subqueries += [f"(SELECT MAX(updated_at) FROM {t} WHERE workspace_id = ?)" for t in optional]
+    params: list[str] = [workspace_id] * len(subqueries)
     try:
-        rows = conn.execute(
-            f"""
-            SELECT MAX(ts) FROM (
-              SELECT updated_at AS ts FROM decisions        WHERE workspace_id = ?
-              UNION ALL
-              SELECT updated_at        FROM behaviors        WHERE workspace_id = ?
-              UNION ALL
-              SELECT updated_at        FROM tasks            WHERE workspace_id = ?
-              UNION ALL
-              SELECT updated_at        FROM code_digests     WHERE workspace_id = ?
-              UNION ALL
-              SELECT created_at        FROM episodes         WHERE workspace_id = ?
-              UNION ALL
-              SELECT updated_at        FROM capability_links WHERE workspace_id = ?
-            {extra_clause}
-            )
-            """,
-            tuple(params),
-        ).fetchone()
+        row = conn.execute(f"SELECT {', '.join(subqueries)}", tuple(params)).fetchone()
     except sqlite3.Error:
         return f"err-{workspace_id}-{id(conn)}"
-    if rows is None:
+    if row is None:
         return f"empty-{workspace_id}"
-    raw = str(rows[0] or "")
+    raw = "|".join(str(value or "") for value in row)
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
