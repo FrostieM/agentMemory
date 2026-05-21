@@ -141,6 +141,36 @@ def _seed_plan_step(conn: sqlite3.Connection, **kwargs) -> None:
     conn.commit()
 
 
+def _seed_capability_link(conn: sqlite3.Connection, **kwargs) -> None:
+    defaults = {
+        "id": "caplink_x",
+        "workspace_id": "ws",
+        "target_type": "plan_step",
+        "target_id": "pstep_x",
+        "capability_type": "skill",
+        "capability_id": "skill_x",
+        "capability_name": "deploy-procedure",
+        "relation": "required_skill",
+        "rationale": None,
+        "strength": 0.8,
+        "source_episode_id": None,
+        "created_at": "2026-05-22T00:00:00Z",
+        "updated_at": "2026-05-22T00:00:00Z",
+    }
+    defaults.update(kwargs)
+    conn.execute(
+        """INSERT INTO capability_links
+           (id, workspace_id, target_type, target_id, capability_type,
+            capability_id, capability_name, relation, rationale, strength,
+            source_episode_id, created_at, updated_at)
+           VALUES (:id, :workspace_id, :target_type, :target_id, :capability_type,
+                   :capability_id, :capability_name, :relation, :rationale, :strength,
+                   :source_episode_id, :created_at, :updated_at)""",
+        defaults,
+    )
+    conn.commit()
+
+
 def _seed_skill(conn: sqlite3.Connection, **kwargs) -> None:
     defaults = {
         "id": "skill_x",
@@ -440,6 +470,77 @@ def test_active_plan_dropped_when_doing_line_will_not_fit(conn: sqlite3.Connecti
     assert _build_active_plan(conn, "ws", budget=3).lines == []
 
 
+def test_resolve_target_workspace_accepts_plan_step(conn: sqlite3.Connection) -> None:
+    """Phase 4: a plan_step is a valid capability-link target — the
+    PLAN_STEP enum value plus the TARGET_TABLES entry let the resolver
+    find it, so memory_link_capability can bind skills to steps."""
+    from agent_memory_lite.models.enums import CapabilityLinkTargetType  # noqa: PLC0415
+    from agent_memory_lite.repositories.capability_links_repo import (  # noqa: PLC0415
+        resolve_target_workspace,
+    )
+
+    _seed_task(conn, id="task_rt", task_id="trt")
+    _seed_plan_step(conn, id="rt_step", task_id="trt", title="a step")
+    found = resolve_target_workspace(
+        conn, target_type=CapabilityLinkTargetType.PLAN_STEP, target_id="rt_step"
+    )
+    assert found == "ws"
+    missing = resolve_target_workspace(
+        conn, target_type=CapabilityLinkTargetType.PLAN_STEP, target_id="no_such_step"
+    )
+    assert missing is None
+
+
+def test_compose_brief_active_plan_shows_bound_capabilities(conn: sqlite3.Connection) -> None:
+    """Phase 4: skills/roles linked to the in-progress step surface as an
+    'apply:' line so the agent applies the step's bound capability."""
+    _seed_task(conn, id="task_cap", task_id="tcap", goal_one_line="cap plan")
+    _seed_plan_step(
+        conn, id="cap_active", task_id="tcap", rank=1.0, title="ship it", status="active"
+    )
+    _seed_capability_link(
+        conn, id="cl_1", target_id="cap_active", capability_name="deploy-procedure"
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "→ doing: ship it" in brief.body_md
+    assert "apply: deploy-procedure" in brief.body_md
+
+
+def test_compose_brief_active_plan_capabilities_scoped_to_active_step(
+    conn: sqlite3.Connection,
+) -> None:
+    """Only the in-progress step is activated — the active step's bound
+    capability surfaces, a pending step's bound capability does not."""
+    _seed_task(conn, id="task_sc", task_id="tsc", goal_one_line="scoped plan")
+    _seed_plan_step(conn, id="sc_active", task_id="tsc", rank=1.0, title="current", status="active")
+    _seed_plan_step(conn, id="sc_pending", task_id="tsc", rank=2.0, title="later", status="pending")
+    _seed_capability_link(conn, id="cl_a", target_id="sc_active", capability_name="active-skill")
+    _seed_capability_link(conn, id="cl_p", target_id="sc_pending", capability_name="future-skill")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "→ doing: current" in brief.body_md
+    assert "apply: active-skill" in brief.body_md  # the active step's capability
+    assert "future-skill" not in brief.body_md  # the pending step's must not surface
+
+
+def test_compose_brief_active_plan_lists_multiple_capabilities(conn: sqlite3.Connection) -> None:
+    """Several capabilities bound to the in-progress step render on one
+    'apply:' line, separated so a name cannot blur into the separator."""
+    _seed_task(conn, id="task_mc", task_id="tmc", goal_one_line="multi cap plan")
+    _seed_plan_step(conn, id="mc_active", task_id="tmc", rank=1.0, title="build", status="active")
+    _seed_capability_link(conn, id="cl_m1", target_id="mc_active", capability_name="skill-one")
+    _seed_capability_link(
+        conn,
+        id="cl_m2",
+        target_id="mc_active",
+        capability_id="skill_y",
+        capability_name="skill-two",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "skill-one" in brief.body_md
+    assert "skill-two" in brief.body_md
+    assert " · " in brief.body_md  # the capabilities are separated
+
+
 def test_compose_brief_respects_budget(conn: sqlite3.Connection) -> None:
     # Seed many pinned behaviors with long lines to force budget pressure.
     for i in range(20):
@@ -632,6 +733,64 @@ def test_compose_brief_cache_bounded(conn: sqlite3.Connection) -> None:
         assert len(brief_mod._BRIEF_CACHE) <= 3
     finally:
         brief_cache._BRIEF_CACHE_MAX = original_max
+
+
+def test_compose_brief_cache_invalidates_on_plan_step_write(conn: sqlite3.Connection) -> None:
+    """A plan_step write flips the fingerprint → cache miss. Phase 3 read
+    plan_steps in the active-plan section but the fingerprint omitted the
+    table; Phase 4 adds it so a step change cannot serve a stale brief."""
+    from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    # Early task timestamp so the fingerprint's global MAX(updated_at) is
+    # driven by the plan_step writes below, not by the task row.
+    _seed_task(
+        conn,
+        id="task_pf",
+        task_id="tpf",
+        goal_one_line="fingerprint plan",
+        updated_at="2026-05-20T00:00:00Z",
+    )
+    _seed_plan_step(conn, id="pf_1", task_id="tpf", rank=1.0, title="step one", status="active")
+    first = compose_brief(conn, workspace_id="ws")
+    _seed_plan_step(
+        conn,
+        id="pf_2",
+        task_id="tpf",
+        rank=2.0,
+        title="step two",
+        status="pending",
+        updated_at="2026-05-22T00:05:00Z",
+    )
+    second = compose_brief(conn, workspace_id="ws")
+    assert first.cache_hit is False
+    assert second.cache_hit is False  # plan_steps now in the fingerprint
+
+
+def test_compose_brief_cache_invalidates_on_capability_link_write(
+    conn: sqlite3.Connection,
+) -> None:
+    """Binding a capability to the active step flips the fingerprint, so
+    the next brief renders the new 'apply:' line, not a stale body."""
+    from agent_memory_lite.cognition import brief as brief_mod  # noqa: PLC0415
+
+    brief_mod._BRIEF_CACHE.clear()
+    # Early task timestamp so the fingerprint's global MAX(updated_at) is
+    # driven by the plan_step + capability_link writes, not the task row.
+    _seed_task(
+        conn,
+        id="task_cf",
+        task_id="tcf",
+        goal_one_line="caplink plan",
+        updated_at="2026-05-20T00:00:00Z",
+    )
+    _seed_plan_step(conn, id="cf_active", task_id="tcf", rank=1.0, title="working", status="active")
+    first = compose_brief(conn, workspace_id="ws")
+    _seed_capability_link(conn, id="cl_fp", target_id="cf_active", capability_name="bound-skill")
+    second = compose_brief(conn, workspace_id="ws")
+    assert first.cache_hit is False
+    assert second.cache_hit is False  # capability_links now in the fingerprint
+    assert "apply: bound-skill" in second.body_md
 
 
 # ============================================================

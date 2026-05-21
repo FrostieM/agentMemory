@@ -251,6 +251,7 @@ class CapabilityLinkTargetType(StrEnum):
     RESEARCH_INSIGHT = "research_insight"
     MEMORY_CANDIDATE = "memory_candidate"
     DECISION = "decision"
+    PLAN_STEP = "plan_step"
 
 
 class CapabilityLinkRelation(StrEnum):

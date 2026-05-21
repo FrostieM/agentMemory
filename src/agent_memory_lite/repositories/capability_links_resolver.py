@@ -26,6 +26,7 @@ TARGET_TABLES: dict[CapabilityLinkTargetType, str] = {
     CapabilityLinkTargetType.RESEARCH_INSIGHT: "research_insights",
     CapabilityLinkTargetType.MEMORY_CANDIDATE: "memory_candidates",
     CapabilityLinkTargetType.DECISION: "decisions",
+    CapabilityLinkTargetType.PLAN_STEP: "plan_steps",
 }
 
 

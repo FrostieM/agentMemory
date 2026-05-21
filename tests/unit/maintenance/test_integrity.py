@@ -262,6 +262,44 @@ def test_integrity_detects_dangling_capability_link(
     assert after.checks["capability_links"].details["missing_capabilities"]["skill"] == 1
 
 
+def test_integrity_flags_dangling_plan_step_capability_link(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """Phase 4: capability_links_check audits plan_step targets via the
+    canonical TARGET_TABLES map — a link to a missing plan_step is
+    flagged, not silently un-audited."""
+    skill = upsert_agent_skill(
+        applied_conn,
+        AgentSkillIn(
+            workspace_id="project-a",
+            name="Step execution skill",
+            summary="Apply when entering this plan step.",
+        ),
+    )
+    applied_conn.execute(
+        """
+        INSERT INTO capability_links (
+            id, workspace_id, target_type, target_id, capability_type,
+            capability_id, capability_name, relation, rationale, strength,
+            source_episode_id, created_at, updated_at
+        ) VALUES (
+            'cl_ghost', 'project-a', 'plan_step', 'ghost_step', 'skill',
+            ?, 'Step execution skill', 'required_skill', NULL, 0.7,
+            NULL, '2026-05-22T00:00:00Z', '2026-05-22T00:00:00Z'
+        )
+        """,
+        (skill.id,),
+    )
+    applied_conn.commit()
+
+    report = run_integrity_audit(applied_conn, workspace_id="project-a")
+
+    assert report.status == "degraded"
+    cap_check = report.checks["capability_links"]
+    assert cap_check.details["missing_targets"]["plan_step"] == 1
+    assert cap_check.details["missing_capabilities"] == {}  # only the target dangles
+
+
 def test_integrity_warns_on_empty_workspace_manifest(
     applied_conn: sqlite3.Connection,
 ) -> None:

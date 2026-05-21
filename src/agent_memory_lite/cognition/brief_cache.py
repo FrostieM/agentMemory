@@ -68,13 +68,29 @@ def _brief_env_signature() -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    """True when ``name`` exists as a table. Lets the fingerprint query
+    skip optional tables that a pre-migration database may not have."""
+    try:
+        return (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (name,),
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.Error:
+        return False
+
+
 def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     """Hash the cardinal mutation timestamps that affect the brief.
 
     Reads ``MAX(updated_at)`` from decisions / behaviors / tasks /
-    code_digests and ``MAX(created_at)`` from episodes for the
-    workspace. Any write in those tables changes at least one of those
-    maxima, so the fingerprint flips → cache miss on next call.
+    code_digests / capability_links / plan_steps and ``MAX(created_at)``
+    from episodes for the workspace. Any write in those tables changes
+    at least one of those maxima, so the fingerprint flips → cache miss
+    on next call.
 
     Returns the first 12 chars of SHA1 (collision-safe at this cache
     size). On any SQL error returns a unique sentinel so the call
@@ -88,50 +104,42 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     timed out before ever rendering. UNION ALL over five small index-
     seek scans returns the same answer in < 5 ms.
     """
-    # Audit-5 H2 fix: include the candidates table (legacy
-    # ``memory_candidates`` OR canonical ``candidates``) so a Vector 1
-    # ``persist=true`` write invalidates the cached brief immediately.
-    # Detect which table is present so canonical-only deploys (where
-    # the legacy name is absent) don't fail the whole query.
-    cand_table = ""
-    try:
-        for name in ("memory_candidates", "candidates"):
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (name,),
-            ).fetchone()
-            if row:
-                cand_table = name
-                break
-    except sqlite3.Error:
-        cand_table = ""
-    extra_clause = (
-        f"  UNION ALL SELECT updated_at FROM {cand_table} WHERE workspace_id = ?"
-        if cand_table
-        else ""
-    )
-    params: list[str] = [
-        workspace_id,
-        workspace_id,
-        workspace_id,
-        workspace_id,
-        workspace_id,
-    ]
+    # capability_links + plan_steps feed the brief's active-plan section
+    # (Phase 3/4); decisions / behaviors / tasks / code_digests / episodes
+    # feed the rest. A write in ANY of them must flip the fingerprint.
+    #
+    # Optional tables are added only when present -- an absent table
+    # would fail the whole query. The candidates table is named
+    # ``memory_candidates`` in legacy DBs and ``candidates`` in
+    # canonical; ``plan_steps`` (migration 0038) may be absent on a
+    # pre-migration DB.
+    optional: list[str] = []
+    cand_table = next((n for n in ("memory_candidates", "candidates") if _has_table(conn, n)), "")
     if cand_table:
-        params.append(workspace_id)
+        optional.append(cand_table)
+    if _has_table(conn, "plan_steps"):
+        optional.append("plan_steps")
+    extra_clause = "".join(
+        f"  UNION ALL SELECT updated_at FROM {t} WHERE workspace_id = ?\n" for t in optional
+    )
+    # 6 fixed tables + one placeholder per optional table. Every
+    # placeholder binds the same workspace_id, so only the count matters.
+    params: list[str] = [workspace_id] * (6 + len(optional))
     try:
         rows = conn.execute(
             f"""
             SELECT MAX(ts) FROM (
-              SELECT updated_at AS ts FROM decisions     WHERE workspace_id = ?
+              SELECT updated_at AS ts FROM decisions        WHERE workspace_id = ?
               UNION ALL
-              SELECT updated_at        FROM behaviors    WHERE workspace_id = ?
+              SELECT updated_at        FROM behaviors        WHERE workspace_id = ?
               UNION ALL
-              SELECT updated_at        FROM tasks        WHERE workspace_id = ?
+              SELECT updated_at        FROM tasks            WHERE workspace_id = ?
               UNION ALL
-              SELECT updated_at        FROM code_digests WHERE workspace_id = ?
+              SELECT updated_at        FROM code_digests     WHERE workspace_id = ?
               UNION ALL
-              SELECT created_at        FROM episodes     WHERE workspace_id = ?
+              SELECT created_at        FROM episodes         WHERE workspace_id = ?
+              UNION ALL
+              SELECT updated_at        FROM capability_links WHERE workspace_id = ?
             {extra_clause}
             )
             """,

@@ -19,6 +19,7 @@ from agent_memory_lite.maintenance.integrity_research_check import (
     hygiene_report_check,
     research_hygiene_check,
 )
+from agent_memory_lite.repositories.capability_links_repo import CAPABILITY_TABLES, TARGET_TABLES
 from agent_memory_lite.repositories.maintenance_repo import count_open_maintenance_events
 
 __all__ = [
@@ -49,23 +50,15 @@ def capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
         "SELECT COUNT(*) FROM capability_links WHERE workspace_id = ?",
         (workspace_id,),
     )
-    target_tables = {
-        "theory": "theories",
-        "theory_evidence": "theory_evidence",
-        "experiment": "research_experiments",
-        "experiment_result": "experiment_results",
-        "research_insight": "research_insights",
-        "memory_candidate": "memory_candidates",
-        "decision": "decisions",
-    }
-    capability_tables = {
-        "role": "agent_roles",
-        "skill": "agent_skills",
-        "playbook": "agent_playbooks",
-    }
 
+    # Target tables come from the canonical TARGET_TABLES map so a new
+    # link target (e.g. Phase 4's plan_step) is audited without keeping a
+    # second hardcoded copy in sync. A table the DB lacks yet is skipped
+    # -- the LEFT JOIN would otherwise crash on a pre-migration database.
     missing_targets: dict[str, int] = {}
-    for target_type, table in target_tables.items():
+    for target_type, table in TARGET_TABLES.items():
+        if not table_exists(conn, table):
+            continue
         count = count_query(
             conn,
             f"""
@@ -77,13 +70,18 @@ def capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
               AND l.target_type = ?
               AND t.id IS NULL
             """,
-            (workspace_id, target_type),
+            (workspace_id, target_type.value),
         )
         if count:
-            missing_targets[target_type] = count
+            missing_targets[target_type.value] = count
 
+    # Capability tables likewise come from the canonical CAPABILITY_TABLES
+    # map; the table_exists guard skips the v2-named agent_* tables on a
+    # canonical-schema DB that does not have them.
     missing_capabilities: dict[str, int] = {}
-    for capability_type, table in capability_tables.items():
+    for capability_type, table in CAPABILITY_TABLES.items():
+        if not table_exists(conn, table):
+            continue
         count = count_query(
             conn,
             f"""
@@ -95,10 +93,10 @@ def capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
               AND l.capability_type = ?
               AND c.id IS NULL
             """,
-            (workspace_id, capability_type),
+            (workspace_id, capability_type.value),
         )
         if count:
-            missing_capabilities[capability_type] = count
+            missing_capabilities[capability_type.value] = count
 
     status = "ok" if not missing_targets and not missing_capabilities else "degraded"
     return IntegrityCheck(

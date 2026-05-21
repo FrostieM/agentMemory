@@ -5,6 +5,11 @@ but rendered compact: goal + done/total count, the step in progress, any
 blocked steps, the next pending step titles. The full plan and per-step
 detail stay fetch-on-demand via memory_get / memory_search.
 
+Phase 4 adds step-enter skill activation: capabilities (skills / roles /
+playbooks) linked to the in-progress step via capability_links surface
+as an ``apply:`` line, so the agent applies the step's bound skill
+rather than just reading the plan.
+
 Free text is word-capped so a verbose title or body cannot crowd out the
 essential in-progress line; when even the capped in-progress line will
 not fit the budget, the whole section is dropped (its budget is
@@ -17,10 +22,15 @@ import sqlite3
 
 from agent_memory_lite.cognition.brief_models import BriefSection
 from agent_memory_lite.cognition.brief_tokens import fit_to_budget
+from agent_memory_lite.models.enums import CapabilityLinkTargetType
 from agent_memory_lite.models.plan_step import PlanStep
+from agent_memory_lite.repositories.capability_links_repo import list_capability_links
 from agent_memory_lite.repositories.plan_step_repo import list_plan_steps
 
 _NEXT_STEPS_SHOWN = 2
+# How many capabilities (skills / roles / playbooks) bound to the
+# in-progress step are surfaced on the brief's "apply:" line.
+_APPLY_CAPS_SHOWN = 3
 
 # Word caps for free text. The active-plan budget is tight (~35 tokens at
 # the default 500-token brief), so an uncapped title / body / goal would
@@ -28,6 +38,7 @@ _NEXT_STEPS_SHOWN = 2
 _GOAL_WORDS = 10
 _TITLE_WORDS = 10
 _BODY_WORDS = 16
+_APPLY_WORDS = 14
 
 # The most-recently-updated in-progress task that owns at least one live
 # plan step. The EXISTS sub-query filters BEFORE the LIMIT, so the
@@ -56,9 +67,35 @@ def _cap_words(text: str, limit: int) -> str:
     return " ".join(words[:limit]).rstrip(".,;:") + "..."
 
 
-def _render_lines(task_id: str, goal: str, steps: list[PlanStep]) -> list[str]:
-    """Compact plan render: header + done count, the in-progress step,
-    any blocked steps, then the next pending step titles.
+def _active_step_capabilities(
+    conn: sqlite3.Connection, workspace_id: str, step: PlanStep
+) -> list[str]:
+    """Names of the capabilities bound to the in-progress step.
+
+    Phase 4 step-enter activation: skills / roles / playbooks linked to
+    the active step via capability_links. Strongest binding first
+    (``list_capability_links`` orders by strength). Empty when nothing
+    is bound or the table is absent (pre-migration DB).
+    """
+    try:
+        links = list_capability_links(
+            conn,
+            workspace_id=workspace_id,
+            target_type=CapabilityLinkTargetType.PLAN_STEP,
+            target_id=step.id,
+            limit=_APPLY_CAPS_SHOWN,
+        )
+    except sqlite3.OperationalError:
+        return []
+    return [link.capability_name for link in links]
+
+
+def _render_lines(
+    task_id: str, goal: str, steps: list[PlanStep], active_caps: list[str]
+) -> list[str]:
+    """Compact plan render: header + done count, the in-progress step
+    (with its bound capabilities), any blocked steps, then the next
+    pending step titles.
 
     Only the first ``active`` step (by rank) is rendered. The schema
     permits several, but the agent is doing one thing at a time; extra
@@ -75,6 +112,13 @@ def _render_lines(task_id: str, goal: str, steps: list[PlanStep]) -> list[str]:
     active = next((s for s in steps if s.status == "active"), None)
     if active is not None:
         lines.append(f"→ doing: {_cap_words(active.title, _TITLE_WORDS)}")
+        # Phase 4: bound skills/roles surface right under the step so the
+        # agent applies them. Placed before the body -- "how to do this
+        # step" outranks the step's own descriptive detail under budget.
+        if active_caps:
+            # Join with " · ", not ", ": a capability name is free text
+            # and a comma in one would blur into the separator.
+            lines.append(f"  apply: {_cap_words(' · '.join(active_caps), _APPLY_WORDS)}")
         body = _cap_words(active.body, _BODY_WORDS)
         if body:
             lines.append(f"  {body}")
@@ -106,12 +150,14 @@ def _active_plan_lines(conn: sqlite3.Connection, workspace_id: str, budget: int)
     steps = list_plan_steps(conn, workspace_id, task_id)
     if not any(s.status != "skipped" for s in steps):
         return []
-    lines = fit_to_budget(_render_lines(task_id, row["goal_one_line"] or "?", steps), budget)
+    active = next((s for s in steps if s.status == "active"), None)
+    active_caps = _active_step_capabilities(conn, workspace_id, active) if active else []
+    rendered = _render_lines(task_id, row["goal_one_line"] or "?", steps, active_caps)
+    lines = fit_to_budget(rendered, budget)
     # Invariant: a rendered plan must show the in-progress step. If the
     # budget dropped it (or only the header survived), drop the section.
-    has_active = any(s.status == "active" for s in steps)
     shows_doing = any(line.startswith("→ doing:") for line in lines)
-    if len(lines) < 2 or (has_active and not shows_doing):
+    if len(lines) < 2 or (active is not None and not shows_doing):
         return []
     return lines
 
