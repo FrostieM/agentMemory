@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
+import logging
 import sqlite3
 
 from agent_memory_lite.api.agent_context import current_agent_id
 from agent_memory_lite.models.audit import AuditEntry
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
+
+logger = logging.getLogger(__name__)
 
 
 def insert_audit(
@@ -36,6 +38,9 @@ def insert_audit(
         agent_id = current_agent_id()
     entry_id = new_id(IdKind.AUDIT)
     created_at = iso_now()
+    # default=str: a non-serializable payload value must not crash the operation being audited.
+    before_json = None if before is None else json.dumps(before, sort_keys=True, default=str)
+    after_json = None if after is None else json.dumps(after, sort_keys=True, default=str)
     # 1.3.0 schema migration 0026 adds the ``agent_id`` column. Use a
     # try/except fallback so pre-migration databases (rare, only legacy
     # workspaces that haven't applied 0026 yet) still write without
@@ -56,21 +61,19 @@ def insert_audit(
                 target_type,
                 target_id,
                 source_episode_id,
-                None if before is None else json.dumps(before, sort_keys=True),
-                None if after is None else json.dumps(after, sort_keys=True),
+                before_json,
+                after_json,
                 created_at,
                 agent_id,
             ),
         )
-    except sqlite3.OperationalError:
-        # Two degraded states reach here. (1) Legacy schema missing the
-        # 0026 agent_id column — retry the insert without it (the common,
-        # expected case). (2) The audit_log table is absent entirely (a
-        # pre-migration or partially built DB) — the retry can't succeed
-        # either, and an audit-trail write must never crash the operation
-        # it is auditing, so that case is swallowed best-effort; the
-        # in-memory AuditEntry is still returned to the caller.
-        with contextlib.suppress(sqlite3.OperationalError):
+    except sqlite3.Error:
+        # The modern insert failed — almost always a legacy schema
+        # missing the 0026 agent_id column; retry without it. Catching
+        # the sqlite base class (not just OperationalError) routes any
+        # other failure to the best-effort fallback below instead of
+        # crashing the operation being audited.
+        try:
             conn.execute(
                 """
                 INSERT INTO audit_log (
@@ -85,11 +88,18 @@ def insert_audit(
                     target_type,
                     target_id,
                     source_episode_id,
-                    None if before is None else json.dumps(before, sort_keys=True),
-                    None if after is None else json.dumps(after, sort_keys=True),
+                    before_json,
+                    after_json,
                     created_at,
                 ),
             )
+        except sqlite3.Error as exc:
+            # The retry failed too — audit_log is absent (pre-migration /
+            # partially built DB) or unwritable (locked, I/O error,
+            # corrupt image). An audit-trail write must never crash the
+            # operation it audits, so the row is dropped best-effort —
+            # but logged, so the gap is visible rather than silent.
+            logger.warning("audit_log write skipped (%s): %s", action, exc)
     return AuditEntry(
         id=entry_id,
         workspace_id=workspace_id,
