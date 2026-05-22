@@ -23,9 +23,9 @@ This:
    hub mode can route to it.
 3. Applies the v3 schema (idempotent — `CREATE TABLE IF NOT EXISTS`
    for every table; safe on existing v2 DBs).
-4. Seeds the 3 pinned discipline rules (graph-tools-first /
-   search-before-write / capability-link-on-write) into the v3
-   `behaviors` table.
+4. Seeds the 4 pinned discipline rules (graph-tools-first /
+   search-before-write / capability-link-on-write /
+   maintain-plan-steps) into the v3 `behaviors` table.
 5. Writes hooks to `<project>/.claude/settings.json`:
    * `UserPromptSubmit` → `scripts/inject_memory_brief.py`
      (≤500-token brief)

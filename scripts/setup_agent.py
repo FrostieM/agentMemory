@@ -15,10 +15,10 @@ What it does (idempotent — safe to re-run):
    brain migrations (0002_outcome_loop, 0003_hebbian,
    0004_consolidation_feedback, 0005_reflexes, 0006_self_model,
    0007_bi_temporal, 0008_causal_links). All idempotent.
-4. Seeds the 3 pinned discipline behaviors (graph-tools-first,
-   search-before-write, capability-link-on-write) AND the 3 Phase-4
-   baseline reflex rules (advisory enforcement — operator promotes to
-   block via memory_edit once they fire reliably).
+4. Seeds the 4 pinned discipline behaviors (graph-tools-first,
+   search-before-write, capability-link-on-write, maintain-plan-steps)
+   AND the 3 Phase-4 baseline reflex rules (advisory enforcement —
+   operator promotes to block via memory_edit once they fire reliably).
 5. Sets `OLLAMA_PROBE_SKIP` based on Ollama availability.
 6. For every detected agent runtime, writes:
    - An MCP server entry pointing at this venv's `agent_memory_lite.mcp.stdio_server`

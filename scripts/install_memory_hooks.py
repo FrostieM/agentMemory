@@ -252,6 +252,7 @@ def build_plan(
             "graph-tools-first",
             "search-before-write",
             "capability-link-on-write",
+            "maintain-plan-steps",
         ]
 
     return plan

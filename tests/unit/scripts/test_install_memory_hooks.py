@@ -3,12 +3,12 @@
 Covers:
 
 * ``build_plan`` produces a complete plan with both hook entries
-  and the 3 seed rule names
+  and the 4 seed rule names
 * Re-running the plan after apply marks hooks as ``skipped``
   (idempotency)
 * ``apply_hooks`` writes the settings.json structure Claude Code
   expects (events / matcher / command)
-* ``apply_seed`` runs the v3 schema + seeds 3 rules; idempotent
+* ``apply_seed`` runs the v3 schema + seeds 4 rules; idempotent
 * Backup file is created when ``--backup-first``
 * Dry-run does NOT touch disk
 * main() with --apply / --no-hooks / --no-seed / --json
@@ -97,6 +97,7 @@ def test_build_plan_includes_both_hooks(project: Path, registry_file: Path) -> N
         "graph-tools-first",
         "search-before-write",
         "capability-link-on-write",
+        "maintain-plan-steps",
     ]
 
 
@@ -155,7 +156,7 @@ def test_build_plan_no_hooks_when_disabled(project: Path, registry_file: Path) -
         workspaces_file=registry_file,
     )
     assert plan.hooks == []
-    assert len(plan.seed_rules) == 3
+    assert len(plan.seed_rules) == 4
 
 
 # ============================================================
@@ -263,7 +264,7 @@ def test_apply_seed_creates_schema_and_seeds_rules(
     )
     result = installer.apply_seed(plan)
     assert result["status"] == "ok"
-    assert int(result["inserted"]) == 3
+    assert int(result["inserted"]) == 4
     # Verify rules landed in the DB.
     conn = sqlite3.connect(plan.db_path)
     try:
@@ -273,7 +274,7 @@ def test_apply_seed_creates_schema_and_seeds_rules(
         ).fetchall()
     finally:
         conn.close()
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert all(pinned == 1 for _, pinned in rows)
 
 
@@ -289,7 +290,7 @@ def test_apply_seed_idempotent_on_second_pass(project: Path, registry_file: Path
     result = installer.apply_seed(plan)
     assert result["status"] == "ok"
     assert int(result["inserted"]) == 0
-    assert int(result["skipped"]) == 3
+    assert int(result["skipped"]) == 4
 
 
 def test_apply_seed_skipped_when_workspace_unregistered(project: Path, tmp_path: Path) -> None:

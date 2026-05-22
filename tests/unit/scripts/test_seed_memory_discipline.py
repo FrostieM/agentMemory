@@ -2,7 +2,7 @@
 
 Covers:
 
-* All 3 rules inserted on fresh DB
+* All 4 rules inserted on fresh DB
 * Re-running is idempotent: every rule reports 'skipped' on second pass
 * Each inserted rule is pinned=1 + active=1
 * applies_to_json round-trips through JSON
@@ -36,13 +36,13 @@ def db_path(tmp_path: Path) -> Path:
 # ============================================================
 
 
-def test_seed_inserts_three_rules_on_fresh_db(db_path: Path) -> None:
+def test_seed_inserts_four_rules_on_fresh_db(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:
         results = seed.seed_discipline(conn, workspace_id="ws")
     finally:
         conn.close()
-    assert len(results) == 3
+    assert len(results) == 4
     statuses = [r.status for r in results]
     assert all(s == "inserted" for s in statuses)
 
@@ -68,7 +68,7 @@ def test_seeded_rules_are_pinned_and_active(db_path: Path) -> None:
         ).fetchall()
     finally:
         conn.close()
-    assert len(rows) == 3
+    assert len(rows) == 4
     for _, pinned, active in rows:
         assert pinned == 1
         assert active == 1
@@ -91,6 +91,25 @@ def test_seeded_rules_have_graph_first_rule(db_path: Path) -> None:
     assert "memory_impact_check" in rule
     assert "Read/Edit/Grep" in rule
     assert "impact_check" in one_line
+
+
+def test_seeded_rules_have_plan_rule(db_path: Path) -> None:
+    """The plan-use rule must name plan_steps + the active-step convention."""
+    conn = sqlite3.connect(db_path)
+    try:
+        seed.seed_discipline(conn, workspace_id="ws")
+        row = conn.execute(
+            "SELECT rule, rule_one_line FROM behaviors "
+            "WHERE workspace_id = ? AND name = 'maintain-plan-steps'",
+            ("ws",),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    rule, one_line = row
+    assert "plan_steps" in rule
+    assert "active" in rule
+    assert "plan_steps" in one_line
 
 
 def test_seeded_applies_to_json_round_trips(db_path: Path) -> None:
@@ -130,7 +149,7 @@ def test_main_json_output(db_path: Path, capsys: pytest.CaptureFixture) -> None:
     rc = seed.main(["--workspace", "ws", "--db-path", str(db_path), "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert len(payload) == 3
+    assert len(payload) == 4
     assert all(item["status"] == "inserted" for item in payload)
 
 

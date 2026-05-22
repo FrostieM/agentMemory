@@ -90,6 +90,23 @@ DISCIPLINE_RULES: list[dict[str, Any]] = [
         ),
         "applies_to_json": json.dumps(["decision writes", "theory writes"]),
     },
+    {
+        "name": "maintain-plan-steps",
+        "kind": "operating_rule",
+        "rule": (
+            "For a multi-step task, keep a live plan in plan_steps — create "
+            "the steps, hold exactly one `active`, and mark each `done` / "
+            "`blocked` / `skipped` as you go. The brief's Active plan "
+            "section is the live tracker."
+        ),
+        "rule_one_line": ("Keep a live plan in plan_steps for any multi-step task."),
+        "rationale": (
+            "A plan no one maintains is dead weight: the brief's plan "
+            "section and step-bound skill activation deliver value only "
+            "when plan_steps track the work in real time."
+        ),
+        "applies_to_json": json.dumps(["multi-step tasks", "task planning", "plan_steps"]),
+    },
 ]
 
 

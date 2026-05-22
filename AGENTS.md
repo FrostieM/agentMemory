@@ -77,8 +77,13 @@ surface (every one flag-gated, default ON, byte-equivalent rollback):**
    scan the response's `capability_suggestions` field and link the
    best-matching role/skill/playbook. Unlinked decisions force the
    next agent to re-derive execution knowledge from raw episodes.
+4. **Maintain a plan in `plan_steps`** for any multi-step task —
+   create the steps up front, keep exactly ONE step `active` while
+   you work it, and mark each `done` / `blocked` / `skipped` as you
+   go. The brief's `Active plan` section is your live tracker; a plan
+   nobody maintains is dead weight.
 
-These three rules ship as **pinned** workspace behaviors via
+These four rules ship as **pinned** workspace behaviors via
 `scripts/seed_memory_discipline.py` and ride every brief automatically.
 
 ### v3 strict tools (the agent's primary surface)
