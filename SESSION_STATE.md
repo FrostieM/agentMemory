@@ -2,7 +2,95 @@
 
 Rolling state for cross-session work. Pair-read with `CLAUDE.md`.
 
-## Current state — 3.0.0 (memory as a brain + agent UX follow-ups)
+## Current state — 3.7.1 (plan-storage redesign in progress + cross-workspace leak fix)
+
+Work since 3.0.0 runs on the 3.x line — the v3.1–v3.7 feature cycles
+shipped (per-version history in `CHANGELOG.md`). The active focus is
+the **plan-storage redesign**, with a set of audit-/incident-driven
+fixes carried alongside it.
+
+### Plan-storage redesign — replacing the flat plan model
+
+Decision `dec_59ddc0bb896c4f7e`: replace the flat plan model (two
+JSON string lists `current_plan` / `completed_steps` upserted in
+place on the `task_state` row) with first-class `plan_steps` rows —
+id, task_id, parent_step_id, rank, title, body, status
+(pending/active/done/blocked/skipped), supersedes_step_id,
+source_episode_id, bi-temporal `valid_from` / `valid_to`. Six phases:
+
+- **Phase 1 — data model + migration.** Done — `plan_steps` table
+  (migration 0038) + model hardening. `77d15f7`, `c5aa202`.
+- **Phase 2 — plan writes + history.** Done — versioned write engine
+  via `writer.py`; `valid_to` timestamp alignment. `b63d9cc`,
+  `f2edc37`.
+- **Plan-step MCP surface.** Done — `plan_step` added to the generic
+  tool kind enums (`memory_get` / `memory_search` / …). `29ca4b8`
+  (task #111).
+- **Phase 3 — pinned compact plan view in the brief.** Done — the
+  active task's plan rides every brief, rendered compact (goal +
+  N/M done + in-progress step + next steps); full detail stays
+  fetch-on-demand. `8223eb5`.
+- **Phase 4 — skill activation on step-enter.** Done — capabilities
+  (skills / roles / playbooks) linked to the in-progress step via
+  `capability_links` surface as an `apply:` brief line. `89d248c`.
+- **Phase 5 — smart plan layer** (Large — subdivided):
+  - **5a — plan-health review nudges.** Done — heuristic nudges
+    (more than one step active, no active step, blocked work)
+    render as a `review:` brief line. `2f9cc9b`.
+  - **5b — distill a completed plan into a playbook.** Pending
+    (task #113) — when every live step is done/skipped, create a
+    playbook capability from the step titles in rank order.
+  - **5c — step outcomes feed skill maturity.** Pending (task #114)
+    — on a step status change, bump bound capabilities' maturity
+    counters (done → success; skipped/blocked → failure).
+- **Phase 6 — plan UI in the observatory.** Pending (task #110).
+
+Every completed phase passed round-based adversarial AI audits.
+**Next step: Phase 5b** (task #113) — the playbook distiller.
+
+### Fixes of various types (carried alongside the redesign)
+
+- **Cross-workspace ingest-leak guard — `b71cc62`, shipped as
+  3.7.1.** In hub mode a `POST /memory/ingest_file` /
+  `/memory/ingest_episode` naming a foreign `workspace_id` could
+  land in the service's anchor DB when `WorkspaceRoutingMiddleware`
+  routing was bypassed (a stale service, or a wrong `X-Memory-DB-Path`
+  header). On 2026-05-21, 134 copyBot `ingest_file` calls leaked
+  11,334 rows into the agent-memory-lite DB. `ensure_workspace_writable`
+  could not catch it — it permits every workspace in hub mode and
+  every foreign workspace with strict isolation off. New guard
+  `ensure_workspace_matches_db` (`api/workspace_routing.py`) compares
+  the connection's physical file (`PRAGMA database_list`) against the
+  workspace's registered DB (`os.path.samefile`, with a
+  `Path.resolve()` fallback) and raises `ValidationError` before any
+  row is written on a mismatch. 3 adversarial audit rounds, 13 paired
+  tests. The 11,334 leaked rows were quarantined out of the
+  agent-memory-lite DB (`scripts/memory_workspace_doctor.py
+  --quarantine --backup-first`; full-DB backup + JSON row-export
+  under `.agent_memory/backups/`). **Follow-up task #115:** extend
+  the guard to the remaining ~28 write routes.
+- **Brief-cache per-table fingerprint — `6fe7a8f`.**
+  `_workspace_fingerprint` rewritten to hash per-table `MAX`
+  timestamps (decisions / behaviors / tasks / code_digests /
+  episodes / capability_links / plan_steps) instead of a single
+  global `MAX`, so a write to one table is never masked behind a
+  higher timestamp in another — including the mixed `Z` / `+00:00`
+  timestamp formats across writers.
+- **Pre-commit ingest-hook retry — `2cd3de4`.** The dogfooding
+  pre-commit hook (`scripts/git_hooks/pre-commit`) now retries, with
+  a deadline bound, any staged file that failed the parallel
+  `/memory/ingest_file` batch, so a transient indexing failure no
+  longer leaves files unindexed.
+
+### Operator note (3.7.1)
+
+Restart the HTTP service so it runs the new code (`/health` must
+report `version=3.7.1`) — the cross-workspace guard is inert until
+the running service is restarted. Restarting Claude Desktop / Cursor
+is optional for this fix: it is HTTP-side; the MCP stdio path routes
+per-call and was never part of the leak.
+
+## Previous state — 3.0.0 (memory as a brain + agent UX follow-ups)
 
 **3.0.0 ships 2026-05-19 as the v3 final release** with the
 agent-UX follow-ups consolidated on top of the same version line
