@@ -56,6 +56,7 @@ sequence (`memory_file_digest` + `memory_graph_neighbors` + ad-hoc Grep).
 | GET | `/memory/get` | `workspace_id, kind, id, fields?` |
 | GET | `/memory/list` | `workspace_id, kind, limit, pinned_only, status?` |
 | GET | `/memory/count` | `workspace_id, kind, pinned_only, status?` |
+| GET | `/memory/plan` | `workspace_id, task_id` |
 | POST | `/memory/write` | `{workspace_id, kind, payload, agent_id?, source_episode_id?}` |
 | POST | `/memory/edit` | `{workspace_id, kind, id, fields, agent_id?}` |
 | POST | `/memory/pin` | `{workspace_id, kind, id, pinned}` |

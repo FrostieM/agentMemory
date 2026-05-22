@@ -40,7 +40,7 @@ blind — say so, do not fall back to "internal memory".
 
 ## v3.0.0-final — compact-projection surface
 
-The agent has 10 strict tools (compact projections by default,
+The agent has 12 strict tools (compact projections by default,
 ~20-40 tokens per item, full content opt-in via `fields=`) plus a
 legacy `memory_get_context` / `memory_list_*` / `memory_write_*` family
 that returns full bodies (~500-2000 tokens). The compact surface is
@@ -98,6 +98,8 @@ These four rules ship as **pinned** workspace behaviors via
 | `memory_brief(task?, max_tokens?)` | session-start brief, ≤500 tokens |
 | `memory_lint(tool_name, tool_payload)` | pre-task advisory (PreToolUse path) |
 | `memory_invoke_skill(skill_id)` | full `body_md` of a skill (ONLY surface that returns full markdown) |
+| `memory_status(include_environment?, include_active_memory?)` | anchor / registry / workspace counts / adoption diagnostic |
+| `memory_plan(task_id)` | one plan's live steps, rank-ordered compact projections |
 
 ### Discover-then-fetch pattern (compact projections)
 

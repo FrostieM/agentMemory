@@ -3,7 +3,7 @@
 Names are version-free (``memory_*``, not ``memory_v3_*``). The
 surface is intentionally minimal:
 
-  10 MCP tools = 6 strict + 2 hook primitives + 2 specialised
+  12 MCP tools = 6 strict + 2 hook primitives + 4 specialised
 
 Strict 6:
   memory_search, memory_get, memory_write,
@@ -17,6 +17,8 @@ Specialised:
     returns a full markdown body; all other tools return compact
     projections)
   memory_impact_check — pre-edit envelope: digest + callers + verdict
+  memory_status — self-introspection: anchor / registry / counts
+  memory_plan — list one plan's steps by task_id, rank-ordered
 
 list / count / rollback / versions stay HTTP-only — accessible via
 ``memory-cli`` for ops, but not in the hot MCP path. Keeps the
@@ -298,6 +300,25 @@ MEMORY_TOOLS: list[types.Tool] = [
                 "include_active_memory": {"type": "boolean", "default": False},
             },
             "required": [],
+        },
+    ),
+    types.Tool(
+        name="memory_plan",
+        description=(
+            "List the live steps of one plan (one task_id) as compact "
+            "projections in rank order: id, title, status, rank, "
+            "parent_step_id. The read companion to the plan_step write "
+            "surface -- fetch the whole plan in one call instead of "
+            "tracking step ids by hand. Re-planned-out (removed) steps "
+            "are excluded."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "workspace_id": workspace_schema(),
+                "task_id": {"type": "string", "minLength": 1},
+            },
+            "required": ["task_id"],
         },
     ),
 ]

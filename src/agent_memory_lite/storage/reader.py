@@ -183,6 +183,40 @@ def list_kind(
     return out
 
 
+def plan_for_task(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    """List one plan's live steps as compact projections, rank-ordered.
+
+    The read companion to the plan_step write surface: a single call
+    returns every live (``valid_to IS NULL``) step of ``task_id`` -- id,
+    title, status, rank -- so the agent re-finds its plan instead of
+    tracking step ids by hand. Re-planned-out steps are excluded.
+
+    Always now-only -- there is no ``as_of`` knob; ``valid_to IS NULL``
+    is a deliberate "current plan" filter. ``rank`` is not unique, so
+    ties break deterministically on ``created_at`` then ``id``; the
+    result is capped at 500 steps (far above any real plan) to bound
+    the envelope.
+    """
+    rows = conn.execute(
+        "SELECT * FROM plan_steps "
+        "WHERE workspace_id = ? AND task_id = ? AND valid_to IS NULL "
+        "ORDER BY rank, created_at, id "
+        "LIMIT 500",
+        (workspace_id, task_id),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        projection = project("plan_step", row)
+        if projection is not None:
+            out.append(projection)
+    return out
+
+
 # ============================================================
 # memory_get — fetch by id with selective fields
 # ============================================================

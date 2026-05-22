@@ -33,7 +33,7 @@ from agent_memory_lite.cognition.lint import lint as run_lint
 from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
-from agent_memory_lite.storage.reader import get_object, search
+from agent_memory_lite.storage.reader import get_object, plan_for_task, search
 from agent_memory_lite.storage.writer import archive, edit, pin, write
 
 # ============================================================
@@ -106,6 +106,20 @@ def _handle_v3_get(args: dict[str, Any]) -> dict[str, Any]:
     if obj is None:
         return _err("not_found", f"{kind}:{object_id} not found in {workspace_id}")
     return _ok(obj)
+
+
+def _handle_v3_plan(args: dict[str, Any]) -> dict[str, Any]:
+    payload = _with_workspace(args, intent="read")
+    workspace_id = str(payload["workspace_id"])
+    task_id = str(payload.get("task_id") or "")
+    if not task_id:
+        return _err("invalid_args", "task_id is required")
+    steps = plan_for_task(
+        _runtime.db_for(workspace_id),
+        workspace_id=workspace_id,
+        task_id=task_id,
+    )
+    return _ok(steps)
 
 
 # ============================================================
@@ -365,6 +379,7 @@ def _runtime_version() -> str:
 MEMORY_HANDLERS: dict[str, Any] = {
     "memory_search": _handle_v3_search,
     "memory_get": _handle_v3_get,
+    "memory_plan": _handle_v3_plan,
     "memory_write": _handle_v3_write,
     "memory_edit": _handle_v3_edit,
     "memory_pin": _handle_v3_pin,

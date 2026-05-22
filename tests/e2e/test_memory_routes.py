@@ -309,3 +309,33 @@ def test_v3_write_unsupported_kind_error(client: TestClient) -> None:
     body = r.json()
     assert body["ok"] is False
     assert body["error"]["code"] == "unsupported_kind"
+
+
+def _seed_plan_step(client: TestClient, task_id: str, title: str) -> None:
+    r = client.post(
+        "/memory/write",
+        json={
+            "workspace_id": "default",
+            "kind": "plan_step",
+            "payload": {"task_id": task_id, "title": title},
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+
+def test_v3_plan_returns_steps_rank_ordered(client: TestClient) -> None:
+    for title in ("first", "second", "third"):
+        _seed_plan_step(client, "t1", title)
+    r = client.get("/memory/plan", params={"workspace_id": "default", "task_id": "t1"})
+    body = r.json()
+    assert body["ok"] is True
+    assert [s["title"] for s in body["data"]] == ["first", "second", "third"]
+    assert all(s["kind"] == "plan_step" for s in body["data"])
+
+
+def test_v3_plan_empty_for_unknown_task(client: TestClient) -> None:
+    r = client.get("/memory/plan", params={"workspace_id": "default", "task_id": "nope"})
+    body = r.json()
+    assert body["ok"] is True
+    assert body["data"] == []

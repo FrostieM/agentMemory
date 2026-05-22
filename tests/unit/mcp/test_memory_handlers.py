@@ -83,13 +83,14 @@ def test_v3_tools_match_handlers() -> None:
         "memory_invoke_skill",
         "memory_impact_check",
         "memory_status",
+        "memory_plan",
     }
     tool_names = {t.name for t in ALL_TOOLS} & canonical
     handler_names = set(_HANDLERS) & canonical
     assert tool_names == canonical, f"missing tools: {canonical - tool_names}"
     assert handler_names == canonical, f"missing handlers: {canonical - handler_names}"
-    # 6 strict + 2 hook + invoke_skill + impact_check + status (diagnostic)
-    assert len(canonical) == 11
+    # 6 strict + 2 hook + invoke_skill + impact_check + status + plan
+    assert len(canonical) == 12
 
 
 # ============================================================
@@ -514,3 +515,113 @@ def test_write_plan_step_invalid_payload(db_conn: sqlite3.Connection) -> None:
     )
     assert env["ok"] is False
     assert env["error"]["code"] == "invalid_args"
+
+
+# ============================================================
+# memory_plan (read a plan's steps by task_id)
+# ============================================================
+
+
+def _seed_plan_step(conn: sqlite3.Connection, task_id: str, title: str) -> str:
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "plan_step",
+            "payload": {"task_id": task_id, "title": title},
+        }
+    )
+    assert env["ok"] is True, env
+    assert isinstance(env["data"], dict)
+    return str(env["data"]["id"])
+
+
+def test_plan_returns_steps_rank_ordered(db_conn: sqlite3.Connection) -> None:
+    """memory_plan lists a task's live steps as projections in rank order."""
+    for title in ("alpha", "beta", "gamma"):
+        _seed_plan_step(db_conn, "t1", title)
+    env = v3._handle_v3_plan({"workspace_id": "default", "task_id": "t1"})
+    assert env["ok"] is True
+    assert [s["title"] for s in env["data"]] == ["alpha", "beta", "gamma"]
+    assert all(s["kind"] == "plan_step" for s in env["data"])
+
+
+def test_plan_empty_for_unknown_task(db_conn: sqlite3.Connection) -> None:
+    """An unknown task_id yields an empty list, not an error."""
+    env = v3._handle_v3_plan({"workspace_id": "default", "task_id": "no-such-task"})
+    assert env["ok"] is True
+    assert env["data"] == []
+
+
+def test_plan_requires_task_id(db_conn: sqlite3.Connection) -> None:
+    """memory_plan without a task_id is an invalid_args error."""
+    env = v3._handle_v3_plan({"workspace_id": "default"})
+    assert env["ok"] is False
+    assert env["error"]["code"] == "invalid_args"
+
+
+def test_plan_excludes_removed_steps(db_conn: sqlite3.Connection) -> None:
+    """A re-planned-out step (valid_to set) drops out of memory_plan."""
+    _seed_plan_step(db_conn, "t1", "kept")
+    removed_id = _seed_plan_step(db_conn, "t1", "removed")
+    v3._handle_v3_edit(
+        {
+            "workspace_id": "default",
+            "kind": "plan_step",
+            "id": removed_id,
+            "fields": {"valid_to": "2099-01-01T00:00:00Z"},
+        }
+    )
+    env = v3._handle_v3_plan({"workspace_id": "default", "task_id": "t1"})
+    assert env["ok"] is True
+    assert [s["title"] for s in env["data"]] == ["kept"]
+
+
+def _raw_plan_step(
+    conn: sqlite3.Connection,
+    *,
+    step_id: str,
+    task_id: str,
+    rank: float,
+    title: str,
+    created_at: str,
+) -> None:
+    """Insert a plan_steps row directly, bypassing the auto-rank writer.
+
+    Lets a test pin ``rank`` and ``created_at`` exactly -- the only way
+    to construct a deterministic rank tie.
+    """
+    conn.execute(
+        "INSERT INTO plan_steps "
+        "(id, workspace_id, task_id, rank, title, valid_from, created_at, updated_at) "
+        "VALUES (?, 'default', ?, ?, ?, ?, ?, ?)",
+        (step_id, task_id, rank, title, created_at, created_at, created_at),
+    )
+    conn.commit()
+
+
+def test_plan_rank_ties_break_by_created_at(db_conn: sqlite3.Connection) -> None:
+    """Equal-rank steps order deterministically by created_at, then id.
+
+    The two steps share rank 5.0 and are inserted later-then-earlier,
+    so a plain ``ORDER BY rank`` would return them in insertion order
+    and fail this assertion -- the tiebreaker is what makes it pass.
+    """
+    _raw_plan_step(
+        db_conn,
+        step_id="step_b",
+        task_id="t1",
+        rank=5.0,
+        title="later",
+        created_at="2026-01-02T00:00:00+00:00",
+    )
+    _raw_plan_step(
+        db_conn,
+        step_id="step_a",
+        task_id="t1",
+        rank=5.0,
+        title="earlier",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    env = v3._handle_v3_plan({"workspace_id": "default", "task_id": "t1"})
+    assert env["ok"] is True
+    assert [s["title"] for s in env["data"]] == ["earlier", "later"]

@@ -43,6 +43,7 @@ from agent_memory_lite.storage.reader import (
     count_kind,
     get_object,
     list_kind,
+    plan_for_task,
     search,
 )
 from agent_memory_lite.storage.writer import (
@@ -125,6 +126,19 @@ def count_endpoint(
         conn, workspace_id=workspace_id, kind=kind, pinned_only=pinned_only, status=status
     )
     return _ok({"count": n})
+
+
+@router.get("/plan", response_model=Envelope)
+def plan_endpoint(
+    conn: DbDep,
+    settings: SettingsDep,
+    workspace_id: str = Query(min_length=1),
+    task_id: str = Query(min_length=1),
+) -> Envelope:
+    """List one plan's live steps as compact projections, rank-ordered."""
+    ensure_workspace_readable(workspace_id, settings)
+    steps = plan_for_task(conn, workspace_id=workspace_id, task_id=task_id)
+    return _ok(steps)
 
 
 # ============================================================
