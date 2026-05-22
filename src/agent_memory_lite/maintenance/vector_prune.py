@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.repositories.vector_metadata_repo import set_vector_index_row_count
 from agent_memory_lite.vector_store.base import VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
@@ -60,4 +61,22 @@ def prune_orphan_vectors(
         return 0
     # Cap per pass: a pathological backlog must not turn one brain tick
     # into a multi-thousand-row delete; the remainder clears next pass.
-    return store.delete(namespace, orphans[:max_delete])
+    store.delete(namespace, orphans[:max_delete])
+    # Recompute everything from a fresh list_ids -- never trust
+    # VectorStore.delete()'s return value. It is backend-dependent
+    # (LanceDBStore returns the requested id count, SqliteVecStore the
+    # real rowcount), so neither the row_count cache nor the pruned-count
+    # return may derive from it. SQLite's vector_index_metadata.row_count
+    # and LanceDB are separate stores; without this sync an audit reports
+    # metadata_status=degraded until the next full reindex. Commit so the
+    # sync holds for every caller, not only the brain pass with its
+    # end-of-pass commit.
+    live_count = len(store.list_ids(namespace, workspace_id=workspace_id))
+    set_vector_index_row_count(
+        conn,
+        workspace_id=workspace_id,
+        namespace=namespace,
+        row_count=live_count,
+    )
+    conn.commit()
+    return len(vector_ids) - live_count

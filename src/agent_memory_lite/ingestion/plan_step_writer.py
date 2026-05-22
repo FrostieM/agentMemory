@@ -1,29 +1,30 @@
 """Business-layer writes for plan steps.
 
-Wraps the generic versioned writer (``storage/writer.py``) with plan
-semantics: rank assignment on append, status transitions, reorder, and
-re-plan removal. Every mutation here is snapshotted into the ``versions``
-table and appended to ``audit_log`` by writer.py — history comes free.
+Wraps the generic versioned writer (``storage/writer.py``) with the one
+piece of plan semantics the generic writer lacks: ``rank`` assignment on
+append. Every mutation rides writer.py, so each write is snapshotted
+into the ``versions`` table and appended to ``audit_log`` — history
+comes free.
+
+The compact ``memory_write`` surface (HTTP ``/memory/write`` and the MCP
+``memory_write`` handler) routes ``kind="plan_step"`` through
+``add_plan_step_from_payload`` here, NOT through the generic writer:
+the generic writer has no ``rank`` default and the INSERT fails the
+NOT NULL constraint on ``plan_steps.rank``. Plain status / rank /
+valid_to edits keep going through the generic ``memory_edit`` — they
+are ordinary column updates and need no plan-specific wrapper.
 """
 
 from __future__ import annotations
 
 import sqlite3
-import time
 from typing import Any
 
-from agent_memory_lite.models.plan_step import PlanStepIn, PlanStepStatus
+from agent_memory_lite.models.plan_step import PlanStepIn
 from agent_memory_lite.repositories.plan_step_repo import max_rank
 from agent_memory_lite.storage import writer
 
 _RANK_GAP = 1.0
-
-
-def _utc_now() -> str:
-    """ISO-8601 UTC with a ``Z`` suffix — matches the format storage/writer.py
-    stamps on valid_from / created_at / updated_at, so a plan step's
-    bi-temporal columns stay lexicographically comparable."""
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def add_plan_step(
@@ -58,59 +59,30 @@ def add_plan_step(
     )
 
 
-def set_plan_step_status(
+def add_plan_step_from_payload(
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
-    step_id: str,
-    status: PlanStepStatus,
+    payload: dict[str, Any],
     agent_id: str = "agent",
+    source_episode_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Transition one step's status (pending / active / done / blocked / skipped)."""
-    return writer.edit(
-        conn,
-        workspace_id=workspace_id,
-        kind="plan_step",
-        object_id=step_id,
-        fields={"status": status},
-        agent_id=agent_id,
-    )
+    """Append a plan step from a raw ``memory_write`` payload dict.
 
+    The compact ``memory_write`` surface hands plan-step fields as a
+    loose dict. This is the single adapter the HTTP route and the MCP
+    handler both call, so a plan-step create always flows through
+    ``add_plan_step`` (which assigns ``rank``) instead of the generic
+    writer, which has no rank default and would reject the INSERT with
+    a NOT NULL violation on ``plan_steps.rank``.
 
-def move_plan_step(
-    conn: sqlite3.Connection,
-    *,
-    workspace_id: str,
-    step_id: str,
-    rank: float,
-    agent_id: str = "agent",
-) -> dict[str, Any] | None:
-    """Reorder a step by assigning a new rank — use a midpoint to slot it
-    between two existing steps without renumbering the rest."""
-    return writer.edit(
-        conn,
-        workspace_id=workspace_id,
-        kind="plan_step",
-        object_id=step_id,
-        fields={"rank": rank},
-        agent_id=agent_id,
-    )
-
-
-def remove_plan_step(
-    conn: sqlite3.Connection,
-    *,
-    workspace_id: str,
-    step_id: str,
-    agent_id: str = "agent",
-) -> dict[str, Any] | None:
-    """Remove a step from the active plan in a re-plan: stamps ``valid_to``
-    so the step drops from the current view but stays in the trajectory."""
-    return writer.edit(
-        conn,
-        workspace_id=workspace_id,
-        kind="plan_step",
-        object_id=step_id,
-        fields={"valid_to": _utc_now()},
-        agent_id=agent_id,
-    )
+    Raises ``pydantic.ValidationError`` when ``payload`` is missing a
+    required field (``task_id`` / ``title``) or carries an unknown one
+    (``PlanStepIn`` is ``extra="forbid"``); the caller maps that to an
+    ``invalid_args`` envelope.
+    """
+    fields = {k: v for k, v in payload.items() if k != "workspace_id"}
+    if source_episode_id is not None:
+        fields.setdefault("source_episode_id", source_episode_id)
+    step_in = PlanStepIn(workspace_id=workspace_id, **fields)
+    return add_plan_step(conn, step_in=step_in, agent_id=agent_id)

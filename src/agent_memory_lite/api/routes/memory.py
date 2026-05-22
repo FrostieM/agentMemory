@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Query
+from pydantic import ValidationError
 
 from agent_memory_lite.api.deps import (
     DbDep,
@@ -37,6 +38,7 @@ from agent_memory_lite.api.schemas.memory import (
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
+from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.storage.reader import (
     count_kind,
     get_object,
@@ -162,14 +164,29 @@ def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> E
 @router.post("/write", response_model=Envelope)
 def write_endpoint(req: WriteRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_writable(req.workspace_id, settings)
-    out = write(
-        conn,
-        workspace_id=req.workspace_id,
-        kind=req.kind,
-        payload=req.payload,
-        agent_id=req.agent_id,
-        source_episode_id=req.source_episode_id,
-    )
+    if req.kind == "plan_step":
+        # plan_step creates route through the business writer so `rank`
+        # is auto-assigned -- the generic writer has no rank default and
+        # the INSERT fails the NOT NULL constraint on plan_steps.rank.
+        try:
+            out = add_plan_step_from_payload(
+                conn,
+                workspace_id=req.workspace_id,
+                payload=req.payload,
+                agent_id=req.agent_id,
+                source_episode_id=req.source_episode_id,
+            )
+        except ValidationError as exc:
+            return _err("invalid_args", f"invalid plan_step payload: {exc}")
+    else:
+        out = write(
+            conn,
+            workspace_id=req.workspace_id,
+            kind=req.kind,
+            payload=req.payload,
+            agent_id=req.agent_id,
+            source_episode_id=req.source_episode_id,
+        )
     if out is None:
         return _err("unsupported_kind", f"writer does not support kind={req.kind}")
     return _ok(out)

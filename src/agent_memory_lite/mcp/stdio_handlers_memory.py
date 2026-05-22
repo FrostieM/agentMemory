@@ -25,9 +25,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
+from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.storage.reader import get_object, search
@@ -117,14 +120,32 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
     body = payload.get("payload")
     if not kind or not isinstance(body, dict):
         return _err("invalid_args", "kind + payload object are required")
-    out = write(
-        _runtime.db_for(workspace_id),
-        workspace_id=workspace_id,
-        kind=kind,
-        payload=body,
-        agent_id=str(payload.get("agent_id") or "mcp"),
-        source_episode_id=payload.get("source_episode_id"),
-    )
+    conn = _runtime.db_for(workspace_id)
+    agent_id = str(payload.get("agent_id") or "mcp")
+    source_episode_id = payload.get("source_episode_id")
+    if kind == "plan_step":
+        # plan_step creates route through the business writer so `rank`
+        # is auto-assigned -- the generic writer has no rank default and
+        # the INSERT fails the NOT NULL constraint on plan_steps.rank.
+        try:
+            out = add_plan_step_from_payload(
+                conn,
+                workspace_id=workspace_id,
+                payload=body,
+                agent_id=agent_id,
+                source_episode_id=source_episode_id,
+            )
+        except ValidationError as exc:
+            return _err("invalid_args", f"invalid plan_step payload: {exc}")
+    else:
+        out = write(
+            conn,
+            workspace_id=workspace_id,
+            kind=kind,
+            payload=body,
+            agent_id=agent_id,
+            source_episode_id=source_episode_id,
+        )
     if out is None:
         return _err("unsupported_kind", f"writer does not support kind={kind}")
     return _ok(out)

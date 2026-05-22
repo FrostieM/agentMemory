@@ -23,6 +23,7 @@ from pathlib import Path
 
 from agent_memory_lite.config import workspace_meta
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.config.workspace_paths import connection_matches_workspace
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.maintenance.retrieval_quality import (
     load_retrieval_quality_cases,
@@ -109,6 +110,7 @@ def _run_sentinel_pass_safe(
         _run_sentinel_pass(
             workspace_id=workspace_id,
             db_path=db_path,
+            settings=settings,
             embedding_provider=embedding_provider,
             vector_store=vector_store,
         )
@@ -122,6 +124,7 @@ def _run_sentinel_pass(
     *,
     workspace_id: str,
     db_path: Path,
+    settings: Settings,
     embedding_provider: EmbeddingProvider | None,
     vector_store: VectorStore | None,
 ) -> None:
@@ -129,6 +132,23 @@ def _run_sentinel_pass(
     cases = load_retrieval_quality_cases(discovery.path) if discovery.path is not None else []
     conn = sqlite3.connect(db_path, timeout=10.0)
     try:
+        # Cross-workspace guard: if this connection's physical DB is not
+        # workspace_id's registered DB, abort before any write. A
+        # misrouted (workspace_id, db_path) pair otherwise lets the brain
+        # pass write workspace_id's self_model / workspace_meta rows into
+        # a foreign DB -- the 2026-05-22 copyBot-into-agent-memory-lite
+        # leak. connection_matches_workspace returns True when it cannot
+        # tell (unregistered / anchor-colocated / in-memory / registry
+        # unreadable) so a freshly bootstrapped workspace is never falsely
+        # aborted.
+        if not connection_matches_workspace(conn, workspace_id, settings):
+            _log.error(
+                "sentinel pass aborted: connection %s is not workspace %r's "
+                "registered DB -- skipped to prevent cross-workspace pollution",
+                db_path,
+                workspace_id,
+            )
+            return
         # Path A: YAML retrieval-quality sentinels (v1.9). Only run when
         # the workspace has a sentinels YAML with cases.
         if cases:
@@ -154,21 +174,21 @@ def _run_sentinel_pass(
         # Path B: v3.0.0-final brain maintenance (Phases 1-7). Runs on
         # every overdue tick regardless of YAML presence so newly-
         # bootstrapped workspaces still grow an brain.
-        _maybe_run_brain_pass(conn, workspace_id=workspace_id)
+        _maybe_run_brain_pass(conn, workspace_id=workspace_id, settings=settings)
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:
         conn.close()
 
 
-def _maybe_run_brain_pass(conn: sqlite3.Connection, *, workspace_id: str) -> None:
+def _maybe_run_brain_pass(
+    conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
+) -> None:
     """Best-effort v3 brain maintenance. Never raises -- single bad
     workspace cannot block the sentinel commit."""
     try:
-        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
         from agent_memory_lite.maintenance.brain_pass import run_brain_pass  # noqa: PLC0415
 
-        settings = get_settings()
         if not getattr(settings, "brain_pass_enabled", True):
             return
         run_brain_pass(conn, workspace_id=workspace_id, settings=settings)

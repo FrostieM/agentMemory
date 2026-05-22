@@ -128,6 +128,31 @@ def upsert_vector_index_metadata(
     )
 
 
+def set_vector_index_row_count(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    namespace: str,
+    row_count: int,
+) -> bool:
+    """Update only the cached ``row_count`` of an existing metadata row.
+
+    A no-op (returns ``False``) when the table or the row is absent: a
+    caller that merely prunes vectors must not synthesize a partial
+    metadata row, since ``provider_name`` / ``embedding_dim`` would be
+    unknown. Used by the orphan-vector prune to keep ``row_count``
+    honest without re-deriving the whole metadata row.
+    """
+    if not table_exists(conn):
+        return False
+    cursor = conn.execute(
+        "UPDATE vector_index_metadata SET row_count = ?, updated_at = ? "
+        "WHERE workspace_id = ? AND namespace = ?",
+        (row_count, iso_now(), workspace_id, namespace),
+    )
+    return cursor.rowcount > 0
+
+
 def provider_name_from_settings(*, embedding_backend: str, embedding_model: str) -> str:
     if embedding_backend == "sentence_transformers":
         return f"st:{embedding_model}"

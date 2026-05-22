@@ -484,3 +484,33 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     assert env_anchor["error"]["code"] == "not_found"
     anchor.close()
     foreign.close()
+
+
+# ============================================================
+# plan_step write routing (Debt C — rank auto-assignment)
+# ============================================================
+
+
+def test_write_plan_step_auto_ranks(db_conn: sqlite3.Connection) -> None:
+    """memory_write(kind=plan_step) succeeds with no explicit rank: the
+    handler routes plan_step through add_plan_step_from_payload, which
+    assigns rank — the generic writer would fail the NOT NULL constraint."""
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "plan_step",
+            "payload": {"task_id": "t1", "title": "step one"},
+        }
+    )
+    assert env["ok"] is True, env
+    assert env["data"]["kind"] == "plan_step"
+    assert env["data"]["rank"] == 1.0
+
+
+def test_write_plan_step_invalid_payload(db_conn: sqlite3.Connection) -> None:
+    """A plan_step payload missing a required field maps to invalid_args."""
+    env = v3._handle_v3_write(
+        {"workspace_id": "default", "kind": "plan_step", "payload": {"task_id": "t1"}}
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "invalid_args"

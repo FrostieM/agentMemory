@@ -12,12 +12,11 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from agent_memory_lite.ingestion.plan_step_writer import (
     add_plan_step,
-    move_plan_step,
-    remove_plan_step,
-    set_plan_step_status,
+    add_plan_step_from_payload,
 )
 from agent_memory_lite.models.plan_step import PlanStepIn
 from agent_memory_lite.repositories.plan_step_repo import get_plan_step, list_plan_steps
@@ -63,49 +62,6 @@ def test_add_plan_step_explicit_rank(conn: sqlite3.Connection) -> None:
     assert step.valid_from is not None  # writer.py defaults it on write
 
 
-def test_set_plan_step_status(conn: sqlite3.Connection) -> None:
-    sid = _add(conn, title="step")
-    set_plan_step_status(conn, workspace_id="ws", step_id=sid, status="active")
-    step = get_plan_step(conn, "ws", sid)
-    assert step is not None
-    assert step.status == "active"
-
-
-def test_move_plan_step(conn: sqlite3.Connection) -> None:
-    a = _add(conn, title="a", rank=1.0)
-    b = _add(conn, title="b", rank=2.0)
-    move_plan_step(conn, workspace_id="ws", step_id=a, rank=3.0)
-    steps = list_plan_steps(conn, "ws", "t1")
-    assert [s.id for s in steps] == [b, a]
-
-
-def test_remove_plan_step(conn: sqlite3.Connection) -> None:
-    """remove stamps valid_to -> the step drops from the active plan."""
-    keep = _add(conn, title="keep")
-    gone = _add(conn, title="gone")
-    remove_plan_step(conn, workspace_id="ws", step_id=gone)
-    active = list_plan_steps(conn, "ws", "t1")
-    assert [s.id for s in active] == [keep]
-    all_steps = list_plan_steps(conn, "ws", "t1", include_removed=True)
-    assert {s.id for s in all_steps} == {keep, gone}
-
-
-def test_writes_are_versioned(conn: sqlite3.Connection) -> None:
-    """Every mutation snapshots the prior row into the versions table."""
-    sid = _add(conn, title="step")
-    set_plan_step_status(conn, workspace_id="ws", step_id=sid, status="active")
-    set_plan_step_status(conn, workspace_id="ws", step_id=sid, status="done")
-    versions = writer.list_versions(conn, workspace_id="ws", kind="plan_step", object_id=sid)
-    assert len(versions) >= 2
-
-
-def test_edit_ops_on_missing_step_return_none(conn: sqlite3.Connection) -> None:
-    """set / move / remove on an unknown step id are no-ops returning None."""
-    assert set_plan_step_status(conn, workspace_id="ws", step_id="nope", status="done") is None
-    assert move_plan_step(conn, workspace_id="ws", step_id="nope", rank=1.0) is None
-    assert remove_plan_step(conn, workspace_id="ws", step_id="nope") is None
-
-
 def test_add_plan_step_with_parent(conn: sqlite3.Connection) -> None:
     """A sub-step carries its parent_step_id through the writer."""
     root = _add(conn, title="root")
@@ -115,3 +71,91 @@ def test_add_plan_step_with_parent(conn: sqlite3.Connection) -> None:
     )
     assert out is not None
     assert out["parent_step_id"] == root
+
+
+def test_writes_are_versioned(conn: sqlite3.Connection) -> None:
+    """Every mutation snapshots the prior row into the versions table.
+
+    Status edits go through the generic ``writer.edit`` (``memory_edit``)
+    — plan_step_writer no longer carries a status wrapper.
+    """
+    sid = _add(conn, title="step")
+    writer.edit(
+        conn, workspace_id="ws", kind="plan_step", object_id=sid, fields={"status": "active"}
+    )
+    writer.edit(conn, workspace_id="ws", kind="plan_step", object_id=sid, fields={"status": "done"})
+    versions = writer.list_versions(conn, workspace_id="ws", kind="plan_step", object_id=sid)
+    assert len(versions) >= 2
+
+
+def test_add_from_payload_auto_ranks(conn: sqlite3.Connection) -> None:
+    """The memory_write adapter mints rank when the payload omits it —
+    the generic writer would fail the INSERT on the NOT NULL rank column."""
+    first = add_plan_step_from_payload(
+        conn, workspace_id="ws", payload={"task_id": "t1", "title": "first"}
+    )
+    second = add_plan_step_from_payload(
+        conn, workspace_id="ws", payload={"task_id": "t1", "title": "second"}
+    )
+    assert first is not None
+    assert second is not None
+    steps = list_plan_steps(conn, "ws", "t1")
+    assert [s.id for s in steps] == [first["id"], second["id"]]
+    assert steps[0].rank < steps[1].rank
+
+
+def test_add_from_payload_honours_explicit_rank(conn: sqlite3.Connection) -> None:
+    """An explicit rank in the payload is passed straight through."""
+    out = add_plan_step_from_payload(
+        conn, workspace_id="ws", payload={"task_id": "t1", "title": "only", "rank": 5.0}
+    )
+    assert out is not None
+    assert out["rank"] == 5.0
+
+
+def test_add_from_payload_rejects_missing_required_field(conn: sqlite3.Connection) -> None:
+    """A payload missing a required field (title) raises ValidationError —
+    the HTTP route / MCP handler map that to an invalid_args envelope."""
+    with pytest.raises(ValidationError):
+        add_plan_step_from_payload(conn, workspace_id="ws", payload={"task_id": "t1"})
+
+
+def test_add_from_payload_rejects_unknown_field(conn: sqlite3.Connection) -> None:
+    """PlanStepIn is extra='forbid' — an unknown payload key (e.g. a
+    caller-supplied id, which a plan-step create does not accept) is
+    rejected rather than silently dropped."""
+    with pytest.raises(ValidationError):
+        add_plan_step_from_payload(
+            conn,
+            workspace_id="ws",
+            payload={"task_id": "t1", "title": "x", "id": "pstep_x"},
+        )
+
+
+def test_rank_edit_reorders_via_generic_writer(conn: sqlite3.Connection) -> None:
+    """A rank edit through the generic writer (memory_edit) reorders the
+    plan — the behaviour the deleted move_plan_step wrapper used to lock."""
+    a = _add(conn, title="a", rank=1.0)
+    b = _add(conn, title="b", rank=2.0)
+    writer.edit(conn, workspace_id="ws", kind="plan_step", object_id=a, fields={"rank": 3.0})
+    steps = list_plan_steps(conn, "ws", "t1")
+    assert [s.id for s in steps] == [b, a]
+
+
+def test_valid_to_edit_drops_from_active_via_generic_writer(conn: sqlite3.Connection) -> None:
+    """A valid_to edit through the generic writer drops a step from the
+    active plan but keeps it in the trajectory — the behaviour the deleted
+    remove_plan_step wrapper used to lock."""
+    keep = _add(conn, title="keep")
+    gone = _add(conn, title="gone")
+    writer.edit(
+        conn,
+        workspace_id="ws",
+        kind="plan_step",
+        object_id=gone,
+        fields={"valid_to": "2099-01-01T00:00:00Z"},
+    )
+    active = list_plan_steps(conn, "ws", "t1")
+    assert [s.id for s in active] == [keep]
+    all_steps = list_plan_steps(conn, "ws", "t1", include_removed=True)
+    assert {s.id for s in all_steps} == {keep, gone}

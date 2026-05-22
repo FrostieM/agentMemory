@@ -16,6 +16,7 @@ import pytest
 
 from agent_memory_lite.config import workspace_meta
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.maintenance import sentinel_lock, sentinel_scheduler
 
 
@@ -26,11 +27,17 @@ def _reset_locks() -> None:
     sentinel_lock.reset_for_tests()
 
 
-def _settings(*, autorun_hours: float) -> Settings:
+def _settings(*, autorun_hours: float, db_path: Path) -> Settings:
+    """Settings whose anchor DB IS ``db_path`` and whose registry file is
+    an (absent) tmp path — so the sentinel scheduler's cross-workspace
+    guard sees a pass for the anchor workspace on ``db_path`` as
+    correctly routed instead of aborting it."""
     return Settings(  # type: ignore[call-arg]
         _env_file=None,
         OLLAMA_PROBE_SKIP="true",
         MEMORY_SENTINEL_AUTORUN_HOURS=str(autorun_hours),
+        MEMORY_DB_PATH=str(db_path),
+        MEMORY_WORKSPACES_FILE=str(db_path.parent / "workspaces.json"),
     )
 
 
@@ -78,7 +85,7 @@ def test_overdue_handles_malformed_timestamp(
 
 
 def test_disabled_when_threshold_zero(applied_conn: sqlite3.Connection, tmp_db_path: Path) -> None:
-    settings = _settings(autorun_hours=0.0)
+    settings = _settings(autorun_hours=0.0, db_path=tmp_db_path)
     scheduled = sentinel_scheduler.maybe_run_sentinels(
         workspace_id="default",
         settings=settings,
@@ -92,7 +99,7 @@ def test_disabled_when_threshold_zero(applied_conn: sqlite3.Connection, tmp_db_p
 def test_not_scheduled_when_recent_run(applied_conn: sqlite3.Connection, tmp_db_path: Path) -> None:
     _stamp_last_run(applied_conn, hours_ago=0.0)
     applied_conn.commit()
-    settings = _settings(autorun_hours=24.0)
+    settings = _settings(autorun_hours=24.0, db_path=tmp_db_path)
     scheduled = sentinel_scheduler.maybe_run_sentinels(
         workspace_id="default",
         settings=settings,
@@ -108,7 +115,7 @@ def test_scheduled_when_overdue_no_yaml_stamps_last_run(
 ) -> None:
     """When overdue but no sentinels yaml exists, the scheduler still
     stamps last_run_at so we don't try again on the next request."""
-    settings = _settings(autorun_hours=1.0)
+    settings = _settings(autorun_hours=1.0, db_path=tmp_db_path)
     scheduled = sentinel_scheduler.maybe_run_sentinels(
         workspace_id="default",
         settings=settings,
@@ -139,7 +146,7 @@ def test_in_flight_lock_blocks_concurrent_run(
     both calls would see "overdue" and start daemons in parallel.
     """
     # No prior stamp → would be "overdue".
-    settings = _settings(autorun_hours=1.0)
+    settings = _settings(autorun_hours=1.0, db_path=tmp_db_path)
     held = sentinel_lock.get_workspace_lock("default")
     assert held.acquire(blocking=False) is True
     try:
@@ -163,7 +170,7 @@ def test_lock_released_after_run(applied_conn: sqlite3.Connection, tmp_db_path: 
     Schedules one run, waits for it to finish (lock release), then schedules
     another from a "long-ago" stamp and expects it to succeed.
     """
-    settings = _settings(autorun_hours=1.0)
+    settings = _settings(autorun_hours=1.0, db_path=tmp_db_path)
     sentinel_scheduler.maybe_run_sentinels(
         workspace_id="default",
         settings=settings,
@@ -193,3 +200,57 @@ def test_lock_released_after_run(applied_conn: sqlite3.Connection, tmp_db_path: 
         vector_store=None,
     )
     assert second is True, "second overdue tick failed to schedule after release"
+
+
+def test_run_sentinel_pass_aborts_on_mismatched_db(tmp_path: Path) -> None:
+    """A misrouted (workspace_id, db_path) pair aborts before any write.
+
+    Regression for the 2026-05-22 leak: a brain pass run on a connection
+    that is not the workspace's registered DB wrote one workspace's
+    self_model / workspace_meta rows into a foreign database.
+
+    ``wrong.db`` carries the real schema, so with the guard reverted the
+    pass WOULD reach ``workspace_meta.set_value`` and stamp ``ws-a``'s
+    last-run row -- the assertion below is load-bearing only because of
+    that.
+    """
+    schema = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
+    workspaces_file = tmp_path / "workspaces.json"
+    WorkspaceRegistry(workspaces_file).register(
+        workspace_id="ws-a",
+        db_path=str(tmp_path / "ws-a.db"),
+        vector_path=str(tmp_path / "ws-a.lance"),
+    )
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        OLLAMA_PROBE_SKIP="true",
+        MEMORY_WORKSPACES_FILE=str(workspaces_file),
+    )
+    wrong_db = tmp_path / "wrong.db"
+    seed = sqlite3.connect(str(wrong_db))
+    try:
+        seed.executescript(schema.read_text(encoding="utf-8"))
+        seed.commit()
+    finally:
+        seed.close()
+
+    # workspace_id "ws-a" paired with a db_path that is NOT its registered DB.
+    sentinel_scheduler._run_sentinel_pass(
+        workspace_id="ws-a",
+        db_path=wrong_db,
+        settings=settings,
+        embedding_provider=None,
+        vector_store=None,
+    )
+
+    # The guard fired: the pass returned before any write, so the foreign
+    # DB has zero ws-a workspace_meta rows. With the guard reverted the
+    # pass would have stamped ws-a's last_sentinel_run_at here.
+    conn = sqlite3.connect(str(wrong_db))
+    try:
+        ws_a_rows = conn.execute(
+            "SELECT COUNT(*) FROM workspace_meta WHERE workspace_id = ?", ("ws-a",)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert ws_a_rows == 0
