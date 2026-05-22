@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS plan_steps (
     valid_to TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    outcome_fed_at TEXT,
     FOREIGN KEY(parent_step_id) REFERENCES plan_steps(id),
     FOREIGN KEY(supersedes_step_id) REFERENCES plan_steps(id),
     FOREIGN KEY(source_episode_id) REFERENCES episodes(id)

@@ -200,6 +200,17 @@ class Settings(BaseSettings):
     plan_playbook_distill_max_per_pass: int = Field(
         50, ge=1, le=10000, validation_alias="MEMORY_PLAN_PLAYBOOK_DISTILL_MAX_PER_PASS"
     )
+    # Phase 5c -- feed a terminal plan step's outcome (done -> success,
+    # skipped -> failure; blocked is transient, not fed) into the
+    # maturity counters of the capabilities bound to it via
+    # capability_links. Idempotent via plan_steps.outcome_fed_at; the
+    # cap bounds steps fed per pass.
+    plan_outcome_maturity_enabled: bool = Field(
+        True, validation_alias="MEMORY_PLAN_OUTCOME_MATURITY_ENABLED"
+    )
+    plan_outcome_maturity_max_per_pass: int = Field(
+        200, ge=1, le=10000, validation_alias="MEMORY_PLAN_OUTCOME_MATURITY_MAX_PER_PASS"
+    )
     # v3.0.0-final Phase 3: consolidation feedback. Each consolidation
     # insight surfaces in brief, boosts its evidence-episode usefulness,
     # and -- when confidence + surface_count cross the gate -- auto-

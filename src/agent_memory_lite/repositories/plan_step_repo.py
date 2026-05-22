@@ -142,3 +142,8 @@ def max_rank(conn: sqlite3.Connection, workspace_id: str, task_id: str) -> float
     # MAX() always yields one row — m is NULL when the plan has no steps.
     highest: float | None = row["m"]
     return highest
+
+
+# Public alias so a sibling repo module (plan_step_outcome_repo) can build
+# PlanStep rows without importing a private name.
+row_to_plan_step = _row_to_plan_step

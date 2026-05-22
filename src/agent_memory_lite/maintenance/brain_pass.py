@@ -115,6 +115,8 @@ class BrainPassReport:
     autonomous_held: int = 0
     # Phase 5b: completed plans distilled into playbooks this pass.
     plan_playbooks_distilled: int = 0
+    # Phase 5c: (plan step -> capability) outcomes fed into maturity this pass.
+    plan_step_outcomes_fed: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -151,6 +153,7 @@ class BrainPassReport:
             "autonomous_promoted": self.autonomous_promoted,
             "autonomous_held": self.autonomous_held,
             "plan_playbooks_distilled": self.plan_playbooks_distilled,
+            "plan_step_outcomes_fed": self.plan_step_outcomes_fed,
             "errors": list(self.errors),
         }
 
@@ -610,6 +613,32 @@ def _step_distill_plan_playbooks(
         report.errors.append(f"plan_playbook_distill:{exc}")
 
 
+def _step_feed_plan_outcomes(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Phase 5c: feed terminal plan-step outcomes into capability maturity.
+
+    Idempotent (``plan_steps.outcome_fed_at`` marker) + failure-soft like
+    every brain-pass step."""
+    if not settings.plan_outcome_maturity_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.plan_outcome_maturity import (  # noqa: PLC0415
+            feed_plan_step_outcomes,
+        )
+
+        report.plan_step_outcomes_fed = feed_plan_step_outcomes(
+            conn,
+            workspace_id=workspace_id,
+            max_steps=settings.plan_outcome_maturity_max_per_pass,
+        )
+    except Exception as exc:
+        report.errors.append(f"plan_outcome_maturity:{exc}")
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -640,6 +669,7 @@ def run_brain_pass(
     _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     _step_distill_plan_playbooks(conn, workspace_id, settings, report)
+    _step_feed_plan_outcomes(conn, workspace_id, settings, report)
     try:
         conn.commit()
     except sqlite3.Error as exc:
