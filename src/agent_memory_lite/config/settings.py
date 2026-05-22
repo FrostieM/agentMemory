@@ -191,6 +191,15 @@ class Settings(BaseSettings):
     vector_prune_max_per_pass: int = Field(
         2000, ge=1, le=100000, validation_alias="MEMORY_VECTOR_PRUNE_MAX_PER_PASS"
     )
+    # Phase 5b -- distil a completed plan (every live step done/skipped,
+    # >=1 done) into a `plan:<task_id>` playbook. Idempotent; the cap
+    # bounds NEW playbooks per pass.
+    plan_playbook_distill_enabled: bool = Field(
+        True, validation_alias="MEMORY_PLAN_PLAYBOOK_DISTILL_ENABLED"
+    )
+    plan_playbook_distill_max_per_pass: int = Field(
+        50, ge=1, le=10000, validation_alias="MEMORY_PLAN_PLAYBOOK_DISTILL_MAX_PER_PASS"
+    )
     # v3.0.0-final Phase 3: consolidation feedback. Each consolidation
     # insight surfaces in brief, boosts its evidence-episode usefulness,
     # and -- when confidence + surface_count cross the gate -- auto-

@@ -113,6 +113,8 @@ class BrainPassReport:
     autonomous_examined: int = 0
     autonomous_promoted: int = 0
     autonomous_held: int = 0
+    # Phase 5b: completed plans distilled into playbooks this pass.
+    plan_playbooks_distilled: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -148,6 +150,7 @@ class BrainPassReport:
             "autonomous_examined": self.autonomous_examined,
             "autonomous_promoted": self.autonomous_promoted,
             "autonomous_held": self.autonomous_held,
+            "plan_playbooks_distilled": self.plan_playbooks_distilled,
             "errors": list(self.errors),
         }
 
@@ -581,6 +584,32 @@ def _step_behavior_auto_archive(
         report.errors.append(f"behavior_auto_archive:{exc}")
 
 
+def _step_distill_plan_playbooks(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Phase 5b: distil each completed plan into a replayable playbook.
+
+    Idempotent (playbook name ``plan:<task_id>``) + failure-soft like
+    every brain-pass step."""
+    if not settings.plan_playbook_distill_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.plan_playbook_distiller import (  # noqa: PLC0415
+            distill_completed_plans,
+        )
+
+        report.plan_playbooks_distilled = distill_completed_plans(
+            conn,
+            workspace_id=workspace_id,
+            max_distill=settings.plan_playbook_distill_max_per_pass,
+        )
+    except Exception as exc:
+        report.errors.append(f"plan_playbook_distill:{exc}")
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -610,6 +639,7 @@ def run_brain_pass(
     _step_predictive_lr_train(conn, workspace_id, started, report)
     _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
+    _step_distill_plan_playbooks(conn, workspace_id, settings, report)
     try:
         conn.commit()
     except sqlite3.Error as exc:
