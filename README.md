@@ -232,11 +232,11 @@ fresh chat and the agent wires everything itself.
 
 ## Status
 
-**v3.7.0** (2026-05-21). The "memory as a brain" core shipped in the 3.0.0
+**v3.7.1** (2026-05-22). The "memory as a brain" core shipped in the 3.0.0
 line; 3.1–3.7 added the research vectors, MemBench retrieval benchmarks, an
-8-sector adversarial audit, and the orphan-vector prune loop. Every feature is
-on by default, with a flag-off path locked byte-equivalent by
-`tests/invariants/`.
+8-sector adversarial audit, the orphan-vector prune loop, and a hub-mode
+cross-workspace write guard on the ingest routes. Every feature is on by
+default, with a flag-off path locked byte-equivalent by `tests/invariants/`.
 
 ## License
 

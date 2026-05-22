@@ -9,6 +9,26 @@ Versioning follows semver from 2.0.0 onward. Minor bumps add
 functionality (and may flip a default), patch bumps fix bugs without
 behavioural change.
 
+## 3.7.1 — 2026-05-22 (cross-workspace ingest-leak guard)
+
+### Fixed
+
+- **Cross-workspace write leak on the ingest routes.** In hub mode a
+  `POST /memory/ingest_file` (or `/memory/ingest_episode`) naming a
+  foreign `workspace_id` could land in the service's anchor database
+  instead of that workspace's own — whenever `WorkspaceRoutingMiddleware`
+  routing was bypassed (a stale service, or a wrong `X-Memory-DB-Path`
+  header). On 2026-05-21, 134 copyBot `ingest_file` calls leaked into
+  the agent-memory-lite database this way. `ensure_workspace_writable`
+  could not catch it — it permits every workspace in hub mode, and every
+  foreign workspace with strict isolation off. A new guard
+  `ensure_workspace_matches_db` (`api/workspace_routing.py`) compares the
+  physical file behind the request's connection against the workspace's
+  registered DB and raises before any row is written when they are
+  different files. Wired into the `ingest_file` and `ingest_episode`
+  routes; extending the guard to the remaining write routes is tracked
+  separately.
+
 ## 3.7.0 — 2026-05-21 (audit re-audit hardening + orphan-vector self-cleaning)
 
 A deep adversarial re-audit of the API/MCP and local-only-security

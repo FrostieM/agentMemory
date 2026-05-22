@@ -16,6 +16,7 @@ from agent_memory_lite.api.schemas.ingest import (
     IngestEpisodeResponse,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.models.episodes import EpisodeIn
 
@@ -31,6 +32,7 @@ def ingest_episode_route(
     settings: SettingsDep,
 ) -> IngestEpisodeResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/ingest_episode",
