@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from agent_memory_lite.storage.reader import (
+    _MAX_SEARCH_TOKENS,
     SearchHit,
+    _search_tokens,
     count_kind,
     get_object,
     list_kind,
@@ -159,6 +161,82 @@ def test_search_kind_no_match(conn: sqlite3.Connection) -> None:
     _insert_decision(conn, id_="dec_1", title="A")
     hits = search_kind(conn, workspace_id="ws-test", kind="decision", query="xyz")
     assert hits == []
+
+
+def test_search_kind_multi_word_non_contiguous(conn: sqlite3.Connection) -> None:
+    """A multi-word query matches when the row carries the tokens — even
+    out of order. The old whole-query LIKE only matched a verbatim
+    substring of the entire query, so this returned nothing."""
+    _insert_decision(conn, id_="dec_1", title="Plan storage redesign for steps")
+    hits = search_kind(conn, workspace_id="ws-test", kind="decision", query="storage redesign plan")
+    assert len(hits) == 1
+    assert hits[0].projection["id"] == "dec_1"
+
+
+def test_search_kind_ranks_by_token_coverage(conn: sqlite3.Connection) -> None:
+    """A row matching more distinct query tokens ranks above one matching fewer."""
+    _insert_decision(conn, id_="dec_all", title="alpha beta gamma delta")
+    _insert_decision(conn, id_="dec_some", title="alpha beta only")
+    hits = search_kind(
+        conn, workspace_id="ws-test", kind="decision", query="alpha beta gamma delta"
+    )
+    assert [h.projection["id"] for h in hits] == ["dec_all", "dec_some"]
+    assert hits[0].score > hits[1].score
+
+
+def test_search_kind_only_short_tokens_returns_empty(conn: sqlite3.Connection) -> None:
+    """A query of only sub-2-char tokens has nothing to match on."""
+    _insert_decision(conn, id_="dec_1", title="A B C")
+    assert search_kind(conn, workspace_id="ws-test", kind="decision", query="a b c") == []
+
+
+def test_search_tokens_dedup_trim_minlen() -> None:
+    """_search_tokens lower-cases, trims punctuation, dedups, drops <2-char."""
+    assert _search_tokens("Plan, plan STORAGE x") == ["plan", "storage"]
+    assert _search_tokens("ui db") == ["ui", "db"]
+    assert _search_tokens("   ") == []
+
+
+def test_search_multi_word_finds_decision(conn: sqlite3.Connection) -> None:
+    """End-to-end through search(): a multi-word query reaches a decision —
+    the regression that silently defeated discipline rule #2."""
+    _insert_decision(conn, id_="dec_1", title="Replace flat plan with first-class steps")
+    hits = search(conn, workspace_id="ws-test", query="first-class plan steps", limit=10)
+    assert any(h.projection["id"] == "dec_1" for h in hits)
+
+
+def test_search_kind_best_match_survives_large_candidate_set(conn: sqlite3.Connection) -> None:
+    """The genuine top match ranks #1 even when many rows share a common
+    token — the in-SQL match-count ORDER BY, not an arbitrary window."""
+    for i in range(60):
+        _insert_decision(conn, id_=f"dec_c{i}", title="common topic")
+    _insert_decision(conn, id_="dec_best", title="common rare topic")
+    hits = search_kind(conn, workspace_id="ws-test", kind="decision", query="common rare", limit=5)
+    assert hits[0].projection["id"] == "dec_best"
+    assert hits[0].score > hits[1].score
+
+
+def test_search_kind_underscore_is_literal(conn: sqlite3.Connection) -> None:
+    """An underscore in a token matches a literal underscore, not LIKE's
+    any-char wildcard (escaped LIKE)."""
+    _insert_decision(conn, id_="dec_lit", title="the plan_steps table")
+    _insert_decision(conn, id_="dec_wild", title="the planXsteps table")
+    hits = search_kind(conn, workspace_id="ws-test", kind="decision", query="plan_steps")
+    assert [h.projection["id"] for h in hits] == ["dec_lit"]
+
+
+def test_search_kind_score_stays_below_chunk_band(conn: sqlite3.Connection) -> None:
+    """search_kind scores cap at 0.5 — below the 0.8 chunk-FTS band — so
+    this interim path never outranks a real BM25 chunk hit."""
+    _insert_decision(conn, id_="dec_1", title="alpha beta gamma")
+    hits = search_kind(conn, workspace_id="ws-test", kind="decision", query="alpha beta gamma")
+    assert hits[0].score == 0.5  # full token coverage -> exactly the cap
+
+
+def test_search_tokens_caps_token_count() -> None:
+    """A pathological many-word query is capped at _MAX_SEARCH_TOKENS."""
+    many = " ".join(f"tok{i}" for i in range(200))
+    assert len(_search_tokens(many)) == _MAX_SEARCH_TOKENS
 
 
 def test_search_multi_kind(conn: sqlite3.Connection) -> None:

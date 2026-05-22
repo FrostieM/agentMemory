@@ -321,6 +321,48 @@ def get_object(
 # ============================================================
 
 
+# A query token shorter than this is too noisy for a LIKE scan (every
+# row contains "a"); 2 keeps meaningful short tokens like "ui" / "db".
+_MIN_SEARCH_TOKEN_LEN = 2
+# Cap on query tokens — bounds the generated SQL (one CASE arm per
+# token), mirroring the chunk path's _sanitize length cap.
+_MAX_SEARCH_TOKENS = 32
+# Punctuation trimmed from each token so "plan_steps." matches the bare
+# word in stored text.
+_TOKEN_TRIM = ".,;:!?()[]{}\"'`"
+
+
+def _search_tokens(query: str) -> list[str]:
+    """Whitespace-split a query into distinct lower-cased LIKE tokens.
+
+    Order-preserving dedup; punctuation trimmed from each token; tokens
+    shorter than ``_MIN_SEARCH_TOKEN_LEN`` dropped as too noisy; the
+    list capped at ``_MAX_SEARCH_TOKENS`` so a pathological query cannot
+    explode the generated SQL.
+    """
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for raw in query.lower().split():
+        tok = raw.strip(_TOKEN_TRIM)
+        if len(tok) >= _MIN_SEARCH_TOKEN_LEN and tok not in seen:
+            seen.add(tok)
+            tokens.append(tok)
+            if len(tokens) >= _MAX_SEARCH_TOKENS:
+                break
+    return tokens
+
+
+def _like_pattern(token: str) -> str:
+    """A LIKE pattern matching ``token`` as a literal substring.
+
+    ``\\`` / ``%`` / ``_`` inside the token are escaped so a token like
+    ``plan_steps`` matches a literal underscore, not LIKE's any-char
+    wildcard. Pair with ``LIKE ? ESCAPE '\\'``.
+    """
+    escaped = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 def search_kind(
     conn: sqlite3.Connection,
     *,
@@ -329,30 +371,56 @@ def search_kind(
     query: str,
     limit: int = 10,
 ) -> list[SearchHit]:
-    """LIKE-based search across the kind's free-text columns.
+    """Token-overlap search across the kind's free-text columns.
 
-    Pragmatic v1 implementation: scans `_KIND_FTS_COLUMNS[kind]` with
-    LIKE patterns. A future plan adds FTS5 + LanceDB + jina rerank to
-    the chunks table; this function handles non-chunk kinds where the
-    body lives in the kind's own table.
+    Each query token is matched independently with an escaped LIKE
+    substring scan over ``_KIND_FTS_COLUMNS[kind]``. The distinct-token
+    match count is computed IN SQL and used for ``ORDER BY``, so the
+    ``LIMIT`` keeps the genuine top matches rather than an arbitrary
+    candidate window. The returned score is ``0.5 * matched / tokens``
+    — within (0, 0.5], deliberately below the chunk-FTS score band so
+    this interim path never outranks a real BM25 chunk hit.
+
+    The prior implementation LIKE-matched the *whole query* as one
+    substring, so any multi-word query missed every row lacking that
+    verbatim phrase — which silently defeated ``memory_search`` for
+    decisions / theories / behaviors (chunks have their own FTS5 path).
+    A future plan adds FTS5 + rerank to these kinds.
     """
     if kind not in _KIND_TABLES or kind not in _KIND_FTS_COLUMNS:
         return []
+    tokens = _search_tokens(query)
+    if not tokens:
+        return []
     table, _ = _KIND_TABLES[kind]
     cols = _KIND_FTS_COLUMNS[kind]
-    pattern = f"%{query.lower()}%"
-    or_clauses = " OR ".join([f"LOWER(IFNULL({c}, '')) LIKE ?" for c in cols])
-    sql = f"SELECT * FROM {table} WHERE workspace_id = ? AND ({or_clauses}) LIMIT ?"
-    params: list[Any] = [workspace_id]
-    params.extend([pattern] * len(cols))
+    # Per token: 1 when it appears in ANY searchable column. The sum is
+    # the row's distinct-token match count; ORDER BY it so LIMIT keeps
+    # the true top matches, not an arbitrary candidate window.
+    col_likes = " OR ".join(f"LOWER(IFNULL({c}, '')) LIKE ? ESCAPE '\\'" for c in cols)
+    case_arms: list[str] = []
+    params: list[Any] = []
+    for tok in tokens:
+        case_arms.append(f"(CASE WHEN ({col_likes}) THEN 1 ELSE 0 END)")
+        params.extend([_like_pattern(tok)] * len(cols))
+    score_expr = " + ".join(case_arms)
+    params.append(workspace_id)
     params.append(limit)
+    sql = (
+        f"SELECT *, ({score_expr}) AS _match_score FROM {table} "
+        "WHERE workspace_id = ? ORDER BY _match_score DESC LIMIT ?"
+    )
     rows = conn.execute(sql, params).fetchall()
     hits: list[SearchHit] = []
     for row in rows:
+        matched = int(row["_match_score"])
+        if matched == 0:
+            continue
         projection = project(kind, row)
         if projection is None:
             continue
-        hits.append(SearchHit(kind=kind, projection=projection, score=0.5))
+        score = 0.5 * matched / len(tokens)
+        hits.append(SearchHit(kind=kind, projection=projection, score=score))
     return hits
 
 
