@@ -46,7 +46,7 @@ def test_queue_html_contract(app_factory) -> None:
     assert 'id="filter-kind"' in html
     assert 'id="filter-severity"' in html
     # Wires to the new HTTP routes.
-    assert "/memory/list_maintenance_events" in html
+    assert "/memory/maintenance_events" in html
     assert "/memory/claim_maintenance_event" in html
     assert "/memory/dismiss_maintenance_event" in html
     assert "/memory/resolve_maintenance_event" in html
@@ -59,7 +59,7 @@ def test_queue_html_contract(app_factory) -> None:
 
 @pytest.mark.parametrize(
     "page_name",
-    ["index", "code", "graph", "recall", "reflexes", "metrics", "review", "browse"],
+    ["index", "recall", "reflexes", "metrics", "review", "browse"],
 )
 def test_queue_link_present_in_sibling_pages(app_factory, page_name: str) -> None:
     """Every existing UI page exposes the Queue link in the nav, so the
@@ -114,7 +114,7 @@ def test_queue_browser_smoke() -> None:
     # come back, the operator should seed one before running this
     # smoke test.
     seed = httpx.post(
-        f"{base}/memory/list_maintenance_events",
+        f"{base}/memory/maintenance_events",
         json={
             "workspace_id": _LIVE_WS,
             "action_statuses": ["open", "claimed"],

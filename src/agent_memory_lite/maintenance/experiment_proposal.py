@@ -51,7 +51,7 @@ class ExperimentProposal:
 
     ``source_episode_id`` carries the first evidence-episode id from the
     underlying insight when available — it satisfies the
-    ``memory_candidates.source_episode_id`` FK on persist. Empty when
+    ``candidates.source_episode_id`` FK on persist. Empty when
     the insight has no recorded evidence episodes (persist_proposal
     skips those rather than fabricating an episode).
     """
@@ -265,7 +265,7 @@ def find_proposal_candidates(
         if evidence_n < min_ev:
             continue
         # Vector1-audit M3: strip + min-length gate to keep
-        # whitespace-only summaries out of memory_candidates.
+        # whitespace-only summaries out of candidates.
         if len(summary.strip()) < _MIN_SUMMARY_LEN:
             continue
         # Live-validation-2026-05-20: skip auto-event-noise insights.

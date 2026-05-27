@@ -1,18 +1,7 @@
-"""UserPromptSubmit memory brief hook: prepend a ≤500-token brief from /memory/brief.
+"""UserPromptSubmit memory brief hook: prepend a <=500-token v3 brief.
 
-Memory brief hook -- replacement for ``scripts/inject_memory_context.py``. Where the v2 hook
-emits a verbose ``<memory_context>`` envelope (~1500 tokens) by calling
-``/memory/get_context``, this hook emits a tight pre-task brief composed
-from compact projections (~500 tokens) by calling ``/memory/brief``.
-
-Architecture:
-
-* The v2 hook keeps shipping for projects still on v2.
-* This hook is opt-in via setup_agent.py (added at week 5)
-  or by manually editing ``~/.claude/settings.json``.
-* At week 8 cutover, setup_agent flips new projects to this hook by
-  default.
-
+This is the active hook. It calls ``/memory/brief`` and injects compact
+projection output instead of the old XML context envelope.
 Stdin: a Claude Code event JSON with at least ``{"prompt": "<text>"}``.
 Other fields (``cwd``, ``session_id``, ``workspace_id``) are forwarded
 into workspace resolution when present.
@@ -45,10 +34,16 @@ import contextlib
 import hashlib
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
 import httpx
+
+try:
+    from hook_audit import record_hook_event
+except ImportError:  # pragma: no cover - used when tests import scripts as a package
+    from scripts.hook_audit import record_hook_event
 
 # Force UTF-8 stdout so the brief block is never truncated on Windows.
 with contextlib.suppress(AttributeError, ValueError):
@@ -89,7 +84,20 @@ def _validate_base(raw: str) -> str:
 
 
 DEFAULT_BASE = _validate_base(os.environ.get("AGENT_MEMORY_BASE", "http://127.0.0.1:8765"))
-DEFAULT_WORKSPACE = os.environ.get("AGENT_MEMORY_WORKSPACE", "")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+
+
+def _env_first(*names: str) -> str:
+    """Return the first non-empty env value from canonical-to-legacy names."""
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+DEFAULT_WORKSPACE = _env_first("MEMORY_WORKSPACE_ID", "AGENT_MEMORY_WORKSPACE")
 DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MEMORY_BRIEF_TOKENS", "500"))
 DEFAULT_TIMEOUT = float(os.environ.get("AGENT_MEMORY_BRIEF_TIMEOUT", "10.0"))
 REGISTRY_PATH = (
@@ -98,12 +106,15 @@ REGISTRY_PATH = (
     else Path.home() / ".agent_memory" / "workspaces.json"
 )
 # Fallback workspace when cwd is not inside any registered project_root.
-# Mirrors the v2 inject_memory_context.py global-fallback behaviour so the
-# operator who opens Claude Code from a parent / unregistered directory
+# Global fallback keeps an agent useful when the operator opens Claude Code
+# from a parent / unregistered directory
 # still gets a meaningful brief (pinned rules from the global workspace)
 # instead of an empty envelope. Disable with
 # ``AGENT_MEMORY_HOOK_FALLBACK=disabled``.
 GLOBAL_FALLBACK_WORKSPACE = os.environ.get("AGENT_MEMORY_FALLBACK_WORKSPACE", "global")
+GLOBAL_FALLBACK_ROOT = Path(
+    os.environ.get("AGENT_MEMORY_GLOBAL_ROOT", str(Path.home() / ".agent_memory" / "global"))
+)
 HOOK_FALLBACK_DISABLED = os.environ.get("AGENT_MEMORY_HOOK_FALLBACK", "").strip().lower() in {
     "0",
     "false",
@@ -143,11 +154,11 @@ def _list_registry() -> list[dict[str, object]]:
 
 def _safe_registry_path(raw: str) -> str:
     """Round-2 audit: reject registry db_path / vector_path shapes that
-    are never a legitimate local DB path — UNC / network paths, null
+    are never a legitimate local DB path: UNC / network paths, null
     bytes, non-absolute paths. The registry file is the trust root, so
     full root-confinement buys little and would break the multi-project
     design; this only blocks the unambiguously-malicious shapes. A
-    rejected value returns '' → the hook routes without the header and
+    rejected value returns ''; the hook routes without the header and
     the service falls back to its anchor DB."""
     raw = (raw or "").strip()
     if not raw or "\x00" in raw:
@@ -178,6 +189,38 @@ def _resolve_workspace_from_cwd(cwd: Path) -> tuple[str, str, str]:
                     _safe_registry_path(str(entry.get("vector_path", ""))),
                 )
     return ("", "", "")
+
+
+def _global_fallback_paths() -> tuple[str, str]:
+    """Return deterministic DB/vector paths for the unregistered global fallback."""
+    return (
+        _safe_registry_path(str(GLOBAL_FALLBACK_ROOT / "memory.db")),
+        _safe_registry_path(str(GLOBAL_FALLBACK_ROOT / "vectors.lance")),
+    )
+
+
+def _bootstrap_global_workspace(db_path: str, *, workspace_id: str) -> None:
+    """Best-effort local bootstrap for the unregistered global fallback DB."""
+    if not db_path:
+        return
+    for path in (SRC_ROOT, REPO_ROOT):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        apply_migrations(conn)
+        try:
+            from scripts.seed_memory_discipline import seed_discipline  # noqa: PLC0415
+
+            seed_discipline(conn, workspace_id=workspace_id)
+        except Exception:
+            pass
+    finally:
+        conn.close()
 
 
 def _emit_brief(body_md: str) -> None:
@@ -240,7 +283,7 @@ def _load_memo(session_id: str) -> dict[str, object]:
 
 
 def _save_memo(session_id: str, *, body_hash: str, turn: int) -> None:
-    """Best-effort write — failure here must not break the hook."""
+    """Best-effort write - failure here must not break the hook."""
     p = _session_memo_path(session_id)
     try:
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -253,7 +296,7 @@ def _save_memo(session_id: str, *, body_hash: str, turn: int) -> None:
 
 
 def _body_hash(body_md: str) -> str:
-    """Stable fingerprint of the brief body — short SHA1 hex."""
+    """Stable fingerprint of the brief body - short SHA1 hex."""
     return hashlib.sha1(body_md.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
@@ -281,7 +324,7 @@ def _should_skip_brief(
         # Same content + we're not at the periodic refresh point.
         _save_memo(session_id, body_hash=current_hash, turn=next_turn)
         return (True, next_turn)
-    # Hash changed OR refresh due → emit + reset counter.
+    # Hash changed OR refresh due: emit + reset counter.
     _save_memo(session_id, body_hash=current_hash, turn=1)
     return (False, 1)
 
@@ -325,15 +368,22 @@ def _fetch_brief(
     return data if isinstance(data, dict) else None
 
 
-def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early returns per failure mode
+def main() -> int:  # noqa: PLR0912, PLR0915 - linear hook flow with explicit early returns per failure mode
     event = _read_event()
     prompt = str(event.get("prompt", "")).strip()
     if not prompt:
+        record_hook_event(
+            hook="UserPromptSubmit",
+            event=event,
+            workspace_id="",
+            status="skip",
+            detail="empty_prompt",
+        )
         return 0
 
     workspace = str(event.get("workspace_id") or DEFAULT_WORKSPACE or "")
-    db_path = os.environ.get("AGENT_MEMORY_DB_PATH", "")
-    vector_path = os.environ.get("AGENT_MEMORY_VECTOR_PATH", "")
+    db_path = _safe_registry_path(_env_first("MEMORY_DB_PATH", "AGENT_MEMORY_DB_PATH"))
+    vector_path = _safe_registry_path(_env_first("VECTOR_DB_PATH", "AGENT_MEMORY_VECTOR_PATH"))
 
     if not workspace or not db_path:
         cwd_candidates: list[Path] = []
@@ -353,6 +403,14 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
     used_global_fallback = False
     if not workspace:
         if HOOK_FALLBACK_DISABLED:
+            record_hook_event(
+                hook="UserPromptSubmit",
+                event=event,
+                workspace_id="",
+                status="notice",
+                detail="no_workspace_fallback_disabled",
+                db_path=db_path,
+            )
             _emit_notice(
                 "no workspace registered for this cwd. "
                 "Run `python scripts/setup_agent.py --project <path>` "
@@ -360,7 +418,7 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
                 "AGENT_MEMORY_HOOK_FALLBACK to use the `global` workspace."
             )
             return 0
-        # Fall back to the global workspace — operator opened Claude Code
+        # Fall back to the global workspace - operator opened Claude Code
         # from a directory that doesn't match any registered project_root.
         # The global workspace is seeded with the same 3 pinned discipline
         # rules so the brief is still useful (not the empty envelope that
@@ -375,7 +433,15 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
                     str(entry.get("vector_path") or "")
                 )
                 break
-        used_global_fallback = True
+        if not db_path:
+            fallback_db, fallback_vectors = _global_fallback_paths()
+            db_path = db_path or fallback_db
+            vector_path = vector_path or fallback_vectors
+    used_global_fallback = True
+
+    if used_global_fallback and db_path:
+        with contextlib.suppress(Exception):
+            _bootstrap_global_workspace(db_path, workspace_id=workspace)
 
     headers: dict[str, str] = {}
     if db_path:
@@ -386,7 +452,7 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
     raw_session = event.get("session_id") or event.get("transcript_path") or ""
     session_id = str(raw_session) if raw_session else None
     # v3.2: skip the server-side sticky-brief shrink so the body stays
-    # consistent across calls — otherwise our fingerprint dedup misses
+    # consistent across calls - otherwise our fingerprint dedup misses
     # the 2nd-turn emit when server shrinks 500->200 tokens. Client-side
     # dedup gives the same savings without the extra mid-turn render.
     data = _fetch_brief(
@@ -397,6 +463,15 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
         session_id=None if DEFAULT_DEDUP_ENABLED else session_id,
     )
     if data is None:
+        record_hook_event(
+            hook="UserPromptSubmit",
+            event=event,
+            workspace_id=workspace,
+            status="notice",
+            detail="brief_unreachable",
+            db_path=db_path,
+            extra={"base_url": DEFAULT_BASE},
+        )
         _emit_notice(
             f"agent-memory-lite memory brief unreachable at {DEFAULT_BASE}. "
             "Run `python -m agent_memory_lite` to start the service."
@@ -405,14 +480,21 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
 
     body_md = data.get("body_md")
     if not isinstance(body_md, str) or not body_md.strip():
-        _emit_notice("memory brief returned no body — empty workspace?")
+        record_hook_event(
+            hook="UserPromptSubmit",
+            event=event,
+            workspace_id=workspace,
+            status="notice",
+            detail="empty_brief",
+            db_path=db_path,
+        )
+        _emit_notice("memory brief returned no body - empty workspace?")
         return 0
 
     if used_global_fallback:
         # Prefix the brief with a visible breadcrumb so the agent (and
         # operator) see that the brief is from the global workspace, not
-        # the project they meant to open. Mirrors v2 inject_memory_context.py
-        # hook_notice for parity.
+        # the project they meant to open.
         registered = sorted(
             str(e.get("id", "?")) for e in _list_registry() if isinstance(e, dict)
         ) or ["<empty>"]
@@ -422,7 +504,7 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
             f"`{workspace}` (registered workspaces: {registered}). "
             f"To get a project-scoped brief, open Claude Code from one of the "
             f"registered project roots, or set "
-            f"AGENT_MEMORY_WORKSPACE=<id> in the env.\n"
+            f"MEMORY_WORKSPACE_ID=<id> in the env.\n"
             f"</hook_notice>\n"
         )
         body_md = notice + body_md
@@ -433,9 +515,27 @@ def main() -> int:  # noqa: PLR0912 — linear hook flow with explicit early ret
     # where memory state did not change.
     skip, turn = _should_skip_brief(session_id=session_id, body_md=body_md)
     if skip:
+        record_hook_event(
+            hook="UserPromptSubmit",
+            event=event,
+            workspace_id=workspace,
+            status="ok",
+            detail="brief_unchanged",
+            db_path=db_path,
+            extra={"turn": turn},
+        )
         _emit_unchanged(turn)
         return 0
 
+    record_hook_event(
+        hook="UserPromptSubmit",
+        event=event,
+        workspace_id=workspace,
+        status="ok",
+        detail="brief_emitted",
+        db_path=db_path,
+        extra={"body_chars": len(body_md), "global_fallback": used_global_fallback},
+    )
     _emit_brief(body_md)
     return 0
 

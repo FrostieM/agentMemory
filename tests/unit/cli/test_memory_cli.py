@@ -59,26 +59,11 @@ def test_brief_text_mode_prints_body_md(captured: dict, capsys: pytest.CaptureFi
     assert "token_count" not in out  # text mode strips envelope
 
 
-def test_list_passes_kind_and_filters(captured: dict) -> None:
-    _run(
-        [
-            "list",
-            "--workspace",
-            "ws",
-            "--kind",
-            "decision",
-            "--limit",
-            "5",
-            "--pinned-only",
-            "--status",
-            "active",
-        ]
-    )
-    params = captured["kwargs"]["params"]
-    assert params["kind"] == "decision"
-    assert params["limit"] == 5
-    assert params["pinned_only"] is True
-    assert params["status"] == "active"
+@pytest.mark.parametrize("cmd", ["list", "count", "rollback", "versions"])
+def test_removed_legacy_commands_are_not_registered(cmd: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _run([cmd, "--workspace", "ws"])
+    assert exc.value.code == 2
 
 
 def test_get_with_fields(captured: dict) -> None:
@@ -206,47 +191,9 @@ def test_skill_invoke(captured: dict) -> None:
     assert captured["path"] == "/memory/skill/skill_x"
 
 
-def test_rollback_required_args(captured: dict) -> None:
-    _run(
-        [
-            "rollback",
-            "--workspace",
-            "ws",
-            "--kind",
-            "decision",
-            "--id",
-            "dec_x",
-            "--to-version",
-            "2",
-            "--why",
-            "v3 broke prod",
-        ]
-    )
-    body = captured["kwargs"]["json"]
-    assert body["to_version"] == 2
-    assert body["why"] == "v3 broke prod"
-
-
-def test_versions_listing(captured: dict) -> None:
-    _run(
-        [
-            "versions",
-            "--workspace",
-            "ws",
-            "--kind",
-            "decision",
-            "--id",
-            "dec_x",
-        ]
-    )
-    params = captured["kwargs"]["params"]
-    assert params["kind"] == "decision"
-    assert params["id"] == "dec_x"
-
-
 def test_envelope_error_returns_nonzero(captured: dict, capsys: pytest.CaptureFixture) -> None:
     captured["response"] = {"ok": False, "error": {"code": "not_found", "message": "x"}}
-    rc = _run(["count", "--workspace", "ws", "--kind", "decision"])
+    rc = _run(["get", "--workspace", "ws", "--kind", "decision", "--id", "dec_x"])
     assert rc == 1
     body = json.loads(capsys.readouterr().out)
     assert body["ok"] is False
@@ -263,5 +210,5 @@ def test_workspace_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Re-import to refresh DEFAULT_WORKSPACE.
     importlib.reload(cli)
     parser = cli._build_parser()  # type: ignore[attr-defined]
-    args = parser.parse_args(["count", "--kind", "decision"])
+    args = parser.parse_args(["get", "--kind", "decision", "--id", "dec_x"])
     assert args.workspace == "env-ws"

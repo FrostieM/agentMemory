@@ -1,11 +1,8 @@
-# Operations guide
+﻿# Operations guide
 
 Operational knowledge for running agent-memory-lite day-to-day:
-upgrade workflow, service auto-start, hook fallback chain, hub-mode +
-legacy DB behaviour, troubleshooting common failure modes. Pair with
-[`docs/V1_1_0.md`](V1_1_0.md) for the env-flag map and
-[`docs/V1_1_0_CALIBRATION.md`](V1_1_0_CALIBRATION.md) for calibration
-evidence.
+upgrade workflow, service auto-start, hook fallback chain, hub-mode
+behaviour, and troubleshooting common failure modes.
 
 ## v3.0.0 deployment (canonical path)
 
@@ -21,27 +18,26 @@ This:
    `<project>/.agent_memory/`.
 2. Registers the workspace in `~/.agent_memory/workspaces.json` so the
    hub mode can route to it.
-3. Applies the v3 schema (idempotent — `CREATE TABLE IF NOT EXISTS`
-   for every table; safe on existing v2 DBs).
+3. Applies the v3 schema (idempotent on fresh/current v3 DBs).
 4. Seeds the 4 pinned discipline rules (graph-tools-first /
-   search-before-write / capability-link-on-write /
+   search-before-write / capability-suggestion-on-write /
    maintain-plan-steps) into the v3 `behaviors` table.
-5. Writes hooks to `<project>/.claude/settings.json`:
-   * `UserPromptSubmit` → `scripts/inject_memory_brief.py`
-     (≤500-token brief)
-   * `PostToolUse` (`Edit|Write|NotebookEdit|MultiEdit`) →
+5. Writes hooks to `<project>/.claude/settings.json` and
+   `<project>/.codex/hooks.json`:
+   * `UserPromptSubmit` в†’ `scripts/inject_memory_brief.py`
+     (в‰¤500-token brief)
+   * `PostToolUse` (`Edit|Write|NotebookEdit|MultiEdit`) в†’
      `scripts/post_edit_enqueue.py` (digest queue)
-   * `PreToolUse` → `scripts/pre_tool_use_check.py`
-     (fail-OPEN — never blocks tool calls on unrelated errors)
-6. Applies v3.0.0-final brain migrations (0002_outcome_loop,
-   0003_hebbian, 0004_consolidation_feedback, 0005_reflexes,
-   0006_self_model, 0007_bi_temporal, 0008_causal_links). All idempotent.
+   * `PreToolUse` в†’ `scripts/pre_tool_use_check.py`
+     (fail-OPEN вЂ” never blocks tool calls on unrelated errors)
+6. Applies the canonical v3 `0001_init` migration when the workspace DB is
+   new. Existing v3 DBs remain forward-only and are not reinitialized.
 7. Seeds the 3 Phase-4 baseline reflex rules (advisory enforcement).
-   Operator promotes advisory → block via `memory_edit` once a rule
+   Operator promotes advisory в†’ block via `memory_edit` once a rule
    fires reliably without false positives.
 8. Updates project `CLAUDE.md` + `AGENTS.md` with the agent contract.
 
-Idempotent — re-running is safe. New rules / hooks insert; existing
+Idempotent вЂ” re-running is safe. New rules / hooks insert; existing
 ones are detected by marker substring and refreshed.
 
 ### Verify deployment
@@ -49,19 +45,20 @@ ones are detected by marker substring and refreshed.
 After `setup_agent.py` finishes:
 
 ```bash
-# 1. Settings.json has both hooks (current marker = "memory-brief" /
-#    "memory-postedit"; the legacy "v3-brief" / "v3-postedit" markers
-#    are also accepted for older installs).
-python -c "import json; d = json.load(open('<project>/.claude/settings.json')); \
-  print('UserPromptSubmit:', any('memory-brief' in str(h) or 'v3-brief' in str(h) for h in d.get('hooks', {}).get('UserPromptSubmit', []))); \
-  print('PostToolUse:',     any('memory-postedit' in str(h) or 'v3-postedit' in str(h) for h in d.get('hooks', {}).get('PostToolUse', [])))"
+# 1. Claude/Codex project configs have all three v3 hooks.
+python -c "import json, pathlib; p=pathlib.Path('<project>'); \
+for rel in ('.claude/settings.json','.codex/hooks.json'): \
+ d=json.loads((p/rel).read_text()); h=d.get('hooks', {}); print(rel); \
+ print('  UserPromptSubmit:', any('inject_memory_brief.py' in str(x) for x in h.get('UserPromptSubmit', []))); \
+ print('  PreToolUse:', any('pre_tool_use_check.py' in str(x) for x in h.get('PreToolUse', []))); \
+ print('  PostToolUse:', any('post_edit_enqueue.py' in str(x) for x in h.get('PostToolUse', [])))"
 
 # 2. Pinned rules in DB
 sqlite3 <project>/.agent_memory/memory.db \
   "SELECT name, pinned FROM behaviors WHERE pinned=1 ORDER BY name;"
 
 # 3. Compose a brief manually (no Claude Code session needed)
-python -c "import sqlite3; from agent_memory_lite.v3.cognition.brief import compose_brief; \
+python -c "import sqlite3; from agent_memory_lite.cognition.brief import compose_brief; \
   conn = sqlite3.connect('<project>/.agent_memory/memory.db'); \
   print(compose_brief(conn, workspace_id='<your-workspace>').body_md)"
 ```
@@ -72,7 +69,7 @@ After 1-2 days of work in the project, measure adoption:
 python scripts/measure_tool_usage.py --since-days 2
 ```
 
-Target: `graph_share >= 0.30` — agent reaches for `memory_*`
+Target: `graph_share >= 0.30` вЂ” agent reaches for `memory_*`
 instead of `Read` / `Grep`. Baseline measured on existing projects:
 `0.00%` (graph tools effectively unused before v3 stack).
 
@@ -81,10 +78,10 @@ instead of `Read` / `Grep`. Baseline measured on existing projects:
 After installing v3 hooks, the agent runtime needs a refresh to pick
 them up:
 
-* **Claude Code chats**: open a **new** session in the project root —
+* **Claude Code chats**: open a **new** session in the project root вЂ”
   `.claude/settings.json` is read at session start, current chats
   don't re-read it mid-flight.
-* **MCP stdio server**: spawned per chat — new chat = new MCP =
+* **MCP stdio server**: spawned per chat вЂ” new chat = new MCP =
   fresh v3 handler code.
 * **HTTP service** on port 8765: rebuild only needed if you want
   `/memory/*` routes (mounted via `api/app_routes.py`). The
@@ -137,18 +134,18 @@ After `git pull` / a new tag, three things may need refreshing:
    ```bash
    curl -s http://127.0.0.1:8765/health \
      | python -c "import sys,json; d=json.load(sys.stdin); print(d['version'], d['applied_migrations'][-1])"
-   # expected: 1.1.0  0025_hygiene_recurrence
+   # expected: current version and 0001_init for fresh workspaces
    ```
 
 ## Service auto-start options
 
 Three options for keeping the HTTP service alive on a developer
-machine. Pick one — running multiple competes for port 8765.
+machine. Pick one вЂ” running multiple competes for port 8765.
 
-### Task Scheduler — production grade (Windows, requires admin once)
+### Task Scheduler вЂ” production grade (Windows, requires admin once)
 
 * Auto-starts at login.
-* `RestartCount=3` with `RestartInterval=1 minute` — automatic
+* `RestartCount=3` with `RestartInterval=1 minute` вЂ” automatic
   restart on crash.
 * No interactive console; logs go to `logs/`.
 
@@ -181,10 +178,10 @@ powershell -ExecutionPolicy Bypass -File `
   -Action Uninstall -WorkspaceId <your-workspace-id>
 ```
 
-### Startup folder — dev grade (Windows, no admin)
+### Startup folder вЂ” dev grade (Windows, no admin)
 
 Drop a small launcher in the user Startup folder. Auto-starts at
-login but **no restart on crash** — if the process dies, it stays
+login but **no restart on crash** вЂ” if the process dies, it stays
 dead until next login.
 
 ```powershell
@@ -210,7 +207,7 @@ Remove later:
 Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\agent-memory-lite.ps1"
 ```
 
-### Manual — debug / CI
+### Manual вЂ” debug / CI
 
 Just run from terminal. Stays alive while terminal is open.
 
@@ -225,7 +222,7 @@ cd /path/to/agent-memory-lite
 
 If you have a Startup folder script and want to switch to Task
 Scheduler, **remove the Startup script first** before installing the
-task — otherwise both try to bind port 8765 at login and one of them
+task вЂ” otherwise both try to bind port 8765 at login and one of them
 fails noisily.
 
 ```powershell
@@ -241,26 +238,25 @@ Start-ScheduledTask -TaskName "agent-memory-lite-<your-workspace-id>"
 
 ## Hook fallback chain
 
-`scripts/inject_memory_context.py` runs on every user prompt
+`scripts/inject_memory_brief.py` runs on every user prompt
 (UserPromptSubmit hook). The fallback order is:
 
 ```
-1. POST http://127.0.0.1:8765/memory/get_context (default path)
-   ↓ on httpx.ConnectError (service down / refused)
-2. Open SQLite directly + run FTS-only build (~30ms, no embedding)
-   ↓ on import or DB error
-3. Emit notice in <agent-memory> tag — agent runs blind on memory
+1. Resolve workspace from MEMORY_WORKSPACE_ID or workspaces.json.
+2. If cwd is unregistered, bootstrap/register the local `global`
+   workspace under ~/.agent_memory/global/.
+3. GET http://127.0.0.1:8765/memory/brief for a compact v3 brief.
+4. Emit a one-line <agent-memory> notice if the HTTP service is down
+   or returns an invalid envelope.
 ```
 
-Step 2 (FTS fallback) was added in 1.1.0. Quality is degraded vs the
-HTTP path: no vector ranking, no graph walk, no EWMA re-rank. But
-`<core_memory>` / `<behavior_instructions>` / `<active_decisions>` /
-`<retrieved_chunks>` still render — agent is not blind.
+The active hook calls only the v3 brief endpoint and never renders
+retired XML context sections. If it emits only a
+notice, fix the HTTP service (see auto-start section) or run
+`python scripts/setup_agent.py --project <path>` so the cwd resolves
+to a registered workspace.
 
-When the hook lands at step 3, fix the service (see auto-start
-section). Step 2 is a resilience layer, not a substitute.
-
-## Hub mode + legacy DBs
+## Hub mode + partial-schema DBs
 
 The HTTP service runs in **hub mode** when `MEMORY_HUB_MODE=true` or
 when `~/.agent_memory/workspaces.json` has more than one entry.
@@ -275,23 +271,17 @@ nothing matches (e.g. you opened an admin shell in
 hook falls back to a global workspace at `~/.agent_memory/global/`
 (opt out with `AGENT_MEMORY_HOOK_FALLBACK=disabled`).
 
-**The catch:** that global DB might have been bootstrapped by an
-older release with only v1.0.x migrations applied. When the v1.1.0
-service routes a request to it, the v1.5 / v1.6 / v2.2 post-build
-hooks try to write columns / tables that don't exist on the legacy
-schema.
+**The catch:** an old or manually-created DB may not have every optional
+column/table expected by observability paths. Read-side helpers treat
+missing optional tables as empty and missing optional columns as zero/None
+where that is safe.
 
-1.1.0 handles this gracefully: every legacy-schema write path catches
-`sqlite3.OperationalError` and degrades to a no-op. The route still
-returns 200. The catch-all global DB is read-mostly anyway so the
-silent skip is fine.
-
-If you want the legacy DB upgraded:
+The v3-only migration runner does **not** apply `0001_init` to a DB that
+still contains old pre-v3 tables. That would mix old and new active tables.
+Back up the old DB, export anything you need,
+then bootstrap a fresh v3 workspace.
 
 ```bash
-# Either: open it with the current service once — apply_migrations
-# auto-applies on first connection.
-# Or: re-bootstrap explicitly:
 python scripts/setup_agent.py --project ~/.agent_memory/global \
   --workspace global --no-hook
 ```
@@ -300,9 +290,8 @@ python scripts/setup_agent.py --project ~/.agent_memory/global \
 
 ### `<agent-memory>` notice: "agent-memory-lite is not running"
 
-The HTTP service is down. The hook tried the FTS fallback and that
-also failed (no DB resolved from cwd / registry). Either start the
-service (see auto-start), or check that your project root is in
+The HTTP service is down or refused the brief request. Start the
+service (see auto-start), then check that your project root is in
 `~/.agent_memory/workspaces.json`:
 
 ```bash
@@ -315,36 +304,33 @@ python scripts/register_workspace.py register \
 
 Look at the service log for the actual exception. Two common causes:
 
-* **Legacy DB** routed via hub mode — fixed in 1.1.0; if you're on an
-  older version, upgrade or set `MEMORY_HUB_MODE=false` and pin to
-  one workspace.
-* **Pollution / corruption** — run
+* **Partial-schema DB** routed via hub mode -- bootstrap a fresh v3 DB for
+  that workspace if the missing object is part of the canonical schema.
+* **Pollution / corruption** вЂ” run
   `python scripts/memory_audit.py --workspace <id> --json`
   to inspect; repair only with explicit `--repair-*` flags after
   reading the report.
 
 ### MCP tools work, hook doesn't
 
-The hook depends on HTTP (with FTS fallback). MCP stdio is
-independent — has its own local fallback. If MCP works but the hook
-shows "not running", the FTS fallback path also failed. Most likely
-cause: the cwd isn't registered AND
+The hook depends on HTTP. MCP stdio is independent and can still work
+when the HTTP service is down. If MCP works but the hook shows
+"not running", the most likely cause is: the cwd isn't registered AND
 `AGENT_MEMORY_HOOK_FALLBACK=disabled` was set, so the hook didn't
 auto-bootstrap the global workspace. Either register your cwd, or
 clear the env var.
 
 ### `no such table` / `no such column` in service logs
 
-Means a legacy-schema DB got routed to a v1.1.0 code path. As of
-1.1.0 these errors no longer surface as 500 — the hook just no-ops
-the affected feature. To recover full functionality on that DB, run
-`apply_migrations` on it (see legacy DB section above).
+Means the DB is missing an expected table or column. For canonical schema
+objects, re-run setup against a fresh v3 workspace DB; for optional
+observability fields, the active code should degrade without returning 500.
 
 ### Port 8765 already in use at startup
 
 Two service instances trying to bind. Common causes:
 
-* Both Task Scheduler and Startup folder script installed — pick one.
+* Both Task Scheduler and Startup folder script installed вЂ” pick one.
 * Manual `python -m agent_memory_lite` left running. Find + kill:
   ```powershell
   Get-NetTCPConnection -LocalPort 8765 -State Listen `
@@ -381,9 +367,9 @@ python scripts/setup_agent.py --project /path/to/your/project \
 
 Two ways:
 
-* **UI dropdown** at `http://127.0.0.1:8765/ui` — top-right corner,
+* **UI dropdown** at `http://127.0.0.1:8765/ui` вЂ” top-right corner,
   picks any registered workspace, no service restart.
-* **MCP per-call routing** — pass `workspace_id` in the call (and
+* **MCP per-call routing** вЂ” pass `workspace_id` in the call (and
   the hub-mode service routes to that DB via the registry).
 
 ### Remove a workspace
@@ -397,7 +383,6 @@ manually if you want full cleanup.
 
 ## See also
 
-* [`docs/V1_1_0.md`](V1_1_0.md) — env-flag map for all the v1.4-v1.9 + v2 loops
-* [`docs/V1_1_0_CALIBRATION.md`](V1_1_0_CALIBRATION.md) — calibration evidence + reproduction
-* [`docs/AGENT_CONTRACT.md`](AGENT_CONTRACT.md) — canonical agent operating contract
-* [`CHANGELOG.md`](../CHANGELOG.md) — release notes
+* [`docs/AGENT_CONTRACT.md`](AGENT_CONTRACT.md) вЂ” canonical agent operating contract
+* [`docs/REMOVED.md`](REMOVED.md) вЂ” removed legacy surfaces and replacement map
+* [`CHANGELOG.md`](../CHANGELOG.md) вЂ” release notes

@@ -17,19 +17,14 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_INTER_AGENT_MIN_TITLE_LEN", raising=False)
 
 
-CANONICAL_ROOT = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-
-
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Hybrid schema — legacy + canonical (needs outcome_score)."""
+    """Fresh schema from the root migration runner."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     c = open_connection(tmp_path / "ia.db")
     apply_migrations(c)
-    c.executescript((CANONICAL_ROOT / "0001_init.sql").read_text(encoding="utf-8"))
-    c.executescript((CANONICAL_ROOT / "0002_outcome_loop.sql").read_text(encoding="utf-8"))
     try:
         yield c
     finally:
@@ -127,7 +122,7 @@ def test_import_emits_candidate_on_conflict(
     n = ia.import_beliefs(conn, workspace_id="ws", beliefs=beliefs, source_episode_id="ep_conflict")
     assert n == 1
     row = conn.execute(
-        "SELECT kind, subject, predicate, object, status FROM memory_candidates "
+        "SELECT kind, subject, predicate, object, status FROM candidates "
         "WHERE id = 'cand_neg_dec_foreign__dec_local'"
     ).fetchone()
     assert row is not None
@@ -159,9 +154,9 @@ def test_import_idempotent(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyP
         ia.import_beliefs(conn, workspace_id="ws", beliefs=beliefs, source_episode_id="ep_idem")
         == 1
     )
-    n_rows = conn.execute(
-        "SELECT COUNT(*) FROM memory_candidates WHERE kind = 'negotiation'"
-    ).fetchone()[0]
+    n_rows = conn.execute("SELECT COUNT(*) FROM candidates WHERE kind = 'negotiation'").fetchone()[
+        0
+    ]
     assert n_rows == 1
 
 

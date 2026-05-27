@@ -106,8 +106,7 @@ def test_runner_handles_retrieval_context_quality_case(
             ],
             "query": "heap_watchdog memory pressure",
             "expect_labels": ["heap"],
-            "expect_sources": ["fts", "vector"],
-            "expect_sections": ["retrieved_chunks"],
+            "expect_sources": ["fts"],
             "expect_substrings": ["heap_watchdog v2"],
             "top_k": 3,
         }
@@ -168,8 +167,7 @@ def test_runner_handles_research_context_case(fake_embedding_provider, fake_vect
                 },
             ],
             "query": "paper selector research agenda",
-            "expect_sections": ["active_theories", "research_agenda"],
-            "expect_substrings": ["Sparse paper opens", "Soft-gate replay", "selector-gate"],
+            "expect_substrings": ["Sparse paper opens", "selector-gate"],
         }
     ]
     report = run_evals(

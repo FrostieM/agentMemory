@@ -74,7 +74,7 @@ def _capability_text_skill(row: sqlite3.Row) -> str:
 
 
 def _capability_text_role(row: sqlite3.Row) -> str:
-    parts = [str(row["name"] or ""), str(row["purpose"] or "")]
+    parts = [str(row["name"] or ""), str(row["summary"] or "")]
     for col in ("responsibilities_json", "boundaries_json"):
         with contextlib.suppress(TypeError, ValueError, json.JSONDecodeError):
             parts.extend(json.loads(row[col] or "[]"))
@@ -82,7 +82,7 @@ def _capability_text_role(row: sqlite3.Row) -> str:
 
 
 def _capability_text_playbook(row: sqlite3.Row) -> str:
-    parts = [str(row["name"] or ""), str(row["goal"] or "")]
+    parts = [str(row["name"] or ""), str(row["summary"] or "")]
     for col in ("triggers_json", "steps_json", "success_criteria_json"):
         with contextlib.suppress(TypeError, ValueError, json.JSONDecodeError):
             parts.extend(json.loads(row[col] or "[]"))
@@ -90,10 +90,10 @@ def _capability_text_playbook(row: sqlite3.Row) -> str:
 
 
 _TextFn = Callable[[sqlite3.Row], str]
-_TABLE_CONFIG: tuple[tuple[str, str, str, _TextFn], ...] = (
-    ("skill", "agent_skills", "summary", _capability_text_skill),
-    ("role", "agent_roles", "purpose", _capability_text_role),
-    ("playbook", "agent_playbooks", "goal", _capability_text_playbook),
+_TABLE_CONFIG: tuple[tuple[str, str, _TextFn], ...] = (
+    ("skill", "summary", _capability_text_skill),
+    ("role", "summary", _capability_text_role),
+    ("playbook", "summary", _capability_text_playbook),
 )
 
 
@@ -129,10 +129,11 @@ def suggest_capabilities(
         return []
     out: list[CapabilitySuggestion] = []
     conn.row_factory = sqlite3.Row
-    for kind, table, primary_col, text_fn in _TABLE_CONFIG:
+    for kind, primary_col, text_fn in _TABLE_CONFIG:
         try:
             rows = conn.execute(
-                f"SELECT * FROM {table} WHERE workspace_id = ?", (workspace_id,)
+                "SELECT * FROM skills WHERE workspace_id = ? AND subtype = ?",
+                (workspace_id, kind),
             ).fetchall()
         except sqlite3.OperationalError:
             continue

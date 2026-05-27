@@ -1,9 +1,8 @@
 """Phase 22: cross-cutting trust & safety invariants.
 
 * Local-only guard: importing the cloud-banned packages would fail at
-  ruff time, so we don't try at runtime; instead we assert that
-  /memory/get_context never includes raw-SECRET-looking strings ingested
-  earlier.
+  ruff time, so we don't try at runtime; instead we assert storage never
+  includes raw-SECRET-looking strings ingested earlier.
 * Trust gate: after writing an episode that contains a fake API key, the
   redaction layer must scrub it before storage.
 """

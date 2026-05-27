@@ -78,12 +78,13 @@ def test_label_does_not_affect_search_ranking(client: TestClient) -> None:
         json={
             "workspace_id": "default",
             "query": "UNIQ_LABEL_TOKEN_zzz",
-            "mode": "fts",
             "limit": 5,
         },
     )
     assert response.status_code == 200, response.text
-    hits = response.json().get("hits", [])
+    body = response.json()
+    assert body["ok"] is True
+    hits = body["data"]
     # The label is purely visual: FTS over raw_text/text doesn't index it.
     assert hits == []
 

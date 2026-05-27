@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -19,14 +18,14 @@ from agent_memory_lite.storage.reader import (
     search_kind,
 )
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -259,6 +258,35 @@ def test_search_respects_kinds_filter(conn: sqlite3.Connection) -> None:
     hits = search(conn, workspace_id="ws-test", query="kelly", kinds=["behavior"], limit=10)
     kinds = {h.kind for h in hits}
     assert kinds == {"behavior"}
+
+
+def test_search_unknown_kind_raises(conn: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="unknown kinds"):
+        search(conn, workspace_id="ws-test", query="kelly", kinds=["decisions"], limit=10)
+
+
+def test_archived_decision_hidden_from_list_and_search_but_gettable(
+    conn: sqlite3.Connection,
+) -> None:
+    _insert_decision(conn, id_="dec_archived", title="Archive needle")
+    conn.execute(
+        "UPDATE decisions SET status = 'archived' WHERE id = ?",
+        ("dec_archived",),
+    )
+    conn.commit()
+
+    assert list_kind(conn, workspace_id="ws-test", kind="decision") == []
+    assert search(conn, workspace_id="ws-test", query="archive needle", limit=10) == []
+
+    out = get_object(
+        conn,
+        workspace_id="ws-test",
+        kind="decision",
+        object_id="dec_archived",
+        fields=["status"],
+    )
+    assert out is not None
+    assert out["status"] == "archived"
 
 
 def test_workspace_isolation(conn: sqlite3.Connection) -> None:

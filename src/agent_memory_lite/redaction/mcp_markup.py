@@ -59,7 +59,7 @@ def has_mcp_markup(text: str | None) -> bool:
 def extract_rationale(decision_text: str | None) -> str | None:
     """Pull rationale content from leaked `<parameter name="rationale">`.
 
-    Used by the ``/memory/write_decision`` route to recover rationale
+    Used by the ``memory_write(kind=decision)`` path to recover rationale
     that leaked into ``decision_text`` when the agent's MCP invocation
     accidentally embedded the parameter boundary inside the value.
     Returns the inner text (stripped) or None if no rationale block.

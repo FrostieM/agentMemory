@@ -1,23 +1,20 @@
-"""Regression injection test for v2.3 sentinel scheduler.
+"""Regression injection test for the sentinel scheduler.
 
-Validates the behavioral claim: sentinels actually CATCH a regression,
-they don't just pass-through-and-stamp.
+Validates the behavioral claim: sentinels actually catch a regression,
+they do not just pass through and stamp success.
 
 Procedure:
 1. Pick 3 well-defined decisions from the workspace.
-2. Build retrieval-quality cases that query for each decision's id by
-   the words in its title (FTS-only — no embedding model needed).
-3. Run the cases against the unmodified DB (baseline). All 3 must pass.
-4. INJECT a regression: archive one of the 3 decisions
-   (status='superseded', is_archived=1 — same path archive route uses).
-5. Re-run the cases. Exactly 1 must fail (the archived one), the other
-   2 must still pass — proves the sentinel detects targeted regression
-   without spurious failures.
+2. Build retrieval-quality cases that query for each decision's title words.
+3. Run the cases against the unmodified DB. All 3 must pass.
+4. Inject a regression by archiving one of the 3 decisions.
+5. Re-run the cases. Exactly 1 must fail, proving the sentinel detects
+   a targeted regression without spurious failures.
 
 Usage:
     python scripts/calibration/regression_injection.py --db <path> --workspace <id>
 
-Calibration evidence in docs/V1_1_0_CALIBRATION.md.
+Historical calibration evidence lives in git history.
 """
 
 from __future__ import annotations
@@ -39,13 +36,13 @@ def _pick_cases(conn: sqlite3.Connection, workspace: str) -> list[RetrievalQuali
     """Pick 3 active decisions and build a retrieval case per decision.
 
     Each case queries for the title and asserts the decision_text
-    substring appears in the envelope. Using decision_text — not the
-    decision id — gates the assertion on actual rendering of the
-    ``<active_decisions>`` section: insights and chunks may still
-    reference an archived decision by id, but only the active
-    decisions section renders the body. So when the decision is
-    archived, this substring drops out and the case fails — exactly
-    the regression behavior we want to detect.
+    substring appears in the compact v3 surface. Using decision_text,
+    not the decision id, gates the assertion on actual active-decision
+    visibility: insights and chunks may still reference an archived
+    decision by id, but the brief/search surface must not keep showing
+    the archived decision body. When the decision is archived, this
+    substring drops out and the case fails, which is the targeted
+    regression behavior this script validates.
     """
     rows = conn.execute(
         """
@@ -125,8 +122,8 @@ def main() -> None:
         print("ERROR: need at least 3 active decisions for the test")
         sys.exit(1)
 
-    # Use the case name to recover the target decision id (cases don't
-    # carry the id in expected_substrings — we attached only the body).
+    # Use the case body to recover the target decision id; cases carry
+    # only the expected substring, not the id.
     target_id = next(
         r[0]
         for r in conn.execute(
@@ -137,37 +134,33 @@ def main() -> None:
     )
     target_name = cases[0].name
 
-    # Phase 1: baseline — must all pass
     baseline = _run(conn, args.workspace, cases, "BASELINE (no regression)")
     if baseline["failed"] > 0:
         print(
-            f"\nWARN: baseline had {baseline['failed']} failures — picking different "
+            f"\nWARN: baseline had {baseline['failed']} failures; picking different "
             "decisions might be needed. Continuing."
         )
 
-    # Phase 2: inject and re-run
     print(f"\n--- INJECTING regression: archive {target_id} ({target_name}) ---")
     _inject_regression(conn, target_id)
     try:
         post = _run(conn, args.workspace, cases, "POST-INJECTION")
     finally:
-        # Always restore so the calibration DB stays usable.
         _restore_decision(conn, target_id)
         print(f"\n--- restored {target_id} ---")
 
-    # Verdict
     print("\n=== VERDICT ===")
     expected_post_fail = 1
     actual_post_fail = post["failed"] - baseline["failed"]
     if actual_post_fail >= expected_post_fail:
         print(
-            f"PASS — sentinel detected the regression "
+            "PASS - sentinel detected the regression "
             f"(baseline failures: {baseline['failed']}, post: {post['failed']}, "
             f"delta: +{actual_post_fail})"
         )
     else:
         print(
-            f"FAIL — regression slipped past sentinels "
+            "FAIL - regression slipped past sentinels "
             f"(baseline: {baseline['failed']}, post: {post['failed']}, "
             f"delta: +{actual_post_fail}, expected: +{expected_post_fail})"
         )

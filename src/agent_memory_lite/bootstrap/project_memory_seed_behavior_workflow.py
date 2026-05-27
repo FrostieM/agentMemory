@@ -5,7 +5,7 @@ consolidation) to keep modules ≤150 SLOC. These rules govern the agent's
 working-loop discipline: query memory before reading source, never push to
 git without explicit permission. Both are seed-pinned (see
 ``PINNED_DISCIPLINE_FACTORIES`` in ``project_memory_seed_behavior.py``)
-so they ride every active envelope regardless of query relevance.
+so they ride every active brief regardless of query relevance.
 """
 
 from __future__ import annotations
@@ -25,17 +25,16 @@ def memory_first_before_edit_instruction(
     """Generic discipline rule: query memory before reading/editing source.
 
     Closes the "agent has the tools but defaults to Read/Grep" adoption
-    gap (see dec_ebc1c147bcde92e3 self-audit). The v1.4 → v2.1.x
-    code-memory tools — memory_file_digest, memory_find_symbols,
-    memory_graph_neighbors — answer "what does this file do" and "who
-    depends on X" in one call. Read+Grep returns raw text and forces the
-    agent to reconstruct the structure manually. The friction is habit,
-    not access; this rule lives in every workspace's
-    ``<behavior_instructions>`` envelope so the discipline is the
-    agent's first read, not an afterthought.
+    gap (see dec_ebc1c147bcde92e3 self-audit). The v3
+    memory_impact_check surface answers "what does this file do", "who calls
+    it", "which symbols are hot", and "how risky is this edit" in one call.
+    Read+Grep returns raw text and forces the agent to reconstruct the
+    structure manually. The friction is habit, not access; this rule
+    lives in every workspace's pinned behavior set so the discipline is
+    the agent's first read, not an afterthought.
 
     Project-AGNOSTIC — applies to any agent on any project that has
-    indexed source files via memory_ingest_file.
+    indexed source files.
     """
     return BehaviorInstructionIn(
         workspace_id=workspace_id,
@@ -44,21 +43,17 @@ def memory_first_before_edit_instruction(
             "TRIGGER: before any Read / Grep / Glob / Edit / Write on a source file in "
             "this workspace, and before answering a question that requires reading code.\n\n"
             "ACTION:\n"
-            "  1. CALL memory_file_digest(file_path) FIRST. Returns: chunk_count, "
-            "symbol kinds, in/out edges, recent versions, narrative.\n"
-            "  2. IF digest returned found=false: you MUST call "
-            "memory_ingest_file(path, content) BEFORE any Read/Grep/Edit. "
-            "Re-ingest is idempotent (content_hash skip). NEVER fallback to "
-            "bare Read/Grep on a missing-from-index file — that is the loophole "
-            "this rule closes.\n"
-            "  3. FOR EACH function you are about to modify: call "
-            "memory_symbol_history(qualified_name) AND memory_breaking_changes(since_days=7). "
-            "This gives WHAT changed, WHEN, and (via paired decisions/episodes) WHY.\n"
-            "  4. FOR symbol lookup: prefer memory_find_symbols over Grep (qualified-name-aware).\n"
-            "  5. FOR 'who depends on X' questions: use memory_graph_neighbors, not full-text search.\n\n"
+            "  1. CALL memory_impact_check(file_path) FIRST. Returns: digest, "
+            "callers, hot symbols, verdict, and advisory.\n"
+            "  2. IF verdict is high or advisory reports stale/missing digest: narrow "
+            "the edit, verify callers explicitly, and keep the patch scoped.\n"
+            "  3. FOR EACH function you are about to modify: use the impact_check "
+            "callers/hot-symbol output as the first dependency map before reading raw text.\n"
+            "  4. FOR symbol lookup or 'who depends on X' questions: prefer the "
+            "impact_check/code graph surfaces over bare full-text search.\n\n"
             "KEY INVARIANT: Read/Grep on an un-indexed file is silently making memory "
-            "obsolete. The indexed copy is where 'when and why' lives — bypass it once "
-            "and the next agent has no history."
+            "obsolete. The indexed copy is where impact and dependency context lives; "
+            "bypass it once and the next agent has no history."
         ),
         kind=BehaviorInstructionKind.WORKFLOW_PREFERENCE,
         scope=BehaviorInstructionScope.WORKSPACE,
@@ -66,11 +61,9 @@ def memory_first_before_edit_instruction(
         conflict_policy=BehaviorConflictPolicy.HIGHER_PRIORITY_WINS,
         rationale=(
             "Self-audit 2026-05-10: agent shipped a 4-file UI patch via "
-            "Read+Grep, never calling memory_file_digest. v2.2.x 2026-05-13 "
-            "strengthening: closed the 'fallback to Read if memory yields "
-            "nothing' loophole (let agents bypass indexing) and added "
-            "symbol_history + breaking_changes requirement so WHAT changed, "
-            "WHEN, and WHY is loaded before modifying a function."
+            "Read+Grep, never calling code-memory first. The v3 rewrite makes "
+            "memory_impact_check the single first step so digest, callers, hot "
+            "symbols, verdict, and advisory are loaded before modifying a file."
         ),
         applies_to=[
             "before Read tool",

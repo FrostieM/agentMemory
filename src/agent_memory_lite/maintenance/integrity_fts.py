@@ -1,4 +1,4 @@
-"""FTS-side integrity checks + retrieval round-trip check."""
+"""FTS-side integrity checks + v3 search round-trip check."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from agent_memory_lite.maintenance.integrity_models import (
     sample_query,
     table_exists,
 )
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.storage.reader import search
 
 
 def fts_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
@@ -83,20 +82,23 @@ def roundtrip_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityChe
     for token in tokens:
         hits = search_chunks_fts(conn, workspace_id=workspace_id, query=token, limit=10)
         fts_hit_ids = {hit.chunk_id for hit in hits}
-        built = build_context(
+        compact_hits = search(
             conn,
-            RetrievalQuery(workspace_id=workspace_id, query=token, max_tokens=1200),
-            embedding_provider=None,
-            vector_store=None,
+            workspace_id=workspace_id,
+            query=token,
+            kinds=["chunk"],
+            limit=10,
         )
-        context_hit_ids = {hit.id for hit in built.hits}
-        shared = context_hit_ids & fts_hit_ids
+        search_hit_ids = {
+            str(hit.projection.get("id")) for hit in compact_hits if hit.projection.get("id")
+        }
+        shared = search_hit_ids & fts_hit_ids
         tried.append(
             {
                 "query": token,
                 "fts_hits": len(hits),
-                "context_hits": len(built.hits),
-                "shared_context_fts_hits": len(shared),
+                "search_hits": len(compact_hits),
+                "shared_search_fts_hits": len(shared),
             }
         )
         if hits and shared:
@@ -106,9 +108,9 @@ def roundtrip_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityChe
                     "query": token,
                     "expected_chunk_id": expected_chunk_id,
                     "fts_ok": True,
-                    "context_ok": True,
-                    "context_hits": len(built.hits),
-                    "shared_context_fts_hits": len(shared),
+                    "search_ok": True,
+                    "search_hits": len(compact_hits),
+                    "shared_search_fts_hits": len(shared),
                 },
             )
     return IntegrityCheck(
@@ -117,9 +119,9 @@ def roundtrip_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityChe
             "query": tokens[0],
             "expected_chunk_id": expected_chunk_id,
             "fts_ok": any(item["fts_hits"] for item in tried),
-            "context_ok": False,
-            "context_hits": max((item["context_hits"] for item in tried), default=0),
-            "shared_context_fts_hits": 0,
+            "search_ok": False,
+            "search_hits": max((item["search_hits"] for item in tried), default=0),
+            "shared_search_fts_hits": 0,
             "tried": tried,
         },
     )

@@ -92,7 +92,7 @@ def test_auto_promote_uses_episode_workspace(
     assert result.auto_promoted_decisions == 0
     assert result.candidates_written == 1
     candidate = applied_conn.execute(
-        "SELECT workspace_id, status FROM memory_candidates WHERE source_episode_id = ?",
+        "SELECT workspace_id, status FROM candidates WHERE source_episode_id = ?",
         (result.episode.id,),
     ).fetchone()
     assert candidate is not None
@@ -101,7 +101,7 @@ def test_auto_promote_uses_episode_workspace(
     leaked = applied_conn.execute(
         """
         SELECT COUNT(*)
-        FROM memory_candidates
+        FROM candidates
         WHERE source_episode_id = ? AND workspace_id = 'default'
         """,
         (result.episode.id,),

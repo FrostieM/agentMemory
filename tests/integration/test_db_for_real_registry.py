@@ -109,9 +109,9 @@ def test_db_for_routes_explicit_workspace_via_registry(
         # Insert a marker row into beta DB so we can prove db_for hit it.
         beta_direct = sqlite3.connect(beta_db)
         beta_direct.execute(
-            "INSERT INTO core_memory (id, workspace_id, key, value, "
+            "INSERT INTO behaviors (id, workspace_id, name, kind, rule, "
             "confidence, importance, active, created_at, updated_at, pinned) "
-            "VALUES ('cm_beta_marker', 'beta', 'beta-key', 'beta-value', "
+            "VALUES ('beh_beta_marker', 'beta', 'beta-key', 'operating_rule', 'beta-value', "
             "0.9, 0.9, 1, datetime('now'), datetime('now'), 0)"
         )
         beta_direct.commit()
@@ -119,7 +119,7 @@ def test_db_for_routes_explicit_workspace_via_registry(
 
         conn = rt.db_for("beta")
         row = conn.execute(
-            "SELECT value FROM core_memory WHERE id = ?", ("cm_beta_marker",)
+            "SELECT rule FROM behaviors WHERE id = ?", ("beh_beta_marker",)
         ).fetchone()
         assert row is not None
         assert row[0] == "beta-value"
@@ -141,9 +141,9 @@ def test_db_for_falls_back_to_anchor_on_unknown_workspace(
         # fallback connection is the anchor's.
         alpha_direct = sqlite3.connect(alpha_db)
         alpha_direct.execute(
-            "INSERT INTO core_memory (id, workspace_id, key, value, "
+            "INSERT INTO behaviors (id, workspace_id, name, kind, rule, "
             "confidence, importance, active, created_at, updated_at, pinned) "
-            "VALUES ('cm_alpha_marker', 'alpha', 'alpha-key', 'alpha-value', "
+            "VALUES ('beh_alpha_marker', 'alpha', 'alpha-key', 'operating_rule', 'alpha-value', "
             "0.9, 0.9, 1, datetime('now'), datetime('now'), 0)"
         )
         alpha_direct.commit()
@@ -151,7 +151,7 @@ def test_db_for_falls_back_to_anchor_on_unknown_workspace(
 
         conn = rt.db_for("nonexistent-workspace")
         row = conn.execute(
-            "SELECT value FROM core_memory WHERE id = ?", ("cm_alpha_marker",)
+            "SELECT rule FROM behaviors WHERE id = ?", ("beh_alpha_marker",)
         ).fetchone()
         assert row is not None
         assert row[0] == "alpha-value"
@@ -291,23 +291,23 @@ def test_runtime_singleton_db_for_routes_correctly(
     try:
         beta_conn = _runtime.db_for("beta")
         beta_conn.execute(
-            "INSERT INTO core_memory (id, workspace_id, key, value, "
+            "INSERT INTO behaviors (id, workspace_id, name, kind, rule, "
             "confidence, importance, active, created_at, updated_at, pinned) "
-            "VALUES ('cm_singleton_marker', 'beta', 'k', 'v', "
+            "VALUES ('beh_singleton_marker', 'beta', 'k', 'operating_rule', 'v', "
             "0.9, 0.9, 1, datetime('now'), datetime('now'), 0)"
         )
         beta_conn.commit()
         # Re-fetch via the singleton and verify the row is visible.
         again = _runtime.db_for("beta")
         row = again.execute(
-            "SELECT value FROM core_memory WHERE id = ?", ("cm_singleton_marker",)
+            "SELECT rule FROM behaviors WHERE id = ?", ("beh_singleton_marker",)
         ).fetchone()
         assert row is not None
         assert row[0] == "v"
         # And alpha (anchor) does NOT see beta's marker.
         alpha_conn = _runtime.db_for("alpha")
         alpha_row = alpha_conn.execute(
-            "SELECT value FROM core_memory WHERE id = ?", ("cm_singleton_marker",)
+            "SELECT rule FROM behaviors WHERE id = ?", ("beh_singleton_marker",)
         ).fetchone()
         assert alpha_row is None
     finally:

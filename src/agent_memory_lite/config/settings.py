@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     require_api_token: bool = Field(False, validation_alias="MEMORY_REQUIRE_API_TOKEN")
     audit_api_auth_failures: bool = Field(False, validation_alias="MEMORY_AUDIT_API_AUTH_FAILURES")
     # 1.2.4: write a lightweight audit_log row for read operations
-    # (memory_search, memory_get_context). Required for /memory/telemetry
+    # (memory_search, memory_brief). Required for /memory/telemetry
     # to count the agent's search rate; without it telemetry can only
     # measure writes. Default true because the perf cost is microseconds
     # per call and the operator-facing measurement value is high. Set to
@@ -116,7 +116,7 @@ class Settings(BaseSettings):
 
     # Memory-quality features. As of the 1.1.0 calibration, these
     # default ON: the v1.4-v1.9 + v2 loops are calibrated against real
-    # copyBot data (see docs/V1_1_0_CALIBRATION.md) and the older
+    # historical calibration evidence in git history and the older
     # opt-ins are non-destructive. To restore the v1.0.x baseline behaviour,
     # explicitly set the flag to ``false`` in the environment / .env file —
     # tests/invariants/test_v2_parity.py locks that path in.
@@ -266,8 +266,8 @@ class Settings(BaseSettings):
     )
     # v3.2 dead-behavior auto-archive: live-2026-05-20 audit showed 27/91
     # behaviors on copyBot with application_count=0 (never fired) bloating
-    # every brief's <behavior_instructions> envelope and burning context
-    # tokens. brain_pass now flips ``active=0`` on rows that have zero
+    # every brief and burning context tokens. brain_pass now flips
+    # ``active=0`` on rows that have zero
     # applications AND were created more than ``..._AGE_DAYS`` ago AND are
     # not pinned AND don't carry priority='system'. Audit-safe: archived
     # rows stay in DB with ``reviewed_by='auto_archive_v3_2'`` so the
@@ -300,11 +300,9 @@ class Settings(BaseSettings):
         100, ge=1, validation_alias="MEMORY_COLD_AUDIT_BATCH_SIZE"
     )
 
-    # v1.7 theory -> decision-candidate bridge. Validated theories with
-    # >= min_evidence supporting evidence rows surface as pending
-    # decision_candidates. The bridge NEVER writes to decisions directly —
-    # promote requires explicit operator action via
-    # /memory/decision_candidates/{id}/promote.
+    # Theory -> canonical candidate bridge. Validated theories with enough
+    # supporting evidence surface as reviewable decision candidates. The
+    # bridge never writes to decisions directly; promotion stays explicit.
     theory_bridge_enabled: bool = Field(True, validation_alias="MEMORY_THEORY_BRIDGE_ENABLED")
     theory_bridge_min_evidence: int = Field(
         3, ge=1, validation_alias="MEMORY_THEORY_BRIDGE_MIN_EVIDENCE"
@@ -312,7 +310,7 @@ class Settings(BaseSettings):
 
     # v1.8 reflective compaction; v1.9 hygiene recurrence + sentinel
     # persistence; v2.3 trigger-on-traffic sentinel scheduler. See
-    # docs/V1_1_0.md for the env-flag map.
+    # docs/OPERATIONS.md for the active env-flag map.
     reflective_compact_enabled: bool = Field(
         True, validation_alias="MEMORY_REFLECTIVE_COMPACT_ENABLED"
     )
@@ -322,7 +320,7 @@ class Settings(BaseSettings):
     # "experience accumulated over time"); operators on young
     # workspaces can lower to 7 or 14 to start getting reflective
     # insights sooner. Diagnosed in 1.2.5: copyBot @ 13 days had 0
-    # insight_candidates because no episode crossed the 30-day bar.
+    # lesson candidates because no episode crossed the 30-day bar.
     compact_age_days: int = Field(30, ge=1, validation_alias="MEMORY_COMPACT_AGE_DAYS")
     lesson_min_support_episodes: int = Field(
         4, ge=2, validation_alias="MEMORY_LESSON_MIN_SUPPORT_EPISODES"

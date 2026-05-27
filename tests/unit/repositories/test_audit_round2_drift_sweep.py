@@ -1,7 +1,7 @@
 """v3.5 sector-1 audit round-2 regression locks.
 
 The audit found six more raw ``EnumCls(row["col"])`` parsers with the
-same drift-crash class that took down ``/memory/get_context`` for ~2.5h
+same drift-crash class that took down compact reads for ~2.5h
 on copyBot back in v3.4. All six now use ``coerce_enum``. These tests
 fix the contract so a future revert is caught immediately.
 """
@@ -85,7 +85,7 @@ def test_row_to_candidate_tolerates_all_three_unknown_enums(
     applied_conn: sqlite3.Connection,
 ) -> None:
     ws = _ws_seed(applied_conn, "drift-cand-ws")
-    # First need a source episode (FK on memory_candidates is NOT NULL).
+    # First need a source episode (FK on candidates is NOT NULL).
     applied_conn.execute(
         """INSERT INTO episodes (id, workspace_id, source_type, raw_text, summary,
             label, trust_level, importance, confidence, created_at, metadata_json)
@@ -95,7 +95,7 @@ def test_row_to_candidate_tolerates_all_three_unknown_enums(
         (ws,),
     )
     applied_conn.execute(
-        """INSERT INTO memory_candidates
+        """INSERT INTO candidates
            (id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json, write_targets_json,
             metadata_json, source_episode_id, status, created_at, updated_at)
@@ -105,7 +105,7 @@ def test_row_to_candidate_tolerates_all_three_unknown_enums(
                    '2026-05-20T00:00:00+00:00')""",
         (ws,),
     )
-    row = applied_conn.execute("SELECT * FROM memory_candidates WHERE id = 'cand_drift'").fetchone()
+    row = applied_conn.execute("SELECT * FROM candidates WHERE id = 'cand_drift'").fetchone()
     cand = _row_to_candidate(row)
     assert cand.kind is MemoryCandidateKind.PROJECT_FACT
     assert cand.trust_level is TrustLevel.UNKNOWN
@@ -194,7 +194,7 @@ def test_row_to_instruction_tolerates_all_four_unknown_enums(
     applied_conn: sqlite3.Connection,
 ) -> None:
     """Behavior instructions ride every envelope — drift here would 500
-    the brief + get_context. Hardest case because the priority+scope
+    the brief + search. Hardest case because the priority+scope
     enum values are ALSO keys in PRIORITY_WEIGHT / SCOPE_WEIGHT dicts;
     fallback values MUST exist in those dicts to avoid a KeyError chain."""
     from agent_memory_lite.repositories.behavior_repo_ranking import (  # noqa: PLC0415
@@ -203,7 +203,7 @@ def test_row_to_instruction_tolerates_all_four_unknown_enums(
 
     ws = _ws_seed(applied_conn, "drift-beh-ws")
     applied_conn.execute(
-        """INSERT INTO behavior_instructions
+        """INSERT INTO behaviors
            (id, workspace_id, name, kind, scope, priority, rule, rationale,
             applies_to_json, conflict_policy, source_episode_id, confidence,
             active, created_at, updated_at, source_type, application_count, pinned)
@@ -213,9 +213,7 @@ def test_row_to_instruction_tolerates_all_four_unknown_enums(
                    '2026-05-20T00:00:00+00:00', 'manual', 0, 0)""",
         (ws,),
     )
-    row = applied_conn.execute(
-        "SELECT * FROM behavior_instructions WHERE id = 'beh_drift'"
-    ).fetchone()
+    row = applied_conn.execute("SELECT * FROM behaviors WHERE id = 'beh_drift'").fetchone()
     inst = row_to_instruction(row)
     assert inst.kind is BehaviorInstructionKind.OPERATING_RULE
     assert inst.scope is BehaviorInstructionScope.GLOBAL
@@ -274,3 +272,36 @@ def test_ingest_file_redacts_secrets_before_chunking() -> None:
     all_text = " ".join(r[0] or "" for r in rows)
     assert "sk-proj-abcdefghij" not in all_text
     assert "ghp_abcdefghij" not in all_text
+
+
+def test_ingest_file_tracks_exact_source_bytes_when_provided() -> None:
+    """Workspace ingest must not treat CRLF and LF files as identical.
+
+    ``source_bytes`` keeps files.content_hash and size_bytes aligned with the
+    on-disk file while chunk text can still be redacted/decoded for retrieval.
+    """
+    from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
+    from agent_memory_lite.db.migrations import MIGRATION_DIR, apply_migrations  # noqa: PLC0415
+    from agent_memory_lite.ingestion.file_pipeline import ingest_file  # noqa: PLC0415
+    from agent_memory_lite.utils.hashing import blake2b_hex  # noqa: PLC0415
+
+    conn = open_connection(":memory:")  # type: ignore[arg-type]
+    apply_migrations(conn, MIGRATION_DIR)
+    source_bytes = b"line one\r\nline two\r\n"
+    result = ingest_file(
+        conn,
+        workspace_id="byte-test-ws",
+        path="README.md",
+        content=source_bytes.decode("utf-8"),
+        source_bytes=source_bytes,
+        language="markdown",
+    )
+
+    assert result.skipped is False
+    row = conn.execute(
+        "SELECT content_hash, size_bytes FROM files WHERE workspace_id = ? AND path = ?",
+        ("byte-test-ws", "README.md"),
+    ).fetchone()
+    assert row is not None
+    assert row[0] == blake2b_hex(source_bytes)
+    assert row[1] == len(source_bytes)

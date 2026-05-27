@@ -1,10 +1,8 @@
-"""Phase 26: v1.10 correction-aware learning loop end-to-end.
+"""Phase 26: correction-aware learning loop end-to-end.
 
-Synthesises a (claim, correction) episode pair, asserts the
-CorrectionExtractor surfaces a CORRECTION-kind memory_candidate,
-promotes it through /memory/promote_candidate_to_behavior, and
-verifies the resulting behavior_instruction lands in the next
-get_context envelope.
+Synthesises a claim/correction episode pair, asserts the extractor surfaces a
+correction candidate, promotes it to a behavior, and verifies compact search can
+retrieve the promoted behavior.
 """
 
 from __future__ import annotations
@@ -15,16 +13,12 @@ from scripts.crash_test.seeds import post
 
 class P26V110Correction(Phase):
     name = "p26_v110_correction"
-    description = (
-        "v1.10: claim+correction pair → memory_candidate(kind=correction) → "
-        "promote_candidate_to_behavior → behavior_instruction visible in envelope."
-    )
+    description = "claim+correction pair -> correction candidate -> promoted behavior."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
         ws = state.workspace_id
 
-        # 1. Ingest the agent claim.
         claim_resp = post(
             state.client,
             "/memory/ingest_episode",
@@ -45,7 +39,6 @@ class P26V110Correction(Phase):
         if not claim_id:
             return result
 
-        # 2. Ingest the user correction with cross-reference metadata.
         post(
             state.client,
             "/memory/ingest_episode",
@@ -55,7 +48,7 @@ class P26V110Correction(Phase):
                 "raw_text": (
                     "нет, MCP только что был запущен после релиза 1.1.0. "
                     "audit_log нужно фильтровать по дате релиза прежде чем "
-                    "делать выводы о состоянии хука."
+                    "делать выводы о состоянии hook."
                 ),
                 "trust_level": "user_asserted",
                 "importance": 0.85,
@@ -66,40 +59,22 @@ class P26V110Correction(Phase):
             },
         )
 
-        # 3. memory_candidate(kind=CORRECTION) should now exist.
         listed = post(
             state.client,
-            "/memory/list_candidates",
-            {"workspace_id": ws, "statuses": ["new"], "limit": 20},
+            "/memory/review_queue",
+            {"workspace_id": ws, "limit_per_kind": 20},
         )
-        corrections = [c for c in listed.get("candidates", []) if c.get("kind") == "correction"]
+        corrections = [
+            item
+            for item in listed.get("items", [])
+            if item.get("target_type") == "candidate"
+            and (item.get("details") or {}).get("kind") == "correction"
+        ]
         result.assert_ge("CORRECTION candidate emitted", len(corrections), 1)
         if not corrections:
             return result
-        cand = corrections[0]
-        cand_id = cand["candidate_id"]
+        cand_id = corrections[0]["target_id"]
 
-        # 4. Pending review envelope surfaces the correction.
-        ctx = post(
-            state.client,
-            "/memory/get_context",
-            {"workspace_id": ws, "query": "any", "max_tokens": 2000},
-        )
-        text = ctx.get("context_text", "")
-        result.assert_true(
-            "envelope includes <pending_review>",
-            "<pending_review" in text,
-        )
-        result.assert_true(
-            "correction kind surfaced in pending_review",
-            'kind="correction_candidate"' in text,
-        )
-        result.assert_true(
-            "promote endpoint hint surfaced",
-            "promote_candidate_to_behavior" in text,
-        )
-
-        # 5. Promote with a clean rule + name.
         promoted = post(
             state.client,
             "/memory/promote_candidate_to_behavior",
@@ -114,42 +89,26 @@ class P26V110Correction(Phase):
                 "decided_by": "crash-test",
             },
         )
-        bi_id = promoted.get("behavior_instruction_id") or ""
-        result.assert_true("behavior_instruction written", bool(bi_id))
+        behavior_id = promoted.get("behavior_id") or promoted.get("behavior_instruction_id") or ""
+        result.assert_true("behavior written", bool(behavior_id))
         result.assert_eq("promotion status", promoted.get("status"), "promoted")
 
-        # 6. New context surfaces the behavior_instruction.
-        ctx2 = post(
+        search = post(
             state.client,
-            "/memory/get_context",
-            {"workspace_id": ws, "query": "any", "max_tokens": 2000},
+            "/memory/search",
+            {"workspace_id": ws, "query": "release_date", "kinds": ["behavior"], "limit": 5},
         )
-        text2 = ctx2.get("context_text", "")
         result.assert_true(
-            "behavior_instruction visible in next envelope",
-            "v110-crash-test-rule" in text2 or "release_date" in text2,
+            "behavior visible in compact search",
+            "v110-crash-test-rule" in str(search) or "release_date" in str(search),
         )
 
-        # 7. Candidate flipped to promoted with target lineage filled.
-        promoted_listed = post(
-            state.client,
-            "/memory/list_candidates",
-            {"workspace_id": ws, "statuses": ["promoted"], "limit": 5},
+        fetched = state.client.get(
+            "/memory/get",
+            params={"workspace_id": ws, "kind": "behavior", "id": behavior_id},
+            timeout=30.0,
         )
-        match = [
-            c for c in promoted_listed.get("candidates", []) if c.get("candidate_id") == cand_id
-        ]
-        result.assert_ge("promoted candidate found", len(match), 1)
-        if match:
-            result.assert_eq(
-                "promoted_target_type",
-                match[0].get("promoted_target_type"),
-                "behavior_instruction",
-            )
-            result.assert_eq(
-                "promoted_target_id matches behavior id",
-                match[0].get("promoted_target_id"),
-                bi_id,
-            )
+        fetched.raise_for_status()
+        result.assert_eq("promoted behavior fetches", fetched.json()["data"]["id"], behavior_id)
 
         return result

@@ -4,9 +4,7 @@ Phase 2 shipped these as pass-through; the archive feature (migration
 0016 onward) gives them a real job: drop chunks whose underlying row
 was archived, unless the caller asked for ``historical=True``. Other
 soft-delete kinds (decisions, theories, instructions, capabilities)
-are filtered upstream by their respective list functions; this hook
-covers the chunk pipeline that drives ``<retrieved_chunks>`` in
-``get_context`` and the FTS results returned by ``memory_search``.
+are filtered upstream by their respective list functions.
 """
 
 from __future__ import annotations

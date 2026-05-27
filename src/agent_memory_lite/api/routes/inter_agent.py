@@ -110,7 +110,7 @@ def export_beliefs_get(
 def import_beliefs_post(
     body: ImportBeliefsRequest, conn: DbDep, settings: SettingsDep
 ) -> ImportBeliefsResponse:
-    """Detect conflicts vs foreign beliefs; persist as memory_candidates.
+    """Detect conflicts vs foreign beliefs; persist as candidates.
 
     Write surface — strict isolation must hold so a foreign agent's
     POST cannot pollute another project's workspace.

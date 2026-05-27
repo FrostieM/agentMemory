@@ -43,7 +43,7 @@ def persist_warning(
     """Write the warning as a ``memory_candidate(kind=predictive_warning)``.
 
     ``source_episode_id`` is required (FK constraint on
-    ``memory_candidates.source_episode_id``). The caller is responsible
+    ``candidates.source_episode_id``). The caller is responsible
     for choosing an episode to attribute the warning to — typically
     the most recent episode in the workspace.
 
@@ -59,7 +59,7 @@ def persist_warning(
     if not source_episode_id:
         return ""
     # Final-audit H3: pick the live table at runtime so canonical-only
-    # deploys (``candidates`` instead of ``memory_candidates``) get
+    # deploys (``candidates`` instead of ``candidates``) get
     # successful writes instead of silent failure.
     table = resolve_candidates_table(conn)
     if table is None:

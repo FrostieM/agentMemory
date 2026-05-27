@@ -29,7 +29,7 @@ def _ingest_episode(client: TestClient, text: str) -> dict:
     return response.json()
 
 
-def test_archive_chunk_drops_from_get_context(client: TestClient) -> None:
+def test_archive_chunk_marks_canonical_row(client: TestClient) -> None:
     ingested = _ingest_episode(
         client, "Heap watchdog triggered when allocator could not free pages"
     )
@@ -42,10 +42,10 @@ def test_archive_chunk_drops_from_get_context(client: TestClient) -> None:
         json={"workspace_id": "project-a", "query": "heap watchdog", "limit": 5},
     )
     assert pre.status_code == 200
-    pre_hits = pre.json()["hits"]
-    assert any(h["chunk_id"] == chunk_id for h in pre_hits)
-    matched = next(h for h in pre_hits if h["chunk_id"] == chunk_id)
-    assert matched["is_archived"] is False
+    pre_body = pre.json()
+    assert pre_body["ok"] is True
+    pre_hits = pre_body["data"]
+    assert any(h["projection"]["id"] == chunk_id for h in pre_hits)
 
     # Archive the chunk.
     archived = client.post(
@@ -53,48 +53,37 @@ def test_archive_chunk_drops_from_get_context(client: TestClient) -> None:
         json={"workspace_id": "project-a", "kind": "chunk", "id": chunk_id},
     )
     assert archived.status_code == 200, archived.text
-    assert archived.json() == {
-        "kind": "chunk",
-        "id": chunk_id,
-        "archived": True,
-        "found": True,
-    }
+    archived_body = archived.json()
+    assert archived_body["ok"] is True
+    assert archived_body["data"]["id"] == chunk_id
+    assert archived_body["data"]["kind"] == "chunk"
 
-    # Search still returns the archived chunk but with the marker on.
+    archived_get = client.get(
+        "/memory/get",
+        params={
+            "workspace_id": "project-a",
+            "kind": "chunk",
+            "id": chunk_id,
+            "fields": "is_archived",
+        },
+    )
+    assert archived_get.status_code == 200
+    archived_data = archived_get.json()["data"]
+    assert archived_data["is_archived"] == 1
+
+    # Archived rows stay fetchable by id, but disappear from discovery.
     post = client.post(
         "/memory/search",
         json={"workspace_id": "project-a", "query": "heap watchdog", "limit": 5},
     )
     assert post.status_code == 200
-    post_hits = post.json()["hits"]
-    matched = next(h for h in post_hits if h["chunk_id"] == chunk_id)
-    assert matched["is_archived"] is True
-
-    # get_context (default historical=false) drops the archived chunk.
-    ctx = client.post(
-        "/memory/get_context",
-        json={"workspace_id": "project-a", "query": "heap watchdog", "max_tokens": 1500},
-    )
-    assert ctx.status_code == 200
-    ctx_chunk_ids = {s["id"] for s in ctx.json()["sources"]}
-    assert chunk_id not in ctx_chunk_ids
-
-    # historical=true brings the archived chunk back.
-    ctx_hist = client.post(
-        "/memory/get_context",
-        json={
-            "workspace_id": "project-a",
-            "query": "heap watchdog",
-            "max_tokens": 1500,
-            "historical": True,
-        },
-    )
-    assert ctx_hist.status_code == 200
-    hist_ids = {s["id"] for s in ctx_hist.json()["sources"]}
-    assert chunk_id in hist_ids
+    post_body = post.json()
+    assert post_body["ok"] is True
+    post_hits = post_body["data"]
+    assert not any(h["projection"]["id"] == chunk_id for h in post_hits)
 
 
-def test_archive_restore_round_trip(client: TestClient) -> None:
+def test_archive_can_be_reversed_with_memory_edit(client: TestClient) -> None:
     ingested = _ingest_episode(client, "QA archive round-trip episode")
     chunk_id = ingested["chunk_id"]
 
@@ -102,32 +91,33 @@ def test_archive_restore_round_trip(client: TestClient) -> None:
         "/memory/archive",
         json={"workspace_id": "project-a", "kind": "chunk", "id": chunk_id},
     )
-    assert archived.json()["archived"] is True
+    assert archived.json()["ok"] is True
 
     restored = client.post(
-        "/memory/archive",
+        "/memory/edit",
         json={
             "workspace_id": "project-a",
             "kind": "chunk",
             "id": chunk_id,
-            "archive": False,
+            "fields": {"is_archived": 0},
         },
     )
     assert restored.status_code == 200
-    assert restored.json() == {
-        "kind": "chunk",
-        "id": chunk_id,
-        "archived": False,
-        "found": True,
-    }
+    restored_body = restored.json()
+    assert restored_body["ok"] is True
+    assert restored_body["data"]["id"] == chunk_id
 
-    # After restore, chunk is once again un-archived in search.
-    post = client.post(
-        "/memory/search",
-        json={"workspace_id": "project-a", "query": "round trip", "limit": 5},
+    get_response = client.get(
+        "/memory/get",
+        params={
+            "workspace_id": "project-a",
+            "kind": "chunk",
+            "id": chunk_id,
+            "fields": "is_archived",
+        },
     )
-    matched = next(h for h in post.json()["hits"] if h["chunk_id"] == chunk_id)
-    assert matched["is_archived"] is False
+    assert get_response.status_code == 200
+    assert get_response.json()["data"]["is_archived"] == 0
 
 
 def test_archive_unsupported_kind_returns_400(client: TestClient) -> None:
@@ -135,8 +125,11 @@ def test_archive_unsupported_kind_returns_400(client: TestClient) -> None:
         "/memory/archive",
         json={"workspace_id": "project-a", "kind": "bogus", "id": "x"},
     )
-    assert response.status_code == 400
-    assert "unsupported archive kind" in response.json()["detail"].lower()
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "not_found_or_unsupported"
+    assert "cannot archive bogus:x" in body["error"]["message"]
 
 
 def test_archive_missing_target_returns_found_false(client: TestClient) -> None:
@@ -146,9 +139,6 @@ def test_archive_missing_target_returns_found_false(client: TestClient) -> None:
     )
     assert response.status_code == 200
     body = response.json()
-    assert body == {
-        "kind": "chunk",
-        "id": "chk_does_not_exist",
-        "archived": True,
-        "found": False,
-    }
+    assert body["ok"] is False
+    assert body["error"]["code"] == "not_found_or_unsupported"
+    assert "cannot archive chunk:chk_does_not_exist" in body["error"]["message"]

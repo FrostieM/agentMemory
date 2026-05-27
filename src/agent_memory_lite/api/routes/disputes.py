@@ -178,7 +178,7 @@ def resolve_dispute_route(
     return ResolveDisputeResponse(dispute=_to_dto(updated), flipped=flipped)
 
 
-@router.get("/memory/list_disputes", response_model=ListDisputesResponse)
+@router.get("/memory/disputes", response_model=ListDisputesResponse)
 def list_disputes_route(
     conn: DbDep,
     settings: SettingsDep,

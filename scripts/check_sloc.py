@@ -1,6 +1,6 @@
 """Enforce the project's modular-file SLOC ceiling.
 
-Project rule (CLAUDE.md / behavior_instructions): source files under
+Project rule (CLAUDE.md / behaviors): source files under
 ``src/agent_memory_lite`` stay at or below 150 SLOC, one concern per
 module. The ceiling drove real refactors in the early phases but
 silently slipped while we were adding features. This script is the
@@ -51,10 +51,6 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # logic) plus ``api/routes/theory_responses.theory_in_from_body``
         # / ``evidence_in_from_body`` (TheoryIn / TheoryEvidenceIn
         # builders).
-        # record_compound.py: extracted
-        # ``api/routes/_record_compound_link.optionally_link_capability``
-        # for the optional third writer and switched to
-        # ``capability_suggestion_dicts`` (no model_dump round-trip).
         # Smaller pre-existing violators (150-300 SLOC). Each will get
         # a dedicated trim/split commit later. Adding NEW files here
         # should raise eyebrows in code review.
@@ -91,8 +87,8 @@ GRANDFATHERED: frozenset[str] = frozenset(
         #     -> auto_triage.py + auto_triage_models.py + auto_triage_helpers.py
         #   * api/routes/capabilities.py
         #     -> capabilities.py + capability_responses.py + capability_upsert.py
-        #   * api/routes/context.py
-        #     -> context.py + context_trace.py + context_explain.py
+        #   * api/routes/memory.py
+        #     -> memory.py + focused helper modules
         #   * bootstrap/project_memory_seed.py
         #     -> seed.py + seed_templates.py + concepts.py
         #   * ingestion/file_pipeline.py
@@ -107,8 +103,8 @@ GRANDFATHERED: frozenset[str] = frozenset(
         #     -> theories_repo.py + theories_search.py + theory_evidence_repo.py
         #   * maintenance/retrieval_quality.py
         #     -> retrieval_quality.py + _models.py + _runner.py + _grading.py
-        #   * retrieval/explain.py
-        #     -> explain.py + explain_models.py + explain_used_objects.py
+        #   * cognition/brief.py
+        #     -> brief.py facade + brief_* section builders
         #   * api/ui_telemetry.py
         #     -> ui_telemetry.py + _event.py + _bus.py + _trace.py
         #   * maintenance/quality_gate.py
@@ -122,26 +118,12 @@ GRANDFATHERED: frozenset[str] = frozenset(
         #   * ingestion/research_writer.py
         #     -> research_writer.py (facade) + snapshots + experiments
         #         + experiment_create + theory_update + insights + concepts + shared
-        #   * retrieval/context_builder.py
-        #     -> context_builder.py (orchestrator) + _constants + _models + _text
-        #         + _chunks + _intent + _gather + _pipeline + _finalize + _fitting
-        #         + _fitting_eval + _fitting_finalize + _fitting_omissions
-        #         + _fitting_variants + _render_main + _render_core
-        #         + _render_theory + _render_research + _render_research_items
-        #         + _render_behavior + _render_capabilities
-        #         + _render_capabilities_items + _render_misc
+        #   * cognition/brief.py
+        #     -> brief.py facade + brief_* section builders
         #   * mcp/stdio_server.py
-        #     -> stdio_server.py (dispatcher) + stdio_runtime + stdio_env
-        #         + stdio_guards + stdio_http + stdio_payloads + stdio_get_object
-        #         + stdio_tools (aggregator) + stdio_tools_episodes
-        #         + stdio_tools_decisions + stdio_tools_review
-        #         + stdio_tools_capability + stdio_tools_theories
-        #         + stdio_tools_research + stdio_tools_research_lab
-        #         + stdio_tools_capabilities + stdio_handlers (dispatch table)
-        #         + stdio_handlers_episodes + stdio_handlers_decisions
-        #         + stdio_handlers_review + stdio_handlers_capability
-        #         + stdio_handlers_theories + stdio_handlers_research
-        #         + stdio_handlers_research_lists + stdio_handlers_capabilities
+        #     -> stdio_server.py (transport) + stdio_runtime + stdio_env
+        #         + stdio_guards + stdio_tools + stdio_handlers
+        #         + stdio_tools_memory + stdio_handlers_memory.
         #
         # v3.0.0-final additions (crossed the 150-SLOC cap during the
         # brain-organ phase work — Phases 1-7 of the v3 plan). Each
@@ -183,10 +165,8 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # Canonical memory surface (compact projections; one module per
         # kind):
         # * api/routes/memory.py (246)
-        # * api/routes/record_compound.py (155)
         # * api/routes/decisions.py (163)
         "api/routes/memory.py",
-        "api/routes/record_compound.py",
         "api/routes/decisions.py",
         # Storage layer (compact projections + bi-temporal writes):
         # * storage/writer.py (461)
@@ -195,11 +175,9 @@ GRANDFATHERED: frozenset[str] = frozenset(
         "storage/writer.py",
         "storage/reader.py",
         "storage/projections.py",
-        # MCP surface (10-tool compact projections + legacy v2 compat):
-        # * mcp/v2_compat.py (428)
+        # MCP surface (12-tool compact projections):
         # * mcp/stdio_tools_memory.py (263)
         # * mcp/stdio_handlers_memory.py (227)
-        "mcp/v2_compat.py",
         "mcp/stdio_tools_memory.py",
         "mcp/stdio_handlers_memory.py",
         # CLI:

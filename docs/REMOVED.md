@@ -38,13 +38,14 @@ The v2 codebase grew brainically over a year. The audit findings (see
 * 70 MCP files → ~20: each domain currently has separate `stdio_tools_*.py` +
   `stdio_handlers_*.py` + `tools_*.py` + `tools_registry_*.py` modules.
 * v3 collapses to one tools file + one handlers file per domain.
-* v2 tool names that have v3 backends stay accessible via `mcp/v2_compat.py`.
+* v2 tool names that have v3 backends are no longer registered on MCP stdio.
+  Agents must call the compact v3 tools directly.
 
 ### 3. Retrieval context builder fragmentation (~700 SLOC)
 
-* `retrieval/context_builder_*.py` (24 files) → 6 files.
-* The "envelope" concept is replaced by the v3 brief composer, which is
-  single-file (`v3/cognition/brief.py`).
+* `retrieval/context_builder_*.py` (24 files) removed.
+* The envelope concept is replaced by the v3 brief composer
+  (`agent_memory_lite/cognition/brief.py`).
 
 ### 4. Maintenance modules (~700 SLOC)
 
@@ -93,9 +94,8 @@ Total env var count: 71 → ≤30.
 
 ### 8. SQL migrations consolidated (~750 SLOC)
 
-* `migrations/0001_init.sql` + `0020_*.sql` … `0032_*.sql` (14 files,
-  one starting point + 13 forward-only migrations) → `migrations/canonical/0001_init.sql`
-  (single consolidated DDL).
+* The temporary `migrations/canonical/` track was removed; the root
+  `migrations/*.sql` chain is now the only runtime schema path.
 * Migrations 0002-0019 were lost in v2 forward-only flow; v3 ignores them
   entirely.
 
@@ -109,7 +109,7 @@ Total env var count: 71 → ≤30.
 | `V1_4_TO_V2_ROADMAP.md` | Archived |
 | `V2_CALIBRATION.md` | Replaced by v3 acceptance-gate report |
 | `POST_V2_ROADMAP.md` | Source for the v3 plan; archived |
-| `CHANGELOG_LEGACY.md` | Archived |
+| `CHANGELOG_LEGACY.md` | Removed from active tree; use git history |
 | `docs/demo.gif` (~80 KB) | Replaced by `docs/screenshots/v3_*.png` |
 
 ## What's preserved (the v2 reuse list)

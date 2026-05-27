@@ -14,9 +14,9 @@ Three contracts locked:
    the exception message back (it can carry SQL fragments / file
    paths / setup info).
 
-3. ``record_capability_outcome`` no longer raises a raw ``ValueError``
-   (which used to escape as 500) — it raises a typed
-   ``ValidationError`` → 400.
+3. Legacy capability-outcome HTTP reporting is no longer an active
+   API path; capability outcomes flow through v3 plan-step outcome
+   feeding instead.
 """
 
 from __future__ import annotations

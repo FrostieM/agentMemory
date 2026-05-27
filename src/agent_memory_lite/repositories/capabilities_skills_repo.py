@@ -1,4 +1,4 @@
-"""SQL operations for ``agent_skills``."""
+"""SQL operations for skill rows in canonical ``skills``."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import json
 import sqlite3
 
 from agent_memory_lite.models.capabilities import AgentSkill
+from agent_memory_lite.repositories.capabilities_row_helpers import (
+    body_md_from_sections,
+    filter_and_rank,
+)
 from agent_memory_lite.repositories.capabilities_search_helpers import (
-    contains_any,
     json_list,
-    tokens_from,
 )
 
 
@@ -50,15 +52,30 @@ def upsert_skill_row(
     created_at: str,
     updated_at: str,
 ) -> None:
+    body_md = body_md_from_sections(
+        name=name,
+        summary=summary,
+        sections=(
+            ("When to use", when_to_use),
+            ("Inputs", inputs),
+            ("Outputs", outputs),
+            ("Tools", tools),
+            ("Related roles", related_roles),
+        ),
+    )
     conn.execute(
         """
-        INSERT INTO agent_skills (
-            id, workspace_id, name, summary, when_to_use_json, inputs_json,
+        INSERT INTO skills (
+            id, workspace_id, name, subtype, summary, when_to_use_short,
+            body_md, body_token_count, when_to_use_json, inputs_json,
             outputs_json, tools_json, related_roles_json, source_episode_id,
             confidence, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(workspace_id, name) DO UPDATE SET
+        ) VALUES (?, ?, ?, 'skill', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, subtype, name) DO UPDATE SET
             summary = excluded.summary,
+            when_to_use_short = excluded.when_to_use_short,
+            body_md = excluded.body_md,
+            body_token_count = excluded.body_token_count,
             when_to_use_json = excluded.when_to_use_json,
             inputs_json = excluded.inputs_json,
             outputs_json = excluded.outputs_json,
@@ -74,6 +91,9 @@ def upsert_skill_row(
             workspace_id,
             name,
             summary,
+            when_to_use[0] if when_to_use else summary,
+            body_md,
+            len(body_md.split()),
             json.dumps(when_to_use, sort_keys=True),
             json.dumps(inputs, sort_keys=True),
             json.dumps(outputs, sort_keys=True),
@@ -92,14 +112,17 @@ def get_skill_by_name(
     conn: sqlite3.Connection, *, workspace_id: str, name: str
 ) -> AgentSkill | None:
     row = conn.execute(
-        "SELECT * FROM agent_skills WHERE workspace_id = ? AND name = ?",
+        "SELECT * FROM skills WHERE workspace_id = ? AND subtype = 'skill' AND name = ?",
         (workspace_id, name),
     ).fetchone()
     return _row_to_skill(row) if row is not None else None
 
 
 def get_skill_by_id(conn: sqlite3.Connection, skill_id: str) -> AgentSkill | None:
-    row = conn.execute("SELECT * FROM agent_skills WHERE id = ?", (skill_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM skills WHERE id = ? AND subtype = 'skill'",
+        (skill_id,),
+    ).fetchone()
     return _row_to_skill(row) if row is not None else None
 
 
@@ -117,13 +140,6 @@ def _skill_text(skill: AgentSkill) -> str:
     )
 
 
-def _rank_skill(skill: AgentSkill, tokens: list[str]) -> tuple[float, str]:
-    text = _skill_text(skill).lower()
-    token_score = sum(1.0 for token in tokens if token in text)
-    active_bonus = 0.25 if skill.active else -0.25
-    return token_score + skill.confidence + active_bonus, skill.updated_at
-
-
 def list_skills(
     conn: sqlite3.Connection,
     *,
@@ -133,13 +149,17 @@ def list_skills(
     limit: int = 20,
 ) -> list[AgentSkill]:
     rows = conn.execute(
-        "SELECT * FROM agent_skills WHERE workspace_id = ?",
+        "SELECT * FROM skills WHERE workspace_id = ? AND subtype = 'skill'",
         (workspace_id,),
     ).fetchall()
-    terms = tokens_from(query)
     skills = [_row_to_skill(row) for row in rows]
-    if not include_inactive:
-        skills = [item for item in skills if item.active]
-    skills = [item for item in skills if contains_any(_skill_text(item), terms)]
-    skills.sort(key=lambda item: _rank_skill(item, terms), reverse=True)
-    return skills[:limit]
+    return filter_and_rank(
+        skills,
+        query=query,
+        include_inactive=include_inactive,
+        limit=limit,
+        text_of=_skill_text,
+        confidence_of=lambda item: item.confidence,
+        active_of=lambda item: item.active,
+        updated_at_of=lambda item: item.updated_at,
+    )

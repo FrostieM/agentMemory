@@ -36,6 +36,8 @@ from agent_memory_lite.repositories.symbol_edges_resolver import (
 _TS_EDGE_LANGS: frozenset[str] = frozenset(
     {"javascript", "typescript", "go", "rust", "java", "cpp", "csharp"}
 )
+_MAX_QNAME_LENGTH = 400
+_MAX_EDGE_TYPE_LENGTH = 32
 
 
 def _build_owner_index(chunk_qnames: list[tuple[str, str | None]]) -> dict[str, str]:
@@ -57,6 +59,14 @@ def _extract_edges(text: str, language: str | None) -> list[ExtractedEdge]:
         # the service stays usable without C extensions.
         return extract_ts_edges(text, lang)
     return []
+
+
+def _valid_edge(edge: ExtractedEdge) -> bool:
+    return (
+        0 < len(edge.src_qualified_name) <= _MAX_QNAME_LENGTH
+        and 0 < len(edge.dst_qualified_name) <= _MAX_QNAME_LENGTH
+        and 0 < len(edge.edge_type) <= _MAX_EDGE_TYPE_LENGTH
+    )
 
 
 def persist_edges_for_file(
@@ -94,6 +104,8 @@ def persist_edges_for_file(
     fallback_chunk_id = chunk_qnames[0][0] if chunk_qnames else None
     edges_in: list[EdgeIn] = []
     for edge in extracted:
+        if not _valid_edge(edge):
+            continue
         src_chunk_id = owner_index.get(edge.src_qualified_name)
         if src_chunk_id is None:
             if edge.src_qualified_name != "<module>" or fallback_chunk_id is None:

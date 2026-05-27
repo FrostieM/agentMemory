@@ -35,7 +35,7 @@ class MemoryCandidate(BaseModel):
     trust_level: TrustLevel = TrustLevel.UNKNOWN
     temporal: TemporalSpan
     write_targets: list[str] = Field(default_factory=list)
-    source_episode_id: str
+    source_episode_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -55,7 +55,7 @@ class StoredMemoryCandidate(BaseModel):
     temporal: dict[str, Any]
     write_targets: list[str]
     metadata: dict[str, Any]
-    source_episode_id: str
+    source_episode_id: str | None = None
     status: MemoryCandidateStatus
     promoted_target_type: str | None = None
     promoted_target_id: str | None = None

@@ -58,8 +58,7 @@ def test_persist_warning_writes_candidate_row(conn: sqlite3.Connection) -> None:
     )
     assert cid == "cand_pw_dec_fresh__dec_failed"
     row = conn.execute(
-        "SELECT kind, subject, predicate, object, confidence, status "
-        "FROM memory_candidates WHERE id = ?",
+        "SELECT kind, subject, predicate, object, confidence, status FROM candidates WHERE id = ?",
         (cid,),
     ).fetchone()
     assert row is not None
@@ -101,7 +100,7 @@ def test_persist_warning_is_idempotent(conn: sqlite3.Connection) -> None:
     out2 = persist_warning(conn, workspace_id="ws", warning=w2, source_episode_id="ep_idem")
     assert out1 == out2 == "cand_pw_dec_a__dec_b"
     rows = conn.execute(
-        "SELECT object, evidence, confidence FROM memory_candidates WHERE subject = 'dec_a'"
+        "SELECT object, evidence, confidence FROM candidates WHERE subject = 'dec_a'"
     ).fetchall()
     assert len(rows) == 1
     # ``object`` carries the failed_decision_id; the regenerated reason
@@ -123,7 +122,7 @@ def test_persist_warning_preserves_promoted_status(conn: sqlite3.Connection) -> 
     out1 = persist_warning(
         conn, workspace_id="ws", warning=warning_v1, source_episode_id="ep_promo"
     )
-    conn.execute("UPDATE memory_candidates SET status = 'accepted' WHERE id = ?", (out1,))
+    conn.execute("UPDATE candidates SET status = 'accepted' WHERE id = ?", (out1,))
     conn.commit()
     warning_v2 = PredictiveWarning(
         fresh_decision_id="dec_x",
@@ -136,7 +135,7 @@ def test_persist_warning_preserves_promoted_status(conn: sqlite3.Connection) -> 
     )
     assert out2 == ""  # rowcount=0 → skipped
     row = conn.execute(
-        "SELECT object, evidence, confidence, status FROM memory_candidates WHERE id = ?",
+        "SELECT object, evidence, confidence, status FROM candidates WHERE id = ?",
         (out1,),
     ).fetchone()
     assert row["status"] == "accepted"

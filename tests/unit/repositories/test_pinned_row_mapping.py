@@ -12,10 +12,16 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.repositories.core_memory_repo import (
-    _row_to_core,
-    upsert_core_memory_row,
+from agent_memory_lite.models.enums import (
+    BehaviorConflictPolicy,
+    BehaviorInstructionKind,
+    BehaviorInstructionPriority,
+    BehaviorInstructionScope,
 )
+from agent_memory_lite.repositories.behavior_repo import (
+    upsert_behavior_instruction_row,
+)
+from agent_memory_lite.repositories.behavior_repo_ranking import row_to_instruction
 from agent_memory_lite.repositories.decisions_repo import (
     _row_to_decision,
     insert_decision_row,
@@ -53,21 +59,34 @@ def test_decision_pinned_roundtrips(applied_conn: sqlite3.Connection) -> None:
     assert decision.pinned is True
 
 
-def test_core_memory_pinned_roundtrips(applied_conn: sqlite3.Connection) -> None:
-    workspace = "pin-row-core-ws"
-    upsert_core_memory_row(
+def test_behavior_pinned_roundtrips(applied_conn: sqlite3.Connection) -> None:
+    workspace = "pin-row-behavior-ws"
+    upsert_behavior_instruction_row(
         applied_conn,
-        core_id="core_pin_a",
+        instruction_id="beh_pin_a",
         workspace_id=workspace,
-        key="local_only",
-        value="Never call cloud LLMs.",
+        name="local_only",
+        kind=BehaviorInstructionKind.OPERATING_RULE,
+        scope=BehaviorInstructionScope.WORKSPACE,
+        priority=BehaviorInstructionPriority.SYSTEM_BOUND,
+        rule="Never call cloud LLMs.",
+        rationale="",
+        applies_to=[],
+        conflict_policy=BehaviorConflictPolicy.CURRENT_USER_WINS,
         source_episode_id=None,
+        source_type="manual",
+        source_id=None,
+        reviewed_by=None,
+        reviewed_at=None,
+        expires_at=None,
+        conflict_group=None,
         confidence=0.99,
-        importance=0.99,
-        timestamp=iso_now(),
+        active=True,
+        created_at=iso_now(),
+        updated_at=iso_now(),
     )
-    applied_conn.execute("UPDATE core_memory SET pinned = 1 WHERE id = ?", ("core_pin_a",))
+    applied_conn.execute("UPDATE behaviors SET pinned = 1 WHERE id = ?", ("beh_pin_a",))
     applied_conn.commit()
-    row = applied_conn.execute("SELECT * FROM core_memory WHERE id = ?", ("core_pin_a",)).fetchone()
-    core = _row_to_core(row)
-    assert core.pinned is True
+    row = applied_conn.execute("SELECT * FROM behaviors WHERE id = ?", ("beh_pin_a",)).fetchone()
+    behavior = row_to_instruction(row)
+    assert behavior.pinned is True

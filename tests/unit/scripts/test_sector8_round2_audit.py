@@ -88,7 +88,7 @@ def test_precommit_payload_build_does_not_execute_hostile_filename(
 def test_safe_registry_path_rejects_malicious_shapes() -> None:
     """_safe_registry_path must reject UNC / network / null-byte /
     relative paths — shapes never used by a legitimate local DB."""
-    from scripts.inject_memory_context import _safe_registry_path  # noqa: PLC0415
+    from scripts.inject_memory_brief import _safe_registry_path  # noqa: PLC0415
 
     # Rejected → empty string.
     assert _safe_registry_path(r"\\evil-server\share\memory.db") == ""
@@ -103,7 +103,7 @@ def test_safe_registry_path_rejects_malicious_shapes() -> None:
 def test_safe_registry_path_accepts_legitimate_absolute_paths() -> None:
     """A normal absolute project DB path must pass — confinement to a
     fixed root is deliberately NOT done (projects live anywhere)."""
-    from scripts.inject_memory_context import _safe_registry_path  # noqa: PLC0415
+    from scripts.inject_memory_brief import _safe_registry_path  # noqa: PLC0415
 
     # Both POSIX and Windows absolute shapes are legitimate.
     posix = "/home/user/work/proj/.agent_memory/memory.db"

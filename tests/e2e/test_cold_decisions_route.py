@@ -28,12 +28,15 @@ def test_cold_decisions_empty_workspace(client: TestClient) -> None:
 def test_cold_decisions_lists_never_retrieved(client: TestClient) -> None:
     """A freshly-written decision has never been retrieved → days_cold=9999."""
     write = client.post(
-        "/memory/write_decision",
+        "/memory/write",
         json={
             "workspace_id": "cold-ws",
-            "title": "Brand new",
-            "decision_text": "Recently added; never retrieved.",
-            "importance": 0.85,
+            "kind": "decision",
+            "payload": {
+                "title": "Brand new",
+                "decision_text": "Recently added; never retrieved.",
+                "importance": 0.85,
+            },
         },
     )
     assert write.status_code == 200, write.text

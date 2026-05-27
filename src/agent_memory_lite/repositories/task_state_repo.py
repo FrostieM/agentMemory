@@ -1,4 +1,4 @@
-"""SQL operations for the `task_state` table.
+"""SQL operations for the canonical `tasks` table.
 
 Each (workspace_id, task_id) pair has at most one row. Writes are upserts.
 """
@@ -46,13 +46,14 @@ def upsert_task_state_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO task_state (
-            id, workspace_id, task_id, goal, status,
+        INSERT INTO tasks (
+            id, workspace_id, task_id, goal, goal_one_line, status,
             current_plan_json, completed_steps_json, next_action,
             blockers_json, files_in_scope_json, source_episode_id, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, task_id) DO UPDATE SET
             goal = excluded.goal,
+            goal_one_line = excluded.goal_one_line,
             status = excluded.status,
             current_plan_json = excluded.current_plan_json,
             completed_steps_json = excluded.completed_steps_json,
@@ -66,6 +67,7 @@ def upsert_task_state_row(
             state_id,
             workspace_id,
             task_id,
+            goal,
             goal,
             status,
             json.dumps(current_plan, sort_keys=True),
@@ -81,7 +83,7 @@ def upsert_task_state_row(
 
 def get_task_state(conn: sqlite3.Connection, workspace_id: str, task_id: str) -> TaskState | None:
     row = conn.execute(
-        "SELECT * FROM task_state WHERE workspace_id = ? AND task_id = ?",
+        "SELECT * FROM tasks WHERE workspace_id = ? AND task_id = ?",
         (workspace_id, task_id),
     ).fetchone()
     return _row_to_task(row) if row is not None else None
@@ -90,7 +92,7 @@ def get_task_state(conn: sqlite3.Connection, workspace_id: str, task_id: str) ->
 def list_active_task_states(conn: sqlite3.Connection, workspace_id: str) -> list[TaskState]:
     rows = conn.execute(
         """
-        SELECT * FROM task_state
+        SELECT * FROM tasks
         WHERE workspace_id = ? AND status NOT IN ('done', 'cancelled', 'archived')
         ORDER BY updated_at DESC
         """,

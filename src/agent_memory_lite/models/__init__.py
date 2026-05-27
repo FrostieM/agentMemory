@@ -12,7 +12,6 @@ from agent_memory_lite.models.capabilities import (
     AgentSkillIn,
 )
 from agent_memory_lite.models.chunks import Chunk, ChunkIn
-from agent_memory_lite.models.core_memory import CoreMemory, CoreMemoryIn
 from agent_memory_lite.models.decisions import Decision, DecisionIn
 from agent_memory_lite.models.entities import Entity, EntityIn
 from agent_memory_lite.models.enums import (
@@ -30,7 +29,6 @@ from agent_memory_lite.models.enums import (
 )
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
 from agent_memory_lite.models.facts import Fact, FactIn
-from agent_memory_lite.models.procedural import ProceduralRule, ProceduralRuleIn
 from agent_memory_lite.models.research import (
     DomainConcept,
     DomainConceptIn,
@@ -61,8 +59,6 @@ __all__ = [
     "ChunkIn",
     "ChunkKind",
     "ConceptKind",
-    "CoreMemory",
-    "CoreMemoryIn",
     "Decision",
     "DecisionIn",
     "DecisionStatus",
@@ -86,8 +82,6 @@ __all__ = [
     "MemoryCandidateKind",
     "MemorySnapshot",
     "MemorySnapshotIn",
-    "ProceduralRule",
-    "ProceduralRuleIn",
     "ResearchAgenda",
     "ResearchInsight",
     "ResearchInsightIn",

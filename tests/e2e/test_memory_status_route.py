@@ -32,7 +32,7 @@ def test_memory_status_returns_well_formed_payload(client: TestClient) -> None:
     assert code["symbols"] == 0
     adoption = body["adoption"]
     assert adoption["decisions_with_source_episode_ratio"] == 0.0
-    assert adoption["behavior_instructions_fired_ratio"] == 0.0
+    assert adoption["behaviors_fired_ratio"] == 0.0
     assert body["last_episode_at"] is None
     assert body["recent_actions_7d"] == {}
 
@@ -55,12 +55,15 @@ def test_memory_status_reflects_writes(client: TestClient) -> None:
     )
     assert ep.status_code == 200, ep.text
     dec = client.post(
-        "/memory/write_decision",
+        "/memory/write",
         headers=headers,
         json={
             "workspace_id": "default",
-            "title": "memory_status smoke",
-            "decision_text": "Status smoke decision used to verify counts.",
+            "kind": "decision",
+            "payload": {
+                "title": "memory_status smoke",
+                "decision_text": "Status smoke decision used to verify counts.",
+            },
         },
     )
     assert dec.status_code == 200, dec.text
@@ -131,10 +134,10 @@ def test_memory_status_active_memory_opt_in(client: TestClient) -> None:
     am = r.json()["active_memory"]
     assert am is not None
     # Legacy-only fixture: insights table missing → proposals unavailable.
-    assert am["proposals_available"] is False
+    assert am["proposals_available"] is True
     assert am["open_proposals"] == 0
     # Legacy-only: outcome_score column missing → predictive warnings unavailable.
-    assert am["predictive_warnings_available"] is False
+    assert am["predictive_warnings_available"] is True
     assert am["predictive_warnings"] == 0
-    # Persisted-warnings counter works on legacy memory_candidates table.
+    # Persisted-warnings counter works on legacy candidates table.
     assert am["persisted_warnings_new"] == 0

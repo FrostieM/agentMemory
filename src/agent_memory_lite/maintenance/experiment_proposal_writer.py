@@ -59,7 +59,7 @@ def persist_proposal(
     if not proposal.source_episode_id:
         return ""
     # Final-audit H3: pick the live table at runtime so canonical-only
-    # deploys (where ``memory_candidates`` is absent and ``candidates``
+    # deploys (where ``candidates`` is absent and ``candidates``
     # is the live target) get a successful write instead of a silent
     # OperationalError.
     table = resolve_candidates_table(conn)

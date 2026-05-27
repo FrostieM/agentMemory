@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 router = APIRouter(include_in_schema=False)
@@ -29,14 +29,11 @@ _UI_ROOT = _PACKAGE_ROOT / "ui"
 
 _ASSETS: dict[str, str] = {
     "app.js": "application/javascript; charset=utf-8",
-    # 2.2 (Phase 2.3): shared header script for /ui/code and /ui/graph.
     "app_header.js": "application/javascript; charset=utf-8",
     # v3.0.0-final: shared brain-render module (self-model card,
     # outcome pills, watch-outs, recent insights, recall rendering).
     "brain.js": "application/javascript; charset=utf-8",
     "styles.css": "text/css; charset=utf-8",
-    "code.html": "text/html; charset=utf-8",
-    "graph.html": "text/html; charset=utf-8",
     # 2.2 (Phase 3.3): candidate review queue with promote/reject UI.
     "review.html": "text/html; charset=utf-8",
     # 2.2 (Phase 3.6): generic browse page over decisions / theories /
@@ -57,6 +54,8 @@ _NO_CACHE = {
     "Expires": "0",
 }
 
+_REMOVED_ASSETS = {"code", "code.html", "graph", "graph.html"}
+
 
 def _serve_html(filename: str) -> FileResponse:
     return FileResponse(
@@ -69,18 +68,6 @@ def _serve_html(filename: str) -> FileResponse:
 @router.get("/ui")
 def memory_ui_index() -> FileResponse:
     return _serve_html("index.html")
-
-
-@router.get("/ui/code")
-def memory_ui_code() -> FileResponse:
-    """2.0 dashboard backed by /memory/code_overview."""
-    return _serve_html("code.html")
-
-
-@router.get("/ui/graph")
-def memory_ui_graph() -> FileResponse:
-    """2.1.2 D3 graph dashboard backed by /memory/code_graph."""
-    return _serve_html("graph.html")
 
 
 @router.get("/ui/review")
@@ -119,7 +106,7 @@ def memory_ui_queue() -> FileResponse:
 
     Lists open maintenance_events with claim / dismiss / resolve
     operator actions. Distinct from /ui/review which targets
-    memory_candidates (knowledge-side); this one targets
+    candidates (knowledge-side); this one targets
     maintenance_events (substrate-side)."""
     return _serve_html("queue.html")
 
@@ -127,6 +114,8 @@ def memory_ui_queue() -> FileResponse:
 @router.get("/ui/{asset_name}")
 def memory_ui_asset(asset_name: str) -> FileResponse:
     """Serve a registered asset; unknown names fall back to index.html."""
+    if asset_name in _REMOVED_ASSETS:
+        raise HTTPException(status_code=404, detail="removed v2 UI page")
     if asset_name not in _ASSETS:
         return FileResponse(
             _UI_ROOT / "index.html",

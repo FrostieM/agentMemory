@@ -1,6 +1,6 @@
-"""Trigger-on-traffic sentinel runner (v1.9 improvement).
+"""Trigger-on-traffic sentinel runner.
 
-Every ``/memory/get_context`` invokes ``maybe_run_sentinels``. If
+Every compact read path can invoke ``maybe_run_sentinels``. If
 ``workspace_meta.last_sentinel_run_at`` is older than
 ``MEMORY_SENTINEL_AUTORUN_HOURS``, a background daemon thread runs
 the workspace's ``retrieval_sentinels.yaml`` cases and persists
@@ -9,8 +9,8 @@ results. Disabled by default (hours=0).
 The thread opens its own SQLite connection. Failures swallowed and
 logged — sentinels are idempotent, the next overdue tick retries.
 A per-workspace ``threading.Lock`` (``sentinel_lock``) blocks a
-second concurrent run; without it, two simultaneous get_context
-calls would both pass the overdue check and spawn duplicate daemons.
+second concurrent run; without it, two simultaneous traffic-triggered
+checks would both pass the overdue check and spawn duplicate daemons.
 """
 
 from __future__ import annotations

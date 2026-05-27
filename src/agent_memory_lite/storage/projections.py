@@ -23,6 +23,8 @@ import json
 import sqlite3
 from typing import Any
 
+from agent_memory_lite.utils.text_encoding import repair_common_mojibake
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -35,6 +37,10 @@ def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
     except (KeyError, IndexError):
         return default
     return value if value is not None else default
+
+
+def _repair_text(value: Any) -> Any:
+    return repair_common_mojibake(value) if isinstance(value, str) else value
 
 
 def _csv(json_str: str | None, limit: int = 5) -> str:
@@ -61,9 +67,9 @@ def project_decision(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": _row_get(row, "id"),
         "kind": "decision",
-        "title": _row_get(row, "title", ""),
+        "title": _repair_text(_row_get(row, "title", "")),
         "status": _row_get(row, "status", "active"),
-        "gist": _row_get(row, "gist"),
+        "gist": _repair_text(_row_get(row, "gist")),
         "supersedes": _row_get(row, "supersedes_decision_id"),
         "pinned": bool(_row_get(row, "pinned", 0)),
         "valid_from": _row_get(row, "valid_from"),
@@ -173,6 +179,18 @@ def project_insight(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def project_snapshot(row: sqlite3.Row) -> dict[str, Any]:
+    """Token target: ~25. {id, snapshot_key, title, source_label, total_rows}."""
+    return {
+        "id": _row_get(row, "id"),
+        "kind": "snapshot",
+        "snapshot_key": _row_get(row, "snapshot_key", ""),
+        "title": _row_get(row, "title", ""),
+        "source_label": _row_get(row, "source_label"),
+        "total_rows": int(_row_get(row, "total_rows", 0) or 0),
+    }
+
+
 def project_code_digest(row: sqlite3.Row) -> dict[str, Any]:
     """Token target: ~40. {file_path, purpose_short, top_symbols_csv, language}."""
     top_symbols_json = _row_get(row, "top_symbols_json")
@@ -236,6 +254,7 @@ _PROJECTORS = {
     "concept": project_concept,
     "task": project_task,
     "insight": project_insight,
+    "snapshot": project_snapshot,
     "code_digest": project_code_digest,
     "chunk": project_chunk,
     "plan_step": project_plan_step,

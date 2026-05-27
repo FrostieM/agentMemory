@@ -33,7 +33,7 @@ def fake_workspace(tmp_path: Path) -> Iterator[dict[str, str]]:
     try:
         conn.execute(
             """
-            CREATE TABLE behavior_instructions (
+            CREATE TABLE behaviors (
                 id TEXT PRIMARY KEY,
                 workspace_id TEXT NOT NULL,
                 name TEXT NOT NULL,
@@ -79,12 +79,12 @@ def _seed_rule(
     applies_to: list[str],
     pinned: int = 1,
 ) -> None:
-    """Seed a behavior_instruction. Default pinned=1 since loader only enforces pinned rules."""
+    """Seed a behavior. Default pinned=1 since loader only enforces pinned rules."""
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
             """
-            INSERT INTO behavior_instructions (
+            INSERT INTO behaviors (
                 id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -340,6 +340,33 @@ def test_explicit_workspace_env_override(
         env_overrides={
             "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
             "AGENT_MEMORY_WORKSPACE": "test-ws",
+        },
+    )
+    assert result.returncode == 2
+
+
+def test_canonical_workspace_env_override(
+    fake_workspace: dict[str, str],
+) -> None:
+    _seed_rule(
+        fake_workspace["db_path"],
+        rule_id="beh_mn",
+        name="magic-number",
+        applies_to=["enforcement:mechanical", "mechanical:no-magic-number"],
+    )
+    result = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "src/strategy/x.py",
+                "new_string": "if confidence > 0.85:\n    pass",
+            },
+            "cwd": "/totally/unrelated/path",
+        },
+        env_overrides={
+            "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
+            "MEMORY_WORKSPACE_ID": "test-ws",
+            "AGENT_MEMORY_WORKSPACE": "",
         },
     )
     assert result.returncode == 2

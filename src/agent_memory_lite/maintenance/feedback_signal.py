@@ -69,7 +69,7 @@ def feedback_per_source_summary(
     source_type: str | None = None,
     limit: int = 50,
 ) -> list[FeedbackSourceSummary]:
-    """Per-source aggregate, ordered by recency. Reads the migration 0020 view."""
+    """Per-source aggregate, ordered by recency. Reads the feedback signal view."""
     if source_type is not None:
         rows = conn.execute(
             """

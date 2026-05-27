@@ -1,4 +1,4 @@
-# ADR 0005: Asymmetric workspace isolation — reads loose, writes strict
+﻿# ADR 0005: Asymmetric workspace isolation вЂ” reads loose, writes strict
 
 Status: accepted (2026-05-01)
 
@@ -13,7 +13,7 @@ how an AI agent should be allowed to touch other projects' memory:
 
 The first version of strict isolation
 (`MEMORY_STRICT_WORKSPACE_ISOLATION=true`) was symmetric: any
-cross-workspace request — read or write — was rejected. That was too
+cross-workspace request вЂ” read or write вЂ” was rejected. That was too
 strict in practice: when working in project A, asking the agent
 "show me copyBot memory" was a legitimate explicit request that the
 guard rejected, forcing the user to open a different chat.
@@ -29,7 +29,7 @@ Three options:
 
 - **C. Asymmetric.** Reads loose, writes strict. An agent in project A
   can read project B when explicitly asked, but cannot write into
-  project B no matter how the user phrases the request — for that, the
+  project B no matter how the user phrases the request вЂ” for that, the
   user has to open a chat in B (or in the parent dir for hub mode).
 
 ## Decision
@@ -38,7 +38,7 @@ Adopt option C. The user's "explicit request" maps to two different
 semantics depending on direction:
 
 - A *read* request ("look at copyBot decisions") is satisfied
-  in-place — the agent calls `memory_get_context(workspace_id="copyBot")`
+  in-place вЂ” the agent calls `memory_brief / memory_search(workspace_id="copyBot")`
   from its current chat. The result is reference material; nothing
   lands in the calling chat's audit log.
 
@@ -46,17 +46,17 @@ semantics depending on direction:
   in-place. The agent must explain that writes from a project chat are
   blocked, and either ask the user to open a chat in copyBot or to
   open a hub chat. This makes "I'm pretending I'm helping you save
-  this in copyBot" social engineering attempts impossible — the guard
+  this in copyBot" social engineering attempts impossible вЂ” the guard
   blocks the call regardless of what the agent thinks the user meant.
 
 Implementation splits the existing single guard
 (`ensure_workspace_allowed`) into two:
 
-- `ensure_workspace_readable(workspace_id, settings)` — enforces only
+- `ensure_workspace_readable(workspace_id, settings)` вЂ” enforces only
   `forbid_default_workspace`. Reads to any non-default workspace are
   allowed.
 
-- `ensure_workspace_writable(workspace_id, settings)` — enforces
+- `ensure_workspace_writable(workspace_id, settings)` вЂ” enforces
   `forbid_default_workspace` AND `strict_workspace_isolation` (when
   `hub_mode` is off). Writes to non-anchor workspaces raise
   `ValidationError: writes to workspace_id='X' are blocked by
@@ -68,8 +68,7 @@ the stricter behavior).
 
 Every HTTP route is reclassified:
 
-- **Read routes** (`get_context`, `explain_context`, `search`,
-  `list_decisions`, `list_candidates`, `list_theories`,
+- **Read routes** (`search`, `brief`, `get`, `plan`,
   `list_research_agenda`, `list_agent_capabilities`,
   `list_capability_links`, `list_behavior_instructions`,
   `list_maintenance_events`, `hygiene_report`, `quality_gate`, UI
@@ -85,7 +84,7 @@ take an `intent` parameter. Read handlers (12 of them) pass
 `intent="read"`; write handlers default to `intent="write"`.
 
 Hub mode (`MEMORY_HUB_MODE=true`) bypasses strict isolation for both
-reads and writes — the operator chose a shared service, both
+reads and writes вЂ” the operator chose a shared service, both
 directions are explicit.
 
 `forbid_default_workspace` is independent of read/write split: a
@@ -116,8 +115,8 @@ Negative:
 - A foreign read can leak rendered memory into the calling chat's LLM
   context (which is then potentially in the calling chat's audit log
   *as a quoted block*, not as a structured memory write). This is a
-  social-engineering vector: "summarize copyBot decisions" → context
-  is fetched → the agent's response gets ingested as an episode in the
+  social-engineering vector: "summarize copyBot decisions" в†’ context
+  is fetched в†’ the agent's response gets ingested as an episode in the
   calling project. We mitigate by recommending agents not echo foreign
   workspace content into their own audit log; the strict guard cannot
   enforce this because the agent's own response handling is

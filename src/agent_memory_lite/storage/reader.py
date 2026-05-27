@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_memory_lite.storage.projections import project
+from agent_memory_lite.utils.text_encoding import repair_common_mojibake
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,10 +51,13 @@ _KIND_TABLES = {
     "concept": ("concepts", "id"),
     "task": ("tasks", "id"),
     "insight": ("insights", "id"),
+    "snapshot": ("snapshots", "id"),
     "code_digest": ("code_digests", "id"),
     "chunk": ("chunks", "id"),
     "plan_step": ("plan_steps", "id"),
 }
+VALID_KINDS = frozenset(_KIND_TABLES)
+_STATUS_ARCHIVE_KINDS = {"decision", "theory", "insight"}
 
 
 # Kind → list of free-text columns to BM25-search across.
@@ -66,6 +70,7 @@ _KIND_FTS_COLUMNS = {
     "concept": ["name", "definition", "definition_one_line"],
     "task": ["task_id", "goal", "goal_one_line", "next_action"],
     "insight": ["summary", "gist", "proposed_action"],
+    "snapshot": ["snapshot_key", "title", "source_label", "db_path", "duckdb_path"],
     "code_digest": ["file_path", "purpose_short", "narrative"],
     "plan_step": ["title", "body"],
 }
@@ -94,6 +99,36 @@ def _require_known_kind(kind: str) -> None:
     iterate kinds and a per-kind skip is the correct degrade there."""
     if kind not in _KIND_TABLES:
         raise ValueError(f"unknown kind {kind!r}; valid kinds: {sorted(_KIND_TABLES)}")
+
+
+def validate_kinds(kinds: list[str]) -> list[str]:
+    unknown = sorted(set(kinds) - VALID_KINDS)
+    if unknown:
+        raise ValueError(f"unknown kinds: {unknown}; valid kinds: {sorted(VALID_KINDS)}")
+    return kinds
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(str(row[1]) == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _append_archive_filter(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    kind: str,
+    where: list[str],
+    requested_status: str | None = None,
+) -> None:
+    """Hide archived rows from discovery while keeping exact id fetch intact."""
+    if _table_has_column(conn, table, "is_archived"):
+        where.append("COALESCE(is_archived, 0) = 0")
+    if (
+        requested_status is None
+        and kind in _STATUS_ARCHIVE_KINDS
+        and _table_has_column(conn, table, "status")
+    ):
+        where.append("COALESCE(status, '') != 'archived'")
 
 
 def list_kind(
@@ -129,6 +164,7 @@ def list_kind(
     table, _ = _KIND_TABLES[kind]
     where = ["workspace_id = ?"]
     params: list[Any] = [workspace_id]
+    _append_archive_filter(conn, table=table, kind=kind, where=where, requested_status=status)
     if pinned_only and kind in ("decision", "behavior"):
         where.append("pinned = 1")
     if status:
@@ -310,9 +346,16 @@ def get_object(
     extras: dict[str, Any] = {}
     for field in fields:
         try:
-            extras[field] = row[field]
+            value = row[field]
         except (KeyError, IndexError):
             continue
+        if (
+            kind == "decision"
+            and field in {"title", "decision_text", "rationale"}
+            and isinstance(value, str)
+        ):
+            value = repair_common_mojibake(value)
+        extras[field] = value
     return {**base, **extras}
 
 
@@ -394,6 +437,9 @@ def search_kind(
         return []
     table, _ = _KIND_TABLES[kind]
     cols = _KIND_FTS_COLUMNS[kind]
+    where = ["workspace_id = ?"]
+    where_params: list[Any] = [workspace_id]
+    _append_archive_filter(conn, table=table, kind=kind, where=where)
     # Per token: 1 when it appears in ANY searchable column. The sum is
     # the row's distinct-token match count; ORDER BY it so LIMIT keeps
     # the true top matches, not an arbitrary candidate window.
@@ -404,11 +450,11 @@ def search_kind(
         case_arms.append(f"(CASE WHEN ({col_likes}) THEN 1 ELSE 0 END)")
         params.extend([_like_pattern(tok)] * len(cols))
     score_expr = " + ".join(case_arms)
-    params.append(workspace_id)
+    params.extend(where_params)
     params.append(limit)
     sql = (
         f"SELECT *, ({score_expr}) AS _match_score FROM {table} "
-        "WHERE workspace_id = ? ORDER BY _match_score DESC LIMIT ?"
+        f"WHERE {' AND '.join(where)} ORDER BY _match_score DESC LIMIT ?"
     )
     rows = conn.execute(sql, params).fetchall()
     hits: list[SearchHit] = []
@@ -450,6 +496,7 @@ def search_chunks_fts(
         "SELECT c.* FROM chunks_fts f "
         "JOIN chunks c ON c.id = f.chunk_id "
         "WHERE f.chunks_fts MATCH ? AND f.workspace_id = ? "
+        "AND COALESCE(c.is_archived, 0) = 0 "
         "ORDER BY rank LIMIT ?"
     )
     try:
@@ -493,7 +540,9 @@ def search(
     """
     if not query.strip():
         return []
-    selected = kinds or list(_KIND_TABLES.keys())
+    selected = list(_KIND_TABLES.keys()) if kinds is None else validate_kinds(kinds)
+    if not selected:
+        return []
     per_kind = max(2, limit // max(1, len(selected)))
     hits: list[SearchHit] = []
     for kind in selected:
@@ -558,6 +607,7 @@ def count_kind(
     table, _ = _KIND_TABLES[kind]
     where = ["workspace_id = ?"]
     params: list[Any] = [workspace_id]
+    _append_archive_filter(conn, table=table, kind=kind, where=where, requested_status=status)
     if pinned_only and kind in ("decision", "behavior"):
         where.append("pinned = 1")
     if status:

@@ -23,9 +23,9 @@ def test_workspace_doctor_reports_foreign_rows(applied_conn: sqlite3.Connection)
     report = run_workspace_doctor(applied_conn, workspace_id="project-a")
 
     assert report.status == "degraded"
-    assert report.counts_before["task_state"]["foreign"] == 1
+    assert report.counts_before["tasks"]["foreign"] == 1
     assert report.counts_before["audit_log"]["foreign"] == 1
-    assert {sample.table for sample in report.samples} >= {"task_state", "audit_log"}
+    assert {sample.table for sample in report.samples} >= {"tasks", "audit_log"}
 
 
 def test_workspace_doctor_quarantines_foreign_rows(
@@ -53,12 +53,12 @@ def test_workspace_doctor_quarantines_foreign_rows(
     )
 
     assert report.status == "ok"
-    assert report.quarantined_rows["task_state"] == 1
+    assert report.quarantined_rows["tasks"] == 1
     assert report.quarantined_rows["audit_log"] == 1
     assert report.counts_after == {}
     payload = json.loads(quarantine_path.read_text(encoding="utf-8"))
     assert payload["workspace_id"] == "project-a"
-    assert {row["table"] for row in payload["rows"]} >= {"task_state", "audit_log"}
+    assert {row["table"] for row in payload["rows"]} >= {"tasks", "audit_log"}
     after = run_integrity_audit(applied_conn, workspace_id="project-a")
     assert after.checks["workspace_pollution"].status == "ok"
 
@@ -85,10 +85,10 @@ def test_workspace_doctor_leaves_default_rows_unless_requested(
     )
     assert report.status == "degraded"
     assert report.quarantined_rows == {}
-    assert report.counts_after["task_state"]["default"] == 1
+    assert report.counts_after["tasks"]["default"] == 1
     assert (
         applied_conn.execute(
-            "SELECT COUNT(*) FROM task_state WHERE workspace_id = 'default'"
+            "SELECT COUNT(*) FROM tasks WHERE workspace_id = 'default'"
         ).fetchone()[0]
         == 1
     )
@@ -101,4 +101,4 @@ def test_workspace_doctor_leaves_default_rows_unless_requested(
         quarantine_path=tmp_path / "including_default.json",
     )
     assert default_report.status == "ok"
-    assert default_report.quarantined_rows["task_state"] == 1
+    assert default_report.quarantined_rows["tasks"] == 1

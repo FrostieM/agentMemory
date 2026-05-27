@@ -1,4 +1,4 @@
-"""Agent workflow wrapper for preflight context and completion recording."""
+"""Agent workflow wrapper for v3 brief/search preflight and completion writes."""
 
 from __future__ import annotations
 
@@ -53,18 +53,6 @@ def _parser() -> argparse.ArgumentParser:
     complete.add_argument("--allow-episode-only", action="store_true")
     complete.add_argument("--dry-run", action="store_true")
     complete.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
-    # v1.5: capability outcome reporting. The default 'success' is gentle —
-    # `complete` is usually invoked when the task succeeded. Pass --outcome
-    # failure when it didn't (use the --raw-text to explain why). To attach
-    # the outcome to specific capabilities, pass --capability-outcome
-    # KIND:ID (e.g. skill:sk_alpha) once per capability.
-    complete.add_argument("--outcome", choices=("success", "failure"), default="success")
-    complete.add_argument(
-        "--capability-outcome",
-        action="append",
-        default=[],
-        help="KIND:ID (skill|role|playbook). Repeat for multiple capabilities.",
-    )
     return parser
 
 
@@ -91,6 +79,23 @@ def _post_json(
     return parsed if isinstance(parsed, dict) else {"response": parsed}
 
 
+def _get_json(
+    client: httpx.Client,
+    url: str,
+    params: dict[str, Any],
+    *,
+    headers: dict[str, str],
+) -> dict[str, Any]:
+    response = client.get(url, params=params, headers=headers)
+    response.raise_for_status()
+    parsed = response.json()
+    return parsed if isinstance(parsed, dict) else {"response": parsed}
+
+
+def _unwrap_data(envelope: dict[str, Any]) -> Any:
+    return envelope.get("data") if isinstance(envelope.get("data"), (dict, list)) else envelope
+
+
 def _preflight_payload(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "workspace_id": args.workspace,
@@ -100,6 +105,30 @@ def _preflight_payload(args: argparse.Namespace) -> dict[str, Any]:
         "max_tokens": args.max_tokens,
         "historical": args.historical,
     }
+
+
+def _brief_params(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "workspace_id": args.workspace,
+        "task": args.query,
+        "max_tokens": args.max_tokens,
+    }
+
+
+def _search_payload(
+    args: argparse.Namespace,
+    *,
+    query: str | None = None,
+    kinds: list[str] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "workspace_id": args.workspace,
+        "query": query or args.query,
+        "limit": 8,
+    }
+    if kinds:
+        payload["kinds"] = kinds
+    return payload
 
 
 def _role_trace(args: argparse.Namespace) -> dict[str, list[str]]:
@@ -167,24 +196,30 @@ def _completion_payloads(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     _validate_completion(args)
     raw_text = _format_completion_text(args)
     return {
-        "ingest_episode": {
+        "write_episode": {
             "workspace_id": args.workspace,
-            "task_id": args.task_id,
-            "source_type": "agent_action",
-            "raw_text": raw_text,
-            "trust_level": "agent_observed",
-            "importance": args.importance,
+            "kind": "episode",
+            "payload": {
+                "task_id": args.task_id,
+                "source_type": "agent_action",
+                "raw_text": raw_text,
+                "trust_level": "agent_observed",
+                "importance": args.importance,
+            },
         },
-        "update_task_state": {
+        "write_task": {
             "workspace_id": args.workspace,
-            "task_id": args.task_id,
-            "goal": args.goal,
-            "status": args.status,
-            "current_plan": [],
-            "completed_steps": [raw_text],
-            "next_action": args.next_action or None,
-            "blockers": [],
-            "files_in_scope": [],
+            "kind": "task",
+            "payload": {
+                "task_id": args.task_id,
+                "goal": args.goal,
+                "status": args.status,
+                "current_plan": [],
+                "completed_steps": [raw_text],
+                "next_action": args.next_action or None,
+                "blockers": [],
+                "files_in_scope": [],
+            },
         },
     }
 
@@ -194,8 +229,8 @@ def _print(payload: dict[str, Any], *, as_json: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
     print(f"status={payload['status']} command={payload['command']}")
-    if payload.get("context_text"):
-        print(payload["context_text"])
+    if payload.get("body_md"):
+        print(payload["body_md"])
     if payload.get("episode_id"):
         print(f"episode_id={payload['episode_id']}")
     if payload.get("state_id"):
@@ -203,64 +238,44 @@ def _print(payload: dict[str, Any], *, as_json: bool) -> None:
 
 
 def _run_preflight(args: argparse.Namespace, headers: dict[str, str]) -> dict[str, Any]:
-    payload = _preflight_payload(args)
-    capability_payload = {
-        "workspace_id": args.workspace,
-        "query": args.capability_query or args.query,
-        "limit": 8,
-    }
+    brief_params = _brief_params(args)
+    search_payload = _search_payload(args)
+    capability_payload = _search_payload(
+        args,
+        query=args.capability_query or args.query,
+        kinds=["skill"],
+    )
     if args.dry_run:
         return {
             "status": "ok",
             "command": "preflight",
             "dry_run": True,
-            "request": payload,
+            "brief_request": brief_params,
+            "search_request": search_payload,
             "capability_request": capability_payload,
             "role_activation_trace": _role_trace(args),
         }
     with httpx.Client(base_url=args.base_url, timeout=30.0) as client:
         health = client.get("/health")
         health.raise_for_status()
-        context = _post_json(client, "/memory/get_context", payload, headers=headers)
+        brief = _get_json(client, "/memory/brief", brief_params, headers=headers)
+        search_results = _post_json(client, "/memory/search", search_payload, headers=headers)
         capabilities = _post_json(
             client,
-            "/memory/list_agent_capabilities",
+            "/memory/search",
             capability_payload,
             headers=headers,
         )
+    brief_data = _unwrap_data(brief)
     return {
         "status": "ok",
         "command": "preflight",
         "health": health.json(),
-        "context_text": context.get("context_text", ""),
-        "sources": context.get("sources", []),
+        "body_md": brief_data.get("body_md", "") if isinstance(brief_data, dict) else "",
+        "sources": _unwrap_data(search_results),
         "role_activation_trace": _role_trace(args),
-        "capability_candidates": capabilities,
+        "capability_candidates": _unwrap_data(capabilities),
     }
-
-
-def _capability_outcome_payloads(
-    args: argparse.Namespace, *, episode_id: str | None
-) -> list[dict[str, Any]]:
-    """Translate ``KIND:ID`` strings into /memory/capability/record_outcome payloads."""
-    payloads: list[dict[str, Any]] = []
-    success = args.outcome == "success"
-    for raw in args.capability_outcome:
-        if ":" not in raw:
-            raise ValueError(f"--capability-outcome must be 'KIND:ID', got: {raw!r}")
-        kind, _, capability_id = raw.partition(":")
-        if not capability_id:
-            raise ValueError(f"--capability-outcome missing id: {raw!r}")
-        payloads.append(
-            {
-                "workspace_id": args.workspace,
-                "kind": kind.strip(),
-                "capability_id": capability_id.strip(),
-                "success": success,
-                "episode_id": episode_id,
-            }
-        )
-    return payloads
 
 
 def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str, Any]:
@@ -271,46 +286,44 @@ def _run_complete(args: argparse.Namespace, headers: dict[str, str]) -> dict[str
             "command": "complete",
             "dry_run": True,
             "requests": payloads,
-            "capability_outcomes": _capability_outcome_payloads(args, episode_id=None),
         }
     with httpx.Client(base_url=args.base_url, timeout=30.0) as client:
         episode = _post_json(
             client,
-            "/memory/ingest_episode",
-            payloads["ingest_episode"],
+            "/memory/write",
+            payloads["write_episode"],
             headers=headers,
         )
         state = _post_json(
             client,
-            "/memory/update_task_state",
-            payloads["update_task_state"],
+            "/memory/write",
+            payloads["write_task"],
             headers=headers,
         )
-        outcomes: list[dict[str, Any]] = []
-        for outcome_payload in _capability_outcome_payloads(
-            args, episode_id=episode.get("episode_id")
-        ):
-            outcomes.append(
-                _post_json(
-                    client,
-                    "/memory/capability/record_outcome",
-                    outcome_payload,
-                    headers=headers,
-                )
-            )
+        episode_data = _unwrap_data(episode)
+        episode_id = (
+            episode_data.get("id") or episode_data.get("episode_id")
+            if isinstance(episode_data, dict)
+            else None
+        )
+    state_data = _unwrap_data(state)
     return {
         "status": "ok",
         "command": "complete",
         "strict": args.strict,
-        "outcome": args.outcome,
         "role_activation_trace": _role_trace(args),
         "verification": list(args.verification),
         "linked_memory": _linked_memory(args),
-        "episode_id": episode.get("episode_id"),
-        "chunk_id": episode.get("chunk_id"),
-        "candidates_written": episode.get("candidates_written"),
-        "state_id": state.get("state_id"),
-        "capability_outcomes": outcomes,
+        "episode_id": episode_id,
+        "chunk_id": episode_data.get("chunk_id") if isinstance(episode_data, dict) else None,
+        "candidates_written": (
+            episode_data.get("candidates_written") if isinstance(episode_data, dict) else None
+        ),
+        "state_id": (
+            state_data.get("id") or state_data.get("state_id")
+            if isinstance(state_data, dict)
+            else None
+        ),
     }
 
 

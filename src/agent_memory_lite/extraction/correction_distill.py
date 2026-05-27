@@ -17,11 +17,11 @@ _CLIP_CHARS = 160
 
 
 def count_corrections_today(conn: sqlite3.Connection, workspace_id: str) -> int:
-    """Count memory_candidates(kind='correction') rows written today (UTC)
+    """Count candidates(kind='correction') rows written today (UTC)
     in the given workspace. Returns 0 when the table is missing."""
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     sql = (
-        "SELECT COUNT(*) FROM memory_candidates "
+        "SELECT COUNT(*) FROM candidates "
         "WHERE workspace_id = ? AND kind = 'correction' "
         "AND substr(created_at, 1, 10) = ?"
     )

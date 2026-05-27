@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agent_memory_lite.storage.reader import validate_kinds
 
 
 class Envelope(BaseModel):
@@ -83,6 +85,13 @@ class SearchRequest(BaseModel):
         ),
     )
 
+    @field_validator("kinds")
+    @classmethod
+    def _validate_kinds(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return validate_kinds(value)
+
 
 class LintRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -91,14 +100,3 @@ class LintRequest(BaseModel):
     tool_name: str = Field(min_length=1)
     tool_payload: dict[str, Any] = Field(default_factory=dict)
     transcript_path: str | None = None
-
-
-class RollbackRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    workspace_id: str = Field(min_length=1)
-    kind: str = Field(min_length=1)
-    id: str = Field(min_length=1)
-    to_version: int = Field(ge=1)
-    why: str = Field(min_length=1)
-    agent_id: str = "agent"

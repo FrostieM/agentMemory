@@ -18,9 +18,9 @@ Idempotent: each step is fed exactly once. ``plan_steps.outcome_fed_at``
 is NULL until fed, then stamped with the pass timestamp, so a re-running
 brain pass skips already-fed steps. A step with no bound capabilities is
 still stamped -- there is nothing to feed, and stamping stops it being
-re-scanned every pass. Failure-soft (a missing plan_steps table or a
-pre-0039 schema is a no-op) and capped per pass, like every brain-pass
-loop.
+re-scanned every pass. Failure-soft (a missing plan_steps table or
+outcome_fed_at column is a no-op) and capped per pass, like every
+brain-pass loop.
 """
 
 from __future__ import annotations
@@ -51,8 +51,7 @@ def feed_plan_step_outcomes(conn: sqlite3.Connection, *, workspace_id: str, max_
     Returns the number of (step -> capability) outcomes actually
     recorded. A step with no bound capabilities records nothing but is
     still marked fed so it is not re-scanned. A DB without the
-    ``plan_steps`` table or the ``outcome_fed_at`` column (legacy /
-    pre-0039) is a no-op.
+    ``plan_steps`` table or the ``outcome_fed_at`` column is a no-op.
 
     ``mark_outcome_fed`` runs *before* the per-link loop on purpose: if
     a later ``record_outcome`` ever raises, the step is already stamped,

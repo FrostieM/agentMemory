@@ -1,8 +1,8 @@
 """Unit tests for repositories/audit_repo.py — insert_audit.
 
-v3.7: insert_audit's OperationalError fallback used to retry the INSERT
+insert_audit's OperationalError fallback used to retry the INSERT
 unconditionally. When the audit_log table is absent entirely (not just
-the 0026 agent_id column), the retry threw again, uncaught, and 500'd
+the agent_id column), the retry threw again, uncaught, and 500'd
 the operation being audited. The fallback is now best-effort — a missing
 table is swallowed, the in-memory AuditEntry is still returned.
 """
@@ -51,18 +51,17 @@ def test_insert_audit_missing_table_does_not_raise(
         entry = insert_audit(
             fresh_conn,
             workspace_id="ws",
-            action="get_context",
+            action="search",
             target_type="query",
             target_id="q1",
         )
     assert isinstance(entry, AuditEntry)
-    assert entry.action == "get_context"
+    assert entry.action == "search"
     assert "audit_log write skipped" in caplog.text
 
 
-def test_insert_audit_legacy_schema_without_agent_id(fresh_conn: sqlite3.Connection) -> None:
-    """Pre-0026 schema: audit_log exists but lacks the agent_id column.
-    insert_audit falls back to the column-less INSERT and still writes."""
+def test_insert_audit_partial_schema_without_agent_id(fresh_conn: sqlite3.Connection) -> None:
+    """audit_log exists but lacks agent_id; insert_audit still writes."""
     fresh_conn.execute(
         """
         CREATE TABLE audit_log (

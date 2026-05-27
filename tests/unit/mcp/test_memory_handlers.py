@@ -21,8 +21,6 @@ from agent_memory_lite.mcp import stdio_handlers_memory as v3
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def db_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
@@ -35,7 +33,9 @@ def db_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3
     db_path = tmp_path / "canonical.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.commit()
     # Patch the runtime db accessor used by every v3 handler.
     monkeypatch.setattr(v3._runtime, "db", lambda: conn)
@@ -114,6 +114,13 @@ def test_envelope_shape_on_error(db_conn: sqlite3.Connection) -> None:
     assert env["error"]["code"] == "not_found"
 
 
+def test_get_unknown_kind_returns_controlled_error(db_conn: sqlite3.Connection) -> None:
+    env = v3._handle_v3_get({"workspace_id": "default", "kind": "not_a_kind", "id": "x"})
+    assert env["ok"] is False
+    assert env["data"] is None
+    assert env["error"]["code"] == "validation_failed"
+
+
 # ============================================================
 # Read handlers
 # ============================================================
@@ -133,6 +140,15 @@ def test_search_requires_query(db_conn: sqlite3.Connection) -> None:
     env = v3._handle_v3_search({"workspace_id": "default", "query": ""})
     assert env["ok"] is False
     assert env["error"]["code"] == "invalid_args"
+
+
+def test_search_unknown_kind_returns_controlled_error(db_conn: sqlite3.Connection) -> None:
+    env = v3._handle_v3_search(
+        {"workspace_id": "default", "query": "kelly", "kinds": ["decisions"]}
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "invalid_args"
+    assert "unknown kinds" in env["error"]["message"]
 
 
 def test_get_with_fields_csv(db_conn: sqlite3.Connection) -> None:
@@ -392,7 +408,9 @@ def test_search_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Mon
     foreign = sqlite3.connect(foreign_path)
     for conn in (anchor, foreign):
         conn.row_factory = sqlite3.Row
-        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        apply_migrations(conn)
         conn.commit()
 
     relaxed = v3._runtime.settings.model_copy(
@@ -447,7 +465,9 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     foreign = sqlite3.connect(foreign_path)
     for conn in (anchor, foreign):
         conn.row_factory = sqlite3.Row
-        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        apply_migrations(conn)
         conn.commit()
 
     relaxed = v3._runtime.settings.model_copy(

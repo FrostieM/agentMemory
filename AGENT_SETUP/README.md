@@ -1,4 +1,4 @@
-# AGENT_SETUP — paste-and-forget prompts
+﻿# AGENT_SETUP вЂ” paste-and-forget prompts
 
 Two self-contained prompts. Pick one, paste it as the first user message in
 a new chat (or as a follow-up in an active chat), and the agent does the
@@ -19,7 +19,7 @@ common workspace locations, and finally falls back to asking you.
 
 After either prompt finishes, the agent should:
 1. Tell you what it set up (paths, files written).
-2. Confirm the memory tools are working (a quick `memory_get_context` round-trip).
+2. Confirm the memory tools are working (a quick `memory_brief / memory_search` round-trip).
 3. Use the project's established workspace id, or the project directory name
    when none is established.
 4. Run read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
@@ -68,14 +68,14 @@ weak ones instead of turning every extracted sentence into an active decision.
 `setup_agent.py --project` (which both prompts call) bakes the
 asymmetric isolation contract into the project's MCP env:
 
-- Reads from this project's chat to ANY registered workspace are allowed —
-  the user can ask "look at copyBot decisions" and the agent will route
-  the read to that DB via the workspace registry.
+- Reads from this project's chat to ANY registered workspace are allowed вЂ”
+  the user can ask to inspect another registered workspace's decisions and
+  the agent will route the read to that DB via the workspace registry.
 - Writes from this project's chat to ANY workspace other than its own
   are blocked at the strict-isolation guard. The agent must refuse and
   ask the user to switch contexts.
 
-For full cross-workspace access (both read and write — useful for batch
+For full cross-workspace access (both read and write вЂ” useful for batch
 maintenance), open a chat in the **parent directory** (no project pin)
 or run the HTTP service with `MEMORY_HUB_MODE=true`. The PowerShell
 autostart wrapper takes `-HubMode`. The serve.py launcher accepts
@@ -88,9 +88,9 @@ need to **restart whichever runtime is hosting it**:
 | Runtime | What to restart | Where the MCP config lives |
 |---|---|---|
 | Claude Code | Close and reopen the app | `<project>/.claude/settings.json` (project mode) or `~/.claude/settings.json` (global) |
-| Codex | Close and reopen the editor / CLI | `~/.codex/config.toml` — Codex reads MCP globally only. `--project` mode still writes `<project>/AGENTS.md` and the DB, but the MCP entry must come from the global setup. Run `python scripts/setup_agent.py` (no `--project`) once for that, then restart. |
+| Codex | Close and reopen the editor / CLI | `~/.codex/config.toml` вЂ” Codex reads MCP globally only. `--project` mode still writes `<project>/AGENTS.md` and the DB, but the MCP entry must come from the global setup. Run `python scripts/setup_agent.py` (no `--project`) once for that, then restart. |
 | Cursor | Close and reopen Cursor | `~/.cursor/mcp.json` (or per-project equivalent if your build supports it) |
 | Other MCP-aware client | Whatever the client treats as a session boundary | check the client's docs |
 
-This is not a bug in agent-memory-lite — every MCP client reads its
+This is not a bug in agent-memory-lite вЂ” every MCP client reads its
 config at startup, not on every prompt.

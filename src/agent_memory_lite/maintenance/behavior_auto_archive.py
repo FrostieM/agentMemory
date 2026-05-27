@@ -1,9 +1,9 @@
 """v3.2 — auto-archive dead behavior_instructions.
 
 Live-2026-05-20 audit on copyBot showed 27 of 91 active behaviors
-(application_count=0) had never fired. Each row costs context budget
-in every rendered envelope (``<behavior_instructions>``) and trains
-the agent to ignore the section because most of it is irrelevant.
+(application_count=0) had never fired. Each row costs brief budget
+and trains the agent to ignore behavior memory because most of it is
+irrelevant.
 
 This module runs from brain_pass between the consolidation step and
 the causal-link step. The criteria are deliberately strict so we
@@ -67,7 +67,7 @@ def auto_archive_dead_behaviors(
     now = iso_now()
     try:
         cur = conn.execute(
-            """SELECT COUNT(*) FROM behavior_instructions
+            """SELECT COUNT(*) FROM behaviors
                WHERE workspace_id = ?
                  AND active = 1
                  AND COALESCE(application_count, 0) = 0
@@ -86,7 +86,7 @@ def auto_archive_dead_behaviors(
         return ArchiveReport(archived=0, scanned=0)
     try:
         conn.execute(
-            """UPDATE behavior_instructions
+            """UPDATE behaviors
                SET active = 0,
                    expires_at = COALESCE(expires_at, ?),
                    reviewed_by = ?,

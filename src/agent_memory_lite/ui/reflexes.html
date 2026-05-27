@@ -43,8 +43,6 @@
     </header>
     <nav class="app-nav" aria-label="UI sections">
       <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
-      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
-      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
       <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
       <a class="app-nav-link is-active" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
       <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
@@ -104,9 +102,9 @@
           <select id="fTriggerTool">
             <option>Edit</option><option>Write</option>
             <option>Bash</option><option>Read</option><option>Grep</option>
-            <option>memory_write_decision</option>
-            <option>memory_write_theory</option>
-            <option>memory_write_behavior</option>
+            <option>memory_write</option>
+            <option>memory_edit</option>
+            <option>memory_archive</option>
           </select>
           <label>trigger pattern (regex over tool payload — optional)</label>
           <input id="fTriggerPattern" type="text" placeholder=".*kelly.*" />

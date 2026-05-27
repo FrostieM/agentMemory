@@ -131,34 +131,47 @@ def test_hub_mode_get_routes_by_query_workspace_id(hub_setup) -> None:
 
 
 def test_hub_mode_post_routes_by_body_workspace_id(hub_setup) -> None:
-    """write_decision into ws_b lands in ws_b's DB, invisible to ws_a."""
+    """memory_write(kind=decision) into ws_b lands in ws_b's DB, invisible to ws_a."""
     client, _, _ = hub_setup
 
     written = client.post(
-        "/memory/write_decision",
+        "/memory/write",
         json={
             "workspace_id": "ws_b",
-            "title": "Routing test decision",
-            "decision_text": "Created from hub-mode middleware test.",
-            "rationale": "fixture",
+            "kind": "decision",
+            "payload": {
+                "title": "Routing test decision",
+                "decision_text": "Created from hub-mode middleware test.",
+                "rationale": "fixture",
+            },
         },
     )
     assert written.status_code == 200, written.text
 
     in_b = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "ws_b", "limit": 5},
+        "/memory/search",
+        json={
+            "workspace_id": "ws_b",
+            "kinds": ["decision"],
+            "query": "Routing test decision",
+            "limit": 5,
+        },
     )
     assert in_b.status_code == 200
-    titles_b = [d["title"] for d in in_b.json()["decisions"]]
+    titles_b = [d["projection"]["title"] for d in in_b.json()["data"]]
     assert "Routing test decision" in titles_b
 
     in_a = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "ws_a", "limit": 5},
+        "/memory/search",
+        json={
+            "workspace_id": "ws_a",
+            "kinds": ["decision"],
+            "query": "Routing test decision",
+            "limit": 5,
+        },
     )
     assert in_a.status_code == 200
-    titles_a = [d["title"] for d in in_a.json()["decisions"]]
+    titles_a = [d["projection"]["title"] for d in in_a.json()["data"]]
     assert "Routing test decision" not in titles_a
 
 

@@ -96,6 +96,30 @@ def test_resolve_workspace_no_registry_match(
     assert db == ""
 
 
+def test_resolve_workspace_rejects_unsafe_db_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "workspaces.json"
+    project = tmp_path / "proj"
+    project.mkdir()
+    target = project / "src" / "foo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# x", encoding="utf-8")
+    _write_registry(
+        registry,
+        [
+            {
+                "id": "proj",
+                "project_root": str(project),
+                "db_path": "relative.db",
+                "vector_path": "",
+            }
+        ],
+    )
+    monkeypatch.setattr(hook, "REGISTRY_PATH", registry)
+    assert hook._resolve_workspace(target) == ("", "")
+
+
 # ============================================================
 # End-to-end main()
 # ============================================================

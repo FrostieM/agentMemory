@@ -70,7 +70,7 @@ def _seed_correction_candidate(
     )
     conn.execute(
         """
-        INSERT INTO memory_candidates (
+        INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, status,
             temporal_json, write_targets_json, metadata_json,
@@ -124,14 +124,14 @@ def test_promote_atomicity_rollback_on_step3_failure(conn: sqlite3.Connection) -
 
     # No behavior_instruction with that name should exist.
     row = conn.execute(
-        "SELECT id FROM behavior_instructions WHERE workspace_id=? AND name=?",
+        "SELECT id FROM behaviors WHERE workspace_id=? AND name=?",
         ("ws-promote", "rollback-test-rule"),
     ).fetchone()
     assert row is None, "behavior_instruction was not rolled back on step-3 failure"
 
     # The candidate's status must still be 'new' so the operator can retry.
     row = conn.execute(
-        "SELECT status, promoted_target_id FROM memory_candidates WHERE id=?",
+        "SELECT status, promoted_target_id FROM candidates WHERE id=?",
         ("cand_atomicity",),
     ).fetchone()
     assert row is not None
@@ -160,12 +160,12 @@ def test_promote_atomicity_rollback_on_step1_failure(conn: sqlite3.Connection) -
         promote_correction_to_behavior(conn, payload)
 
     row = conn.execute(
-        "SELECT id FROM behavior_instructions WHERE name=?",
+        "SELECT id FROM behaviors WHERE name=?",
         ("step1-fail-rule",),
     ).fetchone()
     assert row is None
     cand = conn.execute(
-        "SELECT status FROM memory_candidates WHERE id=?",
+        "SELECT status FROM candidates WHERE id=?",
         ("cand_step1_fail",),
     ).fetchone()
     assert cand["status"] == "new"
@@ -196,12 +196,12 @@ def test_promote_atomicity_rollback_on_step2_pin_failure(conn: sqlite3.Connectio
     # behavior_instruction created in Step 1 must NOT survive — the
     # outer ``with_tx`` rolls back the inner SAVEPOINT.
     row = conn.execute(
-        "SELECT id FROM behavior_instructions WHERE name=?",
+        "SELECT id FROM behaviors WHERE name=?",
         ("step2-fail-rule",),
     ).fetchone()
     assert row is None, "Step 1 behavior_instruction was not rolled back when Step 2 (pin) failed"
     cand = conn.execute(
-        "SELECT status FROM memory_candidates WHERE id=?",
+        "SELECT status FROM candidates WHERE id=?",
         ("cand_step2_fail",),
     ).fetchone()
     assert cand["status"] == "new"
@@ -221,7 +221,7 @@ def test_promote_succeeds_atomically_on_happy_path(conn: sqlite3.Connection) -> 
     assert instruction.id
     # behavior_instruction live
     bi = conn.execute(
-        "SELECT id, source_type, source_id FROM behavior_instructions WHERE name=?",
+        "SELECT id, source_type, source_id FROM behaviors WHERE name=?",
         ("happy-path-rule",),
     ).fetchone()
     assert bi is not None
@@ -229,7 +229,7 @@ def test_promote_succeeds_atomically_on_happy_path(conn: sqlite3.Connection) -> 
     assert bi["source_id"] == "cand_happy"
     # candidate flipped
     cand = conn.execute(
-        "SELECT status, promoted_target_id FROM memory_candidates WHERE id=?",
+        "SELECT status, promoted_target_id FROM candidates WHERE id=?",
         ("cand_happy",),
     ).fetchone()
     assert cand["status"] == "promoted"
@@ -418,7 +418,7 @@ def test_promote_wrong_kind_still_raises_correction_error(
     )
     conn.execute(
         """
-        INSERT INTO memory_candidates (
+        INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, status,
             temporal_json, write_targets_json, metadata_json,
@@ -438,7 +438,5 @@ def test_promote_wrong_kind_still_raises_correction_error(
         promote_correction_to_behavior(conn, payload)
     assert exc_info.value.code == "wrong_kind"
     # No behavior_instruction created (guard fired before any write).
-    row = conn.execute(
-        "SELECT id FROM behavior_instructions WHERE name='should-not-promote'"
-    ).fetchone()
+    row = conn.execute("SELECT id FROM behaviors WHERE name='should-not-promote'").fetchone()
     assert row is None

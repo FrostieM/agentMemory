@@ -11,29 +11,11 @@ _FILE_MUTATION_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "Bash"})
 _FILE_READ_TOOLS = frozenset({"Read", "Grep", "Glob"})
 _MEMORY_WRITE_NAMES = frozenset(
     {
-        "memory_ingest_episode",
-        "memory_ingest_file",
-        "memory_write_decision",
-        "memory_write_theory",
-        "memory_add_theory_evidence",
-        "memory_write_experiment",
-        "memory_add_experiment_result",
-        "memory_record_with_evidence",
-        "memory_link_capability",
-        "memory_upsert_concept",
-        "memory_upsert_agent_role",
-        "memory_upsert_agent_skill",
-        "memory_upsert_agent_playbook",
-        "memory_upsert_behavior_instruction",
-        "memory_distill_insight",
-        "memory_update_insight",
-        "memory_update_task_state",
-        "memory_promote_candidate",
-        "memory_promote_candidate_to_behavior",
-        "memory_reject_candidate",
-        "memory_register_snapshot",
-        "memory_archive",
+        "memory_write",
+        "memory_edit",
         "memory_pin",
+        "memory_archive",
+        "memory_rollback",
     }
 )
 

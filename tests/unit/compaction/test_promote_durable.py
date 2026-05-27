@@ -6,9 +6,14 @@ import pytest
 
 from agent_memory_lite.compaction.promote_durable import promote_durable_candidates
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
-from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
+from agent_memory_lite.models.enums import (
+    BehaviorInstructionKind,
+    BehaviorInstructionPriority,
+    EpisodeSource,
+    MemoryCandidateKind,
+    TrustLevel,
+)
 from agent_memory_lite.models.episodes import EpisodeIn
-from agent_memory_lite.repositories.core_memory_repo import list_active_core
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 
 
@@ -62,8 +67,14 @@ def test_user_asserted_constraint_promoted(
     )
     assert stats.promoted == 1
     assert stats.skipped == 0
-    actives = list_active_core(applied_conn, "default")
-    assert any(item.value == "user said so" for item in actives)
+    row = applied_conn.execute(
+        "SELECT kind, priority, rule FROM behaviors WHERE workspace_id = ? AND active = 1",
+        ("default",),
+    ).fetchone()
+    assert row is not None
+    assert row["kind"] == BehaviorInstructionKind.OPERATING_RULE.value
+    assert row["priority"] == BehaviorInstructionPriority.SYSTEM_BOUND.value
+    assert row["rule"] == "user said so"
 
 
 def test_untrusted_doc_skipped(applied_conn: sqlite3.Connection, source_episode_id: str) -> None:

@@ -1,24 +1,22 @@
-"""Theory -> decision-candidate bridge.
-
-When a theory is in ``status='validated'`` and has accumulated at least
-``MEMORY_THEORY_BRIDGE_MIN_EVIDENCE`` supporting evidence rows, write a
-proposed decision into ``decision_candidates``. The bridge NEVER touches
-the ``decisions`` table — only the operator's explicit promote call
-through the API can do that, preserving the trust-gate invariant.
-
-Idempotency: a partial unique index in migration 0023 enforces "at most
-one pending candidate per theory". Re-running this function on the same
-theory is a no-op until the existing pending candidate is decided.
-"""
+"""Theory to reviewable decision candidate bridge."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.models.enums import TheoryEvidenceKind, TheoryStatus
+from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
+from agent_memory_lite.models.enums import (
+    MemoryCandidateKind,
+    MemoryCandidateStatus,
+    TheoryEvidenceKind,
+    TheoryStatus,
+    TrustLevel,
+)
 from agent_memory_lite.repositories.audit_repo import insert_audit
+from agent_memory_lite.repositories.candidates_repo import insert_candidate_row
 from agent_memory_lite.repositories.theories_repo import get_theory
 from agent_memory_lite.repositories.theory_evidence_repo import list_evidence_for_theory
 from agent_memory_lite.utils.ids import IdKind, new_id
@@ -33,16 +31,29 @@ class CandidateEmission:
     evidence_strength: float
 
 
-def _has_open_candidate(conn: sqlite3.Connection, theory_id: str) -> bool:
-    row = conn.execute(
+def _has_open_candidate(conn: sqlite3.Connection, *, workspace_id: str, theory_id: str) -> bool:
+    rows = conn.execute(
         """
-        SELECT 1 FROM decision_candidates
-        WHERE theory_id = ? AND status = 'pending'
-        LIMIT 1
+        SELECT metadata_json FROM candidates
+        WHERE workspace_id = ?
+          AND kind = ?
+          AND status IN (?, ?)
         """,
-        (theory_id,),
-    ).fetchone()
-    return row is not None
+        (
+            workspace_id,
+            MemoryCandidateKind.DECISION.value,
+            MemoryCandidateStatus.NEW.value,
+            MemoryCandidateStatus.ACCEPTED.value,
+        ),
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(metadata, dict) and metadata.get("theory_id") == theory_id:
+            return True
+    return False
 
 
 def _supporting_evidence_metrics(conn: sqlite3.Connection, *, theory_id: str) -> tuple[int, float]:
@@ -51,9 +62,6 @@ def _supporting_evidence_metrics(conn: sqlite3.Connection, *, theory_id: str) ->
     count = len(supporting)
     if count == 0:
         return (0, 0.0)
-    # v3.5 sector-5 audit-followup: legacy evidence rows can carry
-    # ``confidence=None``. Summing None propagates a TypeError that
-    # crashed the bridge for the whole theory. Coerce to 0.0.
     avg_confidence = sum(float(row.confidence or 0.0) for row in supporting) / count
     return (count, avg_confidence)
 
@@ -65,10 +73,7 @@ def maybe_emit_decision_candidate(
     theory_id: str,
     settings: Settings,
 ) -> CandidateEmission | None:
-    """Emit a decision candidate when conditions are met. Returns None when
-    the bridge is disabled, the theory is missing or not validated, or the
-    evidence threshold isn't reached yet.
-    """
+    """Emit a canonical decision candidate when bridge conditions are met."""
     if not settings.theory_bridge_enabled:
         return None
     theory = get_theory(conn, theory_id)
@@ -79,41 +84,50 @@ def maybe_emit_decision_candidate(
     evidence_count, evidence_strength = _supporting_evidence_metrics(conn, theory_id=theory_id)
     if evidence_count < settings.theory_bridge_min_evidence:
         return None
-    if _has_open_candidate(conn, theory_id):
+    if _has_open_candidate(conn, workspace_id=workspace_id, theory_id=theory_id):
         return None
-    candidate_id = new_id(IdKind.DECISION_CANDIDATE)
+
+    candidate_id = new_id(IdKind.MEMORY_CANDIDATE)
     now_iso = iso_now()
     proposed_title = f"Adopt: {theory.title}"[:200]
     proposed_text = theory.claim
     proposed_rationale = theory.mechanism or ""
-    conn.execute(
-        """
-        INSERT INTO decision_candidates
-        (id, workspace_id, theory_id, proposed_title, proposed_decision_text,
-         proposed_rationale, evidence_count, evidence_strength, confidence,
-         status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        """,
-        (
-            candidate_id,
-            workspace_id,
-            theory_id,
-            proposed_title,
-            proposed_text,
-            proposed_rationale,
-            evidence_count,
-            evidence_strength,
-            theory.confidence,
-            now_iso,
-            now_iso,
-        ),
+    candidate = MemoryCandidate(
+        kind=MemoryCandidateKind.DECISION,
+        subject=proposed_title,
+        predicate="should_promote_to_decision",
+        object=proposed_text,
+        evidence=proposed_rationale or proposed_text,
+        confidence=theory.confidence,
+        importance=theory.importance,
+        trust_level=TrustLevel.AGENT_INFERRED,
+        temporal=TemporalSpan(observed_at=now_iso, valid_from=now_iso),
+        write_targets=["decision"],
+        source_episode_id=theory.source_episode_id,
+        metadata={
+            "source": "theory_bridge",
+            "theory_id": theory_id,
+            "evidence_count": evidence_count,
+            "evidence_strength": evidence_strength,
+            "proposed_title": proposed_title,
+            "proposed_rationale": proposed_rationale,
+        },
+    )
+    insert_candidate_row(
+        conn,
+        candidate_id=candidate_id,
+        workspace_id=workspace_id,
+        candidate=candidate,
+        status=MemoryCandidateStatus.NEW,
+        created_at=now_iso,
     )
     insert_audit(
         conn,
         workspace_id=workspace_id,
         action="theory.candidate_decision_emitted",
-        target_type="decision_candidate",
+        target_type="memory_candidate",
         target_id=candidate_id,
+        source_episode_id=theory.source_episode_id,
         after={
             "theory_id": theory_id,
             "evidence_count": evidence_count,

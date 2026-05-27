@@ -17,29 +17,25 @@ _DEFAULT_DOC_GLOBS = [
     "docs/**/*.md",
     "AGENT_SETUP/**/*.md",
 ]
+_DEFAULT_EXCLUDED_DOCS = {Path("docs/V3_1_BREAKTHROUGH_ROADMAP.md")}
+_DEFAULT_EXCLUDED_PREFIXES = (Path("docs/adr"),)
 _REQUIRED_CONTRACT_TOKENS = [
-    "memory_get_context",
+    "memory_brief",
     "memory_search",
-    "memory_ingest_episode",
-    "memory_write_theory",
-    "memory_upsert_behavior_instruction",
-    "memory_list_agent_capabilities",
-    "memory_link_capability",
+    "memory_get",
+    "memory_write",
+    "memory_edit",
+    "memory_impact_check",
+    "memory_status",
+    "memory_plan",
     "scripts/memory_audit.py",
-    "scripts/memory_hygiene.py",
     "scripts/memory_quality_gate.py",
-    "scripts/memory_watchdog.py",
-    "scripts/memory_encoding_audit.py",
-    "scripts/memory_workspace_doctor.py",
-    "scripts/memory_feedback_report.py",
-    "scripts/memory_operator_report.py",
-    "scripts/memory_service_task.ps1",
-    "scripts/memory_trend_report.py",
+    "scripts/memory_mcp_smoke.py",
+    "scripts/memory_trust_dashboard.py",
     "MEMORY_STRICT_WORKSPACE_ISOLATION",
     "/ui",
-    "/memory/ui/state",
-    "/memory/explain_context",
-    "/memory/record_usage_feedback",
+    "/ui/recall",
+    "/ui/metrics",
 ]
 _DEFAULT_WORKSPACE_PATTERNS = [
     re.compile(r"workspace_id\s*=\s*['\"]default['\"]"),
@@ -47,6 +43,47 @@ _DEFAULT_WORKSPACE_PATTERNS = [
     re.compile(r"--workspace(?:-id)?\s+default\b"),
 ]
 _PROJECT_NAME_RE = re.compile(r"\bcopyBot\b", re.IGNORECASE)
+_LEGACY_ALLOWED_CONTEXT_RE = re.compile(
+    r"\b(?:"
+    r"404|deleted|forbidden|no\s+longer|not\s+active|not\s+registered|"
+    r"reject(?:ed)?|removed|unsupported|was\s+removed|were\s+removed|"
+    r"do\s+not\s+use|must\s+not\s+use"
+    r")\b",
+    re.IGNORECASE,
+)
+_LEGACY_CONTRACT_PATTERNS = [
+    ("legacy_mcp_tool", re.compile(r"\bmemory_get_context\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_get_object\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_list_[a-z_]+\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_write_(?:decision|theory|task_state)\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_record_with_evidence\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_upsert_[a-z_]+\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_(?:file_digest|find_symbols|graph_neighbors)\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_code_(?:overview|graph)\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_(?:claim_edit|release_edit)\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_(?:ingest_episode|distill_insight)\b")),
+    ("legacy_mcp_tool", re.compile(r"\bmemory_update_task_state\b")),
+    ("legacy_http_route", re.compile(r"/memory/get_context\b")),
+    ("legacy_http_route", re.compile(r"/memory/get_object\b")),
+    ("legacy_http_route", re.compile(r"/memory/list_[A-Za-z_]+\b")),
+    (
+        "legacy_http_route",
+        re.compile(
+            r"/memory/(?:"
+            r"decision_candidates|insight_candidates|snapshot_(?:save|list|diff)|"
+            r"write_decision|write_theory|record_with_evidence|"
+            r"upsert_[A-Za-z_]+|update_task_state|file_digest|find_symbols|"
+            r"graph_neighbors|code_overview|code_graph|claim_edit|release_edit"
+            r")\b"
+        ),
+    ),
+    ("legacy_storage_name", re.compile(r"\bdecision_candidates\b")),
+    ("legacy_storage_name", re.compile(r"\binsight_candidates\b")),
+    ("legacy_storage_name", re.compile(r"\bmemory_state_snapshots\b")),
+    ("legacy_migration_path", re.compile(r"\bmigrations/canonical/")),
+    ("legacy_migration_path", re.compile(r"\bscripts/migrate_to_canonical\.py\b")),
+    ("legacy_migration_path", re.compile(r"\bscripts/migrate_behaviors_to_canonical\.py\b")),
+]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -54,6 +91,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", default=".", help="Project root to scan.")
     parser.add_argument("--workspace", "--workspace-id", dest="workspace", default=None)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--strict",
+        "--fail-on-warnings",
+        dest="strict",
+        action="store_true",
+        help="Return non-zero when warnings are present.",
+    )
     parser.add_argument(
         "--allow-project-name",
         action="append",
@@ -81,7 +125,11 @@ def _iter_default_files(root: Path) -> list[Path]:
     files: dict[str, Path] = {}
     for pattern in _DEFAULT_DOC_GLOBS:
         for path in root.glob(pattern):
-            if path.is_file():
+            rel = path.relative_to(root) if path.is_relative_to(root) else path
+            excluded_prefix = any(
+                rel == prefix or prefix in rel.parents for prefix in _DEFAULT_EXCLUDED_PREFIXES
+            )
+            if path.is_file() and rel not in _DEFAULT_EXCLUDED_DOCS and not excluded_prefix:
                 files[str(path.resolve())] = path
     return sorted(files.values())
 
@@ -145,6 +193,21 @@ def _scan_file(path: Path, root: Path, allowed_project_names: set[str]) -> list[
                     "summary": "Generic memory docs should not mention a specific project.",
                 }
             )
+    for line_number, line_text in enumerate(text.splitlines(), start=1):
+        if _LEGACY_ALLOWED_CONTEXT_RE.search(line_text):
+            continue
+        for kind, pattern in _LEGACY_CONTRACT_PATTERNS:
+            for match in pattern.finditer(line_text):
+                findings.append(
+                    {
+                        "kind": kind,
+                        "severity": "error",
+                        "path": rel,
+                        "line": line_number,
+                        "match": match.group(0),
+                        "summary": "Active contract docs must use the canonical v3 surface only.",
+                    }
+                )
     return findings
 
 
@@ -246,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
     _print(payload, as_json=args.json)
     if payload["status"] == "degraded":
         return 2
+    if args.strict and payload["status"] == "warning":
+        return 1
     return 0
 
 

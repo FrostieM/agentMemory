@@ -57,8 +57,7 @@ def test_new_secret_patterns_caught(payload: str, secret_marker: str) -> None:
 
 def test_trust_gate_blocks_untrusted_decision() -> None:
     """A DECISION candidate from an UNTRUSTED_DOC episode must NOT
-    pass the trust gate — the v3.4 gate only blocked procedural_rule
-    + constraint, leaving decision/correction as bypass routes."""
+    pass the trust gate - decision/correction used to be bypass routes."""
     cand = _candidate(
         kind=MemoryCandidateKind.DECISION,
         trust_level=TrustLevel.UNTRUSTED_DOC,

@@ -90,6 +90,7 @@ DEFAULT_SKIP_DIRS = frozenset(
         ".tox",
         ".idea",
         ".vscode",
+        ".claude",
         # Transient / generated artifacts that shouldn't enter the
         # workspace's code graph — Playwright screenshot dumps include
         # bundled Chrome extension cache scripts that dominate the
@@ -122,6 +123,10 @@ class IndexReport:
     edges_first_pass: int = 0
     edges_resolved_second_pass: int = 0
     digests_edge_refreshed: int = 0
+    pruned_digests: int = 0
+    pruned_files: int = 0
+    pruned_chunks: int = 0
+    pruned_edges: int = 0
     languages: Counter[str] = field(default_factory=Counter)
     error_details: list[str] = field(default_factory=list)
 
@@ -139,6 +144,10 @@ class IndexReport:
             "edges_first_pass": self.edges_first_pass,
             "edges_resolved_second_pass": self.edges_resolved_second_pass,
             "digests_edge_refreshed": self.digests_edge_refreshed,
+            "pruned_digests": self.pruned_digests,
+            "pruned_files": self.pruned_files,
+            "pruned_chunks": self.pruned_chunks,
+            "pruned_edges": self.pruned_edges,
             "languages": dict(self.languages),
             "error_details": list(self.error_details)[:20],
         }
@@ -180,6 +189,124 @@ def _existing_sha(conn: sqlite3.Connection, *, workspace_id: str, file_path: str
     return row[0] if row else None
 
 
+def _stored_path(project_root: Path, file_path: Path, *, relative_paths: bool) -> str:
+    if relative_paths:
+        return str(file_path.relative_to(project_root)).replace("\\", "/")
+    return str(file_path)
+
+
+def _prune_stale_code_memory(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    expected_paths: set[str],
+    prune_files: bool,
+) -> tuple[int, int, int, int]:
+    """Delete code-memory rows for paths outside the current project walk."""
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_file_ids")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_chunk_ids")
+    conn.execute("CREATE TEMP TABLE _bulk_expected_code_paths (path TEXT PRIMARY KEY)")
+    conn.executemany(
+        "INSERT INTO _bulk_expected_code_paths (path) VALUES (?)",
+        [(path,) for path in sorted(expected_paths)],
+    )
+    pruned_digests = int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM code_digests
+            WHERE workspace_id = ?
+              AND file_path NOT IN (SELECT path FROM _bulk_expected_code_paths)
+            """,
+            (workspace_id,),
+        ).fetchone()[0]
+        or 0
+    )
+    conn.execute(
+        """
+        DELETE FROM code_digests
+        WHERE workspace_id = ?
+          AND file_path NOT IN (SELECT path FROM _bulk_expected_code_paths)
+        """,
+        (workspace_id,),
+    )
+    if not prune_files:
+        conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+        return pruned_digests, 0, 0, 0
+
+    conn.execute(
+        """
+        CREATE TEMP TABLE _bulk_stale_file_ids AS
+        SELECT id FROM files
+        WHERE workspace_id = ?
+          AND path NOT IN (SELECT path FROM _bulk_expected_code_paths)
+        """,
+        (workspace_id,),
+    )
+    conn.execute(
+        """
+        CREATE TEMP TABLE _bulk_stale_chunk_ids AS
+        SELECT id FROM chunks
+        WHERE workspace_id = ?
+          AND file_id IN (SELECT id FROM _bulk_stale_file_ids)
+        """,
+        (workspace_id,),
+    )
+    pruned_files = int(conn.execute("SELECT COUNT(*) FROM _bulk_stale_file_ids").fetchone()[0] or 0)
+    pruned_chunks = int(
+        conn.execute("SELECT COUNT(*) FROM _bulk_stale_chunk_ids").fetchone()[0] or 0
+    )
+    pruned_edges = int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM symbol_edges
+            WHERE workspace_id = ?
+              AND (src_chunk_id IN (SELECT id FROM _bulk_stale_chunk_ids)
+                   OR dst_chunk_id IN (SELECT id FROM _bulk_stale_chunk_ids))
+            """,
+            (workspace_id,),
+        ).fetchone()[0]
+        or 0
+    )
+    conn.execute(
+        """
+        DELETE FROM symbol_edges
+        WHERE workspace_id = ?
+          AND (src_chunk_id IN (SELECT id FROM _bulk_stale_chunk_ids)
+               OR dst_chunk_id IN (SELECT id FROM _bulk_stale_chunk_ids))
+        """,
+        (workspace_id,),
+    )
+    conn.execute(
+        """
+        DELETE FROM chunks_fts
+        WHERE workspace_id = ?
+          AND chunk_id IN (SELECT id FROM _bulk_stale_chunk_ids)
+        """,
+        (workspace_id,),
+    )
+    conn.execute(
+        """
+        DELETE FROM chunks
+        WHERE workspace_id = ?
+          AND id IN (SELECT id FROM _bulk_stale_chunk_ids)
+        """,
+        (workspace_id,),
+    )
+    conn.execute(
+        """
+        DELETE FROM files
+        WHERE workspace_id = ?
+          AND id IN (SELECT id FROM _bulk_stale_file_ids)
+        """,
+        (workspace_id,),
+    )
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_file_ids")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_chunk_ids")
+    return pruned_digests, pruned_files, pruned_chunks, pruned_edges
+
+
 def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches per per-file outcome
     project_root: Path,
     *,
@@ -190,6 +317,7 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
     skip_dirs: frozenset[str] = DEFAULT_SKIP_DIRS,
     relative_paths: bool = True,
     with_edges: bool = True,
+    prune_stale: bool = True,
 ) -> IndexReport:
     """Walk ``project_root`` and index each source file via ``index_file``.
 
@@ -214,6 +342,23 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
     files = iter_source_files(project_root, extensions=extensions, skip_dirs=skip_dirs)
     conn = sqlite3.connect(db_path)
     try:
+        expected_paths = {
+            _stored_path(project_root, file_path, relative_paths=relative_paths)
+            for file_path in files
+        }
+        if prune_stale:
+            (
+                report.pruned_digests,
+                report.pruned_files,
+                report.pruned_chunks,
+                report.pruned_edges,
+            ) = _prune_stale_code_memory(
+                conn,
+                workspace_id=workspace_id,
+                expected_paths=expected_paths,
+                prune_files=with_edges,
+            )
+            conn.commit()
         for file_path in files:
             report.walked += 1
             try:
@@ -226,11 +371,7 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
             if digest_preview.language is None:
                 report.skipped_unindexable += 1
                 continue
-            stored_path = (
-                str(file_path.relative_to(project_root)).replace("\\", "/")
-                if relative_paths
-                else str(file_path)
-            )
+            stored_path = _stored_path(project_root, file_path, relative_paths=relative_paths)
             if with_edges:
                 result = index_file(
                     conn,
@@ -308,6 +449,11 @@ def render_human(report: IndexReport) -> str:
         f"  edges (1st pass)  = {report.edges_first_pass}",
         f"  edges (2nd pass)  = {report.edges_resolved_second_pass}",
         f"  digests refreshed = {report.digests_edge_refreshed}",
+        "",
+        f"  pruned digests    = {report.pruned_digests}",
+        f"  pruned files      = {report.pruned_files}",
+        f"  pruned chunks     = {report.pruned_chunks}",
+        f"  pruned edges      = {report.pruned_edges}",
     ]
     if report.languages:
         lines.append("")
@@ -353,6 +499,11 @@ def main(argv: list[str] | None = None) -> int:
             " rows (faster but impact_check verdicts stay at 'low')."
         ),
     )
+    parser.add_argument(
+        "--no-prune-stale",
+        action="store_true",
+        help="Keep code-memory rows for files outside the current project walk.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human render.")
     args = parser.parse_args(argv)
 
@@ -371,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         extensions=extensions,
         relative_paths=not args.absolute_paths,
         with_edges=not args.no_edges,
+        prune_stale=not args.no_prune_stale,
     )
 
     if args.json:

@@ -61,6 +61,22 @@ def test_search_handles_special_chars(applied_conn: sqlite3.Connection) -> None:
     assert hits
 
 
+def test_search_uses_ascii_anchors_for_mixed_language_query(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    chunk_id = _seed_chunk(
+        applied_conn,
+        "A source-flip theory was rejected after replay showed the edge did not persist.",
+    )
+    hits = search_chunks_fts(
+        applied_conn,
+        workspace_id="default",
+        query="почему гипотеза source flip была отклонена после replay",
+        limit=10,
+    )
+    assert any(hit.chunk_id == chunk_id for hit in hits)
+
+
 def test_rebuild_repopulates(applied_conn: sqlite3.Connection) -> None:
     chunk_id = _seed_chunk(applied_conn, "rebuild target text")
     delete_chunk_fts(applied_conn, chunk_id)

@@ -30,27 +30,14 @@ def brain_metrics_module(monkeypatch: pytest.MonkeyPatch) -> object:
     return module
 
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-ALL_PHASE_MIGRATIONS = [
-    "0002_outcome_loop.sql",
-    "0003_hebbian.sql",
-    "0004_consolidation_feedback.sql",
-    "0005_reflexes.sql",
-    "0006_self_model.sql",
-    "0007_bi_temporal.sql",
-    "0008_causal_links.sql",
-]
-
-
 @pytest.fixture
 def fully_migrated_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "brain.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    migrations_dir = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-    for name in ALL_PHASE_MIGRATIONS:
-        conn.executescript((migrations_dir / name).read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.commit()
     conn.close()
     return db_path
@@ -161,7 +148,9 @@ def test_dashboard_on_pre_migration_db_safe(tmp_path: Path, brain_metrics_module
     """Apply ONLY 0001; the dashboard skips missing-table phases gracefully."""
     db_path = tmp_path / "old.db"
     conn = sqlite3.connect(db_path)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.commit()
     conn.close()
     report = brain_metrics_module.collect_workspace_report(db_path, "ws_pre")

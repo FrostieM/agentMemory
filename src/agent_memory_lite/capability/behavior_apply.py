@@ -1,7 +1,7 @@
 """Track when behavior instructions are rendered into a context envelope.
 
-`behavior_instructions.application_count` and `last_applied_at` were declared
-in the original schema (migration 0011) but never written. v1.5 wires them
+`behaviors.application_count` and `last_applied_at` are written through this
+single batched function. v1.5 wired the counters
 through a single batched function, called once per envelope build when the
 ``MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED`` flag is on.
 
@@ -34,7 +34,7 @@ def mark_behavior_instructions_applied(
     try:
         cursor = conn.execute(
             f"""
-            UPDATE behavior_instructions
+            UPDATE behaviors
             SET application_count = application_count + 1,
                 last_applied_at = ?,
                 updated_at = ?
@@ -43,9 +43,8 @@ def mark_behavior_instructions_applied(
             (now_iso, now_iso, workspace_id, *instruction_ids),
         )
     except sqlite3.OperationalError:
-        # Pre-0021 schema (no application_count / last_applied_at columns) —
-        # hub mode may route here from a legacy DB. Tracking is opt-in,
-        # never required for correctness; treat as no-op.
+        # Partial schema without application_count / last_applied_at.
+        # Tracking is opt-in, never required for correctness; treat as no-op.
         return 0
     updated = int(cursor.rowcount or 0)
     if updated <= 0:

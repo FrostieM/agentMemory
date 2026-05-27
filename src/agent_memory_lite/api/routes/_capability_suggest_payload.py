@@ -1,6 +1,6 @@
 """Move 3 of v2.2 — wire-payload helper for capability suggestions.
 
-Both /memory/write_decision and /memory/record_with_evidence return a
+Both memory_write(kind=decision) and theory writes return a
 ``capability_suggestions`` field listing the top-3 ranked candidates.
 This module owns the conversion from ``CapabilitySuggestion`` (the
 helper module's dataclass) into ``CapabilitySuggestionPayload`` (the
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.api.schemas.decisions import CapabilitySuggestionPayload
+from agent_memory_lite.api.schemas.suggestions import CapabilitySuggestionPayload
 from agent_memory_lite.ingestion.capability_suggester import (
     suggest_capabilities_for_decision,
 )

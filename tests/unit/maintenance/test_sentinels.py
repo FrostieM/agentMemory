@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
 
 
@@ -19,7 +21,10 @@ def test_discovers_sentinels_next_to_memory_db(tmp_path: Path) -> None:
     assert discovered.warnings == []
 
 
-def test_missing_required_sentinel_reports_warning(tmp_path: Path) -> None:
+def test_missing_required_sentinel_reports_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     discovered = discover_sentinel_file(
         db_path=tmp_path / ".agent_memory" / "memory.db",
         require=True,

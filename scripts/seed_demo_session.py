@@ -1,13 +1,13 @@
 """End-to-end smoke check via the running HTTP service.
 
-Seeds the workspace with a representative session (episodes, decisions, task
-state, secrets-bearing text), then exercises:
+Seeds the workspace with a representative session (episodes, decisions, task,
+secrets-bearing text), then exercises:
 
-- POST /memory/ingest_episode
-- POST /memory/write_decision
-- POST /memory/update_task_state
-- POST /memory/get_context
-- POST /memory/search (mode=fts)
+- POST /memory/write kind=episode
+- POST /memory/write kind=decision
+- POST /memory/write kind=task
+- GET /memory/brief
+- POST /memory/search
 - POST /memory/run_evals
 
 Prerequisite: the service is already running on http://127.0.0.1:8765.
@@ -42,8 +42,8 @@ EPISODES: list[dict[str, object]] = [
     {
         "raw_text": (
             "Phase 0 shipped: pyproject (Python 3.12-3.14), forward-only SQL "
-            "migrations 0001_init (12 tables + indexes) and 0002_chunks_fts "
-            "(FTS5 virtual table), FastAPI app on 127.0.0.1:8765, local-only "
+            "migrations 0001_init (canonical tables + indexes, including FTS5), "
+            "FastAPI app on 127.0.0.1:8765, local-only "
             "guard with cloud denylist + telemetry kill list, 49 tests."
         ),
         "trust_level": "agent_observed",
@@ -62,16 +62,16 @@ EPISODES: list[dict[str, object]] = [
         "raw_text": (
             "Phase 2 shipped: VectorStore Protocol with LanceDB default + "
             "sqlite-vec opt-in. Retrieval pipeline does FTS+vector candidates -> "
-            "reciprocal rank fusion (k=60) -> weighted scoring -> token budget "
-            "-> XML envelope. POST /memory/get_context."
+            "reciprocal rank fusion (k=60) -> weighted scoring -> compact projections "
+            "and a brief/search read surface."
         ),
         "trust_level": "agent_observed",
         "importance": 0.8,
     },
     {
         "raw_text": (
-            "Phase 3 shipped: decisions with supersedes-chain, task_state upsert, "
-            "core_memory promotion, procedural rules, extraction layer (heuristic "
+            "Phase 3 shipped: decisions with supersedes-chain, canonical task rows, "
+            "behavior promotion, extraction layer (heuristic "
             "+ Ollama LLM extractor + thresholds + trust_gate)."
         ),
         "trust_level": "agent_observed",
@@ -198,40 +198,53 @@ def _post(client: httpx.Client, path: str, payload: dict[str, object]) -> dict[s
     return body
 
 
+def _get(client: httpx.Client, path: str, params: dict[str, object]) -> dict[str, object]:
+    response = client.get(f"{BASE}{path}", params=params)
+    response.raise_for_status()
+    body = response.json()
+    if not isinstance(body, dict):
+        raise RuntimeError(f"unexpected response body for {path}: {body!r}")
+    return body
+
+
 def _seed_episodes(client: httpx.Client) -> list[str]:
     ids: list[str] = []
     for episode in EPISODES:
-        payload: dict[str, object] = {
-            "workspace_id": WORKSPACE,
-            "task_id": TASK_ID,
-            "source_type": "agent_action",
-            **episode,
-        }
-        result = _post(client, "/memory/ingest_episode", payload)
-        ids.append(str(result["episode_id"]))
-        kinds = result.get("redacted_kinds") or []
-        if kinds:
-            print(f"  redacted in {result['episode_id']}: {kinds}")
+        payload: dict[str, object] = {"task_id": TASK_ID, "source_type": "agent_action", **episode}
+        result = _post(
+            client,
+            "/memory/write",
+            {"workspace_id": WORKSPACE, "kind": "episode", "payload": payload},
+        )
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        ids.append(str(data.get("id", "")))
     return ids
 
 
 def _seed_decisions(client: httpx.Client) -> None:
     for decision in DECISIONS:
-        _post(client, "/memory/write_decision", {"workspace_id": WORKSPACE, **decision})
+        _post(
+            client,
+            "/memory/write",
+            {"workspace_id": WORKSPACE, "kind": "decision", "payload": decision},
+        )
 
 
 def _seed_task(client: httpx.Client) -> None:
-    _post(client, "/memory/update_task_state", {"workspace_id": WORKSPACE, **TASK_STATE})
-
-
-def _query_context(client: httpx.Client) -> dict[str, object]:
-    return _post(
+    _post(
         client,
-        "/memory/get_context",
+        "/memory/write",
+        {"workspace_id": WORKSPACE, "kind": "task", "payload": TASK_STATE},
+    )
+
+
+def _query_brief(client: httpx.Client) -> dict[str, object]:
+    return _get(
+        client,
+        "/memory/brief",
         {
             "workspace_id": WORKSPACE,
-            "task_id": TASK_ID,
-            "query": "what was decided about embedding model and retrieval pipeline",
+            "task": "what was decided about embedding model and retrieval pipeline",
             "max_tokens": 3500,
         },
     )
@@ -243,8 +256,7 @@ def _query_fts(client: httpx.Client) -> dict[str, object]:
         "/memory/search",
         {
             "workspace_id": WORKSPACE,
-            "query": "FTS5 virtual table 0002_chunks_fts",
-            "mode": "fts",
+            "query": "FTS5 virtual table canonical init",
             "limit": 5,
         },
     )
@@ -264,12 +276,13 @@ def main() -> int:
         print(f"  -> {len(DECISIONS)} decisions")
         print("=== upserting task state ===")
         _seed_task(client)
-        print("=== POST /memory/get_context ===")
-        context = _query_context(client)
+        print("=== GET /memory/brief ===")
+        context = _query_brief(client)
         print()
-        print(context["context_text"])
+        data = context.get("data") if isinstance(context.get("data"), dict) else {}
+        print(data.get("body_md", ""))
         print()
-        print("=== POST /memory/search (mode=fts) ===")
+        print("=== POST /memory/search ===")
         print(json.dumps(_query_fts(client), indent=2)[:800])
         print()
         print("=== POST /memory/run_evals ===")

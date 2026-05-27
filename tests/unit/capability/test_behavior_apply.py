@@ -11,7 +11,7 @@ from agent_memory_lite.capability.behavior_apply import mark_behavior_instructio
 def _seed_instruction(conn: sqlite3.Connection, *, instruction_id: str) -> None:
     conn.execute(
         """
-        INSERT INTO behavior_instructions
+        INSERT INTO behaviors
         (id, workspace_id, name, kind, scope, priority, rule, rationale,
          applies_to_json, conflict_policy, source_episode_id, confidence,
          active, created_at, updated_at, source_type, source_id, reviewed_by,
@@ -29,7 +29,7 @@ def _seed_instruction(conn: sqlite3.Connection, *, instruction_id: str) -> None:
 
 def _read(conn: sqlite3.Connection, instruction_id: str) -> tuple[int, str | None]:
     row = conn.execute(
-        "SELECT application_count, last_applied_at FROM behavior_instructions WHERE id = ?",
+        "SELECT application_count, last_applied_at FROM behaviors WHERE id = ?",
         (instruction_id,),
     ).fetchone()
     return int(row[0]), (str(row[1]) if row[1] else None)

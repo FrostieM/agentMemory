@@ -24,7 +24,7 @@ def test_memory_benchmarks_return_operation_timings(applied_conn: sqlite3.Connec
         workspace_id="project-a",
         queries=["benchmark sentinel"],
         runs=1,
-        thresholds_ms={"get_context": 10_000.0},
+        thresholds_ms={"memory_brief": 10_000.0},
     )
 
     assert report.status == "ok"
@@ -34,7 +34,8 @@ def test_memory_benchmarks_return_operation_timings(applied_conn: sqlite3.Connec
     assert "hygiene_report" in names
     assert "quality_gate" in names
     assert "fts_search[1]" in names
-    assert "get_context[1]" in names
+    assert "memory_search[1]" in names
+    assert "memory_brief[1]" in names
     assert all(result.max_ms >= 0 for result in report.results)
 
 

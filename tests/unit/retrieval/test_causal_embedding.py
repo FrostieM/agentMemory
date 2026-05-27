@@ -19,20 +19,14 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEMORY_CAUSAL_EMBEDDING_WINDOW", raising=False)
 
 
-CANONICAL_ROOT = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-
-
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Hybrid schema with canonical overlay — needs causal_links."""
+    """Fresh schema from the root migration runner."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     c = open_connection(tmp_path / "ce.db")
     apply_migrations(c)
-    # causal_links lives in canonical/0008 — needs init + the table itself.
-    c.executescript((CANONICAL_ROOT / "0001_init.sql").read_text(encoding="utf-8"))
-    c.executescript((CANONICAL_ROOT / "0008_causal_links.sql").read_text(encoding="utf-8"))
     try:
         yield c
     finally:

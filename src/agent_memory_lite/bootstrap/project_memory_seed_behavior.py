@@ -4,7 +4,7 @@ Phase 1.2 of v2.2 consolidation: the original module hit 297 lines with
 4 factories so it was split into two by-concern submodules:
 
 * ``project_memory_seed_behavior_writes.py`` — write-discipline rules
-  (search-before-write, link-capability-after-write).
+  (search-before-write, capability-suggestion-after-write).
 * ``project_memory_seed_behavior_workflow.py`` — workflow / shipping
   discipline (memory-first-before-edit, no-unauthorized-git-push).
 
@@ -36,6 +36,7 @@ from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_payload
     no_magic_number_in_strategy_pretooluse_instruction,
 )
 from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_trail import (
+    impact_check_before_read_pretooluse_instruction,
     read_before_edit_pretooluse_instruction,
     search_before_arch_write_pretooluse_instruction,
 )
@@ -44,7 +45,7 @@ from agent_memory_lite.bootstrap.project_memory_seed_behavior_workflow import (
     no_unauthorized_git_push_instruction,
 )
 from agent_memory_lite.bootstrap.project_memory_seed_behavior_writes import (
-    link_capability_discipline_instruction,
+    capability_suggestion_discipline_instruction,
     search_before_write_discipline_instruction,
 )
 
@@ -52,8 +53,9 @@ __all__ = [
     "DISCIPLINE_FACTORIES",
     "PINNED_DISCIPLINE_FACTORIES",
     "applies_to_checklist_verbatim_instruction",
+    "capability_suggestion_discipline_instruction",
     "decision_must_have_provenance_pretooluse_instruction",
-    "link_capability_discipline_instruction",
+    "impact_check_before_read_pretooluse_instruction",
     "memory_first_before_edit_instruction",
     "memory_write_resolve_candidates_instruction",
     "no_magic_number_in_strategy_pretooluse_instruction",
@@ -68,7 +70,7 @@ __all__ = [
 # Every factory the seed orchestrator should upsert. Order is stable to
 # keep upsert-by-name behaviour deterministic across runs.
 DISCIPLINE_FACTORIES = (
-    link_capability_discipline_instruction,
+    capability_suggestion_discipline_instruction,
     search_before_write_discipline_instruction,
     memory_first_before_edit_instruction,
     no_unauthorized_git_push_instruction,
@@ -78,6 +80,7 @@ DISCIPLINE_FACTORIES = (
     no_magic_number_in_strategy_pretooluse_instruction,
     decision_must_have_provenance_pretooluse_instruction,
     read_before_edit_pretooluse_instruction,
+    impact_check_before_read_pretooluse_instruction,
     search_before_arch_write_pretooluse_instruction,
 )
 
@@ -95,5 +98,6 @@ PINNED_DISCIPLINE_FACTORIES = (
     no_magic_number_in_strategy_pretooluse_instruction,
     decision_must_have_provenance_pretooluse_instruction,
     read_before_edit_pretooluse_instruction,
+    impact_check_before_read_pretooluse_instruction,
     search_before_arch_write_pretooluse_instruction,
 )

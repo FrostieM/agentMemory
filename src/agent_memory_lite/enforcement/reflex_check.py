@@ -34,7 +34,7 @@ from agent_memory_lite.enforcement.session_trail import has_called
 # Precondition kind → tools that satisfy it.
 _PRECONDITION_TOOL_MAP: dict[str, tuple[str, ...]] = {
     "impact_check_within_seconds": ("memory_impact_check",),
-    "memory_search_within_seconds": ("memory_search", "memory_get_context"),
+    "memory_search_within_seconds": ("memory_search",),
     "playbook_fetch": ("memory_invoke_skill",),
 }
 

@@ -8,8 +8,9 @@ the `schema_migrations` tracking table.
 
 1. **Forward-only.** No `down.sql`. If a migration is wrong, ship a *new* migration
    that fixes it (`0003_fix_xxx.sql`); never edit a migration that has already shipped.
-2. **Atomic.** Each `*.sql` file is executed inside a single transaction. The runner
-   rolls back on failure.
+2. **Recoverable.** Each `*.sql` file must be safe to re-run after a mid-script
+   failure. The runner uses SQLite `executescript`; do not rely on rollback
+   semantics for partially-created objects.
 3. **Idempotent at the file level.** Use `CREATE TABLE IF NOT EXISTS`,
    `CREATE INDEX IF NOT EXISTS`, etc. Re-running on a partially-applied DB is a no-op.
 4. **Filenames are immutable** once committed. The pattern is `NNNN_<slug>.sql`,

@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, cast
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
+
+DEFAULT_COMPONENT_TIMEOUT_SECONDS = 180.0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,6 +38,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-contract", action="store_true")
     parser.add_argument("--skip-candidates", action="store_true")
     parser.add_argument("--skip-restore-check", action="store_true")
+    parser.add_argument(
+        "--component-timeout-seconds",
+        type=float,
+        default=DEFAULT_COMPONENT_TIMEOUT_SECONDS,
+        help="Maximum seconds to wait for each child check before marking it degraded.",
+    )
     return parser
 
 
@@ -53,23 +63,64 @@ def _script(name: str) -> str:
     return str(Path(__file__).with_name(name))
 
 
-def _run_json(name: str, cmd: list[str], *, ok_codes: set[int]) -> dict[str, Any]:
-    completed = subprocess.run(cmd, check=False, capture_output=True, text=True)
+def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        proc.kill()
+
+
+def _run_json(
+    name: str,
+    cmd: list[str],
+    *,
+    ok_codes: set[int],
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
-        payload = cast(dict[str, Any], json.loads(completed.stdout))
+        stdout, stderr = proc.communicate(timeout=max(timeout_seconds, 0.1))
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(proc)
+        stdout, stderr = proc.communicate()
+        return {
+            "status": "degraded",
+            "failures": [f"{name} timed out after {timeout_seconds:.1f}s"],
+            "stdout": stdout.strip(),
+            "stderr": stderr.strip(),
+            "exit_code": None,
+            "timed_out": True,
+            "elapsed_sec": round(time.perf_counter() - started, 3),
+        }
+    try:
+        payload = cast(dict[str, Any], json.loads(stdout))
     except json.JSONDecodeError:
         payload = {
             "status": "degraded",
             "failures": [f"{name} did not emit JSON"],
-            "stdout": completed.stdout.strip(),
-            "stderr": completed.stderr.strip(),
+            "stdout": stdout.strip(),
+            "stderr": stderr.strip(),
         }
-    if completed.returncode not in ok_codes and not payload.get("failures"):
-        payload.setdefault("failures", []).append(f"{name} exited {completed.returncode}")
-    if completed.stderr.strip():
-        payload.setdefault("stderr", completed.stderr.strip())
-    payload.setdefault("status", "degraded" if completed.returncode not in ok_codes else "ok")
-    payload["exit_code"] = completed.returncode
+    if proc.returncode not in ok_codes and not payload.get("failures"):
+        payload.setdefault("failures", []).append(f"{name} exited {proc.returncode}")
+    if stderr.strip():
+        payload.setdefault("stderr", stderr.strip())
+    payload.setdefault("status", "degraded" if proc.returncode not in ok_codes else "ok")
+    payload["exit_code"] = proc.returncode
+    payload["elapsed_sec"] = round(time.perf_counter() - started, 3)
     return payload
 
 
@@ -119,7 +170,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         str(settings.vector_db_path),
         "--json",
     ]
-    components["integrity"] = _run_json("memory_audit", audit_cmd, ok_codes={0, 2})
+    components["integrity"] = _run_json(
+        "memory_audit",
+        audit_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
 
     workspace_doctor_cmd = [
         sys.executable,
@@ -131,6 +187,7 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         "memory_workspace_doctor",
         workspace_doctor_cmd,
         ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
     )
 
     hygiene_cmd = [
@@ -139,7 +196,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         *_base_args(settings),
         "--json",
     ]
-    components["hygiene"] = _run_json("memory_hygiene", hygiene_cmd, ok_codes={0, 2})
+    components["hygiene"] = _run_json(
+        "memory_hygiene",
+        hygiene_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
 
     feedback_cmd = [
         sys.executable,
@@ -147,7 +209,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         *_base_args(settings),
         "--json",
     ]
-    components["feedback"] = _run_json("memory_feedback_report", feedback_cmd, ok_codes={0, 2})
+    components["feedback"] = _run_json(
+        "memory_feedback_report",
+        feedback_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
 
     encoding_cmd = [
         sys.executable,
@@ -155,7 +222,35 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         *_base_args(settings),
         "--json",
     ]
-    components["encoding"] = _run_json("memory_encoding_audit", encoding_cmd, ok_codes={0, 2})
+    components["encoding"] = _run_json(
+        "memory_encoding_audit",
+        encoding_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
+
+    if not args.skip_mcp:
+        mcp_cmd = [
+            sys.executable,
+            _script("memory_mcp_smoke.py"),
+            "--workspace",
+            settings.workspace_id,
+            "--db-path",
+            str(settings.db_path),
+            "--vector-path",
+            str(settings.vector_db_path),
+            "--require-behavior",
+            "--require-capabilities",
+            "--max-seconds",
+            "8.0",
+            "--json",
+        ]
+        components["mcp_smoke"] = _run_json(
+            "memory_mcp_smoke",
+            mcp_cmd,
+            ok_codes={0, 2},
+            timeout_seconds=args.component_timeout_seconds,
+        )
 
     watchdog_cmd = [
         sys.executable,
@@ -176,7 +271,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         watchdog_cmd.extend(["--sentinels", str(sentinel_discovery.path)])
     if args.require_sentinels:
         watchdog_cmd.append("--require-sentinels")
-    components["watchdog"] = _run_json("memory_watchdog", watchdog_cmd, ok_codes={0, 2})
+    components["watchdog"] = _run_json(
+        "memory_watchdog",
+        watchdog_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
     components["watchdog"]["sentinels_discovered"] = sentinel_discovery.to_dict()
     if (
         components["watchdog"].get("retrieval_eval", {}).get("status") == "unknown"
@@ -189,22 +289,6 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
     if sentinel_discovery.warnings:
         components["watchdog"].setdefault("failures", []).extend(sentinel_discovery.warnings)
         components["watchdog"]["status"] = "degraded"
-
-    if not args.skip_mcp:
-        mcp_cmd = [
-            sys.executable,
-            _script("memory_mcp_smoke.py"),
-            "--workspace",
-            settings.workspace_id,
-            "--db-path",
-            str(settings.db_path),
-            "--vector-path",
-            str(settings.vector_db_path),
-            "--require-behavior",
-            "--require-capabilities",
-            "--json",
-        ]
-        components["mcp_smoke"] = _run_json("memory_mcp_smoke", mcp_cmd, ok_codes={0, 2})
 
     if not args.skip_candidates:
         candidate_cmd = [
@@ -220,6 +304,7 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
             "memory_candidate_triage",
             candidate_cmd,
             ok_codes={0, 2},
+            timeout_seconds=args.component_timeout_seconds,
         )
 
     if not args.skip_restore_check:
@@ -232,12 +317,15 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
             str(settings.db_path),
             "--vector-path",
             str(settings.vector_db_path),
+            "--audit-timeout-seconds",
+            str(args.component_timeout_seconds),
             "--json",
         ]
         components["backup_restore"] = _run_json(
             "memory_backup_restore_check",
             restore_cmd,
             ok_codes={0, 2},
+            timeout_seconds=args.component_timeout_seconds,
         )
 
     trend_cmd = [
@@ -247,7 +335,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         str(settings.db_path),
         "--json",
     ]
-    components["trend"] = _run_json("memory_trend_report", trend_cmd, ok_codes={0, 2})
+    components["trend"] = _run_json(
+        "memory_trend_report",
+        trend_cmd,
+        ok_codes={0, 2},
+        timeout_seconds=args.component_timeout_seconds,
+    )
 
     if project_root is not None and not args.skip_contract:
         contract_cmd = [
@@ -266,7 +359,12 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         }
         for project_name in sorted(item for item in allowed_project_names if item):
             contract_cmd.extend(["--allow-project-name", str(project_name)])
-        components["contract"] = _run_json("memory_contract_check", contract_cmd, ok_codes={0})
+        components["contract"] = _run_json(
+            "memory_contract_check",
+            contract_cmd,
+            ok_codes={0},
+            timeout_seconds=args.component_timeout_seconds,
+        )
 
     status = _combine_status(components)
     failures: list[str] = []

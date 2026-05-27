@@ -1,4 +1,4 @@
-"""Stale-capability hygiene finder runs over agent_skills/roles/playbooks."""
+"""Stale-capability hygiene finder runs over skills(subtype)."""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ def _seed_skill(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO agent_skills
-        (id, workspace_id, name, summary, when_to_use_json, inputs_json,
+        INSERT INTO skills
+        (id, workspace_id, name, subtype, summary, when_to_use_json, inputs_json,
          outputs_json, tools_json, related_roles_json, source_episode_id,
          confidence, active, created_at, updated_at,
          usage_count, success_count, failure_count, last_invoked_at)
-        VALUES (?, 'default', ?, 'summary', '[]', '[]', '[]', '[]', '[]',
+        VALUES (?, 'default', ?, 'skill', 'summary', '[]', '[]', '[]', '[]', '[]',
                 NULL, 0.7, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z',
                 0, 0, 0, ?)
         """,

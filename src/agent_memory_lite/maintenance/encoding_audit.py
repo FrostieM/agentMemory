@@ -22,21 +22,18 @@ __all__ = [
 TEXT_COLUMNS: dict[str, tuple[str, ...]] = {
     "episodes": ("raw_text", "summary"),
     "chunks": ("text", "summary"),
-    "core_memory": ("key", "value"),
-    "task_state": ("goal", "next_action"),
+    "tasks": ("goal", "next_action"),
     "decisions": ("title", "decision_text", "rationale"),
-    "procedural_rules": ("rule_text",),
+    "behaviors": ("name", "rule", "rationale"),
     "facts": ("literal_value", "fact_text"),
     "theories": ("title", "domain", "claim", "mechanism", "experiment_plan"),
     "theory_evidence": ("summary", "artifact_path"),
-    "research_experiments": ("title", "hypothesis", "cohort_definition", "command", "owner"),
+    "experiments": ("title", "hypothesis", "cohort_definition", "command", "owner"),
     "experiment_results": ("summary", "artifact_path"),
-    "domain_concepts": ("name", "kind", "definition"),
-    "research_insights": ("summary", "proposed_action", "target_type"),
-    "agent_roles": ("name", "purpose"),
-    "agent_skills": ("name", "summary"),
-    "agent_playbooks": ("name", "goal"),
-    "behavior_instructions": ("name", "rule", "rationale"),
+    "concepts": ("name", "kind", "definition"),
+    "insights": ("summary", "proposed_action", "target_type"),
+    "skills": ("name", "summary", "body_md"),
+    "candidates": ("subject", "predicate", "object", "evidence"),
 }
 
 

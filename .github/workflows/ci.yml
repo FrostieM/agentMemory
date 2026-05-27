@@ -25,6 +25,8 @@ jobs:
         run: mypy src
       - name: Modular-file SLOC ceiling
         run: python scripts/check_sloc.py --enforce
+      - name: V3-only surface gate
+        run: python scripts/v3_surface_check.py
       - name: Tests
         run: pytest
       - name: Retrieval evals
@@ -38,3 +40,5 @@ jobs:
         run: |
           python scripts/setup_agent.py --sync-repo
           git diff --exit-code -- CLAUDE.md AGENTS.md
+      - name: Agent contract drift
+        run: python scripts/memory_contract_check.py --strict

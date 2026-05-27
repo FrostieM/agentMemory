@@ -1,6 +1,6 @@
 """Snapshot route.
 
-Experiment + result routes live in ``research_experiments.py``;
+Experiment + result routes live in ``experiments.py``;
 mounted on the same prefix from the parent ``research.py``.
 """
 

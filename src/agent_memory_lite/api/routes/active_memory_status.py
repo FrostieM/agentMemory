@@ -25,20 +25,18 @@ def _safe_scan_count(call) -> tuple[int, bool]:  # type: ignore[no-untyped-def]
 
 
 def _persisted_warnings_new(conn: sqlite3.Connection, workspace_id: str) -> int:
-    """Count Vector 5 warnings landed as memory_candidate(kind=predictive_warning)
+    """Count Vector 5 warnings landed as candidate(kind=predictive_warning)
     in 'new' state — i.e. waiting on operator review."""
-    for table in ("memory_candidates", "candidates"):
-        try:
-            row = conn.execute(
-                f"SELECT COUNT(*) FROM {table} "
-                "WHERE workspace_id = ? AND kind = 'predictive_warning' "
-                "AND status = 'new'",
-                (workspace_id,),
-            ).fetchone()
-            return int(row[0] if row else 0)
-        except sqlite3.OperationalError:
-            continue
-    return 0
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM candidates "
+            "WHERE workspace_id = ? AND kind = 'predictive_warning' "
+            "AND status = 'new'",
+            (workspace_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row[0] if row else 0)
 
 
 def build_active_memory(conn: sqlite3.Connection, workspace_id: str) -> ActiveMemoryCounts:

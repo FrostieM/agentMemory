@@ -5,7 +5,7 @@ Three operations bundled by `memory_compact`:
 - archive long-invalidated facts (cosmetic — they were already hidden by
   filters, but archive trims `list_active_facts` scans and keeps the audit
   trail honest);
-- promote durable, high-trust candidates to core memory.
+- promote durable, high-trust candidates to behaviors.
 """
 
 from agent_memory_lite.compaction.invalidate_stale import (

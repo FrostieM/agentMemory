@@ -1,9 +1,8 @@
 """Unit tests for maintenance/plan_outcome_maturity.py (Phase 5c).
 
-Uses the ``applied_conn`` fixture (full root-migration schema) — it
-carries plan_steps (with ``outcome_fed_at``, migration 0039), the
-agent_skills / agent_roles / agent_playbooks maturity tables, the
-capability_links table, and audit_log. Steps are created directly at
+Uses the ``applied_conn`` fixture (full root-migration schema) -- it
+carries plan_steps (with ``outcome_fed_at``), the capability maturity
+tables, the capability_links table, and audit_log. Steps are created directly at
 their target status via ``PlanStepIn``.
 """
 

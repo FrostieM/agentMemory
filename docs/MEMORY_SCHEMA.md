@@ -1,11 +1,9 @@
 # V3 Schema — one-page reference
 
-Source of truth: `migrations/canonical/0001_init.sql`. Applied as a single DDL
-on a fresh v3 database via `scripts/migrate_to_canonical.py`. Lives in a
-separate `migrations/canonical/` subdirectory so the v2 migration runner
-(`db/migrations.py`, walks `migrations/*.sql` non-recursively) does
-NOT pick it up. The v3 chain starts here and grows forward as
-`migrations/canonical/0002_*.sql`, etc.
+Source of truth: `migrations/0001_init.sql`, a squashed canonical v3 schema.
+Fresh databases start directly on the v3 table set; existing databases that
+already applied the historical chain keep working because migrations are
+tracked forward-only in `schema_migrations`.
 
 ## Design principles
 
@@ -54,23 +52,20 @@ NOT pick it up. The v3 chain starts here and grows forward as
 ### Code memory substrate
 - `files` — file metadata.
 - `chunks` — chunked content for retrieval; `gist`, `symbol_kind` /
-  `qualified_name` / `parent_qualified_name` for find_symbols.
+  `qualified_name` / `parent_qualified_name` for compact code-aware recall.
 - `chunks_fts` — FTS5 virtual table (+ `gist` searchable).
 - `code_digests` — per-file pre-digested knowledge (renamed from
   `file_digests`); `purpose_short` (≤30 tokens), `top_symbols_json`,
   `top_callers_json`, `top_callees_json`, `pagerank`. Built by
   background `digest_worker.py` daemon.
 - `symbol_edges` — hard graph (calls, imports, extends, implements).
-- `symbol_versions` — signature history; powers `memory_breaking_changes`.
-- `active_edits` — multi-agent edit coordination (TTL-bounded).
+- `symbol_versions` — signature history used by code-memory maintenance.
 - `soft_edges` — heuristic co-change / co-reference signals (EWMA weight).
 
 ### Coordination + review
 - `capability_links` — target ↔ role/skill/playbook explicit relations.
-- `candidates` — correction loop primary kind (renamed from
-  `memory_candidates`).
-- `decision_candidates` — theory→decision bridge (v1.7).
-- `insight_candidates` — reflective compaction proposals (v1.8).
+- `candidates` — single review queue for correction, decision, insight,
+  theory-proposal, and predictive-warning candidates.
 
 ### Audit + maintenance
 - `audit_log` — every write, including `agent_id`.
@@ -80,7 +75,6 @@ NOT pick it up. The v3 chain starts here and grows forward as
   `first_seen_at` + `last_seen_at` for dedup-and-increment.
 - `retrieval_sentinel_results` — watchdog per-case verdicts.
 - `memory_usage_feedback` (+ summary view) — usefulness signals.
-- `memory_state_snapshots` — point-in-time digests.
 
 ### Infrastructure
 - `workspace_meta` — per-workspace key/value config.
@@ -124,17 +118,8 @@ top-5 decisions (130) + state (60) + top-10 code-digest projections (90).
 
 ## Migration path
 
-`scripts/migrate_to_canonical.py` (Phase 0 Week 2 deliverable):
-1. Read v2 SQLite at registered workspace path.
-2. Create v3 SQLite at `<workspace>/.agent_memory.v3-trial/memory.db`.
-3. Apply `schema_v3.sql` once.
-4. Port rows kind-by-kind, computing `gist` columns via heuristic
-   (first sentence / regex-extracted summary).
-5. Idempotent + resumable via per-workspace `migration_progress.json`.
-6. Parity verify: row count match per kind. Write
-   `migration_report.json` with diffs.
-7. Optional Ollama backfill pass for `gist` columns where the heuristic
-   produced low-quality summaries (≥95% coverage target).
+The active path is now a single canonical init migration. Historical cutover
+files were squashed into `0001_init.sql`, so new workspaces only create the v3
+tables. v3 is the only schema path.
 
-Original v2 SQLite is NEVER touched. Operator promotes manually after
 parity report green.

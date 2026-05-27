@@ -45,7 +45,7 @@ def _seed_minimal_db(tmp_path: Path, workspace_id: str = "alpha") -> Path:
     conn = open_connection(db_path)
     apply_migrations(conn)
     now = "2026-05-10T00:00:00+00:00"
-    # Seed one decision (pinned) + one behavior_instruction (pinned).
+    # Seed one decision (pinned) + one behavior (pinned).
     # Schema-shape is captured at the time of writing; the export side
     # reads SELECT *, so adding a new column wouldn't break the export
     # — but a missing column in the seed would. Keep this matched with
@@ -79,7 +79,7 @@ def _seed_minimal_db(tmp_path: Path, workspace_id: str = "alpha") -> Path:
         ),
     )
     conn.execute(
-        """INSERT INTO behavior_instructions
+        """INSERT INTO behaviors
            (id, workspace_id, name, kind, scope, priority, rule, rationale,
             applies_to_json, conflict_policy, source_episode_id, confidence,
             active, created_at, updated_at, source_type, source_id,
@@ -145,7 +145,7 @@ def test_export_then_import_preserves_rows_and_flags(
     )
     assert rc == 0
     assert (out_dir / "alpha" / "decisions.json").exists()
-    assert (out_dir / "alpha" / "behavior_instructions.json").exists()
+    assert (out_dir / "alpha" / "behaviors.json").exists()
 
     rc = import_script.main(
         [  # type: ignore[attr-defined]
@@ -170,7 +170,7 @@ def test_export_then_import_preserves_rows_and_flags(
     assert rows[0]["pinned"] == 1
 
     bis = conn.execute(
-        "SELECT name, pinned, active FROM behavior_instructions WHERE workspace_id='alpha'"
+        "SELECT name, pinned, active FROM behaviors WHERE workspace_id='alpha'"
     ).fetchall()
     assert len(bis) == 1
     assert bis[0]["name"] == "test-pinned-rule"
@@ -212,7 +212,7 @@ def test_dry_run_does_not_mutate(
     conn = sqlite3.connect(dst_db)
     n = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
     assert n == 0, "dry-run must not write rows"
-    n = conn.execute("SELECT COUNT(*) FROM behavior_instructions").fetchone()[0]
+    n = conn.execute("SELECT COUNT(*) FROM behaviors").fetchone()[0]
     assert n == 0
     conn.close()
 

@@ -27,14 +27,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent_memory_lite.api.errors import MemoryServiceError
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
-from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
+from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.storage.reader import get_object, plan_for_task, search
-from agent_memory_lite.storage.writer import archive, edit, pin, write
+from agent_memory_lite.storage.writer import archive, edit, pin
 
 # ============================================================
 # Envelope helpers (mirror api/routes/memory._ok / _err)
@@ -74,16 +75,21 @@ def _handle_v3_search(args: dict[str, Any]) -> dict[str, Any]:
     kinds = payload.get("kinds")
     if kinds is not None and not isinstance(kinds, list):
         return _err("invalid_args", "kinds must be a list of strings")
+    if isinstance(kinds, list) and not all(isinstance(k, str) for k in kinds):
+        return _err("invalid_args", "kinds must be a list of strings")
     limit = int(payload.get("limit") or 10)
     rerank = bool(payload.get("rerank") or False)
-    hits = search(
-        _runtime.db_for(workspace_id),
-        workspace_id=workspace_id,
-        query=query,
-        kinds=kinds,
-        limit=limit,
-        rerank=rerank,
-    )
+    try:
+        hits = search(
+            _runtime.db_for(workspace_id),
+            workspace_id=workspace_id,
+            query=query,
+            kinds=kinds,
+            limit=limit,
+            rerank=rerank,
+        )
+    except ValueError as exc:
+        return _err("invalid_args", str(exc))
     data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
     return _ok(data)
 
@@ -96,13 +102,16 @@ def _handle_v3_get(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not object_id:
         return _err("invalid_args", "kind and id are required")
     fields = _parse_fields(payload.get("fields"))
-    obj = get_object(
-        _runtime.db_for(workspace_id),
-        workspace_id=workspace_id,
-        kind=kind,
-        object_id=object_id,
-        fields=fields,
-    )
+    try:
+        obj = get_object(
+            _runtime.db_for(workspace_id),
+            workspace_id=workspace_id,
+            kind=kind,
+            object_id=object_id,
+            fields=fields,
+        )
+    except ValueError as exc:
+        return _err("validation_failed", str(exc))
     if obj is None:
         return _err("not_found", f"{kind}:{object_id} not found in {workspace_id}")
     return _ok(obj)
@@ -137,29 +146,20 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
     conn = _runtime.db_for(workspace_id)
     agent_id = str(payload.get("agent_id") or "mcp")
     source_episode_id = payload.get("source_episode_id")
-    if kind == "plan_step":
-        # plan_step creates route through the business writer so `rank`
-        # is auto-assigned -- the generic writer has no rank default and
-        # the INSERT fails the NOT NULL constraint on plan_steps.rank.
-        try:
-            out = add_plan_step_from_payload(
-                conn,
-                workspace_id=workspace_id,
-                payload=body,
-                agent_id=agent_id,
-                source_episode_id=source_episode_id,
-            )
-        except ValidationError as exc:
-            return _err("invalid_args", f"invalid plan_step payload: {exc}")
-    else:
-        out = write(
+    try:
+        out = write_canonical(
             conn,
             workspace_id=workspace_id,
             kind=kind,
             payload=body,
             agent_id=agent_id,
             source_episode_id=source_episode_id,
+            settings=_runtime.settings,
         )
+    except ValidationError as exc:
+        return _err("invalid_args", f"invalid {kind} payload: {exc}")
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, str(exc))
     if out is None:
         return _err("unsupported_kind", f"writer does not support kind={kind}")
     return _ok(out)

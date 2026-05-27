@@ -20,11 +20,11 @@ from agent_memory_lite.capability.usage_tracker import (
 def _seed_skill(conn: sqlite3.Connection, *, skill_id: str = "sk_alpha") -> None:
     conn.execute(
         """
-        INSERT INTO agent_skills
-        (id, workspace_id, name, summary, when_to_use_json, inputs_json,
+        INSERT INTO skills
+        (id, workspace_id, name, subtype, summary, when_to_use_json, inputs_json,
          outputs_json, tools_json, related_roles_json, source_episode_id,
          confidence, active, created_at, updated_at)
-        VALUES (?, 'default', 'Test skill', 'summary', '[]', '[]', '[]',
+        VALUES (?, 'default', 'Test skill', 'skill', 'summary', '[]', '[]', '[]',
                 '[]', '[]', NULL, 0.7, 1, '2026-01-01T00:00:00Z',
                 '2026-01-01T00:00:00Z')
         """,

@@ -3,8 +3,8 @@
 Pipeline: hook ingests claim + user_correction pair → auto_promote
 runs this extractor → emits MemoryCandidate(kind=CORRECTION) →
 candidate surfaces in <pending_review> → operator promotes via
-/memory/promote_candidate_to_behavior. See ``docs/V1_2_0.md`` for
-the complete flow and design notes.
+/memory/promote_candidate_to_behavior. Active operator flow lives in
+``docs/OPERATIONS.md``; historical design notes live in git history.
 
 SECURITY: ``_resolve_claim`` filters by workspace_id AND requires
 the referenced episode to carry ``metadata.kind="correction_target"``.

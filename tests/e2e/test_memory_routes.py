@@ -1,9 +1,7 @@
-"""End-to-end tests for the canonical HTTP surface mounted at /memory/*.
+"""End-to-end tests for the v3 HTTP surface mounted at /memory/*.
 
-Builds a minimal FastAPI app with just the canonical router — bypasses the
-v2 migration bootstrap (which would conflict with the canonical schema in the
-same DB). Production wiring runs v2 migrations against v2 DBs and
-canonical schema against canonical DBs separately.
+Builds a minimal FastAPI app with just the canonical router and a fresh
+root-migrated v3 DB.
 """
 
 from __future__ import annotations
@@ -18,18 +16,18 @@ from fastapi.testclient import TestClient
 
 from agent_memory_lite.api.routes import memory as v3_routes
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
-    """FastAPI client with a pure canonical-schema DB and only canonical routes mounted."""
+    """FastAPI client with a root-migrated DB and only memory routes mounted."""
     db_path = tmp_path / "canonical.db"
 
-    # Apply canonical schema to a fresh DB.
+    # Apply the root migration chain to a fresh DB.
     init_conn = sqlite3.connect(db_path)
     try:
-        init_conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        apply_migrations(init_conn)
         init_conn.commit()
     finally:
         init_conn.close()
@@ -127,29 +125,6 @@ def test_v3_get_unknown_returns_not_found(client: TestClient) -> None:
     assert body["error"]["code"] == "not_found"
 
 
-def test_v3_list_returns_projections(client: TestClient) -> None:
-    _seed_decision(client, title="A")
-    _seed_decision(client, title="B")
-    r = client.get(
-        "/memory/list",
-        params={"workspace_id": "default", "kind": "decision", "limit": 10},
-    )
-    body = r.json()
-    assert body["ok"] is True
-    assert len(body["data"]) == 2
-    for d in body["data"]:
-        assert "decision_text" not in d
-
-
-def test_v3_count_endpoint(client: TestClient) -> None:
-    _seed_decision(client, title="X")
-    r = client.get(
-        "/memory/count",
-        params={"workspace_id": "default", "kind": "decision"},
-    )
-    assert r.json()["data"]["count"] == 1
-
-
 def test_v3_search_returns_hits(client: TestClient) -> None:
     _seed_decision(client, title="Kelly sizing", decision_text="Use quarter-Kelly")
     _seed_decision(client, title="Unrelated", decision_text="Other")
@@ -161,6 +136,19 @@ def test_v3_search_returns_hits(client: TestClient) -> None:
     assert body["ok"] is True
     titles = [h["projection"]["title"] for h in body["data"]]
     assert "Kelly sizing" in titles
+
+
+def test_v3_search_rejects_unknown_kind(client: TestClient) -> None:
+    r = client.post(
+        "/memory/search",
+        json={
+            "workspace_id": "default",
+            "query": "kelly",
+            "kinds": ["decisions"],
+        },
+    )
+    assert r.status_code == 422
+    assert "unknown kinds" in r.text
 
 
 def test_v3_edit_partial_update(client: TestClient) -> None:
@@ -228,44 +216,6 @@ def test_v3_lint_empty_workspace_allows(client: TestClient) -> None:
     )
     body = r.json()
     assert body["data"]["verdict"] == "allow"
-
-
-def test_v3_versions_history(client: TestClient) -> None:
-    dec_id = _seed_decision(client, title="v1", decision_text="first")
-    _seed_decision(client, id=dec_id, title="v2", decision_text="second") if False else None
-    # Update via edit to generate a version snapshot
-    client.post(
-        "/memory/edit",
-        json={
-            "workspace_id": "default",
-            "kind": "decision",
-            "id": dec_id,
-            "fields": {"title": "v2"},
-        },
-    )
-    r = client.get(
-        "/memory/versions",
-        params={"workspace_id": "default", "kind": "decision", "id": dec_id},
-    )
-    body = r.json()
-    assert body["ok"] is True
-    assert len(body["data"]) >= 1
-
-
-def test_v3_rollback_requires_why(client: TestClient) -> None:
-    dec_id = _seed_decision(client, title="v1")
-    r = client.post(
-        "/memory/rollback",
-        json={
-            "workspace_id": "default",
-            "kind": "decision",
-            "id": dec_id,
-            "to_version": 1,
-            "why": "",
-        },
-    )
-    # Empty why fails Pydantic validation (min_length=1).
-    assert r.status_code == 422
 
 
 def test_v3_impact_check_not_indexed(client: TestClient) -> None:

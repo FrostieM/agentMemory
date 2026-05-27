@@ -20,12 +20,12 @@ from pathlib import Path
 import pytest
 from scripts import memory_consolidation_runner as runner
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 def _make_db(path: Path) -> None:
     conn = sqlite3.connect(path)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.commit()
     conn.close()
 

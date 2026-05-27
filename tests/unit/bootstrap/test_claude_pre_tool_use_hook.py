@@ -6,7 +6,7 @@ from pathlib import Path
 
 from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (
     HOOK_MARKER,
-    HOOK_MATCHER,
+    HOOK_MATCHERS,
     install_pre_tool_use_hook,
 )
 
@@ -23,10 +23,9 @@ def test_fresh_install_creates_pretooluse_block() -> None:
     settings: dict = {}
     status = install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     assert status == "installed"
-    assert settings["hooks"]["PreToolUse"]
-    block = settings["hooks"]["PreToolUse"][0]
-    assert block["matcher"] == HOOK_MATCHER
-    assert HOOK_MARKER in block["hooks"][0]["command"]
+    blocks = settings["hooks"]["PreToolUse"]
+    assert [block["matcher"] for block in blocks] == list(HOOK_MATCHERS)
+    assert all(HOOK_MARKER in block["hooks"][0]["command"] for block in blocks)
 
 
 def test_second_install_is_unchanged() -> None:
@@ -34,7 +33,7 @@ def test_second_install_is_unchanged() -> None:
     install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     status = install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     assert status == "unchanged"
-    assert len(settings["hooks"]["PreToolUse"]) == 1
+    assert len(settings["hooks"]["PreToolUse"]) == len(HOOK_MATCHERS)
 
 
 def test_install_refreshes_when_command_changes() -> None:
@@ -50,9 +49,9 @@ def test_install_refreshes_when_command_changes() -> None:
     }
     status = install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     assert status == "refreshed"
-    block = settings["hooks"]["PreToolUse"][0]
-    assert block["matcher"] == HOOK_MATCHER
-    assert "old-cmd" not in block["hooks"][0]["command"]
+    blocks = settings["hooks"]["PreToolUse"]
+    assert [block["matcher"] for block in blocks] == list(HOOK_MATCHERS)
+    assert all("old-cmd" not in block["hooks"][0]["command"] for block in blocks)
 
 
 def test_install_preserves_unrelated_hooks() -> None:
@@ -68,9 +67,9 @@ def test_install_preserves_unrelated_hooks() -> None:
     }
     install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     blocks = settings["hooks"]["PreToolUse"]
-    assert len(blocks) == 2
+    assert len(blocks) == len(HOOK_MATCHERS) + 1
     assert any(b["matcher"] == "Read" for b in blocks)
-    assert any(b["matcher"] == HOOK_MATCHER for b in blocks)
+    assert all(any(b["matcher"] == matcher for b in blocks) for matcher in HOOK_MATCHERS)
 
 
 def test_install_repairs_malformed_hooks_subtree() -> None:
@@ -78,7 +77,7 @@ def test_install_repairs_malformed_hooks_subtree() -> None:
     status = install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
     assert status == "installed"
     assert isinstance(settings["hooks"], dict)
-    assert settings["hooks"]["PreToolUse"][0]["matcher"] == HOOK_MATCHER
+    assert [block["matcher"] for block in settings["hooks"]["PreToolUse"]] == list(HOOK_MATCHERS)
 
 
 def test_install_repairs_malformed_pretooluse_subtree() -> None:

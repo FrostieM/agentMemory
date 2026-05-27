@@ -47,19 +47,49 @@ def tmp_workspace(tmp_path: Path) -> dict:
                         }
                     ]
                 }
-            ]
+            ],
+            "PreToolUse": [
+                {
+                    "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '"py" "/path/to/scripts/pre_tool_use_check.py"',
+                        }
+                    ],
+                }
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "Edit|Write|NotebookEdit|MultiEdit",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '"py" "/path/to/scripts/post_edit_enqueue.py"',
+                        }
+                    ],
+                }
+            ],
         },
         "mcpServers": {"agent-memory-lite": {"env": {"MEMORY_WORKSPACE_ID": "tw"}}},
     }
     (root / ".claude" / "settings.json").write_text(json.dumps(settings))
+    contract = (
+        "# Agent contract\n\n"
+        "## V3-Only Active Surface\n\n"
+        "Use memory_brief, memory_search, memory_get, and memory_write.\n"
+    )
+    (root / "CLAUDE.md").write_text(contract, encoding="utf-8")
+    (root / "AGENTS.md").write_text(contract, encoding="utf-8")
     db = root / ".agent_memory" / "memory.db"
     db.parent.mkdir()
     conn = sqlite3.connect(db)
     conn.executescript(
         """
         CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT);
-        CREATE TABLE behavior_instructions (workspace_id TEXT, name TEXT, active INT, applies_to_json TEXT);
-        INSERT INTO behavior_instructions VALUES
+        CREATE TABLE behaviors (workspace_id TEXT, name TEXT, active INT, applies_to_json TEXT);
+        INSERT INTO behaviors VALUES
+            ('tw', 'pretooluse:impact-check-before-read', 1, '[]'),
             ('tw', 'pretooluse:read-before-edit', 1, '[]'),
             ('tw', 'pretooluse:search-before-architectural-write', 1, '[]'),
             ('tw', 'pretooluse:decision-must-have-provenance', 1, '[]'),
@@ -148,34 +178,25 @@ def test_pending_migration_warns(tmp_workspace, tmp_path) -> None:
 def test_missing_enforcement_rule_warns(tmp_workspace, tmp_path) -> None:
     """Disable one of the 4 expected pretooluse rules → warning."""
     conn = sqlite3.connect(tmp_workspace["db_path"])
-    conn.execute(
-        "UPDATE behavior_instructions SET active=0 WHERE name='pretooluse:read-before-edit'"
-    )
+    conn.execute("UPDATE behaviors SET active=0 WHERE name='pretooluse:read-before-edit'")
     conn.commit()
     conn.close()
     report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
     assert any(f.code == "missing_enforcement_rule" for f in report.findings)
 
 
-def test_canonical_subdir_migrations_not_flagged(tmp_workspace, tmp_path) -> None:
-    """migrations/canonical/ is a separate consolidated-schema artifact the
-    runtime migration runner never discovers (db.migrations.apply_migrations
-    globs only the top level of migrations/). The doctor must mirror that — a
-    fully-migrated root-track DB must NOT be flagged for 'canonical/000N
-    pending' just because schema_migrations lacks canonical-prefixed rows."""
+def test_nested_subdir_migrations_not_flagged(tmp_workspace, tmp_path) -> None:
+    """Nested migration dirs are not part of the root runner's glob."""
     conn = sqlite3.connect(tmp_workspace["db_path"])
     conn.execute("INSERT INTO schema_migrations VALUES ('0001_init', 'now')")
     conn.commit()
     conn.close()
     mig = tmp_path / "migrations"
     mig.mkdir()
-    # Root migration — present in schema_migrations, so not pending.
     (mig / "0001_init.sql").write_text("CREATE TABLE IF NOT EXISTS x (id TEXT);")
-    # Canonical subdir carries brain-phase files the runner never tracks.
-    canon = mig / "canonical"
-    canon.mkdir()
-    (canon / "0002_outcome_loop.sql").write_text("CREATE TABLE IF NOT EXISTS y (id TEXT);")
-    (canon / "0003_hebbian.sql").write_text("CREATE TABLE IF NOT EXISTS z (id TEXT);")
+    nested = mig / "archive"
+    nested.mkdir()
+    (nested / "0002_nested.sql").write_text("CREATE TABLE IF NOT EXISTS y (id TEXT);")
     report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=mig)
     assert not any(f.code == "pending_migrations" for f in report.findings)
 
@@ -191,6 +212,116 @@ def test_unknown_hook_script_warns(tmp_workspace, tmp_path) -> None:
     settings_path.write_text(json.dumps(s))
     report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
     assert any(f.code == "unknown_hook_script" for f in report.findings)
+
+
+def test_missing_required_hook_warns(tmp_workspace, tmp_path) -> None:
+    settings_path = Path(tmp_workspace["project_root"]) / ".claude" / "settings.json"
+    s = json.loads(settings_path.read_text())
+    del s["hooks"]["PreToolUse"]
+    settings_path.write_text(json.dumps(s))
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+    assert any(
+        f.code == "missing_required_hook" and "PreToolUse" in f.detail for f in report.findings
+    )
+
+
+def test_stale_pretooluse_matcher_warns(tmp_workspace, tmp_path) -> None:
+    settings_path = Path(tmp_workspace["project_root"]) / ".claude" / "settings.json"
+    s = json.loads(settings_path.read_text())
+    s["hooks"]["PreToolUse"][0]["matcher"] = "Edit|Write|NotebookEdit|Bash"
+    settings_path.write_text(json.dumps(s))
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+
+    assert any(f.code == "stale_pretooluse_matcher" for f in report.findings)
+
+
+def test_codex_deprecated_hook_script_is_critical(tmp_workspace, tmp_path) -> None:
+    codex_dir = Path(tmp_workspace["project_root"]) / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {"hooks": [{"command": '"py" "/old/scripts/inject_memory_context.py"'}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+    assert report.status == "critical"
+    assert any(f.code == "deprecated_hook_script" and "codex" in f.detail for f in report.findings)
+
+
+def test_codex_dir_without_hooks_warns(tmp_workspace, tmp_path) -> None:
+    (Path(tmp_workspace["project_root"]) / ".codex").mkdir()
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+
+    assert any(f.code == "missing_codex_hooks" for f in report.findings)
+
+
+def test_codex_missing_required_hook_warns(tmp_workspace, tmp_path) -> None:
+    codex_dir = Path(tmp_workspace["project_root"]) / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(
+        json.dumps({"hooks": {"UserPromptSubmit": []}}),
+        encoding="utf-8",
+    )
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+
+    assert any(f.code == "missing_required_hook" and "codex" in f.detail for f in report.findings)
+
+
+def test_codex_stale_pretooluse_matcher_warns(tmp_workspace, tmp_path) -> None:
+    codex_dir = Path(tmp_workspace["project_root"]) / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {"hooks": [{"command": '"py" "/path/to/scripts/inject_memory_brief.py"'}]}
+                    ],
+                    "PreToolUse": [
+                        {
+                            "matcher": "Edit|Write|NotebookEdit|Bash",
+                            "hooks": [{"command": '"py" "/path/to/scripts/pre_tool_use_check.py"'}],
+                        }
+                    ],
+                    "PostToolUse": [
+                        {"hooks": [{"command": '"py" "/path/to/scripts/post_edit_enqueue.py"'}]}
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+
+    assert any(
+        f.code == "stale_pretooluse_matcher" and "codex" in f.detail for f in report.findings
+    )
+
+
+def test_stale_agent_contract_is_critical(tmp_workspace, tmp_path) -> None:
+    (Path(tmp_workspace["project_root"]) / "CLAUDE.md").write_text(
+        "Before work, call memory_get_context and then inject_memory_context.py.\n",
+        encoding="utf-8",
+    )
+
+    report = _doctor.run_workspace_check(tmp_workspace, migrations_dir=_migrations_dir(tmp_path))
+
+    assert report.status == "critical"
+    assert any(
+        f.code == "stale_agent_contract" and "CLAUDE.md" in f.detail for f in report.findings
+    )
 
 
 def test_exit_code_for_returns_critical_when_any_critical() -> None:

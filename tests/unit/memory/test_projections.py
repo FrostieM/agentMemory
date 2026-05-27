@@ -19,6 +19,7 @@ from agent_memory_lite.storage.projections import (
     project_insight,
     project_plan_step,
     project_skill,
+    project_snapshot,
     project_task,
     project_theory,
 )
@@ -37,9 +38,9 @@ def _row(**kwargs) -> sqlite3.Row:
     return row
 
 
-def test_known_kinds_returns_eleven_kinds() -> None:
+def test_known_kinds_returns_twelve_kinds() -> None:
     kinds = known_kinds()
-    assert len(kinds) == 11
+    assert len(kinds) == 12
     for expected in (
         "decision",
         "theory",
@@ -49,6 +50,7 @@ def test_known_kinds_returns_eleven_kinds() -> None:
         "concept",
         "task",
         "insight",
+        "snapshot",
         "code_digest",
         "chunk",
         "plan_step",
@@ -213,6 +215,21 @@ def test_project_insight_falls_back_to_summary() -> None:
     out = project_insight(row)
     assert out["id"] == "insight_x"
     assert "reusable lesson" in out["gist"]
+
+
+def test_project_snapshot_compact_shape() -> None:
+    row = _row(
+        id="snap_x",
+        snapshot_key="daily-2026-05-26",
+        title="Daily import",
+        source_label="warehouse",
+        total_rows=42,
+    )
+    out = project_snapshot(row)
+    assert out["id"] == "snap_x"
+    assert out["kind"] == "snapshot"
+    assert out["snapshot_key"] == "daily-2026-05-26"
+    assert out["total_rows"] == 42
 
 
 def test_project_code_digest_extracts_symbol_csv() -> None:

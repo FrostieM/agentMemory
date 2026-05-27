@@ -25,14 +25,14 @@ from scripts import acceptance_gate as gate
 
 from agent_memory_lite.cognition import brief as brief_mod
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def db_path(tmp_path: Path) -> Iterator[Path]:
     path = tmp_path / "canonical.db"
     conn = sqlite3.connect(path)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.commit()
     conn.close()
     return path

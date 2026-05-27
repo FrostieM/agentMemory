@@ -1,4 +1,4 @@
-"""SQL operations for ``memory_snapshots``."""
+"""SQL operations for canonical ``snapshots``."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def upsert_snapshot_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO memory_snapshots (
+        INSERT INTO snapshots (
             id, workspace_id, snapshot_key, title, source_label, db_path,
             duckdb_path, parquet_dir, window_start, window_end, build_sha,
             build_branch, build_time, remote_host, table_counts_json, total_rows,
@@ -91,7 +91,7 @@ def upsert_snapshot_row(
 
 
 def get_snapshot(conn: sqlite3.Connection, snapshot_id: str) -> MemorySnapshot | None:
-    row = conn.execute("SELECT * FROM memory_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
+    row = conn.execute("SELECT * FROM snapshots WHERE id = ?", (snapshot_id,)).fetchone()
     return row_to_snapshot(row) if row is not None else None
 
 
@@ -99,7 +99,7 @@ def get_snapshot_by_key(
     conn: sqlite3.Connection, *, workspace_id: str, snapshot_key: str
 ) -> MemorySnapshot | None:
     row = conn.execute(
-        "SELECT * FROM memory_snapshots WHERE workspace_id = ? AND snapshot_key = ?",
+        "SELECT * FROM snapshots WHERE workspace_id = ? AND snapshot_key = ?",
         (workspace_id, snapshot_key),
     ).fetchone()
     return row_to_snapshot(row) if row is not None else None
@@ -131,9 +131,7 @@ def list_snapshots(
 ) -> list[MemorySnapshot]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM memory_snapshots "
-        f"WHERE workspace_id = ? {extra_sql} "
-        "ORDER BY updated_at DESC",
+        f"SELECT * FROM snapshots WHERE workspace_id = ? {extra_sql} ORDER BY updated_at DESC",
         (workspace_id, *extra_params),
     ).fetchall()
     tokens = tokens_from(query)

@@ -6,8 +6,8 @@ text) based on the language hint and produces a uniform record shape
 the pipeline can iterate over.
 
 1.4.0: ``IngestChunk`` carries optional symbol metadata (kind /
-qualified_name / parent) so code chunks emit indexable rows for
-``/memory/find_symbols`` without losing existing text-chunk paths.
+qualified_name / parent) so code chunks emit indexable rows for compact
+v3 code-aware retrieval without losing existing text-chunk paths.
 """
 
 from __future__ import annotations

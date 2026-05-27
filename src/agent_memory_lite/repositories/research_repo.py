@@ -2,10 +2,10 @@
 
 Per-table SQL lives in:
 - ``research_snapshots_repo.py``
-- ``research_experiments_repo.py``
+- ``experiments_repo.py``
 - ``research_results_repo.py``
 - ``research_concepts_repo.py``
-- ``research_insights_repo.py``
+- ``insights_repo.py``
 
 Shared search helpers + row converters live in
 ``research_helpers.py``. This module re-exports the public API and

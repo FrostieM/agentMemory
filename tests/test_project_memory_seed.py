@@ -25,7 +25,7 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
 
     assert result.profile == PROFILE_NAME
     assert result.roles_written == 0
-    # 1.2.3: seed wrote one capability-link discipline rule.
+    # 1.2.3: seed wrote one capability-context discipline rule.
     # 1.2.4: added second rule — search-before-write discipline.
     # 2.2 (Phase 1.2 of v2.2 consolidation, 2026-05-10): added
     # memory-first-before-edit and no-unauthorized-git-push discipline
@@ -36,9 +36,8 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     # memory-write-is-not-done-until-candidates-resolved; all three
     # pinned. Total seed BIs = 7. All seeded BIs must be project-AGNOSTIC
     # (no language, personality, or project-specific behavior).
-    # Project-specific rules remain operator-driven via
-    # memory_upsert_behavior_instruction.
-    assert result.behavior_instructions_written == 11
+    # Project-specific rules remain operator-driven via memory_write(kind=behavior).
+    assert result.behavior_instructions_written == 12
     assert [item.name for item in result.skills] == ["Memory population discipline"]
     assert [item.name for item in result.playbooks] == ["Neutral memory bootstrap"]
     assert {item.name for item in result.concepts} == {
@@ -48,8 +47,8 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
         "memory integrity audit",
     }
     assert {item.name for item in result.behavior_instructions} == {
-        "Link capability after every decision and theory write",
-        "Search before write — auto-inject is not exhaustive",
+        "Record capability suggestion after every decision and theory write",
+        "Search before write - auto-inject is not exhaustive",
         "Memory-first before reading or editing source",
         "No git commit/push/CI without explicit operator permission",
         "applies-to-checklist-must-be-stated-verbatim",
@@ -58,14 +57,19 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
         "pretooluse:no-magic-number-in-strategy",
         "pretooluse:decision-must-have-provenance",
         "pretooluse:read-before-edit",
+        "pretooluse:impact-check-before-read",
         "pretooluse:search-before-architectural-write",
     }
 
-    assert _count(applied_conn, "agent_roles", "project-x") == 0
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 11
-    assert _count(applied_conn, "agent_skills", "project-x") == 1
-    assert _count(applied_conn, "agent_playbooks", "project-x") == 1
-    assert _count(applied_conn, "domain_concepts", "project-x") == 4
+    assert _count(applied_conn, "behaviors", "project-x") == 12
+    assert _count(applied_conn, "skills", "project-x") == 2
+    assert (
+        applied_conn.execute(
+            "SELECT COUNT(*) FROM skills WHERE workspace_id='project-x' AND subtype='role'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert _count(applied_conn, "concepts", "project-x") == 4
 
 
 def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connection) -> None:
@@ -80,19 +84,18 @@ def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connect
     first_bi_ids = {item.id for item in first.behavior_instructions}
     second_bi_ids = {item.id for item in second.behavior_instructions}
     assert first_bi_ids == second_bi_ids
-    assert _count(applied_conn, "agent_skills", "project-x") == 1
-    assert _count(applied_conn, "agent_playbooks", "project-x") == 1
-    assert _count(applied_conn, "domain_concepts", "project-x") == 4
-    assert _count(applied_conn, "behavior_instructions", "project-x") == 11
+    assert _count(applied_conn, "skills", "project-x") == 2
+    assert _count(applied_conn, "concepts", "project-x") == 4
+    assert _count(applied_conn, "behaviors", "project-x") == 12
 
 
 def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) -> None:
     """1.2.3+: every seeded discipline rule must carry the right enum
     values and metadata so it's immediately visible in
-    <behavior_instructions> of the next memory_get_context envelope.
+    behavior section of the next memory_brief envelope.
 
     Each BI may pick its own (kind, priority, conflict_policy) — the
-    capability-link and search-before-write rules use operating_rule +
+    capability-suggestion and search-before-write rules use operating_rule +
     user_preference + current_user_wins (overridable by the operator
     in-chat); the workflow rules (memory-first, no-push) tighten on
     purpose. All four MUST share source_type='seed_bootstrap' and
@@ -100,14 +103,14 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
     seed_neutral_project_memory(applied_conn, workspace_id="project-x")
     rows = applied_conn.execute(
         "SELECT name, kind, scope, priority, conflict_policy, source_type, "
-        "active, pinned, applies_to_json FROM behavior_instructions "
+        "active, pinned, applies_to_json FROM behaviors "
         "WHERE workspace_id='project-x' ORDER BY name"
     ).fetchall()
-    assert len(rows) == 11
+    assert len(rows) == 12
     names = {r["name"] for r in rows}
     assert names == {
-        "Link capability after every decision and theory write",
-        "Search before write — auto-inject is not exhaustive",
+        "Record capability suggestion after every decision and theory write",
+        "Search before write - auto-inject is not exhaustive",
         "Memory-first before reading or editing source",
         "No git commit/push/CI without explicit operator permission",
         "applies-to-checklist-must-be-stated-verbatim",
@@ -116,6 +119,7 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "pretooluse:no-magic-number-in-strategy",
         "pretooluse:decision-must-have-provenance",
         "pretooluse:read-before-edit",
+        "pretooluse:impact-check-before-read",
         "pretooluse:search-before-architectural-write",
     }
     # Every seed BI must share the canonical seed-bootstrap source_type and
@@ -138,26 +142,30 @@ def test_seed_behavior_instruction_metadata(applied_conn: sqlite3.Connection) ->
         "pretooluse:no-magic-number-in-strategy",
         "pretooluse:decision-must-have-provenance",
         "pretooluse:read-before-edit",
+        "pretooluse:impact-check-before-read",
         "pretooluse:search-before-architectural-write",
     }
 
-    # The capability-link rule applies_to research-mutating APIs
-    cap_link = next(
-        r for r in rows if r["name"] == "Link capability after every decision and theory write"
+    # The capability-suggestion rule applies_to research-mutating APIs
+    cap_context = next(
+        r
+        for r in rows
+        if r["name"] == "Record capability suggestion after every decision and theory write"
     )
-    cap_applies = json.loads(cap_link["applies_to_json"] or "[]")
-    assert "memory_write_decision" in cap_applies
-    assert "memory_write_theory" in cap_applies
-    assert cap_link["kind"] == "operating_rule"
-    assert cap_link["priority"] == "user_preference"
-    assert cap_link["conflict_policy"] == "current_user_wins"
+    cap_applies = json.loads(cap_context["applies_to_json"] or "[]")
+    assert "memory_write kind=decision" in cap_applies
+    assert "memory_write kind=theory" in cap_applies
+    assert "capability_suggestions field" in cap_applies
+    assert cap_context["kind"] == "operating_rule"
+    assert cap_context["priority"] == "user_preference"
+    assert cap_context["conflict_policy"] == "current_user_wins"
 
     # The search-first rule applies_to writes that should be preceded by search
     search_rule = next(
-        r for r in rows if r["name"] == "Search before write — auto-inject is not exhaustive"
+        r for r in rows if r["name"] == "Search before write - auto-inject is not exhaustive"
     )
     search_applies = json.loads(search_rule["applies_to_json"] or "[]")
-    assert "memory_write_decision" in search_applies
+    assert "memory_write kind=decision" in search_applies
     assert "before architectural decisions" in search_applies
     assert search_rule["kind"] == "operating_rule"
 

@@ -48,7 +48,7 @@ def _seed_correction_candidate(
         )
         conn.execute(
             """
-            INSERT INTO memory_candidates (
+            INSERT INTO candidates (
                 id, workspace_id, kind, subject, predicate, object, evidence,
                 confidence, importance, trust_level, status,
                 temporal_json, write_targets_json, metadata_json,
@@ -76,6 +76,18 @@ def _seed_correction_candidate(
     return candidate_id
 
 
+def _search_behaviors(client: TestClient, query: str):
+    return client.post(
+        "/memory/search",
+        json={
+            "workspace_id": "ws-correction",
+            "kinds": ["behavior"],
+            "query": query,
+            "limit": 10,
+        },
+    )
+
+
 def test_promote_correction_creates_behavior_instruction(client: TestClient, tmp_db_path) -> None:
     cand_id = _seed_correction_candidate(str(tmp_db_path))
     r = client.post(
@@ -96,23 +108,27 @@ def test_promote_correction_creates_behavior_instruction(client: TestClient, tmp
     assert bi_id
 
     # Candidate should now be promoted with target_id set
-    list_resp = client.post(
-        "/memory/list_candidates",
-        json={"workspace_id": "ws-correction", "statuses": ["promoted"]},
-    )
-    assert list_resp.status_code == 200, list_resp.text
-    promoted = [c for c in list_resp.json()["candidates"] if c["candidate_id"] == cand_id]
-    assert promoted, "candidate should appear in promoted listing"
-    assert promoted[0]["promoted_target_type"] == "behavior_instruction"
-    assert promoted[0]["promoted_target_id"] == bi_id
+    conn = sqlite3.connect(str(tmp_db_path))
+    try:
+        promoted = conn.execute(
+            """
+            SELECT status, promoted_target_type, promoted_target_id
+            FROM candidates
+            WHERE id = ?
+            """,
+            (cand_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert promoted is not None
+    assert promoted[0] == "promoted"
+    assert promoted[1] == "behavior_instruction"
+    assert promoted[2] == bi_id
 
-    # behavior_instruction should be retrievable by name
-    list_bi = client.post(
-        "/memory/list_behavior_instructions",
-        json={"workspace_id": "ws-correction", "limit": 10},
-    )
+    # Behavior should be retrievable by canonical compact search.
+    list_bi = _search_behaviors(client, "verify timestamps claiming")
     assert list_bi.status_code == 200, list_bi.text
-    names = [bi["name"] for bi in list_bi.json()["instructions"]]
+    names = [bi["projection"]["name"] for bi in list_bi.json()["data"]]
     assert "verify-timestamps-before-claiming" in names
 
 
@@ -129,11 +145,8 @@ def test_promote_with_pinned_flag(client: TestClient, tmp_db_path) -> None:
         },
     )
     assert r.status_code == 200, r.text
-    list_bi = client.post(
-        "/memory/list_behavior_instructions",
-        json={"workspace_id": "ws-correction", "limit": 10},
-    )
-    instructions = list_bi.json()["instructions"]
+    list_bi = _search_behaviors(client, "pinned-rule")
+    instructions = [item["projection"] for item in list_bi.json()["data"]]
     pinned_rule = next((bi for bi in instructions if bi["name"] == "pinned-rule"), None)
     assert pinned_rule is not None
     assert pinned_rule["pinned"] is True
@@ -153,11 +166,20 @@ def test_promote_with_rule_text_override(client: TestClient, tmp_db_path) -> Non
     )
     assert r.status_code == 200, r.text
 
-    list_bi = client.post(
-        "/memory/list_behavior_instructions",
-        json={"workspace_id": "ws-correction", "limit": 10},
-    )
-    rules = {bi["name"]: bi["rule"] for bi in list_bi.json()["instructions"]}
+    list_bi = _search_behaviors(client, "rule-with-override")
+    rules = {}
+    for item in list_bi.json()["data"]:
+        bi = item["projection"]
+        full = client.get(
+            "/memory/get",
+            params={
+                "workspace_id": "ws-correction",
+                "kind": "behavior",
+                "id": bi["id"],
+                "fields": "rule",
+            },
+        ).json()
+        rules[bi["name"]] = full["data"]["rule"]
     assert "rule-with-override" in rules
     assert rules["rule-with-override"] == (
         "Always check process start time before assuming staleness."
@@ -284,7 +306,7 @@ def test_promote_non_correction_candidate_returns_409(client: TestClient, tmp_db
         )
         conn.execute(
             """
-            INSERT INTO memory_candidates (
+            INSERT INTO candidates (
                 id, workspace_id, kind, subject, predicate, object, evidence,
                 confidence, importance, trust_level, status,
                 temporal_json, write_targets_json, metadata_json,
@@ -316,22 +338,14 @@ def test_promote_non_correction_candidate_returns_409(client: TestClient, tmp_db
     assert "CORRECTION" in r.text or "correction" in r.text
 
 
-def test_pending_review_envelope_lists_correction_candidate(
-    client: TestClient, tmp_db_path
-) -> None:
-    """Confirm <pending_review> exposes the correction queue and its hint."""
+def test_review_queue_lists_correction_candidate(client: TestClient, tmp_db_path) -> None:
+    """Confirm the review queue exposes the correction candidate."""
     cand_id = _seed_correction_candidate(str(tmp_db_path), candidate_id="cand_review_envelope")
-    ctx = client.post(
-        "/memory/get_context",
-        json={
-            "workspace_id": "ws-correction",
-            "query": "anything",
-            "max_tokens": 2000,
-        },
+    listed = client.post(
+        "/memory/review_queue",
+        json={"workspace_id": "ws-correction", "limit_per_kind": 10},
     )
-    assert ctx.status_code == 200, ctx.text
-    text = ctx.json()["context_text"]
-    assert "<pending_review" in text
-    assert 'kind="correction_candidate"' in text
+    assert listed.status_code == 200, listed.text
+    text = str(listed.json())
+    assert "correction" in text
     assert cand_id in text
-    assert "promote_candidate_to_behavior" in text

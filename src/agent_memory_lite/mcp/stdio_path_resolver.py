@@ -21,7 +21,17 @@ from pathlib import Path
 from typing import Any
 
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
+from agent_memory_lite.config.workspace_registry import WorkspaceEntry, WorkspaceRegistry
+
+
+def _registry_match_for_cwd(cwd: Path, entries: list[WorkspaceEntry]) -> WorkspaceEntry | None:
+    for parent in [cwd.resolve(), *cwd.resolve().parents]:
+        target = str(parent).rstrip("\\/").casefold()
+        for entry in entries:
+            root = str(entry.project_root or "").rstrip("\\/").casefold()
+            if root and root == target:
+                return entry
+    return None
 
 
 def resolve_paths_from_cwd(settings: Settings) -> Settings:
@@ -39,6 +49,18 @@ def resolve_paths_from_cwd(settings: Settings) -> Settings:
     except Exception:
         entries = []
     auto_hub = len(entries) > 1 and not settings.strict_workspace_isolation
+    matched_entry = _registry_match_for_cwd(cwd, entries) if entries else None
+    if matched_entry is not None:
+        matched_update: dict[str, Any] = {
+            "db_path": Path(matched_entry.db_path),
+            "vector_db_path": Path(matched_entry.vector_path),
+            "workspace_id": matched_entry.id,
+            "hub_mode": False,
+        }
+        if matched_entry.id != "default":
+            matched_update["forbid_default_workspace"] = True
+            matched_update["strict_workspace_isolation"] = True
+        return settings.model_copy(update=matched_update)
     if candidate_db.parent.exists():
         update: dict[str, Any] = {"db_path": candidate_db, "vector_db_path": candidate_vec}
         if auto_hub:

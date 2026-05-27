@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print()
         print(to_json(report))
-    return 0
+    return 0 if report.cases_passed == report.cases_run and not report.failures else 1
 
 
 if __name__ == "__main__":

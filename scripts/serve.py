@@ -5,7 +5,7 @@ UserPromptSubmit hook and any non-MCP client. Runs in the foreground —
 Ctrl+C to stop.
 
     python scripts/serve.py            # auto: hub mode if registry has entries
-    python scripts/serve.py --strict   # legacy single-workspace mode
+    python scripts/serve.py --strict   # force single-workspace mode
     python scripts/serve.py --hub      # force hub mode
 
 What it does, in order:
@@ -91,7 +91,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Force strict single-workspace mode (legacy behavior).",
+        help="Force strict single-workspace mode.",
     )
     return parser.parse_args(argv)
 

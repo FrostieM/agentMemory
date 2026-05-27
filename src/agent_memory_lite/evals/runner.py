@@ -2,11 +2,11 @@
 
 YAML cases drive a small in-memory exercise of the service:
 
-- `retrieval` cases ingest one or more episodes, run `get_context`, and assert
+- `retrieval` cases ingest one or more episodes, run compact search, and assert
   that the expected chunk ids appear in the top-K (recall + precision).
 - `redaction` cases ingest one episode containing a known secret and assert
   the secret literal does not appear in the resulting chunk text or the
-  rendered context.
+  rendered compact surface.
 - `trust_gating` cases declare a candidate and assert the trust gate matches
   the expected outcome.
 

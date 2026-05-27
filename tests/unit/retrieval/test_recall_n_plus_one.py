@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -24,18 +23,14 @@ from agent_memory_lite.retrieval.causal_extractor import list_outgoing_batch
 from agent_memory_lite.storage.reader import get_objects_batch
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-CAUSAL = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0008_causal_links.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME.read_text(encoding="utf-8"))
-    c.executescript(CAUSAL.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:

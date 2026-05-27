@@ -27,7 +27,7 @@ def test_untrusted_doc_blocks_constraint() -> None:
     assert not passes_trust_gate(cand)
 
 
-def test_untrusted_doc_blocks_procedural_rule() -> None:
+def test_untrusted_doc_blocks_rule_candidate() -> None:
     cand = _candidate(MemoryCandidateKind.PROCEDURAL_RULE, TrustLevel.UNTRUSTED_DOC)
     assert not passes_trust_gate(cand)
 

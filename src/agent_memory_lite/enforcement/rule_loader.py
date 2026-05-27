@@ -90,12 +90,12 @@ def _classify(applies_to: list[str]) -> str | None:
 def load_enforcement_rules(conn: sqlite3.Connection, workspace_id: str) -> list[EnforcementRule]:
     """Return active pinned rules eligible for enforcement.
 
-    Pinned = the operator-marked subset of behavior_instructions that
+    Pinned = the operator-marked subset of behaviors that
     rides every active envelope. Pinning is the contract that says
     "this rule is load-bearing"; the PreToolUse hook treats every
     pinned rule as enforceable by default.
 
-    Failure-soft on pre-v3 / fresh v3 DBs where ``behavior_instructions``
+    Failure-soft on pre-v3 / fresh v3 DBs where ``behaviors``
     has not been created -- returns empty list so the surrounding lint
     pipeline can still evaluate reflexes and discipline hints.
     """
@@ -103,7 +103,7 @@ def load_enforcement_rules(conn: sqlite3.Connection, workspace_id: str) -> list[
         rows = conn.execute(
             """
             SELECT id, name, rule, applies_to_json
-            FROM behavior_instructions
+            FROM behaviors
             WHERE workspace_id = ? AND active = 1 AND pinned = 1
             ORDER BY updated_at DESC
             """,

@@ -20,9 +20,9 @@ from agent_memory_lite.maintenance.quality_gate_models import (
 def behavior_instruction_findings(
     conn: sqlite3.Connection, *, workspace_id: str
 ) -> list[QualityGateFinding]:
-    if not table_exists(conn, "behavior_instructions"):
+    if not table_exists(conn, "behaviors"):
         return []
-    has_governance = column_exists(conn, "behavior_instructions", "source_type")
+    has_governance = column_exists(conn, "behaviors", "source_type")
     governance_cols = (
         "source_type, source_id, reviewed_by, reviewed_at, expires_at, conflict_group"
         if has_governance
@@ -33,7 +33,7 @@ def behavior_instruction_findings(
         f"""
         SELECT id, name, kind, priority, rule, source_episode_id, confidence,
                {governance_cols}
-        FROM behavior_instructions
+        FROM behaviors
         WHERE workspace_id = ? AND active = 1
         """,
         (workspace_id,),

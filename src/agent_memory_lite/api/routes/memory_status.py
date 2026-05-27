@@ -2,7 +2,7 @@
 
 Single endpoint an agent can hit to answer "is this workspace
 indexed?" + "is my discipline showing in the data?" without paging
-through hygiene / quality_gate / health / code_overview separately.
+through hygiene / quality_gate / health separately.
 Read-only, no embedding model touched, sub-100ms target.
 SQL helpers live in ``memory_status_queries.py``.
 

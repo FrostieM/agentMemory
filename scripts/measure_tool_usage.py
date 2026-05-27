@@ -2,9 +2,8 @@
 
 Parses Claude Code session transcripts (``~/.claude/projects/*/*.jsonl``)
 and tallies how often the agent reaches for cheap-but-blind tools
-(Read, Grep, Glob) vs the canonical graph primitives
-(memory_impact_check, memory_get, memory_search,
-memory_graph_neighbors, memory_find_symbols).
+(Read, Grep, Glob) vs the canonical compact memory primitives
+(memory_impact_check, memory_get, memory_search, memory_brief).
 
 The number that matters:  **graph_share = graph_calls / (graph_calls
 + read_grep_calls)**.  Plan target ≥ 0.30 after the discipline stack
@@ -36,7 +35,7 @@ from typing import Any
 
 DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
 
-# Tool buckets — adjust here when adding new canonical primitives or v2 graph tools.
+# Tool buckets: adjust here when adding canonical memory primitives.
 READ_GREP_TOOLS = frozenset({"Read", "Grep", "Glob"})
 GRAPH_TOOLS = frozenset(
     {
@@ -44,13 +43,10 @@ GRAPH_TOOLS = frozenset(
         "memory_get",
         "memory_search",
         "memory_brief",
-        "memory_graph_neighbors",
-        "memory_find_symbols",
-        "memory_file_digest",
-        "memory_code_overview",
-        "memory_code_graph",
-        "memory_breaking_changes",
-        "memory_symbol_history",
+        "memory_status",
+        "memory_plan",
+        "memory_lint",
+        "memory_invoke_skill",
     }
 )
 EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})

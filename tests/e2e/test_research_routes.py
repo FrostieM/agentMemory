@@ -13,20 +13,23 @@ def client(app_factory) -> Iterator[TestClient]:
         yield c
 
 
-def test_research_routes_feed_context_agenda(client: TestClient) -> None:
+def test_research_routes_feed_compact_agenda(client: TestClient) -> None:
     theory = client.post(
-        "/memory/write_theory",
+        "/memory/write",
         json={
             "workspace_id": "default",
-            "title": "Sparse paper opens",
-            "claim": "Sparse paper opens are a learning bottleneck.",
-            "status": "testing",
-            "confidence": 0.45,
-            "tags": ["trading-bot", "paper"],
+            "kind": "theory",
+            "payload": {
+                "title": "Sparse paper opens",
+                "claim": "Sparse paper opens are a learning bottleneck.",
+                "status": "testing",
+                "confidence": 0.45,
+                "tags": ["trading-bot", "paper"],
+            },
         },
     )
     assert theory.status_code == 200, theory.text
-    theory_id = theory.json()["theory_id"]
+    theory_id = theory.json()["data"]["theory_id"]
 
     snapshot = client.post(
         "/memory/register_snapshot",
@@ -114,25 +117,23 @@ def test_research_routes_feed_context_agenda(client: TestClient) -> None:
     )
     assert result.status_code == 200, result.text
 
-    agenda = client.post(
-        "/memory/list_research_agenda",
-        json={"workspace_id": "default", "query": "paper selector gate", "limit": 10},
+    fetched_snapshot = client.get(
+        "/memory/get",
+        params={"workspace_id": "default", "kind": "snapshot", "id": snapshot_id},
     )
-    assert agenda.status_code == 200, agenda.text
-    agenda_body = agenda.json()
-    assert agenda_body["concepts"][0]["name"] == "selector-gate"
-    assert agenda_body["snapshots"][0]["snapshot_key"] == "server_20260427T105823"
+    assert fetched_snapshot.status_code == 200, fetched_snapshot.text
+    assert fetched_snapshot.json()["data"]["snapshot_key"] == "server_20260427T105823"
 
     context = client.post(
-        "/memory/get_context",
+        "/memory/search",
         json={
             "workspace_id": "default",
             "query": "paper selector gate open-rate research agenda",
-            "max_tokens": 2500,
+            "kinds": ["concept", "theory", "insight", "snapshot"],
+            "limit": 10,
         },
     )
     assert context.status_code == 200, context.text
-    text = context.json()["context_text"]
-    assert "<research_agenda>" in text
+    text = str(context.json()["data"])
     assert "selector-gate" in text
-    assert "VPS database snapshot before reset" in text
+    assert "server_20260427T105823" in text

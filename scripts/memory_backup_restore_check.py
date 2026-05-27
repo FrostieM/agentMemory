@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from agent_memory_lite.config.settings import Settings
+
+DEFAULT_AUDIT_TIMEOUT_SECONDS = 180.0
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -22,6 +26,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--db-path", "--db", dest="db_path", default=None)
     parser.add_argument("--vector-path", "--vectors", dest="vector_path", default=None)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--audit-timeout-seconds",
+        type=float,
+        default=DEFAULT_AUDIT_TIMEOUT_SECONDS,
+        help="Maximum seconds to wait for the restored-copy audit.",
+    )
     return parser
 
 
@@ -55,7 +65,46 @@ def _backup_sqlite_db(source: Path, target: Path) -> None:
         source_conn.backup(target_conn)
 
 
-def run_backup_restore_check(settings: Settings) -> dict[str, Any]:
+def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        proc.kill()
+
+
+def _run_restored_audit(
+    audit_cmd: list[str],
+    *,
+    timeout_seconds: float,
+) -> tuple[int | None, str, str, bool, float]:
+    started = time.perf_counter()
+    proc = subprocess.Popen(
+        audit_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=max(timeout_seconds, 0.1))
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(proc)
+        stdout, stderr = proc.communicate()
+        return None, stdout, stderr, True, time.perf_counter() - started
+    return proc.returncode, stdout, stderr, False, time.perf_counter() - started
+
+
+def run_backup_restore_check(
+    settings: Settings,
+    *,
+    audit_timeout_seconds: float = DEFAULT_AUDIT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="memory_restore_check_") as raw_tmp:
         tmp = Path(raw_tmp)
         db_copy = tmp / "memory.db"
@@ -73,17 +122,38 @@ def run_backup_restore_check(settings: Settings) -> dict[str, Any]:
             str(vector_copy),
             "--json",
         ]
-        completed = subprocess.run(audit_cmd, check=False, capture_output=True, text=True)
+        exit_code, stdout, stderr, timed_out, elapsed = _run_restored_audit(
+            audit_cmd,
+            timeout_seconds=audit_timeout_seconds,
+        )
+        if timed_out:
+            return {
+                "status": "degraded",
+                "workspace_id": settings.workspace_id,
+                "source_db_path": str(settings.db_path),
+                "source_vector_path": str(settings.vector_db_path),
+                "copied_db_bytes": db_copy.stat().st_size if db_copy.exists() else 0,
+                "vector_copy_exists": vector_copy.exists(),
+                "audit": {
+                    "status": "degraded",
+                    "failures": [f"restored audit timed out after {audit_timeout_seconds:.1f}s"],
+                    "stdout": stdout.strip(),
+                    "stderr": stderr.strip(),
+                },
+                "audit_exit_code": None,
+                "audit_timed_out": True,
+                "audit_elapsed_sec": round(elapsed, 3),
+            }
         try:
-            audit = json.loads(completed.stdout)
+            audit = json.loads(stdout)
         except json.JSONDecodeError:
             audit = {
                 "status": "degraded",
                 "failures": ["restored audit did not emit JSON"],
-                "stdout": completed.stdout.strip(),
-                "stderr": completed.stderr.strip(),
+                "stdout": stdout.strip(),
+                "stderr": stderr.strip(),
             }
-        status = "ok" if completed.returncode == 0 and audit.get("status") == "ok" else "degraded"
+        status = "ok" if exit_code == 0 and audit.get("status") == "ok" else "degraded"
         return {
             "status": status,
             "workspace_id": settings.workspace_id,
@@ -92,7 +162,9 @@ def run_backup_restore_check(settings: Settings) -> dict[str, Any]:
             "copied_db_bytes": db_copy.stat().st_size if db_copy.exists() else 0,
             "vector_copy_exists": vector_copy.exists(),
             "audit": audit,
-            "audit_exit_code": completed.returncode,
+            "audit_exit_code": exit_code,
+            "audit_timed_out": False,
+            "audit_elapsed_sec": round(elapsed, 3),
         }
 
 
@@ -110,7 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     settings = _settings(args)
     try:
-        payload = run_backup_restore_check(settings)
+        payload = run_backup_restore_check(
+            settings,
+            audit_timeout_seconds=args.audit_timeout_seconds,
+        )
     except Exception as exc:
         print(f"memory_backup_restore_check_failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

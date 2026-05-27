@@ -1,6 +1,6 @@
 """GET /memory/recurring_findings — events past the recurrence threshold (v1.9).
 
-Distinct from /memory/list_maintenance_events which returns all events.
+Distinct from /memory/maintenance_events which returns all events.
 This endpoint surfaces only events whose recurrence_count >= the
 configured threshold, so the operator sees recurring issues first.
 """

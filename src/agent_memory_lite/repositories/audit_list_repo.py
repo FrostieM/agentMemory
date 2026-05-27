@@ -1,8 +1,8 @@
 """Read-side queries for the audit_log table.
 
 The audit_log is already populated by every ingest_* / write_*
-service (insert_audit). This module exposes the listing surface for
-the new POST /memory/list_audit endpoint so an agent can ask
+service (insert_audit). This module exposes the read surface for
+POST /memory/audit so an agent can ask
 "who/when wrote this decision?", "show every change to this theory
 in the last 7 days", etc.
 """

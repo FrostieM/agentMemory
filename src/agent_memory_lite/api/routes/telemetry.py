@@ -5,12 +5,11 @@ seed search-discipline behavior_instruction (1.2.4) actually shifted
 agent behaviour. The route is read-only, aggregates over ``audit_log``,
 and never mutates state.
 
-1.3.0 additions:
+Telemetry includes:
 * ``by_agent`` partition (Claude vs Codex vs hub-mcp vs scripts) keyed
-  off the ``agent_id`` column from migration 0026.
-* ``search_hit_rate`` derived from ``after_json.hits`` (search route)
-  and ``after_json.sources`` (get_context route) — surfaces the rate
-  of empty searches.
+  off the ``agent_id`` audit column.
+* ``search_hit_rate`` derived from ``after_json.hits`` on compact search
+  audit rows, which surfaces the rate of empty searches.
 
 Operator interpretation:
   ratio < 0.5 → agent writes more than it reads. Discipline gap.

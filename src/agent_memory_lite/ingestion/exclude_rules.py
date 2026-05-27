@@ -25,6 +25,8 @@ BUILTIN_DENYLIST: tuple[str, ...] = (
     ".mypy_cache/",
     ".ruff_cache/",
     ".hypothesis/",
+    ".claude/",
+    ".codex/",
     "*.min.js",
     "*.lock",
     "*.lance/",

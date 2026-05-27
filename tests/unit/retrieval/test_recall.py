@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -19,24 +18,14 @@ from agent_memory_lite.retrieval.causal_extractor import _upsert_causal_link
 from agent_memory_lite.retrieval.recall import recall
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-HEBBIAN_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0003_hebbian.sql"
-CAUSAL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0008_causal_links.sql"
-)
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    c.executescript(HEBBIAN_PATH.read_text(encoding="utf-8"))
-    c.executescript(CAUSAL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -207,9 +196,9 @@ def test_pre_migration_db_returns_hits_without_causal() -> None:
     """No causal_links table -> recall still works, causal_links list is empty."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    c.executescript(HEBBIAN_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     # Do NOT apply 0008.
     c.execute(
         """INSERT INTO decisions

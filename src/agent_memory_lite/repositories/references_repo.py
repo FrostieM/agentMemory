@@ -29,12 +29,12 @@ from dataclasses import dataclass
 _REFERENCE_TABLES: list[tuple[str, str, list[str]]] = [
     ("decisions", "decision", ["title", "decision_text", "rationale", "supersedes_decision_id"]),
     ("theories", "theory", ["title", "claim", "mechanism", "experiment_plan", "tags_json"]),
-    ("research_insights", "insight", ["summary", "proposed_action", "target_id"]),
-    ("research_experiments", "experiment", ["title", "hypothesis", "theory_id", "snapshot_id"]),
-    ("memory_snapshots", "snapshot", ["snapshot_key", "title", "metadata_json"]),
+    ("insights", "insight", ["summary", "proposed_action", "target_id"]),
+    ("experiments", "experiment", ["title", "hypothesis", "theory_id", "snapshot_id"]),
+    ("snapshots", "snapshot", ["snapshot_key", "title", "metadata_json"]),
     ("chunks", "chunk", ["text", "summary"]),
     ("episodes", "episode", ["raw_text"]),
-    ("behavior_instructions", "behavior_instruction", ["name", "rule", "rationale"]),
+    ("behaviors", "behavior_instruction", ["name", "rule", "rationale"]),
 ]
 
 

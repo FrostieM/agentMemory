@@ -18,8 +18,8 @@ class MemoryCounts(BaseModel):
     decisions_total: int
     theories_active: int
     theories_total: int
-    behavior_instructions_active: int
-    behavior_instructions_total: int
+    behaviors_active: int
+    behaviors_total: int
     capabilities_active_total: int
     episodes_total: int
     chunks_total: int
@@ -43,7 +43,7 @@ class AdoptionRatios(BaseModel):
 
     decisions_with_source_episode_ratio: float
     decisions_linked_to_capability_ratio: float
-    behavior_instructions_fired_ratio: float
+    behaviors_fired_ratio: float
 
 
 class EnvironmentInfo(BaseModel):

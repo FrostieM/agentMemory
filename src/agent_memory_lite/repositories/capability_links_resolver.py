@@ -12,19 +12,21 @@ import sqlite3
 
 from agent_memory_lite.models.enums import CapabilityLinkTargetType, CapabilityType
 
-CAPABILITY_TABLES: dict[CapabilityType, str] = {
-    CapabilityType.ROLE: "agent_roles",
-    CapabilityType.SKILL: "agent_skills",
-    CapabilityType.PLAYBOOK: "agent_playbooks",
+CAPABILITY_SUBTYPES: dict[CapabilityType, str] = {
+    CapabilityType.ROLE: "role",
+    CapabilityType.SKILL: "skill",
+    CapabilityType.PLAYBOOK: "playbook",
 }
+
+CAPABILITY_TABLES: dict[CapabilityType, str] = dict.fromkeys(CAPABILITY_SUBTYPES, "skills")
 
 TARGET_TABLES: dict[CapabilityLinkTargetType, str] = {
     CapabilityLinkTargetType.THEORY: "theories",
     CapabilityLinkTargetType.THEORY_EVIDENCE: "theory_evidence",
-    CapabilityLinkTargetType.EXPERIMENT: "research_experiments",
+    CapabilityLinkTargetType.EXPERIMENT: "experiments",
     CapabilityLinkTargetType.EXPERIMENT_RESULT: "experiment_results",
-    CapabilityLinkTargetType.RESEARCH_INSIGHT: "research_insights",
-    CapabilityLinkTargetType.MEMORY_CANDIDATE: "memory_candidates",
+    CapabilityLinkTargetType.RESEARCH_INSIGHT: "insights",
+    CapabilityLinkTargetType.MEMORY_CANDIDATE: "candidates",
     CapabilityLinkTargetType.DECISION: "decisions",
     CapabilityLinkTargetType.PLAN_STEP: "plan_steps",
 }
@@ -38,16 +40,16 @@ def resolve_capability(
     capability_id: str | None = None,
     capability_name: str | None = None,
 ) -> tuple[str, str] | None:
-    table = CAPABILITY_TABLES[capability_type]
+    subtype = CAPABILITY_SUBTYPES[capability_type]
     if capability_id:
         row = conn.execute(
-            f"SELECT id, name FROM {table} WHERE workspace_id = ? AND id = ?",
-            (workspace_id, capability_id),
+            "SELECT id, name FROM skills WHERE workspace_id = ? AND subtype = ? AND id = ?",
+            (workspace_id, subtype, capability_id),
         ).fetchone()
     elif capability_name:
         row = conn.execute(
-            f"SELECT id, name FROM {table} WHERE workspace_id = ? AND name = ?",
-            (workspace_id, capability_name),
+            "SELECT id, name FROM skills WHERE workspace_id = ? AND subtype = ? AND name = ?",
+            (workspace_id, subtype, capability_name),
         ).fetchone()
     else:
         return None

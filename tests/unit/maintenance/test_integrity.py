@@ -255,7 +255,7 @@ def test_integrity_detects_dangling_capability_link(
     before = run_integrity_audit(applied_conn, workspace_id="project-a")
     assert before.checks["capability_links"].status == "ok"
 
-    applied_conn.execute("DELETE FROM agent_skills WHERE id = ?", (skill.id,))
+    applied_conn.execute("DELETE FROM skills WHERE id = ?", (skill.id,))
     after = run_integrity_audit(applied_conn, workspace_id="project-a")
 
     assert after.status == "degraded"
@@ -347,7 +347,7 @@ def test_integrity_warns_on_stale_candidate(
     result = ingest_episode(applied_conn, _episode("candidate source"))
     applied_conn.execute(
         """
-        INSERT INTO memory_candidates (
+        INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json, write_targets_json,
             metadata_json, source_episode_id, status, created_at, updated_at

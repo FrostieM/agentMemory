@@ -47,14 +47,14 @@ logical namespace inside it.
 
 ## How a read works
 
-When an agent asks for context, the retrieval pipeline fuses keyword and
-vector search with Reciprocal Rank Fusion, re-scores the hits by outcome /
-feedback / age, and drops bi-temporally-expired rows. Graph-walked facts join
-as a separate structured section, and the result returns as one XML envelope.
+When an agent asks for memory, the v3 retrieval path returns compact
+projections first. The agent fetches full fields only for the one object it
+actually needs. The same source-of-record rows feed `memory_brief`,
+`memory_search`, `memory_get`, and the UI.
 
 ```mermaid
 flowchart LR
-    Q["memory_get_context<br/>memory_search · memory_brief"] --> NORM["normalize<br/>query"]
+    Q["memory_brief<br/>memory_search · memory_get"] --> NORM["normalize<br/>query"]
     NORM --> FTS["FTS5<br/>BM25"]
     NORM --> VEC["vector<br/>cosine"]
     NORM --> GRAPH["graph<br/>walk"]
@@ -62,21 +62,21 @@ flowchart LR
     VEC --> RRF
     RRF --> SCORE["score<br/>outcome · feedback · age"]
     SCORE --> FILTER["filter<br/>bi-temporal · workspace"]
-    FILTER --> ENV["&lt;memory_context&gt;<br/>XML envelope"]
+    FILTER --> ENV["compact projections<br/>Envelope ok/data/error"]
     GRAPH --> ENV
     ENV --> AGENT["agent"]
 ```
 
 ## How a write works
 
-After a task the agent records an episode or a decision. Text is redacted
-before it ever touches disk, then embedded, FTS-indexed, and mined for
-candidate decisions / theories / behaviors that wait in a review queue until
-an operator promotes them.
+After a task the agent writes a structured v3 row: decision, theory, behavior,
+skill, episode, concept, task, insight, or plan_step. Text is redacted before
+it ever touches disk, then embedded, FTS-indexed, and mined for candidate
+memory that waits in a review queue until an operator promotes it.
 
 ```mermaid
 flowchart LR
-    W["memory_ingest_episode<br/>memory_write_decision"] --> REDACT["redact<br/>secrets"]
+    W["memory_write<br/>memory_edit"] --> REDACT["redact<br/>secrets"]
     REDACT --> SAVE[("save → SQLite")]
     SAVE --> EMBED["embed"]
     EMBED --> LANCE[("LanceDB")]
@@ -109,8 +109,8 @@ python scripts/setup_agent.py --project /path/to/your/project
 `setup_agent.py --project` is idempotent: it bootstraps the project's
 `.agent_memory/` database, writes the MCP server entry into
 `.claude/settings.json`, drops the agent contract into `CLAUDE.md` / `AGENTS.md`,
-installs the context-injection hook, and registers the workspace. Re-run it
-any time.
+installs the v3 brief, pre-tool, and post-edit hook stack for Claude and Codex,
+and registers the workspace. Re-run it any time.
 
 Ollama is recommended but optional — set `OLLAMA_PROBE_SKIP=true` to run with
 the heuristic extractor only:
@@ -179,7 +179,6 @@ A live observatory at `http://127.0.0.1:8765/ui` — eight pages sharing a
 workspace dropdown:
 
 - **`/ui`** — Observatory: live graph, self-model card, watch-outs
-- **`/ui/code`** · **`/ui/graph`** — file / symbol dashboard + code graph
 - **`/ui/recall`** — spreading-activation explorer
 - **`/ui/reflexes`** — reflex-rule editor
 - **`/ui/metrics`** — outcome distribution, Hebbian edges, causal links
@@ -232,11 +231,12 @@ fresh chat and the agent wires everything itself.
 
 ## Status
 
-**v3.7.1** (2026-05-22). The "memory as a brain" core shipped in the 3.0.0
-line; 3.1–3.7 added the research vectors, MemBench retrieval benchmarks, an
-8-sector adversarial audit, the orphan-vector prune loop, and a hub-mode
-cross-workspace write guard on the ingest routes. Every feature is on by
-default, with a flag-off path locked byte-equivalent by `tests/invariants/`.
+**v3.8.0** (2026-05-27). The active project surface is now v3-only: compact
+MCP tools, canonical v3 tables, root migrations, one migration runner, and
+registry-routed Claude/Codex hooks. Legacy v2 storage, route, doc, and setup
+surfaces were removed from active project space; historical details remain in
+git history. Every feature is on by default, with a flag-off path locked
+byte-equivalent by `tests/invariants/`.
 
 ## License
 

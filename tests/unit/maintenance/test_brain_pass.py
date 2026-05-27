@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -18,26 +17,14 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.maintenance.brain_pass import BrainPassReport, run_brain_pass
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-ALL_PHASE_MIGRATIONS = [
-    "0002_outcome_loop.sql",
-    "0003_hebbian.sql",
-    "0004_consolidation_feedback.sql",
-    "0005_reflexes.sql",
-    "0006_self_model.sql",
-    "0007_bi_temporal.sql",
-    "0008_causal_links.sql",
-]
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    migrations_dir = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-    for name in ALL_PHASE_MIGRATIONS:
-        c.executescript((migrations_dir / name).read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -107,6 +94,25 @@ def test_pass_with_seed_decision_refreshes_outcome(conn: sqlite3.Connection) -> 
     assert row is not None
     # Either updated_count > 0 or the score actually changed.
     assert report.outcome_updated.get("decision", 0) >= 0
+
+
+def test_pass_normalizes_raw_sqlite_connection_row_factory() -> None:
+    """The sentinel scheduler opens sqlite3 connections directly.
+
+    Brain-pass adapters use row["column"] access, so run_brain_pass must
+    normalize raw tuple-backed connections at the integration boundary.
+    """
+    c = sqlite3.connect(":memory:")
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
+    try:
+        _seed_decision(c, id="dec_raw_conn", feedback_ewma=0.8)
+        report = run_brain_pass(c, workspace_id="ws", settings=Settings())
+    finally:
+        c.close()
+    assert report.errors == []
+    assert "decision" in report.outcome_updated
 
 
 def test_pass_writes_self_model_row(conn: sqlite3.Connection) -> None:
@@ -193,7 +199,9 @@ def test_pass_on_pre_migration_db_does_not_raise() -> None:
     """Apply ONLY 0001; the pass swallows all sqlite3.OperationalError."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     settings = Settings()
     report = run_brain_pass(c, workspace_id="ws_pre", settings=settings)
     # All steps either succeed (with zero work) or fail-soft.

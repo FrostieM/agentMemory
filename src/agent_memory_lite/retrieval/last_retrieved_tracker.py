@@ -25,7 +25,7 @@ KIND_TO_TABLE: dict[str, str] = {
     "chunk": "chunks",
     "decision": "decisions",
     "theory": "theories",
-    "concept": "domain_concepts",
+    "concept": "concepts",
 }
 SUPPORTED_KINDS: tuple[str, ...] = tuple(KIND_TO_TABLE.keys())
 
@@ -70,9 +70,8 @@ def _update_kind(
             (now_iso, workspace_id, *id_list),
         )
     except sqlite3.OperationalError:
-        # Pre-0022 schema (no last_retrieved_at column) — hub mode may
-        # route here from a legacy DB. Treat as no-op: tracking is opt-in
-        # observability, never required for correctness.
+        # Partial schema without last_retrieved_at. Treat as no-op:
+        # tracking is opt-in observability, never required for correctness.
         return 0
     return int(cursor.rowcount or 0)
 

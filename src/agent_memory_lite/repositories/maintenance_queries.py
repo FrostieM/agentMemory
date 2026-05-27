@@ -26,7 +26,7 @@ def _json_dict(raw: str | None) -> dict[str, Any]:
 
 
 def _action_status(row: sqlite3.Row) -> MaintenanceActionStatus:
-    """Read ``action_status`` from a row that may predate migration 0036.
+    """Read ``action_status`` from rows that may not carry triage fields.
 
     On a freshly-migrated DB every column is populated by the ALTER TABLE
     default ('open'), but a sqlite3.Row from a test fixture or an

@@ -61,7 +61,7 @@ def tokens_from(query: str | None) -> list[str]:
 def row_to_instruction(row: sqlite3.Row) -> BehaviorInstruction:
     # v3.5 audit-followup: four drift sites in one parser. Behavior
     # instructions ride every envelope; an unknown future kind/scope/
-    # priority/conflict_policy would 500 the brief + get_context. The
+    # priority/conflict_policy would 500 the brief. The
     # PRIORITY_WEIGHT / SCOPE_WEIGHT dicts below also KeyError on a
     # value missing from the const map, so the safe fallback must be
     # a member that IS in those dicts (SUGGESTION / GLOBAL).

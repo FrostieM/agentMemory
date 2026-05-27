@@ -17,12 +17,8 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
-
-_CANON = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-
 
 # ---------- H1: outcome_recompute clamps the EWMA input ----------
 
@@ -151,9 +147,9 @@ def test_immediate_tx_commits_when_not_nested() -> None:
 def hebbian_db() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript((_CANON / "0001_init.sql").read_text(encoding="utf-8"))
-    conn.executescript((_CANON / "0002_outcome_loop.sql").read_text(encoding="utf-8"))
-    conn.executescript((_CANON / "0003_hebbian.sql").read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     try:
         yield conn
     finally:

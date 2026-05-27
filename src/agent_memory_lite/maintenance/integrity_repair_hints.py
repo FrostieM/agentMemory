@@ -33,9 +33,7 @@ def collect_repair_hints(checks: dict[str, IntegrityCheck]) -> list[str]:  # noq
     if checks["capability_links"].status == "degraded":
         hints.append("Inspect dangling capability_links before trusting role/skill guidance.")
     if checks["candidate_hygiene"].status == "warning":
-        hints.append(
-            "Review or reject stale memory_candidates; do not leave extractor output untriaged."
-        )
+        hints.append("Review or reject stale candidates; do not leave extractor output untriaged.")
     if checks["research_hygiene"].status == "warning":
         hints.append(
             "Add validation criteria, evidence, or completion state to stale research objects."

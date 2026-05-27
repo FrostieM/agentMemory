@@ -5,8 +5,7 @@ only, but a malicious web page the operator visits in the SAME
 browser can still POST to ``http://127.0.0.1:8765/memory/*`` via
 DNS-rebinding or simple form submission (cookies aren't required —
 the service has no auth by default). Any such page could trigger
-``/memory/promote_candidate``, ``/memory/release_edit``,
-``/memory/reflex/delete``, etc.
+memory mutation endpoints such as candidate promotion or reflex deletion.
 
 This middleware rejects requests whose ``Origin`` (browser-set) or
 ``Host`` (always present) header points at a host that is NOT

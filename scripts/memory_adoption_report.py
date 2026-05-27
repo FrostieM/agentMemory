@@ -6,7 +6,7 @@ filesystem tools. The remaining adoption gap is therefore a discipline
 problem, not an infrastructure one — this script measures it.
 
 Read-only, never mutates. ``audit_log`` captures **only mutations**, so
-read-side adoption (memory_search, memory_file_digest, memory_get_context)
+read-side adoption (memory_search, memory_impact_check, memory_brief)
 is invisible from this report. For read telemetry use
 ``/memory/ui/state`` recent-events tail. The ratios here are mutation-
 side discipline signals that map 1:1 to seed-pinned behavior_instructions:
@@ -229,8 +229,8 @@ def _emit_table(payload: dict, since_iso: str, days: int, by_agent: bool) -> Non
         print()
     print("legend:  green >= 0.60   amber 0.30..0.59   red < 0.30")
     print(
-        "note: read-side adoption (memory_search, memory_file_digest, "
-        "memory_get_context) is NOT in audit_log — use /memory/ui/state "
+        "note: read-side adoption (memory_search, memory_impact_check, "
+        "memory_brief) is NOT in audit_log — use /memory/ui/state "
         "for read telemetry."
     )
 

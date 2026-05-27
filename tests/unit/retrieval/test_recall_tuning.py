@@ -10,8 +10,6 @@ import pytest
 
 from agent_memory_lite.retrieval import recall_tuning as rt
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "0034_recall_history.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -31,7 +29,9 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 
     db_path = tmp_path / "src.db"
     c = open_connection(db_path)
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:

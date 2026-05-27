@@ -1,5 +1,4 @@
-"""Phase 07: task_state lifecycle (core_memory + procedural_rules ride on the
-ingestion path; task_state has its own endpoint)."""
+"""Phase 07: task lifecycle through canonical memory_write."""
 
 from __future__ import annotations
 
@@ -9,38 +8,40 @@ from scripts.crash_test.seeds import post
 
 class P07CoreTask(Phase):
     name = "p07_core_task"
-    description = "task_state update + retrieval; presence in <task_state> envelope."
+    description = "task write + compact get/brief retrieval."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
         out = post(
             state.client,
-            "/memory/update_task_state",
+            "/memory/write",
             {
                 "workspace_id": state.workspace_id,
-                "task_id": "qa-task-1",
-                "goal": "Run all crash-test phases",
-                "status": "in_progress",
-                "current_plan": ["seed", "verify", "teardown"],
-                "completed_steps": ["seed"],
-                "next_action": "verify",
-                "blockers": [],
-                "files_in_scope": ["scripts/crash_test/"],
+                "kind": "task",
+                "payload": {
+                    "task_id": "qa-task-1",
+                    "goal": "Run all crash-test phases",
+                    "status": "in_progress",
+                    "current_plan": ["seed", "verify", "teardown"],
+                    "completed_steps": ["seed"],
+                    "next_action": "verify",
+                    "blockers": [],
+                    "files_in_scope": ["scripts/crash_test/"],
+                },
             },
-        )
+        )["data"]
         result.assert_true("state_id returned", bool(out.get("state_id") or out.get("task_id")))
 
-        ctx = post(
+        detail = post(
             state.client,
-            "/memory/get_context",
+            "/memory/search",
             {
                 "workspace_id": state.workspace_id,
-                "task_id": "qa-task-1",
                 "query": "phase plan",
-                "max_tokens": 1500,
+                "kinds": ["task"],
+                "limit": 5,
             },
         )
-        text = str(ctx.get("context_text", ""))
-        result.assert_in("envelope shows task_state", "<task_state", text)
-        result.assert_in("task goal in envelope", "Run all crash-test phases", text)
+        text = str(detail)
+        result.assert_in("task goal in compact search", "Run all crash-test phases", text)
         return result

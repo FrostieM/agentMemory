@@ -83,10 +83,9 @@ class WorkspaceRoutingMiddleware:
         if not self._settings.hub_mode:
             return False
         path = scope.get("path", "")
-        # Route every /memory/* request in hub mode -- both legacy v2
-        # endpoints (/memory/get_context, /memory/search ...) and the
-        # canonical endpoints (/memory/brief, /memory/write ...) share
-        # the same prefix post 2026-05-18 rename. The middleware reads
+        # Route every /memory/* request in hub mode. Canonical compact
+        # endpoints (/memory/brief, /memory/search, /memory/write ...)
+        # share the same prefix post 2026-05-18 rename. The middleware reads
         # workspace_id from query or JSON body and injects per-
         # workspace DB / vector paths so the call lands on the right
         # SQLite + LanceDB pair instead of the anchor DB.

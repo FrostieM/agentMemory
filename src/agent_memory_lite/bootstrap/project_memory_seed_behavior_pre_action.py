@@ -29,8 +29,8 @@ def applies_to_checklist_verbatim_instruction(
         workspace_id=workspace_id,
         name="applies-to-checklist-must-be-stated-verbatim",
         rule=(
-            "TRIGGER (before): git commit/push, deploy, restart, memory write "
-            "tool, strategy/env/schema change.\n\n"
+            "TRIGGER (before): git commit/push, deploy, restart, memory_write "
+            "or memory_edit tool, strategy/env/schema change.\n\n"
             "ACTION (verbatim in reply, not just in head):\n"
             "  1. STATE the action as [VERB] + [OBJECT] + [TARGET].\n"
             "  2. LIST every pinned applies_to in the envelope (bullet, no paraphrasing).\n"
@@ -55,9 +55,10 @@ def applies_to_checklist_verbatim_instruction(
             "git commit",
             "git push",
             "deploy",
-            "memory_write_decision",
-            "memory_record_with_evidence",
-            "memory_upsert_behavior_instruction",
+            "memory_write",
+            "memory_write kind=decision",
+            "memory_write kind=behavior",
+            "memory_edit",
             "strategy config change",
             "env var change",
             "schema change",

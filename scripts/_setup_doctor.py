@@ -36,6 +36,11 @@ _CURRENT_HOOK_SCRIPTS = frozenset(
         "post_edit_enqueue.py",
     }
 )
+_REQUIRED_PROJECT_HOOKS = {
+    "UserPromptSubmit": "inject_memory_brief.py",
+    "PreToolUse": "pre_tool_use_check.py",
+    "PostToolUse": "post_edit_enqueue.py",
+}
 _DEPRECATED_HOOK_SCRIPTS = frozenset(
     {
         # Replaced by inject_memory_brief.py during the v3.0.0 brain rewrite.
@@ -43,12 +48,33 @@ _DEPRECATED_HOOK_SCRIPTS = frozenset(
         "inject_memory_context.py",
     }
 )
+_STALE_CONTRACT_TOKENS = (
+    "memory_get_context",
+    "memory_list_",
+    "memory_write_",
+    "memory_ingest_episode",
+    "memory_update_task_state",
+    "inject_memory_context.py",
+)
 _EXPECTED_PRETOOLUSE_RULES = frozenset(
     {
+        "pretooluse:impact-check-before-read",
         "pretooluse:read-before-edit",
         "pretooluse:search-before-architectural-write",
         "pretooluse:decision-must-have-provenance",
         "pretooluse:no-magic-number-in-strategy",
+    }
+)
+_REQUIRED_PRETOOLUSE_MATCHERS = frozenset(
+    {
+        "Read",
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "Grep",
+        "Bash",
+        "mcp__agent-memory-lite__memory_.*",
     }
 )
 
@@ -128,6 +154,75 @@ def _check_hook_block(
                 )
 
 
+def _hook_defs_include_script(defs: object, expected_script: str) -> bool:
+    if not isinstance(defs, list):
+        return False
+    for d in defs:
+        if not isinstance(d, dict):
+            continue
+        hook_list = d.get("hooks", [])
+        if not isinstance(hook_list, list):
+            continue
+        for h in hook_list:
+            if (
+                isinstance(h, dict)
+                and _script_basename(str(h.get("command", ""))) == expected_script
+            ):
+                return True
+    return False
+
+
+def _pretooluse_matcher_tokens(defs: object) -> set[str]:
+    tokens: set[str] = set()
+    if not isinstance(defs, list):
+        return tokens
+    for d in defs:
+        if not isinstance(d, dict):
+            continue
+        hook_list = d.get("hooks", [])
+        if not isinstance(hook_list, list):
+            continue
+        if not any(
+            isinstance(h, dict)
+            and _script_basename(str(h.get("command", ""))) == "pre_tool_use_check.py"
+            for h in hook_list
+        ):
+            continue
+        matcher = d.get("matcher")
+        if isinstance(matcher, str) and matcher:
+            tokens.update(part for part in matcher.split("|") if part)
+    return tokens
+
+
+def _check_required_project_hooks(
+    report: WorkspaceReport,
+    *,
+    source: str,
+    hooks: dict[str, object],
+) -> None:
+    for hook_type, expected_script in _REQUIRED_PROJECT_HOOKS.items():
+        if _hook_defs_include_script(hooks.get(hook_type), expected_script):
+            continue
+        report.findings.append(
+            Finding(
+                "warning",
+                "missing_required_hook",
+                f"{source}: {hook_type} missing {expected_script!r}",
+            )
+        )
+    missing_matchers = _REQUIRED_PRETOOLUSE_MATCHERS - _pretooluse_matcher_tokens(
+        hooks.get("PreToolUse")
+    )
+    if missing_matchers:
+        report.findings.append(
+            Finding(
+                "warning",
+                "stale_pretooluse_matcher",
+                f"{source}: PreToolUse matcher missing {', '.join(sorted(missing_matchers))}",
+            )
+        )
+
+
 def _check_paths(report: WorkspaceReport, entry: dict[str, object]) -> None:
     for key in ("project_root", "db_path", "vector_path"):
         value = entry.get(key)
@@ -149,6 +244,8 @@ def _check_paths(report: WorkspaceReport, entry: dict[str, object]) -> None:
 def _check_settings_files(report: WorkspaceReport, project_root: Path) -> None:
     settings = project_root / ".claude" / "settings.json"
     settings_local = project_root / ".claude" / "settings.local.json"
+    codex_dir = project_root / ".codex"
+    codex_hooks = codex_dir / "hooks.json"
     if not settings.exists():
         report.findings.append(
             Finding(
@@ -165,10 +262,15 @@ def _check_settings_files(report: WorkspaceReport, project_root: Path) -> None:
         except (OSError, json.JSONDecodeError) as exc:
             report.findings.append(Finding("critical", "settings_parse_error", f"{label}: {exc}"))
             continue
-        for hook_type, defs in (data.get("hooks") or {}).items():
+        hooks_root = data.get("hooks") or {}
+        if not isinstance(hooks_root, dict):
+            hooks_root = {}
+        for hook_type, defs in hooks_root.items():
             if not isinstance(defs, list):
                 continue
             _check_hook_block(report, source=label, hook_type=hook_type, defs=defs)
+        if label == "project":
+            _check_required_project_hooks(report, source=label, hooks=hooks_root)
         # MCP config: workspace_id must match the registry id.
         for name, cfg in (data.get("mcpServers") or {}).items():
             env = cfg.get("env") or {}
@@ -181,6 +283,70 @@ def _check_settings_files(report: WorkspaceReport, project_root: Path) -> None:
                         f"{label}.mcpServers[{name}].env.MEMORY_WORKSPACE_ID={ws!r} but registry id={report.workspace_id!r}",
                     )
                 )
+    _check_codex_hooks_file(report, codex_dir=codex_dir, codex_hooks=codex_hooks)
+
+
+def _check_codex_hooks_file(
+    report: WorkspaceReport,
+    *,
+    codex_dir: Path,
+    codex_hooks: Path,
+) -> None:
+    if codex_dir.exists() and not codex_hooks.exists():
+        report.findings.append(
+            Finding(
+                "warning",
+                "missing_codex_hooks",
+                "<project>/.codex/hooks.json missing (Codex Desktop will not get project hooks)",
+            )
+        )
+    if not codex_hooks.exists():
+        return
+    try:
+        data = json.loads(codex_hooks.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        report.findings.append(Finding("critical", "codex_hooks_parse_error", f"codex: {exc}"))
+        return
+    hooks_root = data.get("hooks") if isinstance(data, dict) else {}
+    if not isinstance(hooks_root, dict):
+        hooks_root = {}
+    for hook_type, defs in hooks_root.items():
+        if not isinstance(defs, list):
+            continue
+        _check_hook_block(report, source="codex", hook_type=hook_type, defs=defs)
+    _check_required_project_hooks(report, source="codex", hooks=hooks_root)
+
+
+def _check_agent_contract_files(report: WorkspaceReport, project_root: Path) -> None:
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        path = project_root / name
+        if not path.exists():
+            report.findings.append(Finding("warning", "missing_agent_contract", f"{name} missing"))
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            report.findings.append(
+                Finding("critical", "agent_contract_unreadable", f"{name}: {exc}")
+            )
+            continue
+        if "## V3-Only Active Surface" not in text:
+            report.findings.append(
+                Finding(
+                    "warning",
+                    "stale_agent_contract",
+                    f"{name} missing V3-Only Active Surface section",
+                )
+            )
+        stale = [token for token in _STALE_CONTRACT_TOKENS if token in text]
+        if stale:
+            report.findings.append(
+                Finding(
+                    "critical",
+                    "stale_agent_contract",
+                    f"{name} still mentions removed legacy surface: {', '.join(stale[:3])}",
+                )
+            )
 
 
 def _check_migrations(report: WorkspaceReport, db_path: Path, migrations_dir: Path) -> None:
@@ -196,11 +362,8 @@ def _check_migrations(report: WorkspaceReport, db_path: Path, migrations_dir: Pa
         )
         return
     # Mirror the runtime migration runner exactly: db.migrations.apply_migrations
-    # globs ONLY the top level of migrations/ (non-recursive) and records each
-    # file by its bare stem. migrations/canonical/ is a separate consolidated-
-    # schema artifact the runner never discovers or tracks, so its files must
-    # NOT be compared against schema_migrations — doing so false-flagged every
-    # root-track DB as "canonical/000N pending" even when fully migrated.
+    # globs only the top level of migrations/ and records each file by stem.
+    # Nested directories are not part of the root migration track.
     pending = [f.stem for f in sorted(migrations_dir.glob("*.sql")) if f.stem not in applied]
     if pending:
         report.findings.append(
@@ -219,7 +382,7 @@ def _check_enforcement_rules(report: WorkspaceReport, db_path: Path) -> None:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT name, active FROM behavior_instructions WHERE workspace_id = ? AND name LIKE 'pretooluse%'",
+            "SELECT name, active FROM behaviors WHERE workspace_id = ? AND name LIKE 'pretooluse%'",
             (report.workspace_id,),
         ).fetchall()
         conn.close()
@@ -247,6 +410,7 @@ def run_workspace_check(entry: dict[str, object], *, migrations_dir: Path) -> Wo
     project_root = Path(report.project_root)
     if project_root.exists():
         _check_settings_files(report, project_root)
+        _check_agent_contract_files(report, project_root)
     db_raw = entry.get("db_path")
     db_path = Path(db_raw if isinstance(db_raw, str) else "")
     if db_path.exists():

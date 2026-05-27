@@ -10,11 +10,15 @@ Locks two contracts:
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+
+from agent_memory_lite.db.connection import close_connection, open_connection
+from agent_memory_lite.repositories.file_digests_repo import get_digest
 
 
 @pytest.fixture
@@ -52,20 +56,25 @@ def _ingest(client: TestClient, ws: str, path: str, content: str) -> dict:
     return r.json()
 
 
-def test_flag_off_uses_heuristic_narrative(client_default: TestClient) -> None:
+def _stored_digest(tmp_db_path: Path, *, workspace_id: str, file_path: str):
+    conn = open_connection(tmp_db_path)
+    try:
+        digest = get_digest(conn, workspace_id=workspace_id, file_path=file_path)
+    finally:
+        close_connection(conn)
+    assert digest is not None
+    return digest
+
+
+def test_flag_off_uses_heuristic_narrative(client_default: TestClient, tmp_db_path: Path) -> None:
     _ingest(client_default, "narr-off-ws", "src/a.py", _PY_SRC)
-    r = client_default.post(
-        "/memory/file_digest",
-        json={"workspace_id": "narr-off-ws", "file_path": "src/a.py"},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["structured"]["narrative_source"] == "heuristic"
+    digest = _stored_digest(tmp_db_path, workspace_id="narr-off-ws", file_path="src/a.py")
+    assert digest.structured["narrative_source"] == "heuristic"
     # Heuristic narrative mentions the path.
-    assert "src/a.py" in body["narrative"]
+    assert "src/a.py" in digest.narrative
 
 
-def test_flag_on_uses_llm_narrative(client_llm_on: TestClient) -> None:
+def test_flag_on_uses_llm_narrative(client_llm_on: TestClient, tmp_db_path: Path) -> None:
     """Flag on + mocked Ollama returning canned text → narrative
     replaced with that text, source flagged as 'llm'."""
 
@@ -98,17 +107,14 @@ def test_flag_on_uses_llm_narrative(client_llm_on: TestClient) -> None:
         _MockClient,
     ):
         _ingest(client_llm_on, "narr-on-ws", "src/a.py", _PY_SRC)
-    r = client_llm_on.post(
-        "/memory/file_digest",
-        json={"workspace_id": "narr-on-ws", "file_path": "src/a.py"},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["structured"]["narrative_source"] == "llm"
-    assert "user-flow handler" in body["narrative"]
+    digest = _stored_digest(tmp_db_path, workspace_id="narr-on-ws", file_path="src/a.py")
+    assert digest.structured["narrative_source"] == "llm"
+    assert "user-flow handler" in digest.narrative
 
 
-def test_flag_on_falls_back_when_ollama_unreachable(client_llm_on: TestClient) -> None:
+def test_flag_on_falls_back_when_ollama_unreachable(
+    client_llm_on: TestClient, tmp_db_path: Path
+) -> None:
     """Flag on but Ollama unreachable → heuristic still used.
     Real network call would time out; we patch httpx to raise."""
 
@@ -130,11 +136,6 @@ def test_flag_on_falls_back_when_ollama_unreachable(client_llm_on: TestClient) -
         _RaisingClient,
     ):
         _ingest(client_llm_on, "narr-on-ws", "src/b.py", _PY_SRC)
-    r = client_llm_on.post(
-        "/memory/file_digest",
-        json={"workspace_id": "narr-on-ws", "file_path": "src/b.py"},
-    )
-    assert r.status_code == 200, r.text
-    body = r.json()
+    digest = _stored_digest(tmp_db_path, workspace_id="narr-on-ws", file_path="src/b.py")
     # Network failure → heuristic baseline survives.
-    assert body["structured"]["narrative_source"] == "heuristic"
+    assert digest.structured["narrative_source"] == "heuristic"

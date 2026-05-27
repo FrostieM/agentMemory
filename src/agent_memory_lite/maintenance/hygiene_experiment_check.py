@@ -16,13 +16,13 @@ from agent_memory_lite.maintenance.hygiene_models import (
 def find_experiment_gaps(
     conn: sqlite3.Connection, *, workspace_id: str, stale_days: int
 ) -> list[HygieneFinding]:
-    if not table_exists(conn, "research_experiments"):
+    if not table_exists(conn, "experiments"):
         return []
     cutoff = datetime.now(UTC) - timedelta(days=stale_days)
     rows = conn.execute(
         """
         SELECT id, title, status, priority, due_at, updated_at, success_criteria_json
-        FROM research_experiments
+        FROM experiments
         WHERE workspace_id = ? AND status IN ('planned', 'running', 'blocked')
         ORDER BY priority DESC, updated_at
         """,

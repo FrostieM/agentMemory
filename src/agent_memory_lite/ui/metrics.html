@@ -43,8 +43,6 @@
     </header>
     <nav class="app-nav" aria-label="UI sections">
       <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
-      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
-      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
       <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
       <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
       <a class="app-nav-link is-active" data-nav="metrics" href="/ui/metrics">Metrics</a>
@@ -99,7 +97,7 @@
           <div class="metric-tile-sub" id="adopCapSub">unlinked decisions force agents to re-derive playbooks</div>
         </div>
         <div class="metric-tile">
-          <div class="metric-tile-head">behavior_instructions fired (last 30d)</div>
+          <div class="metric-tile-head">behaviors fired (last 30d)</div>
           <div class="metric-tile-value" id="adopBeh">—</div>
           <div class="metric-tile-sub">cold instructions never reach the agent's brief</div>
         </div>
@@ -268,11 +266,11 @@ async function loadAll() {
   // ===== hero =====
   const mem = status.memory || {};
   const totalRows = (mem.decisions_total || 0) + (mem.theories_total || 0)
-    + (mem.behavior_instructions_total || 0) + (mem.capabilities_active_total || 0)
+    + (mem.behaviors_total || 0) + (mem.capabilities_active_total || 0)
     + (mem.episodes_total || 0);
   $("#heroRows").textContent = fmtInt(totalRows);
   $("#heroRowsBreakdown").textContent =
-    `${mem.decisions_active || 0} dec · ${mem.theories_active || 0} theory · ${mem.behavior_instructions_active || 0} beh · ${mem.episodes_total || 0} ep`;
+    `${mem.decisions_active || 0} dec · ${mem.theories_active || 0} theory · ${mem.behaviors_active || 0} beh · ${mem.episodes_total || 0} ep`;
   const sm = brain.self_model;
   if (sm) {
     $("#heroSelfModel").textContent = sm.word_count + " words";
@@ -307,7 +305,7 @@ async function loadAll() {
     if (cls) $("#adopCapSub").innerHTML =
       `<span class="outcome-pill ${cls}" style="font-size:9px">${capRatio >= 0.9 ? "healthy" : "low"}</span> unlinked decisions force agents to re-derive playbooks`;
   }
-  $("#adopBeh").textContent = fmtPct(ad.behavior_instructions_fired_ratio);
+  $("#adopBeh").textContent = fmtPct(ad.behaviors_fired_ratio);
   $("#reflexBlocks").textContent = fmtInt(ref.total_block_fires || 0);
   $("#reflexBlocksSub").textContent =
     `${ref.total_advisory_fires || 0} advisory fires · ${ref.active || 0} rules`;

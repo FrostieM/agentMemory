@@ -176,12 +176,12 @@ def test_carries_episode_trust_level(conn: sqlite3.Connection) -> None:
 
 
 def test_throttle_rejects_after_daily_cap(conn: sqlite3.Connection) -> None:
-    """When ``memory_candidates(kind='correction')`` rows for today reach
+    """When ``candidates(kind='correction')`` rows for today reach
     ``max_per_day``, the extractor stops emitting until tomorrow."""
-    # Add memory_candidates table with the columns the throttle reads.
+    # Add candidates table with the columns the throttle reads.
     conn.execute(
         """
-        CREATE TABLE memory_candidates (
+        CREATE TABLE candidates (
             id TEXT, workspace_id TEXT, kind TEXT, created_at TEXT
         )
         """
@@ -190,7 +190,7 @@ def test_throttle_rejects_after_daily_cap(conn: sqlite3.Connection) -> None:
     yesterday = "2026-05-03T12:00:00+00:00"
     # Pre-seed: 2 rows today (cap=2), 1 yesterday (should not count).
     conn.executemany(
-        "INSERT INTO memory_candidates (id, workspace_id, kind, created_at) "
+        "INSERT INTO candidates (id, workspace_id, kind, created_at) "
         "VALUES (?, 'default', 'correction', ?)",
         [("c1", today), ("c2", today), ("c3", yesterday)],
     )
@@ -218,7 +218,7 @@ def test_throttle_isolates_workspaces(conn: sqlite3.Connection) -> None:
     """
     conn.execute(
         """
-        CREATE TABLE memory_candidates (
+        CREATE TABLE candidates (
             id TEXT, workspace_id TEXT, kind TEXT, created_at TEXT
         )
         """
@@ -226,7 +226,7 @@ def test_throttle_isolates_workspaces(conn: sqlite3.Connection) -> None:
     today = datetime.now(UTC).strftime("%Y-%m-%dT12:00:00+00:00")
     # Workspace A is at cap (cap=2). Workspace B has zero rows.
     conn.executemany(
-        "INSERT INTO memory_candidates (id, workspace_id, kind, created_at) "
+        "INSERT INTO candidates (id, workspace_id, kind, created_at) "
         "VALUES (?, ?, 'correction', ?)",
         [("ca1", "ws_a", today), ("ca2", "ws_a", today)],
     )
@@ -272,7 +272,7 @@ def test_throttle_allows_when_below_cap(conn: sqlite3.Connection) -> None:
     """When today's count is below max_per_day, the extractor still emits."""
     conn.execute(
         """
-        CREATE TABLE memory_candidates (
+        CREATE TABLE candidates (
             id TEXT, workspace_id TEXT, kind TEXT, created_at TEXT
         )
         """
@@ -280,7 +280,7 @@ def test_throttle_allows_when_below_cap(conn: sqlite3.Connection) -> None:
     today = datetime.now(UTC).strftime("%Y-%m-%dT12:00:00+00:00")
     # 1 row today, cap = 5 — should still emit.
     conn.execute(
-        "INSERT INTO memory_candidates (id, workspace_id, kind, created_at) "
+        "INSERT INTO candidates (id, workspace_id, kind, created_at) "
         "VALUES ('c1', 'default', 'correction', ?)",
         (today,),
     )

@@ -1,13 +1,4 @@
-"""End-to-end tests for /memory/predictive_warnings (v3.1 Vector 5).
-
-The e2e DB fixture applies legacy ``migrations/*.sql`` only, which
-creates ``decisions`` WITHOUT the ``outcome_score`` column (added by
-``canonical/0002_outcome_loop.sql``). These tests therefore exercise
-only the HTTP plumbing on a legacy-only workspace where the scanner
-reports ``available=false``. The semantics live in
-``tests/unit/maintenance/test_predictive_failure.py`` which sets up
-the hybrid schema directly.
-"""
+"""End-to-end tests for /memory/predictive_warnings (v3.1 Vector 5)."""
 
 from __future__ import annotations
 
@@ -24,18 +15,14 @@ def client(app_factory) -> Iterator[TestClient]:
         yield c
 
 
-def test_predictive_warnings_get_legacy_only(client: TestClient) -> None:
-    """GET returns 200 + ``available=false`` on a legacy-only DB.
-
-    No ``outcome_score`` column → scanner raises OperationalError →
-    route catches and surfaces the flag.
-    """
+def test_predictive_warnings_get_empty_workspace(client: TestClient) -> None:
+    """GET returns 200 on a fresh canonical DB with no warnings."""
     r = client.get("/memory/predictive_warnings", params={"workspace_id": "default"})
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["workspace_id"] == "default"
     assert body["warnings"] == []
-    assert body["available"] is False
+    assert body["available"] is True
     assert body["feature_enabled"] is True
 
 

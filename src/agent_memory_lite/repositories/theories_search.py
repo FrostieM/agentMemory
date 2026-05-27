@@ -52,7 +52,7 @@ def row_to_theory(row: sqlite3.Row) -> Theory:
         tags=_json_list(row["tags_json"]),
         # v3.5 audit-followup: same drift-tolerance pattern as evidence kind.
         # An unknown future status (or pre-v3 'archived' before the enum
-        # caught up) must not 500 every /memory/get_context call.
+        # caught up) must not 500 every compact read call.
         status=coerce_enum(TheoryStatus, row["status"], TheoryStatus.PROPOSED),
         supersedes_theory_id=row["supersedes_theory_id"],
         source_episode_id=row["source_episode_id"],
@@ -71,7 +71,7 @@ def _coerce_evidence_kind(raw: object) -> TheoryEvidenceKind:
 
     See ``models.enums.coerce_enum`` for the underlying contract and
     the historical context (v3.4 ``autonomous_loop`` bypass that
-    crashed ``/memory/get_context`` with HTTP 500). ``NEUTRAL`` is
+    crashed compact reads with HTTP 500). ``NEUTRAL`` is
     the safest default — neither supports nor refutes a theory, so
     the UI / hygiene checks downgrade ranking but don't draw the
     wrong conclusion about a rogue row.

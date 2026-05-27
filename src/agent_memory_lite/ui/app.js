@@ -9,16 +9,13 @@
 //     hits drive a forward→hold→reverse stroke animation that lights only
 //     the families the hits actually came from. The right rail shows the
 //     hit list with their stored labels.
-//   * The user clicks Explain → /memory/get_context runs, the returned
-//     sources drive the animation; the raw context drawer fills with the
-//     real XML envelope.
-//   * The user clicks a family node → the matching backend list endpoint
-//     loads (list_decisions / list_theories / list_agent_capabilities /
-//     list_behavior_instructions / list_research_agenda / fall back to
-//     /memory/ui/state.recent). The graph animates that single family
-//     with its real recent objects, and the inspector shows their full
-//     bodies (decision_text+rationale, theory claim+mechanism+predictions,
-//     etc.).
+//   * The user clicks Explain → /memory/brief + /memory/search run; compact
+//     projections drive the animation and the brief drawer shows the
+//     current memory summary.
+//   * The user clicks a family node → /memory/search returns compact
+//     projections and /memory/get fetches only the inspector fields that
+//     are needed. Sparse families fall back to /memory/ui/state.recent.
+//     The graph animates that single family with its real recent objects.
 //   * The user clicks an object node → the inspector opens that object's
 //     real body — raw_text for episodes, decision_text+rationale for
 //     decisions, claim+predictions for theories, rule+rationale for
@@ -33,11 +30,11 @@ const POLL_MS = 15000;
 const FAMILIES = [
   { id: "episodes",     label: "Episodes",     hue: 200, blurb: "Audit log of what happened — sessions, conversations, events.", tables: ["episodes"] },
   { id: "decisions",    label: "Decisions",    hue: 280, blurb: "Architectural and operational decisions.",                       tables: ["decisions"] },
-  { id: "research",     label: "Research",     hue: 160, blurb: "Theories, snapshots, experiments, results, concepts, insights.", tables: ["theories","theory_evidence","research_experiments","experiment_results","memory_snapshots","research_insights","domain_concepts"] },
-  { id: "tasks",        label: "Tasks",        hue:  35, blurb: "Active task state and pending review candidates.",                tables: ["task_state","memory_candidates"] },
-  { id: "roles",        label: "Roles",        hue: 320, blurb: "Agent personas — purpose, responsibilities, boundaries.",        tables: ["agent_roles"] },
-  { id: "skills",       label: "Skills",       hue:  90, blurb: "Reusable capabilities and the playbooks that compose them.",     tables: ["agent_skills","agent_playbooks","capability_links"] },
-  { id: "instructions", label: "Instructions", hue: 240, blurb: "Behaviour instructions — communication style, operating rules.", tables: ["behavior_instructions"] },
+  { id: "research",     label: "Research",     hue: 160, blurb: "Theories, snapshots, experiments, results, concepts, insights.", tables: ["theories","theory_evidence","experiments","experiment_results","snapshots","insights","concepts"] },
+  { id: "tasks",        label: "Tasks",        hue:  35, blurb: "Active tasks and pending review candidates.",                    tables: ["tasks","candidates"] },
+  { id: "roles",        label: "Roles",        hue: 320, blurb: "Agent personas — purpose, responsibilities, boundaries.",        tables: ["skills"] },
+  { id: "skills",       label: "Skills",       hue:  90, blurb: "Reusable capabilities and the playbooks that compose them.",     tables: ["skills","capability_links"] },
+  { id: "instructions", label: "Instructions", hue: 240, blurb: "Behaviour instructions — communication style, operating rules.", tables: ["behaviors"] },
   { id: "feedback",     label: "Feedback",     hue:   0, blurb: "User ranking signal — helpful, noisy, stale memories.",          tables: ["memory_usage_feedback"] },
 ];
 const FAMILY_BY_ID = Object.fromEntries(FAMILIES.map(f => [f.id, f]));
@@ -61,15 +58,13 @@ const FAMILY_BY_OBJECT_TYPE = {
   snapshot: "research",
   insight: "research",
   concept: "research",
-  task_state: "tasks",
+  task: "tasks",
   candidate: "tasks",
-  memory_candidate: "tasks",
   role: "roles",
   skill: "skills",
   playbook: "skills",
   capability_link: "skills",
-  behavior_instruction: "instructions",
-  procedural_rule: "instructions",
+  behavior: "instructions",
   feedback: "feedback",
   memory_usage_feedback: "feedback",
 };
@@ -260,7 +255,7 @@ const OBJECT_R = 11;
 
 // A family with several distinct sub-types (research = theories +
 // snapshots + experiments + insights + concepts; skills = skill +
-// playbook + capability_link; tasks = task_state + candidate; ...)
+// playbook + capability_link; tasks = task + candidate; ...)
 // gets a third tier in the graph: anchor → family → sub-family →
 // object. Sub-family nodes are smaller than family centres but larger
 // than object nodes so the eye can read the hierarchy at a glance.
@@ -288,19 +283,16 @@ const SUB_FAMILY_LABELS = {
   decisions: "Decisions",
   theories: "Theories",
   theory_evidence: "Evidence",
-  research_experiments: "Experiments",
+  experiments: "Experiments",
   experiment_results: "Results",
-  memory_snapshots: "Snapshots",
-  research_insights: "Insights",
-  domain_concepts: "Concepts",
-  agent_roles: "Roles",
-  agent_skills: "Skills",
-  agent_playbooks: "Playbooks",
+  snapshots: "Snapshots",
+  insights: "Insights",
+  concepts: "Concepts",
+  skills: "Capabilities",
   capability_links: "Links",
-  task_state: "Task state",
-  memory_candidates: "Candidates",
-  behavior_instructions: "Behavior",
-  procedural_rules: "Rules",
+  tasks: "Tasks",
+  candidates: "Candidates",
+  behaviors: "Behavior",
   memory_usage_feedback: "Feedback",
   retrieved_facts: "Facts",
 };
@@ -1031,12 +1023,12 @@ function drawSubFamily(layer, pos, fam, table, vis) {
   if (vis > 0.55) {
     const label = _subFamilyLabel(table);
     // Suppress the sub-family label when it would duplicate the parent
-    // family label. Without this guard the agent_skills bubble inside
+    // family label. Without this guard the canonical skill bubble inside
     // the Skills family renders as "Skills" inside "Skills", and
     // similarly for episodes/decisions/theories whose own table label
     // matches the family group name. The bubble itself stays so the
-    // structural grouping of multiple sub-tables (e.g. Skills →
-    // {agent_skills, capability_links, agent_playbooks}) remains
+    // structural grouping of multiple sources (e.g. Skills →
+    // {skills, capability_links}) remains
     // visible; only the redundant text is dropped.
     const famLabel = (fam.label || "").toLowerCase();
     if (label.toLowerCase() !== famLabel) {
@@ -1235,17 +1227,11 @@ function selectObject(obj) {
   paintFrame();
 }
 
-// Resolve an item's canonical id from a list-endpoint row regardless
+// Resolve an item's canonical id from a compact projection/list row regardless
 // of which `<kind>_id` field the route uses. Different list endpoints
-// return different field names: /memory/list_decisions →
-// `decision_id`, /memory/list_agent_capabilities returns
-// `role_id` / `skill_id` / `playbook_id`, etc. Without a tolerant
-// resolver, the UI's `adapt` reads `r[`${kind}_id`]` where the
-// requested kind doesn't always match the field name (the bug
-// was specifically Skills/Roles where `kind="roles"` looked for
-// `r.roles_id` while the route returns `r.role_id`). The agent's
-// own canonical id stored in the table is always one of these
-// fields, so we try them all in priority order.
+// return different field names. The agent's own canonical id stored in
+// the table is always one of these fields, so we try them all in
+// priority order.
 const _ID_FIELDS = [
   "id",
   "role_id",
@@ -1287,40 +1273,81 @@ async function fetchFamilyDetail(fid) {
       raw: r,
     }));
 
+  const fetchKindRows = async ({ kind, table, query, fields, limit = 12 }) => {
+    const data = await postJson("/memory/search", {
+      workspace_id: ws,
+      query,
+      kinds: [kind],
+      limit,
+    });
+    let rows = (data.data || data.hits || data.results || []).map((hit) => hit.projection || hit);
+    if (fields) {
+      rows = await Promise.all(rows.map(async (row) => {
+        const id = _resolveItemId(row);
+        if (!id) return row;
+        try {
+          const detail = await getJson("/memory/get", {
+            workspace_id: ws,
+            kind,
+            id,
+            fields,
+          });
+          return { ...row, ...(detail.data || {}) };
+        } catch (_err) {
+          return row;
+        }
+      }));
+    }
+    return adapt(rows, table);
+  };
+
   if (fid === "decisions") {
-    const data = await postJson("/memory/list_decisions", { workspace_id: ws, query: "", include_superseded: false, limit: 12 });
-    return { objects: adapt(data.decisions || data.items || [], "decisions") };
+    return {
+      objects: await fetchKindRows({
+        kind: "decision",
+        table: "decisions",
+        query: "decision architecture operational",
+        fields: "decision_text,rationale,confidence,importance,status,pinned,created_at,updated_at",
+      }),
+    };
   }
   if (fid === "research") {
-    const data = await postJson("/memory/list_theories", { workspace_id: ws, query: "", include_evidence: true, limit: 12 });
-    // /memory/list_theories returns wrapped rows
-    // {"theories": [{"theory": {...}, "evidence": [...]}]} so the
-    // theory body is one level deeper than `adapt` expects. Unwrap
-    // before adapting; otherwise label/id resolution falls back to
-    // empty strings and the inspector renders rows with no title.
-    const rawRows = (data.theories || data.items || []).map((item) => item?.theory || item);
-    return { objects: adapt(rawRows, "theories") };
+    const theories = await fetchKindRows({
+      kind: "theory",
+      table: "theories",
+      query: "theory hypothesis claim validation",
+      fields: "claim,mechanism,predictions_json,validation_criteria_json,status,confidence,domain,created_at,updated_at",
+      limit: 8,
+    });
+    const insights = await fetchKindRows({
+      kind: "insight",
+      table: "insights",
+      query: "insight finding action",
+      fields: "proposed_action,status,confidence,created_at,updated_at",
+      limit: 6,
+    });
+    return { objects: [...theories, ...insights].slice(0, 12) };
   }
   if (fid === "instructions") {
-    const data = await postJson("/memory/list_behavior_instructions", { workspace_id: ws, query: "", limit: 12 });
-    return { objects: adapt(data.instructions || data.items || [], "behavior_instructions") };
+    return {
+      objects: await fetchKindRows({
+        kind: "behavior",
+        table: "behaviors",
+        query: "behavior instruction rule preference",
+        fields: "rule,rationale,scope,priority,confidence,active,pinned,created_at,updated_at",
+      }),
+    };
   }
   if (fid === "roles" || fid === "skills") {
-    const data = await postJson("/memory/list_agent_capabilities", { workspace_id: ws, query: "", limit: 18 });
-    let rows = [];
-    if (fid === "roles") rows = (data.roles || []).map((r) => ({ ...r, _kind: "role" }));
-    if (fid === "skills") {
-      rows = [
-        ...(data.skills || []).map((r) => ({ ...r, _kind: "skill" })),
-        ...(data.playbooks || []).map((r) => ({ ...r, _kind: "playbook" })),
-      ];
-    }
+    const query = fid === "roles" ? "role" : "";
+    const data = await postJson("/memory/search", { workspace_id: ws, query, kinds: ["skill"], limit: 18 });
+    const rows = (data.data || data.hits || data.results || []).map((hit) => hit.projection || hit);
     return {
       objects: rows.map((r) => ({
         id: _resolveItemId(r),
-        label: r.name || r.title || r.label || _resolveItemId(r),
+        label: r.name || r.title || r.label || r.gist || _resolveItemId(r),
         famId: fid,
-        table: r._kind === "playbook" ? "agent_playbooks" : `agent_${r._kind}s`,
+        table: "skills",
         raw: r,
       })),
     };
@@ -1329,7 +1356,7 @@ async function fetchFamilyDetail(fid) {
   // First try the cached recent list. If the cached snapshot doesn't
   // contain rows for this family (the recent slice is dominated by
   // chatty tables like chunks/episodes/capability_links and a
-  // smaller table like task_state or memory_usage_feedback gets
+  // smaller table like tasks or memory_usage_feedback gets
   // pushed out), fall back to a targeted /memory/ui/state fetch with
   // a higher recent_limit so we definitely get some rows.
   const tables = FAMILY_BY_ID[fid].tables;
@@ -1432,10 +1459,9 @@ function renderInspector() {
     } else if (!detail) {
       const e = document.createElement("div"); e.className = "inspector-blurb"; e.textContent = "Loading…"; list.appendChild(e);
     } else {
-      // The family detail list comes from a topic-ranked API
-      // (/memory/list_decisions, /memory/list_theories, …) with a
-      // fixed page size. The "active query" — what the most recent
-      // get_context / search rendered into the live graph — picks
+      // The family detail list comes from topic-ranked compact search
+      // with a fixed page size. The "active query" — what the most recent
+      // brief / search rendered into the live graph — picks
       // items by query relevance. Those two sets often disagree:
       // the spoke that's currently lit on the graph may rank low in
       // the unfiltered list and end up missing from the inspector
@@ -1542,7 +1568,7 @@ function renderInspector() {
     // Action toolbar: pin / archive flips that round-trip to the
     // service via /memory/pin and /memory/archive. The toolbar only
     // renders buttons the kind actually supports — pinning is
-    // limited to decision / behavior_instruction / core_memory;
+    // limited to decision / behavior;
     // roles / skills / playbooks intentionally stay un-pinned.
     const actions = renderObjectActions(obj, raw);
     if (actions) card.appendChild(actions);
@@ -1560,17 +1586,21 @@ function renderInspector() {
 const _ACTION_KINDS = {
   decisions:              { pin: "decision",            archive: "decision" },
   theories:               {                              archive: "theory" },
-  research_insights:      {                              archive: "insight" },
-  agent_roles:            {                              archive: "role" },
-  agent_skills:           {                              archive: "skill" },
-  agent_playbooks:        {                              archive: "playbook" },
-  behavior_instructions:  { pin: "behavior_instruction", archive: "behavior_instruction" },
-  core_memory:            { pin: "core_memory" },
+  insights:               {                              archive: "insight" },
+  behaviors:              { pin: "behavior", archive: "behavior" },
   episodes:               {                              archive: "episode" },
   chunks:                 {                              archive: "chunk" },
   files:                  {                              archive: "file" },
-  memory_candidates:      {                              archive: "candidate" },
+  candidates:             {                              archive: "candidate" },
 };
+
+function _actionKindsForObject(obj, raw) {
+  if (obj.table === "skills") {
+    const subtype = raw?._kind || raw?.subtype || "skill";
+    if (["role", "skill", "playbook"].includes(subtype)) return { archive: subtype };
+  }
+  return _ACTION_KINDS[obj.table];
+}
 
 function _isObjectArchived(table, raw) {
   const status = String(raw?.status || "").toLowerCase();
@@ -1581,7 +1611,7 @@ function _isObjectArchived(table, raw) {
 }
 
 function renderObjectActions(obj, raw) {
-  const kinds = _ACTION_KINDS[obj.table];
+  const kinds = _actionKindsForObject(obj, raw);
   if (!kinds) return null;
   const id = obj.id || raw.id;
   if (!id) return null;
@@ -1624,8 +1654,8 @@ function renderObjectActions(obj, raw) {
     btn.className = "action-btn" + (archived ? " is-on" : "");
     btn.textContent = archived ? "Restore" : "Archive";
     btn.title = archived
-      ? "Restore so it appears in get_context again"
-      : "Hide from get_context (still searchable)";
+      ? "Restore so it appears in brief/search again"
+      : "Hide from brief/search (still retrievable by id)";
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       try {
@@ -1649,6 +1679,19 @@ function renderObjectActions(obj, raw) {
 }
 
 function renderObjectBody(table, raw) {
+  const listValue = (value, jsonValue) => {
+    const source = value ?? jsonValue;
+    if (Array.isArray(source)) return source.join("\n");
+    if (typeof source === "string" && source.trim().startsWith("[")) {
+      try {
+        const parsed = JSON.parse(source);
+        if (Array.isArray(parsed)) return parsed.join("\n");
+      } catch (_err) {
+        return source;
+      }
+    }
+    return source;
+  };
   const make = (sections) => {
     const wrap = document.createElement("div");
     for (const [title, content] of sections) {
@@ -1676,26 +1719,26 @@ function renderObjectBody(table, raw) {
     return make([
       ["claim", raw.claim],
       ["mechanism", raw.mechanism],
-      ["predictions", Array.isArray(raw.predictions) ? raw.predictions.join("\n") : raw.predictions],
-      ["validation criteria", Array.isArray(raw.validation_criteria) ? raw.validation_criteria.join("\n") : raw.validation_criteria],
+      ["predictions", listValue(raw.predictions, raw.predictions_json)],
+      ["validation criteria", listValue(raw.validation_criteria, raw.validation_criteria_json)],
       ["status", raw.status ? `${raw.status} (confidence ${raw.confidence ?? "—"})` : null],
     ]);
   }
-  if (table === "behavior_instructions") {
+  if (table === "behaviors") {
     return make([
       ["rule", raw.rule],
       ["rationale", raw.rationale],
       ["scope / priority", `${raw.scope || "—"} · ${raw.priority || "—"}`],
     ]);
   }
-  if (table === "agent_roles") {
+  if (table === "skills" && (raw._kind || raw.subtype) === "role") {
     return make([
-      ["purpose", raw.purpose],
+      ["purpose", raw.purpose || raw.summary],
       ["responsibilities", Array.isArray(raw.responsibilities) ? raw.responsibilities.join("\n") : raw.responsibilities],
       ["boundaries", Array.isArray(raw.boundaries) ? raw.boundaries.join("\n") : raw.boundaries],
     ]);
   }
-  if (table === "agent_skills") {
+  if (table === "skills") {
     return make([
       ["summary", raw.summary],
       ["when to use", Array.isArray(raw.when_to_use) ? raw.when_to_use.join("\n") : raw.when_to_use],
@@ -1901,15 +1944,14 @@ function onMemoryEvent(ev) {
   // (another agent, MCP server, curl, second browser tab) come through
   // SSE and absolutely SHOULD animate — that's the whole point of a
   // live observatory. We tell them apart via a short-lived endpoint +
-  // snippet fingerprint that searchMemory / explainContext set right
+  // snippet fingerprint that searchMemory / fetchBrief set right
   // before they fetch.
   const requestId = ev.request_id || "";
   if (!requestId) return;
   const operation = String(ev.operation || ev.endpoint || "").toLowerCase();
   const isReadEndpoint =
     operation.includes("search") ||
-    operation.includes("get_context") ||
-    operation.includes("explain_context");
+    operation.includes("brief");
   if (isReadEndpoint && isLocalRead(ev)) return;
 
   // SSE replay guard: when the client subscribes to /memory/ui/events,
@@ -1980,7 +2022,7 @@ function onMemoryEvent(ev) {
       //   2. recent.short_label cache from /memory/ui/state — the
       //      object's short label from the polled state snapshot.
       //   3. ev.label when it looks per-object (e.g. context's
-      //      _trace_used_context_objects sets it to item.label). This
+      //      UI telemetry can set it to item.label). This
       //      is the second-best per-object source.
       //   4. The request snippet (entry.snippet) — only when nothing
       //      object-specific is available. This is the LAST resort
@@ -2209,7 +2251,7 @@ function trailKindOf(ev) {
   if (t === "request_done") return "out";
   if (t === "request_failed") return "warn";
   if (ev.endpoint && ev.endpoint.includes("ingest")) return "in";
-  if (ev.endpoint && ev.endpoint.includes("get_context")) return "out";
+  if (ev.endpoint && ev.endpoint.includes("brief")) return "out";
   if (ev.severity === "warn" || ev.severity === "warning") return "warn";
   return "route";
 }
@@ -2346,7 +2388,7 @@ const TRAIL_CLUSTER_WINDOW_MS = 2000;
 function _trailKindForGroup(g) {
   if (g.status === "error") return "warn";
   if (g.endpoint && g.endpoint.includes("ingest")) return "in";
-  if (g.endpoint && (g.endpoint.includes("get_context") || g.endpoint.includes("search") || g.endpoint.includes("explain"))) return "out";
+  if (g.endpoint && (g.endpoint.includes("brief") || g.endpoint.includes("search") || g.endpoint.includes("explain"))) return "out";
   if (g.deltas.length) return "pick";
   return "route";
 }
@@ -2534,16 +2576,30 @@ async function postJson(path, body) {
   return data;
 }
 
+async function getJson(path, params = {}) {
+  const query = new URLSearchParams(params).toString();
+  const url = query ? `${path}?${query}` : path;
+  const headers = { ...buildHeaders() };
+  delete headers["Content-Type"];
+  const r = await fetch(url, { headers });
+  const text = await r.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!r.ok) throw new Error(`${url} ${r.status}: ${text.slice(0, 240)}`);
+  return data;
+}
+
 function buildQueryFromHits(prompt, intent, hits, defaultFamId = "episodes") {
-  // Map a /memory/search or /memory/get_context hit to its family.
+  // Map a compact /memory/search hit to its family.
   // /memory/search returns FTS chunks (kind=undefined or "chunk") whose
   // source is an episode or file — those belong to the Episodes family,
   // NOT Research. Default to "episodes" so the chunk case lands there
   // unless the metadata says otherwise. The cap follows the Tweaks
   // density knob — sparse=5, medium=12, dense=24.
   const objects = hits.slice(0, objectsCap()).map(h => {
-    const meta = h.metadata || {};
-    const kind = meta.kind || h.type || "chunk";
+    const projection = h.projection || {};
+    const meta = h.metadata || projection || {};
+    const kind = h.kind || meta.kind || h.type || "chunk";
     let famId = defaultFamId;
     if (kind === "decision") famId = "decisions";
     else if (
@@ -2552,21 +2608,21 @@ function buildQueryFromHits(prompt, intent, hits, defaultFamId = "episodes") {
       kind === "experiment_result"
     ) famId = "research";
     else if (kind === "episode" || kind === "chunk" || kind === "file") famId = "episodes";
-    else if (kind === "behavior_instruction" || kind === "procedural_rule") famId = "instructions";
+    else if (kind === "behavior") famId = "instructions";
     else if (kind === "role") famId = "roles";
     else if (kind === "skill" || kind === "playbook" || kind === "capability_link") famId = "skills";
-    else if (kind === "task_state" || kind === "candidate") famId = "tasks";
+    else if (kind === "task" || kind === "candidate") famId = "tasks";
     else if (kind === "feedback") famId = "feedback";
     let table = "chunks";
     if (meta.kind === "decision") table = "decisions";
     else if (meta.kind === "theory") table = "theories";
-    else if (kind === "behavior_instruction") table = "behavior_instructions";
-    else if (kind === "role") table = "agent_roles";
-    else if (kind === "skill") table = "agent_skills";
-    else if (kind === "playbook") table = "agent_playbooks";
+    else if (kind === "behavior") table = "behaviors";
+    else if (kind === "role" || kind === "skill" || kind === "playbook") table = "skills";
+    else if (kind === "task") table = "tasks";
+    else if (kind === "candidate") table = "candidates";
     return {
-      id: h.id || h.chunk_id,
-      label: meta.label || h.label || meta.path || clip(h.text || h.snippet || h.id, 22),
+      id: projection.id || h.id || h.chunk_id || projection.file_path,
+      label: meta.label || projection.title || projection.gist || projection.name || h.label || meta.path || clip(h.text || h.snippet || h.id, 22),
       famId,
       table,
       raw: h,
@@ -2608,8 +2664,8 @@ async function searchMemory() {
   els.searchSummary.textContent = "searching…";
   markLocalRead("/memory/search", q);
   try {
-    const data = await postJson("/memory/search", { workspace_id: state.workspace, query: q, mode: "fts", limit: 6 });
-    const hits = data.hits || data.results || [];
+    const data = await postJson("/memory/search", { workspace_id: state.workspace, query: q, limit: 6 });
+    const hits = data.data || data.hits || data.results || [];
     runQueryAnimation(buildQueryFromHits(q, "search", hits));
     els.searchSummary.textContent = `${hits.length} hit${hits.length === 1 ? "" : "s"} from /memory/search`;
   } catch (err) { els.searchSummary.textContent = String(err); }
@@ -2618,15 +2674,17 @@ async function searchMemory() {
 async function explainContext() {
   const q = els.query.value.trim();
   if (!q) return;
-  els.searchSummary.textContent = "fetching context…";
-  markLocalRead("/memory/get_context", q);
+  els.searchSummary.textContent = "fetching brief…";
+  markLocalRead("/memory/brief", q);
   try {
-    const data = await postJson("/memory/get_context", { workspace_id: state.workspace, query: q, max_tokens: 1500 });
-    els.contextBox.textContent = data.context_text || "";
-    const sources = data.sources || [];
-    runQueryAnimation(buildQueryFromHits(q, "explain", sources));
-    const tokens = data.budget_diagnostics?.estimated_tokens || 0;
-    els.searchSummary.textContent = `${sources.length} sources · ~${tokens} tokens from /memory/get_context`;
+    const brief = await getJson("/memory/brief", { workspace_id: state.workspace, task: q, max_tokens: 1500 });
+    const search = await postJson("/memory/search", { workspace_id: state.workspace, query: q, limit: 8 });
+    const body = brief.data?.body_md || "";
+    const hits = search.data || [];
+    els.contextBox.textContent = body;
+    runQueryAnimation(buildQueryFromHits(q, "explain", hits));
+    const tokens = brief.data?.token_count || 0;
+    els.searchSummary.textContent = `${hits.length} compact hits · ${tokens} brief tokens from v3`;
   } catch (err) { els.searchSummary.textContent = String(err); }
 }
 
@@ -2724,7 +2782,7 @@ els.tweaksToggle.addEventListener("click", () => {
 });
 
 // v3.0.0 final: honour ?workspace_id=X URL parameter so the Observatory
-// matches /ui/code, /ui/graph, /ui/recall, /ui/reflexes, /ui/metrics —
+// matches /ui/recall, /ui/reflexes, /ui/metrics —
 // all of which use app_header.js to read the same param. Without this,
 // landing on /ui?workspace_id=copyBot silently switched to whatever
 // workspace the server treated as current.

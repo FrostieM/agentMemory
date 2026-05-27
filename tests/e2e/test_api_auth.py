@@ -35,7 +35,9 @@ def test_memory_routes_require_bearer_token_when_enabled(app_factory, tmp_path: 
             headers={"Authorization": "Bearer local-secret"},
         )
         assert ok.status_code == 200
-        assert ok.json()["mode"] == "fts"
+        body = ok.json()
+        assert body["ok"] is True
+        assert isinstance(body["data"], list)
 
 
 def test_required_api_token_fails_fast_when_token_file_missing(

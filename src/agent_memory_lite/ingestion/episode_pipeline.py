@@ -1,4 +1,4 @@
-"""End-to-end write path for `memory_ingest_episode`.
+"""End-to-end episode write path.
 
 Steps:
 1. Redact secrets in the raw text.

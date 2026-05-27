@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
 <style>
   /* Phase 3.6: generic browse page over decisions / theories /
-     insights / behavior_instructions. One layout, kind dropdown
+     insights / behaviors. One layout, kind dropdown
      switches the data source + per-kind rendering. */
   .browse-body { padding: 24px 32px; max-width: 1100px; }
   .browse-controls { display: flex; gap: 0.6em; align-items: center;
@@ -94,8 +94,6 @@
     </header>
     <nav class="app-nav" aria-label="UI sections">
       <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
-      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
-      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
       <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
       <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
       <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
@@ -111,7 +109,7 @@
             <option value="decisions">Decisions</option>
             <option value="theories">Theories</option>
             <option value="insights">Insights</option>
-            <option value="behavior_instructions">Behavior Instructions</option>
+            <option value="behavior">Behaviors</option>
           </select>
         </label>
         <label>query <input id="query-input" type="text" placeholder="filter by keyword (optional)" /></label>
@@ -137,11 +135,11 @@ function escape(s) {
 
 const KIND_CONFIG = {
   decisions: {
-    endpoint: "/memory/list_decisions",
-    listKey: "decisions",
-    idKey: "decision_id",
+    kind: "decision",
+    defaultQuery: "decision architecture operational",
+    idKey: "id",
     cardKind: "decision",
-    payloadFlags: (historical) => ({ include_superseded: historical }),
+    detailFields: "decision_text,rationale,confidence,importance,created_at,status,pinned",
     render: (d) => ({
       title: d.title || "(untitled)",
       meta: [
@@ -159,13 +157,11 @@ const KIND_CONFIG = {
     }),
   },
   theories: {
-    endpoint: "/memory/list_theories",
-    listKey: "theories",
-    idKey: "theory_id",
+    kind: "theory",
+    defaultQuery: "theory hypothesis claim validation",
+    idKey: "id",
     cardKind: "theory",
-    payloadFlags: (historical) => historical
-      ? { statuses: ["proposed", "testing", "supported", "validated", "weakened", "rejected", "superseded", "archived"] }
-      : { statuses: ["proposed", "testing", "supported", "validated", "weakened"] },
+    detailFields: "claim,mechanism,predictions_json,validation_criteria_json,domain,status,confidence,importance,created_at",
     render: (t) => ({
       title: t.title || "(untitled)",
       meta: [
@@ -179,11 +175,11 @@ const KIND_CONFIG = {
     }),
   },
   insights: {
-    endpoint: "/memory/list_insights",
-    listKey: "insights",
-    idKey: "insight_id",
+    kind: "insight",
+    defaultQuery: "insight finding action",
+    idKey: "id",
     cardKind: "insight",
-    payloadFlags: () => ({}),
+    detailFields: "proposed_action,status,confidence,created_at",
     render: (i) => ({
       title: i.summary || "(no summary)",
       meta: [
@@ -196,12 +192,12 @@ const KIND_CONFIG = {
       badges: [["status", i.status]],
     }),
   },
-  behavior_instructions: {
-    endpoint: "/memory/list_behavior_instructions",
-    listKey: "instructions",
-    idKey: "instruction_id",
+  behavior: {
+    kind: "behavior",
+    defaultQuery: "behavior instruction rule preference",
+    idKey: "id",
     cardKind: "behavior",
-    payloadFlags: () => ({}),
+    detailFields: "rule,rationale,scope,priority,confidence,active",
     render: (b) => ({
       title: b.name || "(unnamed)",
       meta: [
@@ -232,21 +228,42 @@ async function load() {
   $("#browse-summary").textContent = "";
   $("#status").textContent = "";
 
-  const body = {
-    workspace_id: ws,
-    limit: 50,
-    ...(query ? { query } : {}),
-    ...cfg.payloadFlags(historical),
-  };
   try {
-    const r = await fetch(cfg.endpoint, {
+    const r = await fetch("/memory/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        workspace_id: ws,
+        query: query || cfg.defaultQuery,
+        kinds: [cfg.kind],
+        limit: 50,
+      }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
     const data = await r.json();
-    const items = data[cfg.listKey] || [];
+    let items = (data.data || []).map(hit => hit.projection || hit);
+    if (!historical) {
+      items = items.filter((item) => {
+        const status = String(item.status || "").toLowerCase();
+        return item.active !== false && !["archived", "superseded", "rejected"].includes(status);
+      });
+    }
+    if (cfg.detailFields) {
+      items = await Promise.all(items.map(async (item) => {
+        const id = item[cfg.idKey];
+        if (!id) return item;
+        const params = new URLSearchParams({
+          workspace_id: ws,
+          kind: cfg.kind,
+          id,
+          fields: cfg.detailFields,
+        });
+        const detail = await fetch(`/memory/get?${params.toString()}`);
+        if (!detail.ok) return item;
+        const detailData = await detail.json();
+        return { ...item, ...(detailData.data || {}) };
+      }));
+    }
     if (!items.length) {
       list.innerHTML = `<div class="empty-state">no ${escape(kind.replace("_", " "))} match`
         + (query ? ` query '${escape(query)}'` : "")

@@ -75,7 +75,7 @@ def _decisions_count(conn: sqlite3.Connection) -> int:
 
 def _candidates_count(conn: sqlite3.Connection, *, status: str = "pending") -> int:
     row = conn.execute(
-        "SELECT COUNT(*) FROM decision_candidates WHERE status = ?", (status,)
+        "SELECT COUNT(*) FROM candidates WHERE kind = 'decision' AND status = ?", (status,)
     ).fetchone()
     return int(row[0])
 
@@ -129,7 +129,7 @@ def test_threshold_met_emits_candidate_but_not_decision(
     )
     assert result is not None
     assert result.evidence_count == 3
-    assert _candidates_count(applied_conn) == 1
+    assert _candidates_count(applied_conn, status="new") == 1
     # Crucial invariant — the bridge MUST NOT have written a row to decisions.
     assert _decisions_count(applied_conn) == decisions_before
 
@@ -149,7 +149,7 @@ def test_idempotent_when_pending_candidate_exists(
     )
     assert first is not None
     assert second is None
-    assert _candidates_count(applied_conn) == 1
+    assert _candidates_count(applied_conn, status="new") == 1
 
 
 def test_only_supporting_evidence_counts_toward_threshold(
@@ -176,6 +176,6 @@ def test_audit_row_written_on_emission(applied_conn: sqlite3.Connection) -> None
         applied_conn, workspace_id="default", theory_id="th_a", settings=settings
     )
     audit_actions = applied_conn.execute(
-        "SELECT action FROM audit_log WHERE target_type = 'decision_candidate'"
+        "SELECT action FROM audit_log WHERE target_type = 'memory_candidate'"
     ).fetchall()
     assert [str(row[0]) for row in audit_actions] == ["theory.candidate_decision_emitted"]

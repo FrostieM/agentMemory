@@ -10,11 +10,6 @@ import pytest
 
 from agent_memory_lite.api.routes.active_memory_status import build_active_memory
 
-CANONICAL_INIT = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-CANONICAL_OUTCOME = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,8 +25,6 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 
     c = open_connection(tmp_path / "status.db")
     apply_migrations(c)
-    c.executescript(CANONICAL_INIT.read_text(encoding="utf-8"))
-    c.executescript(CANONICAL_OUTCOME.read_text(encoding="utf-8"))
     try:
         yield c
     finally:
@@ -105,7 +98,7 @@ def test_active_memory_counts_persisted_warnings(conn: sqlite3.Connection) -> No
         "'2026-05-19T00:00:00+00:00')",
     )
     conn.execute(
-        """INSERT INTO memory_candidates (
+        """INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id,
@@ -131,7 +124,7 @@ def test_active_memory_persisted_warnings_excludes_promoted(
         "'2026-05-19T00:00:00+00:00')",
     )
     conn.execute(
-        """INSERT INTO memory_candidates (
+        """INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id,
@@ -155,7 +148,7 @@ def test_active_memory_workspace_isolation(conn: sqlite3.Connection) -> None:
         "'2026-05-19T00:00:00+00:00')",
     )
     conn.execute(
-        """INSERT INTO memory_candidates (
+        """INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id,

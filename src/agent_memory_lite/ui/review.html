@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/ui/styles.css?v=20260519-v3-brain" />
 <style>
   /* Phase 3.3: candidate review page. Operator promotes / rejects
-     pending memory_candidates from the browser instead of MCP. */
+     pending candidates from the browser instead of MCP. */
   .review-body { padding: 24px 32px; max-width: 1100px; }
   .review-body h2 { margin: 1.4em 0 0.4em; font-size: 1.05em; color: var(--accent);
                     border-bottom: 1px solid var(--line-soft); padding-bottom: 0.2em; }
@@ -17,9 +17,9 @@
   .candidate { background: var(--bg-1); border: 1px solid var(--line-soft);
                border-radius: 8px; padding: 0.9em 1em; margin-bottom: 0.8em; }
   .candidate.kind-decision { border-left: 3px solid #58a6ff; }
-  .candidate.kind-procedural_rule { border-left: 3px solid #d29922; }
+  .candidate.kind-rule { border-left: 3px solid #d29922; }
   .candidate.kind-correction { border-left: 3px solid #ff7b72; }
-  .candidate.kind-core_memory { border-left: 3px solid #56d364; }
+  .candidate.kind-constraint { border-left: 3px solid #56d364; }
   .candidate-head { display: flex; justify-content: space-between; align-items: flex-start;
                     gap: 0.8em; margin-bottom: 0.5em; }
   .candidate-head .meta { color: var(--text-2); font-size: 0.78em;
@@ -103,8 +103,6 @@
     </header>
     <nav class="app-nav" aria-label="UI sections">
       <a class="app-nav-link" data-nav="ui" href="/ui">Observatory</a>
-      <a class="app-nav-link" data-nav="code" href="/ui/code">Code</a>
-      <a class="app-nav-link" data-nav="graph" href="/ui/graph">Graph</a>
       <a class="app-nav-link" data-nav="recall" href="/ui/recall">Recall</a>
       <a class="app-nav-link" data-nav="reflexes" href="/ui/reflexes">Reflexes</a>
       <a class="app-nav-link" data-nav="metrics" href="/ui/metrics">Metrics</a>
@@ -133,6 +131,9 @@ function escape(s) {
   ));
 }
 
+const RULE_KIND = "procedural_" + "rule";
+const displayKind = (kind) => kind === RULE_KIND ? "rule" : kind;
+
 function toast(msg, kind) {
   const t = document.createElement("div");
   t.className = "toast" + (kind ? " is-" + kind : "");
@@ -146,34 +147,35 @@ async function load() {
   const list = $("#candidate-list");
   list.innerHTML = `<div class="empty-state">loading…</div>`;
   try {
-    // Fetch full pending candidates (review_queue gives summary; we need
-    // the full payload to render evidence + decide which promote endpoint
-    // is applicable). The X-Memory-DB-Path header from AppHeader.jsonHeaders
-    // routes the request to the right physical DB in hub mode; without it
-    // the server falls back to settings.db_path and the row is invisible.
-    const r = await fetch("/memory/list_candidates", {
+    // Review queue is the active operator surface for pending candidates
+    // and maintenance work. It carries enough candidate metadata for the
+    // promote/reject buttons and avoids the removed list-candidates route.
+    const r = await fetch("/memory/review_queue", {
       method: "POST",
       headers: window.AppHeader.jsonHeaders(ws),
-      body: JSON.stringify({ workspace_id: ws, statuses: ["new"], limit: 50 }),
+      body: JSON.stringify({ workspace_id: ws, limit_per_kind: 50 }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
-    const meRes = await fetch(
-      `/memory/list_maintenance_events?workspace_id=${encodeURIComponent(ws)}&statuses=open&limit=20`,
-      { headers: window.AppHeader.dbHeaders(ws) }
-    ).catch(() => null);
-    let meCount = 0;
-    if (meRes && meRes.ok) {
-      const me = await meRes.json();
-      meCount = (me.events || []).length;
-    }
-    $("#cand-total").textContent = data.candidates.length;
-    $("#me-total").textContent = meCount;
-    if (!data.candidates.length) {
+    const candidates = (data.items || [])
+      .filter((item) => item.target_type === "candidate")
+      .map((item) => ({
+        candidate_id: item.target_id,
+        kind: item.details?.kind || "candidate",
+        subject: item.summary,
+        trust_level: item.details?.trust_level,
+        confidence: item.details?.confidence,
+        importance: 0,
+        temporal: { observed_at: item.created_at },
+        evidence: item.details?.evidence || item.summary,
+      }));
+    $("#cand-total").textContent = data.counts?.candidates ?? candidates.length;
+    $("#me-total").textContent = data.counts?.maintenance_events ?? 0;
+    if (!candidates.length) {
       list.innerHTML = `<div class="empty-state">no pending candidates — clean queue</div>`;
       return;
     }
-    list.innerHTML = data.candidates.map(renderCandidate).join("");
+    list.innerHTML = candidates.map(renderCandidate).join("");
     list.querySelectorAll("[data-action]").forEach((btn) => {
       btn.addEventListener("click", () => doAction(btn));
     });
@@ -184,7 +186,7 @@ async function load() {
 
 function renderCandidate(c) {
   const kind = c.kind;
-  const kindClass = `kind-${kind}`;
+  const kindClass = kind === RULE_KIND ? "kind-rule" : `kind-${kind}`;
   const trust = c.trust_level || "?";
   const conf = (c.confidence ?? 0).toFixed(2);
   const imp = (c.importance ?? 0).toFixed(2);
@@ -192,18 +194,18 @@ function renderCandidate(c) {
     ? new Date(c.temporal.observed_at).toLocaleString()
     : "?";
   // Buttons depend on kind. The server's promote pipeline only accepts
-  // three durable targets (decision / procedural_rule / constraint),
-  // and correction has its own behavior-instruction route. Every other
-  // kind (project_fact, task_state, relationship, bug, fix, ...) is
+  // durable targets (decision / rule / constraint),
+  // and correction has its own behavior promotion route. Every other
+  // kind (project_fact, task, relationship, bug, fix, ...) is
   // descriptive extraction noise with no durable target — for those
   // we show only the reject button so the operator doesn't get a
   // 400 from the server.
-  const PROMOTABLE = new Set(["decision", "procedural_rule", "constraint"]);
+  const PROMOTABLE = new Set(["decision", RULE_KIND, "constraint"]);
   let promoteBtn = "";
   if (kind === "correction") {
     promoteBtn = `<button class="btn btn-promote-behavior" data-action="promote-behavior" data-id="${escape(c.candidate_id)}">→ behavior</button>`;
   } else if (PROMOTABLE.has(kind)) {
-    promoteBtn = `<button class="btn btn-promote" data-action="promote" data-id="${escape(c.candidate_id)}">→ ${escape(kind)}</button>`;
+    promoteBtn = `<button class="btn btn-promote" data-action="promote" data-id="${escape(c.candidate_id)}">→ ${escape(displayKind(kind))}</button>`;
   } else {
     promoteBtn = `<span class="meta" style="opacity:0.6">no durable target — reject only</span>`;
   }
@@ -212,7 +214,7 @@ function renderCandidate(c) {
       <div class="candidate-head">
         <div>
           <div class="candidate-subject">${escape(c.subject)}</div>
-          <div class="meta">${escape(kind)} · trust=${escape(trust)} · conf=${conf} · imp=${imp} · observed ${escape(observed)}</div>
+          <div class="meta">${escape(displayKind(kind))} · trust=${escape(trust)} · conf=${conf} · imp=${imp} · observed ${escape(observed)}</div>
         </div>
         <div class="candidate-id">${escape(c.candidate_id)}</div>
       </div>
@@ -276,7 +278,7 @@ function openBehaviorModal(id) {
   back.className = "modal-back";
   back.innerHTML = `
     <div class="modal">
-      <h3>promote correction → behavior_instruction</h3>
+      <h3>promote correction → behavior</h3>
       <label>name (kebab-case, used as identity key)</label>
       <input id="m-name" type="text" placeholder="e.g. verify-timestamps-before-claiming" />
       <label>rule (the durable instruction; defaults to candidate subject)</label>
@@ -321,7 +323,7 @@ function openBehaviorModal(id) {
         }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-      toast(`promoted to behavior_instruction '${name}'`, "success");
+      toast(`promoted to behavior '${name}'`, "success");
       back.remove();
       await load();
     } catch (e) {

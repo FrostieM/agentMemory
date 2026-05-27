@@ -49,9 +49,8 @@ class ProjectMemorySeedResult:
     skills: list[SeedObjectRef]
     playbooks: list[SeedObjectRef]
     concepts: list[SeedObjectRef]
-    # 1.2.3: seed now writes one generic-discipline behavior_instruction
-    # (capability-link rule). Default empty list keeps backward-compatible
-    # construction for any caller that doesn't set it.
+    # Seed writes generic-discipline behaviors. Default empty list
+    # keeps backward-compatible construction for any caller that doesn't set it.
     behavior_instructions: list[SeedObjectRef] = field(default_factory=list)
     roles_written: int = 0
 
@@ -116,7 +115,7 @@ def seed_neutral_project_memory(
             pin_memory_object(
                 conn,
                 workspace_id=workspace_id,
-                kind="behavior_instruction",
+                kind="behavior",
                 object_id=bi.id,
                 pinned=True,
             )

@@ -1,4 +1,4 @@
-"""SQL operations for ``agent_roles``."""
+"""SQL operations for role rows in canonical ``skills``."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import json
 import sqlite3
 
 from agent_memory_lite.models.capabilities import AgentRole
+from agent_memory_lite.repositories.capabilities_row_helpers import (
+    body_md_from_sections,
+    filter_and_rank,
+)
 from agent_memory_lite.repositories.capabilities_search_helpers import (
-    contains_any,
     json_list,
-    tokens_from,
 )
 
 
@@ -18,7 +20,7 @@ def _row_to_role(row: sqlite3.Row) -> AgentRole:
         id=row["id"],
         workspace_id=row["workspace_id"],
         name=row["name"],
-        purpose=row["purpose"],
+        purpose=row["summary"],
         responsibilities=json_list(row["responsibilities_json"]),
         boundaries=json_list(row["boundaries_json"]),
         handoff_triggers=json_list(row["handoff_triggers_json"]),
@@ -48,15 +50,29 @@ def upsert_role_row(
     created_at: str,
     updated_at: str,
 ) -> None:
+    body_md = body_md_from_sections(
+        name=name,
+        summary=purpose,
+        sections=(
+            ("Responsibilities", responsibilities),
+            ("Boundaries", boundaries),
+            ("Handoff triggers", handoff_triggers),
+            ("Tools", tools),
+        ),
+    )
     conn.execute(
         """
-        INSERT INTO agent_roles (
-            id, workspace_id, name, purpose, responsibilities_json,
+        INSERT INTO skills (
+            id, workspace_id, name, subtype, summary, when_to_use_short,
+            body_md, body_token_count, responsibilities_json,
             boundaries_json, handoff_triggers_json, tools_json,
             source_episode_id, confidence, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(workspace_id, name) DO UPDATE SET
-            purpose = excluded.purpose,
+        ) VALUES (?, ?, ?, 'role', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, subtype, name) DO UPDATE SET
+            summary = excluded.summary,
+            when_to_use_short = excluded.when_to_use_short,
+            body_md = excluded.body_md,
+            body_token_count = excluded.body_token_count,
             responsibilities_json = excluded.responsibilities_json,
             boundaries_json = excluded.boundaries_json,
             handoff_triggers_json = excluded.handoff_triggers_json,
@@ -71,6 +87,9 @@ def upsert_role_row(
             workspace_id,
             name,
             purpose,
+            purpose,
+            body_md,
+            len(body_md.split()),
             json.dumps(responsibilities, sort_keys=True),
             json.dumps(boundaries, sort_keys=True),
             json.dumps(handoff_triggers, sort_keys=True),
@@ -86,14 +105,17 @@ def upsert_role_row(
 
 def get_role_by_name(conn: sqlite3.Connection, *, workspace_id: str, name: str) -> AgentRole | None:
     row = conn.execute(
-        "SELECT * FROM agent_roles WHERE workspace_id = ? AND name = ?",
+        "SELECT * FROM skills WHERE workspace_id = ? AND subtype = 'role' AND name = ?",
         (workspace_id, name),
     ).fetchone()
     return _row_to_role(row) if row is not None else None
 
 
 def get_role_by_id(conn: sqlite3.Connection, role_id: str) -> AgentRole | None:
-    row = conn.execute("SELECT * FROM agent_roles WHERE id = ?", (role_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM skills WHERE id = ? AND subtype = 'role'",
+        (role_id,),
+    ).fetchone()
     return _row_to_role(row) if row is not None else None
 
 
@@ -110,13 +132,6 @@ def _role_text(role: AgentRole) -> str:
     )
 
 
-def _rank_role(role: AgentRole, tokens: list[str]) -> tuple[float, str]:
-    text = _role_text(role).lower()
-    token_score = sum(1.0 for token in tokens if token in text)
-    active_bonus = 0.25 if role.active else -0.25
-    return token_score + role.confidence + active_bonus, role.updated_at
-
-
 def list_roles(
     conn: sqlite3.Connection,
     *,
@@ -126,13 +141,17 @@ def list_roles(
     limit: int = 20,
 ) -> list[AgentRole]:
     rows = conn.execute(
-        "SELECT * FROM agent_roles WHERE workspace_id = ?",
+        "SELECT * FROM skills WHERE workspace_id = ? AND subtype = 'role'",
         (workspace_id,),
     ).fetchall()
-    terms = tokens_from(query)
     roles = [_row_to_role(row) for row in rows]
-    if not include_inactive:
-        roles = [item for item in roles if item.active]
-    roles = [item for item in roles if contains_any(_role_text(item), terms)]
-    roles.sort(key=lambda item: _rank_role(item, terms), reverse=True)
-    return roles[:limit]
+    return filter_and_rank(
+        roles,
+        query=query,
+        include_inactive=include_inactive,
+        limit=limit,
+        text_of=_role_text,
+        confidence_of=lambda item: item.confidence,
+        active_of=lambda item: item.active,
+        updated_at_of=lambda item: item.updated_at,
+    )

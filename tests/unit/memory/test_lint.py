@@ -4,45 +4,26 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
 from agent_memory_lite.cognition.lint import LintResult, lint
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
 
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    # Bridge: v3 schema has `behaviors` table; enforcement.rule_loader
-    # currently reads `behavior_instructions`. For v3 lint to work
-    # against v3 storage, the test data is seeded into both names
-    # until Phase 1 batch 3 ports rule_loader to v3.
-    c.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS behavior_instructions (
-            id TEXT PRIMARY KEY, workspace_id TEXT, name TEXT, kind TEXT,
-            scope TEXT, priority TEXT, rule TEXT, rationale TEXT DEFAULT '',
-            applies_to_json TEXT DEFAULT '[]', conflict_policy TEXT,
-            source_episode_id TEXT, confidence REAL, active INTEGER DEFAULT 1,
-            created_at TEXT, updated_at TEXT, source_type TEXT DEFAULT 'manual',
-            source_id TEXT, reviewed_by TEXT, reviewed_at TEXT, expires_at TEXT,
-            last_applied_at TEXT, application_count INTEGER DEFAULT 0,
-            conflict_group TEXT, pinned INTEGER NOT NULL DEFAULT 0
-        );
-        """
-    )
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
         c.close()
 
 
-def _seed_behavior_v2_compat(
+def _seed_behavior(
     conn: sqlite3.Connection,
     *,
     id_: str,
@@ -52,9 +33,9 @@ def _seed_behavior_v2_compat(
     pinned: int = 1,
     active: int = 1,
 ) -> None:
-    """Seed into v2 behavior_instructions (lint reads this for now)."""
+    """Seed into canonical behaviors."""
     conn.execute(
-        """INSERT INTO behavior_instructions
+        """INSERT INTO behaviors
            (id, workspace_id, name, kind, scope, priority, rule, applies_to_json,
             active, pinned, created_at, updated_at)
            VALUES (?, 'ws', ?, 'operating_rule', 'workspace', 'user_preference', ?, ?, ?, ?, 'ts', 'ts')""",
@@ -98,7 +79,7 @@ def test_lint_returns_lint_result(conn: sqlite3.Connection) -> None:
 
 def test_lint_mechanical_block_returns_block_verdict(conn: sqlite3.Connection) -> None:
     """Seed a magic-number rule and confirm Edit with literal blocks."""
-    _seed_behavior_v2_compat(
+    _seed_behavior(
         conn,
         id_="beh_mn",
         name="no-magic-number",
@@ -130,7 +111,7 @@ def test_lint_advisory_path_allows_with_advisories(conn: sqlite3.Connection) -> 
     # advisory comes from semantic rules when Ollama disabled.
     # Seed a semantic-only rule (won't fire without Ollama) and
     # verify verdict is 'allow' (not block).
-    _seed_behavior_v2_compat(
+    _seed_behavior(
         conn,
         id_="beh_s",
         name="semantic-rule",
@@ -212,7 +193,7 @@ def test_lint_to_dict_serialization(conn: sqlite3.Connection) -> None:
 def test_lint_failure_soft_on_subsystem_error(conn: sqlite3.Connection) -> None:
     """Even if a subsystem raises, lint returns allow + diagnostic."""
     # Drop the behaviors table to simulate a schema mismatch / corruption.
-    conn.execute("DROP TABLE behavior_instructions")
+    conn.execute("DROP TABLE behaviors")
     conn.commit()
     result = lint(conn, workspace_id="ws", tool_name="Edit", tool_payload={"file_path": "x"})
     # Should not raise; verdict degrades to allow.

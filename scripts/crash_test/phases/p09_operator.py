@@ -1,16 +1,14 @@
-"""Phase 09: archive + pin + what_references + list_audit."""
+"""Phase 09: archive + pin + what_references + audit."""
 
 from __future__ import annotations
 
 from scripts.crash_test.phases._base import CrashTestState, Phase, PhaseResult
-from scripts.crash_test.seeds import post
+from scripts.crash_test.seeds import get, post
 
 
 class P09Operator(Phase):
     name = "p09_operator"
-    description = (
-        "Archive hides item, pin forces it into context, what_references / list_audit work."
-    )
+    description = "Archive hides item, pin forces it into context, what_references / audit work."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
@@ -20,7 +18,7 @@ class P09Operator(Phase):
             return result
         target = decision_ids[1]  # the active second decision
 
-        # Pin the active decision; verify it appears in get_context.
+        # Pin the active decision; verify the canonical row reflects it.
         pin = post(
             state.client,
             "/memory/pin",
@@ -32,14 +30,18 @@ class P09Operator(Phase):
             },
         )
         result.assert_true("pin returns ok", bool(pin))
-        ctx = post(
+        detail = get(
             state.client,
-            "/memory/get_context",
-            {"workspace_id": state.workspace_id, "query": "irrelevant query", "max_tokens": 1500},
+            "/memory/get",
+            {
+                "workspace_id": state.workspace_id,
+                "kind": "decision",
+                "id": target,
+                "fields": "pinned",
+            },
         )
-        result.assert_in(
-            "pinned decision shows in context", target, str(ctx.get("context_text", ""))
-        )
+        data = detail.get("data") if isinstance(detail.get("data"), dict) else {}
+        result.assert_true("pinned decision persisted", bool(data.get("pinned")))
 
         # what_references searches text columns via LIKE %target_id% — so we
         # plant the literal id in an episode raw_text (the search includes
@@ -74,10 +76,10 @@ class P09Operator(Phase):
                     ref_count += len(v)
         result.assert_ge("what_references finds at least one referrer", ref_count, 1)
 
-        # list_audit returns at least the write_decision row.
+        # /memory/audit returns at least the write_decision row.
         audit = post(
             state.client,
-            "/memory/list_audit",
+            "/memory/audit",
             {
                 "workspace_id": state.workspace_id,
                 "target_type": "decision",
@@ -88,7 +90,7 @@ class P09Operator(Phase):
         rows = audit.get("rows") or audit.get("entries") or audit.get("audit") or []
         result.assert_ge("audit rows for decision", len(rows), 1)
 
-        # Archive a chunk; verify get_context no longer returns it (default historical=false).
+        # Archive a chunk and verify the canonical row is marked archived.
         chunk_id_row = state.conn.execute(
             "SELECT id FROM chunks WHERE workspace_id = ? LIMIT 1", (state.workspace_id,)
         ).fetchone()
@@ -101,7 +103,7 @@ class P09Operator(Phase):
                     "workspace_id": state.workspace_id,
                     "kind": "chunk",
                     "id": chunk_id,
-                    "archive": True,
+                    "reason": "crash-test fixture",
                 },
             )
             archived = state.conn.execute(

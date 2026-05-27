@@ -18,10 +18,10 @@ from agent_memory_lite.enforcement.rule_loader import (
 
 
 def _setup_schema(conn: sqlite3.Connection) -> None:
-    """Minimal behavior_instructions schema for the loader query."""
+    """Minimal behaviors schema for the loader query."""
     conn.execute(
         """
-        CREATE TABLE behavior_instructions (
+        CREATE TABLE behaviors (
             id TEXT PRIMARY KEY,
             workspace_id TEXT NOT NULL,
             name TEXT NOT NULL,
@@ -47,7 +47,7 @@ def _insert(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO behavior_instructions (
+        INSERT INTO behaviors (
             id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -159,7 +159,7 @@ def test_malformed_applies_to_json_defaults_to_semantic(conn: sqlite3.Connection
     """Pinned rule with corrupt applies_to is still enforced — semantic layer."""
     conn.execute(
         """
-        INSERT INTO behavior_instructions (
+        INSERT INTO behaviors (
             id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -187,7 +187,7 @@ def test_multiple_pinned_returned_newest_first(conn: sqlite3.Connection) -> None
     """Order is updated_at DESC so the operator's freshest rules dominate."""
     conn.execute(
         """
-        INSERT INTO behavior_instructions (
+        INSERT INTO behaviors (
             id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -195,7 +195,7 @@ def test_multiple_pinned_returned_newest_first(conn: sqlite3.Connection) -> None
     )
     conn.execute(
         """
-        INSERT INTO behavior_instructions (
+        INSERT INTO behaviors (
             id, workspace_id, name, rule, applies_to_json, active, pinned, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,

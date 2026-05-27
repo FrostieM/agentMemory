@@ -1,4 +1,4 @@
-"""Trust-gate invariant: reflective compaction NEVER inserts research_insights.
+"""Trust-gate invariant: reflective compaction NEVER inserts insights.
 
 Critical regression guard. If this test starts failing, someone wired a
 fast-path that bypasses the operator review and broke the trust gate.
@@ -12,14 +12,14 @@ from agent_memory_lite.compaction.lesson_proposal import LessonProposal
 from agent_memory_lite.compaction.lesson_review import write_lesson_candidates
 
 
-def _research_insights_count(conn: sqlite3.Connection) -> int:
-    return int(conn.execute("SELECT COUNT(*) FROM research_insights").fetchone()[0])
+def _insights_count(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("SELECT COUNT(*) FROM insights").fetchone()[0])
 
 
-def _insight_candidates_count(conn: sqlite3.Connection, *, status: str) -> int:
+def _insight_review_count(conn: sqlite3.Connection, *, status: str) -> int:
     return int(
         conn.execute(
-            "SELECT COUNT(*) FROM insight_candidates WHERE status = ?", (status,)
+            "SELECT COUNT(*) FROM candidates WHERE kind = 'insight' AND status = ?", (status,)
         ).fetchone()[0]
     )
 
@@ -35,16 +35,16 @@ def _proposal(*, summary: str = "lesson", confidence: float = 0.7) -> LessonProp
 
 
 def test_write_lesson_candidates_creates_pending_rows(applied_conn: sqlite3.Connection) -> None:
-    before = _research_insights_count(applied_conn)
+    before = _insights_count(applied_conn)
     ids = write_lesson_candidates(
         applied_conn,
         workspace_id="default",
         proposals=[_proposal(summary=f"lesson {i}") for i in range(3)],
     )
     assert len(ids) == 3
-    assert _insight_candidates_count(applied_conn, status="pending") == 3
-    # Trust-gate guard: research_insights table must be untouched.
-    assert _research_insights_count(applied_conn) == before
+    assert _insight_review_count(applied_conn, status="new") == 3
+    # Trust-gate guard: insights table must be untouched.
+    assert _insights_count(applied_conn) == before
 
 
 def test_empty_proposals_with_zero_discarded_does_nothing(

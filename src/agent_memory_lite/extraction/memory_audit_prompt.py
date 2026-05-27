@@ -1,11 +1,10 @@
 """Build a memory-audit prompt when the agent did real work without recording.
 
-Called by ``scripts/inject_memory_context.py`` (UserPromptSubmit hook) right
-before the agent sees the operator's new prompt. The hook reads the Claude
-Code transcript JSONL, classifies tool_use blocks in the previous assistant
-turn via ``memory_audit_classify``, and — if the agent did file mutations
-without any memory write — prepends a forced-language audit reminder to
-the new turn's system context.
+Callable by UserPromptSubmit hook integrations right before the agent sees
+the operator's new prompt. The hook reads the Claude Code transcript JSONL,
+classifies tool_use blocks in the previous assistant turn via
+``memory_audit_classify``, and - if the agent did file mutations without any
+memory write - prepends a forced-language audit reminder to the new turn.
 
 Why: pinned behavior_instructions are advisory; Claude triages and skips
 them under load (copyBot: 0 episodes despite 5 commits/day). Promoting the
@@ -116,10 +115,10 @@ def decide_audit(
     summary = _summarize(stats)
     prompt = (
         f"[memory-audit] Previous assistant turn: {summary}, 0 memory writes. "
-        "Before responding to this user prompt, call memory_ingest_episode "
-        "summarizing the work you just did. If any architectural choice was "
-        "made, also call memory_write_decision (or memory_record_with_evidence "
-        "for the atomic combo). Acknowledging this audit in your response is "
+        "Before responding to this user prompt, call memory_write(kind=episode) "
+        "summarizing the work you just did. If any architectural choice was made, "
+        "also call memory_write(kind=decision) with the episode as source evidence. "
+        "Acknowledging this audit in your response is "
         "REQUIRED, not optional — the operator sees the audit text and treats "
         "absence of follow-through as a violation."
     )

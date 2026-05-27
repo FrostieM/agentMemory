@@ -2,9 +2,9 @@
 # Pre-commit hook: auto-ingest staged source files into agent-memory-lite.
 #
 # Why: keeps the code-memory index in sync with what is being committed,
-# so memory_file_digest / memory_symbol_history / memory_breaking_changes
-# always reflect HEAD. Closes the adoption gap where agents fall back to
-# Read/Grep because the index is stale.
+# so memory_impact_check / memory_search / memory_get can rely on fresh
+# code digests. Closes the adoption gap where agents fall back to blind
+# file reads because the index is stale.
 #
 # Behaviour: for every staged file matching the indexed extensions
 # (.py, .ts, .tsx, .js, .jsx, .md, .yaml, .yml, .sql, .sh), POST the

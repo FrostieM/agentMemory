@@ -16,9 +16,7 @@ from agent_memory_lite.models.enums import DecisionStatus, coerce_enum
 
 
 def parse_references(row: sqlite3.Row) -> list[str]:
-    """Read references_json off a row, tolerating legacy schemas where
-    the column is missing (returns empty list) and bad JSON (also
-    returns empty list — never raises)."""
+    """Read references_json, tolerating missing columns and bad JSON."""
     if "references_json" not in row.keys():  # noqa: SIM118
         return []
     raw = row["references_json"]
@@ -42,8 +40,8 @@ def serialize_references(references: list[str] | None) -> str | None:
 
 def row_to_decision(row: sqlite3.Row) -> Decision:
     """Map a sqlite3.Row from ``decisions`` (or compatible SELECT) to
-    a Decision. Tolerates legacy schemas missing the ``pinned``,
-    ``references_json``, or ``outcome_score`` columns.
+    a Decision. Tolerates schemas missing ``pinned``, ``references_json``,
+    or ``outcome_score`` columns.
     """
     keys = row.keys()
     pinned_value = row["pinned"] if "pinned" in keys else 0
@@ -59,7 +57,7 @@ def row_to_decision(row: sqlite3.Row) -> Decision:
         rationale=row["rationale"],
         # v3.5 audit-followup: tolerate unknown future status strings so
         # the read path degrades to ACTIVE instead of crashing every
-        # /memory/get_context (same pattern as evidence-kind / chunk-kind).
+        # compact read path (same pattern as evidence-kind / chunk-kind).
         status=coerce_enum(DecisionStatus, row["status"], DecisionStatus.ACTIVE),
         supersedes_decision_id=row["supersedes_decision_id"],
         source_episode_id=row["source_episode_id"],
@@ -81,10 +79,10 @@ def insert_decision_with_refs(
     params_without_refs: tuple[object, ...],
     refs_json: str | None,
 ) -> None:
-    """INSERT a decision row with references_json, falling back to the
-    pre-0027 schema (without the column) so legacy DBs keep working.
+    """INSERT a decision row with references_json, falling back when the
+    column is absent.
 
-    ``params_without_refs`` is the 13-tuple matching the legacy INSERT;
+    ``params_without_refs`` is the 13-tuple matching the column-less INSERT;
     when the new column is available we append refs_json as the 14th.
     Split out of decisions_repo.insert_decision_row to keep that module
     under the 150-SLOC ceiling.

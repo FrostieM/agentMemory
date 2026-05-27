@@ -60,7 +60,7 @@ def _event_response(event: MaintenanceEvent) -> MaintenanceEventResponse:
     )
 
 
-@router.post("/memory/list_maintenance_events", response_model=ListMaintenanceEventsResponse)
+@router.post("/memory/maintenance_events", response_model=ListMaintenanceEventsResponse)
 def list_maintenance_events_route(
     body: ListMaintenanceEventsRequest,
     conn: DbDep,

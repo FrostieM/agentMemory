@@ -47,13 +47,13 @@ def test_edit_synonym_match() -> None:
 
 
 def test_memory_tool_keyword_match() -> None:
-    rule = _rule("beh_d", ["memory_write_decision", "architectural decisions"])
-    assert is_rule_relevant(rule, "memory_write_decision") is True
+    rule = _rule("beh_d", ["memory_write kind=decision", "architectural decisions"])
+    assert is_rule_relevant(rule, "memory_write") is True
 
 
 def test_mcp_prefixed_memory_tool_match() -> None:
-    rule = _rule("beh_d", ["memory_write_decision"])
-    assert is_rule_relevant(rule, "mcp__agent-memory-lite__memory_write_decision") is True
+    rule = _rule("beh_d", ["memory_write kind=decision"])
+    assert is_rule_relevant(rule, "mcp__agent-memory-lite__memory_write") is True
 
 
 def test_unmatched_applies_to_still_relevant_default() -> None:

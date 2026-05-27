@@ -4,20 +4,13 @@ A fresh adversarial agent audited the API & MCP layer:
   CRITICAL — canonical HTTP write routes (/memory/write|edit|pin|
              archive|rollback) dropped the ensure_workspace_writable
              guard their legacy predecessors carried
-  CRITICAL — the MCP v2-compat shim routed write-class tools to
-             storage.writer with no workspace-isolation guard
+  CRITICAL — the old MCP v2-compat shim routed write-class tools to
+             storage.writer with no workspace-isolation guard; that shim
+             has since been removed from the active v3 surface
   HIGH     — agent-supplied payload / fields keys were interpolated
              straight into SQL column lists (injection + workspace
              override)
   LOW      — canonical GET reads skipped ensure_workspace_readable
-
-A follow-up re-audit found one deeper bug behind CRITICAL #2:
-  RE-AUDIT CRITICAL — stdio_server._maybe_compat_dispatch wrapped the
-             shim call in ``except Exception: return None``, so the
-             v2-compat workspace guard's ValueError was swallowed and
-             the call fell THROUGH to the native v2 handler — re-opening
-             the cross-workspace write hole. The guard now runs before
-             the try/except and returns an explicit block envelope.
 
 This file locks every fix so a re-audit finds nothing.
 """
@@ -26,17 +19,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
 from agent_memory_lite.config.settings import Settings
-
-# storage.writer (versions snapshot) needs the canonical schema — the
-# main apply_migrations path does not create the ``versions`` table.
-_CANON = Path(__file__).resolve().parents[3] / "migrations" / "canonical"
-_SCHEMA = _CANON / "0001_init.sql"
-_OUTCOME = _CANON / "0002_outcome_loop.sql"
 
 
 def _strict_settings() -> Settings:
@@ -58,8 +44,9 @@ def _strict_settings() -> Settings:
 def db() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA.read_text(encoding="utf-8"))
-    conn.executescript(_OUTCOME.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     try:
         yield conn
     finally:
@@ -85,20 +72,18 @@ def test_write_endpoint_blocks_foreign_workspace(db: sqlite3.Connection) -> None
         write_endpoint(req, db, _strict_settings())
 
 
-def test_edit_pin_archive_rollback_block_foreign_workspace(db: sqlite3.Connection) -> None:
-    """The other 4 canonical write routes carry the same guard."""
+def test_edit_pin_archive_block_foreign_workspace(db: sqlite3.Connection) -> None:
+    """The remaining canonical mutation routes carry the same guard."""
     from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
     from agent_memory_lite.api.routes.memory import (  # noqa: PLC0415
         archive_endpoint,
         edit_endpoint,
         pin_endpoint,
-        rollback_endpoint,
     )
     from agent_memory_lite.api.schemas.memory import (  # noqa: PLC0415
         ArchiveRequest,
         EditRequest,
         PinRequest,
-        RollbackRequest,
     )
 
     s = _strict_settings()
@@ -114,14 +99,6 @@ def test_edit_pin_archive_rollback_block_foreign_workspace(db: sqlite3.Connectio
         )
     with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
         archive_endpoint(ArchiveRequest(workspace_id="ws-victim", kind="decision", id="d1"), db, s)
-    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
-        rollback_endpoint(
-            RollbackRequest(
-                workspace_id="ws-victim", kind="decision", id="d1", to_version=1, why="x"
-            ),
-            db,
-            s,
-        )
 
 
 def test_write_endpoint_allows_anchor_workspace(db: sqlite3.Connection) -> None:
@@ -136,43 +113,6 @@ def test_write_endpoint_allows_anchor_workspace(db: sqlite3.Connection) -> None:
     )
     env = write_endpoint(req, db, _strict_settings())
     assert env.ok is True
-
-
-# ---------- CRITICAL: MCP v2-compat shim enforces isolation ----------
-
-
-def test_compat_dispatch_blocks_foreign_workspace_write(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """compat_dispatch must re-guard write-class shims. A v2
-    memory_write_decision targeting a foreign workspace under strict
-    mode must raise rather than reach storage.writer."""
-    from agent_memory_lite.mcp import v2_compat  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        v2_compat.compat_dispatch(
-            db,
-            "memory_write_decision",
-            {"workspace_id": "ws-victim", "title": "pwn", "decision_text": "x"},
-        )
-
-
-def test_compat_dispatch_read_tool_not_workspace_guarded(
-    db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A read-class shim (search) is NOT workspace-write-guarded —
-    cross-workspace reads are intentionally allowed."""
-    from agent_memory_lite.mcp import v2_compat  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    # Must not raise on a foreign workspace_id — returns an envelope.
-    out = v2_compat.compat_dispatch(
-        db, "memory_search", {"workspace_id": "ws-other", "query": "anything"}
-    )
-    assert out is not None
 
 
 # ---------- HIGH: payload / fields keys whitelisted before SQL ----------
@@ -261,165 +201,10 @@ def test_edit_drops_unknown_field_keys(db: sqlite3.Connection) -> None:
     assert out2 is not None
 
 
-# ---------- RE-AUDIT CRITICAL: the dispatch shim must surface the block ----------
+# ---------- ROUND-5 RE-AUDIT: HTTP maintenance writes ----------
 #
-# CRITICAL #2 added _ensure_workspace_writable inside the v2-compat shim,
-# but stdio_server._maybe_compat_dispatch wrapped the shim call in
-# ``except Exception: return None`` ("the shim must never raise"). A
-# blocked write raised ValueError -> caught -> returned None -> the call
-# fell through to the separately-registered native v2 handler, re-opening
-# the cross-workspace write hole. The guard now runs BEFORE that
-# try/except and returns an explicit error envelope.
-
-
-def test_maybe_compat_dispatch_blocks_foreign_write_with_envelope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A blocked foreign-workspace v2-compat write must return an explicit
-    error ENVELOPE from _maybe_compat_dispatch — never None. None would
-    fall the call through to the native v2 handler."""
-    from agent_memory_lite.mcp import stdio_server  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(stdio_server, "v2_compat_enabled", lambda: True)
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-
-    result = stdio_server._maybe_compat_dispatch(
-        "memory_write_decision",
-        {"workspace_id": "ws-victim", "title": "pwn", "decision_text": "x"},
-    )
-    assert result is not None, "blocked write fell through to the native handler"
-    assert result["ok"] is False
-    assert result["error"]["code"] == "workspace_isolation_blocked"
-    assert "STRICT_WORKSPACE_ISOLATION" in result["error"]["message"]
-
-
-def test_maybe_compat_dispatch_allows_anchor_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sanity: the guard does not false-positive — an anchor-workspace
-    write proceeds to compat_dispatch instead of returning the block."""
-    from agent_memory_lite.mcp import stdio_server  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(stdio_server, "v2_compat_enabled", lambda: True)
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    sentinel: dict[str, object] = {"ok": True, "dispatched": "compat"}
-    monkeypatch.setattr(stdio_server, "compat_dispatch", lambda *_a: sentinel)
-    monkeypatch.setattr(_runtime, "db_for", lambda *_a: object())
-
-    result = stdio_server._maybe_compat_dispatch(
-        "memory_write_decision",
-        {"workspace_id": "ws-anchor", "title": "legit", "decision_text": "x"},
-    )
-    assert result == sentinel
-
-
-# ---------- RE-AUDIT HIGH: v3.1 / review MCP write handlers missed the guard ----------
-#
-# A re-audit found four MCP handlers that route to a caller-supplied
-# workspace_id via _runtime.db_for(ws) and WRITE, with no
-# _ensure_workspace_writable: memory_propose_experiments (persist=true),
-# memory_promote_candidate, memory_reject_candidate and
-# memory_resolve_maintenance_event. Each now calls
-# _workspace_from_args(intent="write") before touching a DB.
-
-
-def test_mcp_promote_candidate_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """memory_promote_candidate writes (status + decision/theory/behavior
-    rows + audit) — a foreign workspace_id under strict mode must be
-    rejected before _runtime.db_for opens the DB."""
-    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        stdio_handlers_review._handle_promote_candidate(
-            {"workspace_id": "ws-victim", "candidate_id": "c1"}
-        )
-
-
-def test_mcp_reject_candidate_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """memory_reject_candidate writes a status update + audit row."""
-    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        stdio_handlers_review._handle_reject_candidate(
-            {"workspace_id": "ws-victim", "candidate_id": "c1"}
-        )
-
-
-def test_mcp_resolve_maintenance_event_blocks_foreign_workspace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """memory_resolve_maintenance_event writes status + resolved_at + audit."""
-    from agent_memory_lite.mcp import stdio_handlers_review  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        stdio_handlers_review._handle_resolve_maintenance_event(
-            {"workspace_id": "ws-victim", "event_id": "e1"}
-        )
-
-
-def test_mcp_propose_experiments_persist_blocks_foreign_workspace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """memory_propose_experiments with persist=true writes memory_candidate
-    rows — that path now requires write intent. (persist=false stays a
-    cross-workspace-allowed read.)"""
-    from agent_memory_lite.mcp import stdio_handlers_v3_1  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        stdio_handlers_v3_1._handle_propose_experiments(
-            {"workspace_id": "ws-victim", "persist": True}
-        )
-
-
-# ---------- ROUND-5 RE-AUDIT: compact_trigger + HTTP candidate/maintenance writes ----------
-#
-# A round-5 re-audit found one more MCP handler of the same class
-# (_handle_compact_trigger — check_compaction_threshold writes a
-# maintenance event) plus the HTTP candidate / maintenance action routes,
-# which write but carried no workspace-isolation guard. compact_trigger
-# now guards with write intent; the HTTP action requests gained an
-# optional workspace_id and the routes call ensure_workspace_writable.
-
-
-def test_mcp_compact_trigger_blocks_foreign_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """memory_compact_trigger writes a compaction_due maintenance event
-    when overdue — a foreign workspace_id under strict mode is rejected."""
-    from agent_memory_lite.mcp import stdio_handlers_review_queue  # noqa: PLC0415
-    from agent_memory_lite.mcp.stdio_runtime import _runtime  # noqa: PLC0415
-
-    monkeypatch.setattr(_runtime, "settings", _strict_settings())
-    with pytest.raises(ValueError, match="STRICT_WORKSPACE_ISOLATION"):
-        stdio_handlers_review_queue._handle_compact_trigger({"workspace_id": "ws-victim"})
-
-
-def test_http_promote_candidate_blocks_foreign_workspace(db: sqlite3.Connection) -> None:
-    """POST /memory/promote_candidate into a foreign workspace is rejected."""
-    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
-    from agent_memory_lite.api.routes.candidates import promote_candidate_route  # noqa: PLC0415
-    from agent_memory_lite.api.schemas.candidates import CandidateActionRequest  # noqa: PLC0415
-
-    req = CandidateActionRequest(candidate_id="c1", workspace_id="ws-victim")
-    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
-        promote_candidate_route(req, db, _strict_settings())
-
-
-def test_http_reject_candidate_blocks_foreign_workspace(db: sqlite3.Connection) -> None:
-    """POST /memory/reject_candidate into a foreign workspace is rejected."""
-    from agent_memory_lite.api.errors import ValidationError  # noqa: PLC0415
-    from agent_memory_lite.api.routes.candidates import reject_candidate_route  # noqa: PLC0415
-    from agent_memory_lite.api.schemas.candidates import CandidateActionRequest  # noqa: PLC0415
-
-    req = CandidateActionRequest(candidate_id="c1", workspace_id="ws-victim")
-    with pytest.raises(ValidationError, match="STRICT_WORKSPACE_ISOLATION"):
-        reject_candidate_route(req, db, _strict_settings())
+# The active MCP stdio surface is v3-only. Maintenance mutations remain HTTP
+# concerns, so this audit locks the HTTP action routes directly.
 
 
 def test_http_compact_trigger_blocks_foreign_workspace(db: sqlite3.Connection) -> None:

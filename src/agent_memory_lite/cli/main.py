@@ -1,13 +1,12 @@
 """memory-cli entrypoint.
 
-Mirrors the 8 HTTP endpoints. JSON to stdout; exit 1 on
+Mirrors the canonical v3 HTTP endpoints. JSON to stdout; exit 1 on
 ``envelope.ok == false``. Defaults: ``--base-url
 http://127.0.0.1:8765``, ``--workspace`` from ``AGENT_MEMORY_WORKSPACE``
 env, ``--timeout 30``.
 
 Subcommands:
-    brief, list, get, count, search, write, edit, pin,
-    archive, lint, skill, rollback, versions
+    brief, get, search, write, edit, pin, archive, lint, skill
 
 Examples:
     memory-cli brief --workspace=agentLight
@@ -83,26 +82,6 @@ def cmd_brief(args: argparse.Namespace) -> int:
     return _print_envelope(env, text_mode=args.text)
 
 
-def cmd_list(args: argparse.Namespace) -> int:
-    params: dict[str, Any] = {
-        "workspace_id": args.workspace,
-        "kind": args.kind,
-        "limit": args.limit,
-    }
-    if args.pinned_only:
-        params["pinned_only"] = True
-    if args.status:
-        params["status"] = args.status
-    env = _request(
-        "GET",
-        "/memory/list",
-        base_url=args.base_url,
-        timeout=args.timeout,
-        params=params,
-    )
-    return _print_envelope(env)
-
-
 def cmd_get(args: argparse.Namespace) -> int:
     params: dict[str, Any] = {
         "workspace_id": args.workspace,
@@ -119,22 +98,6 @@ def cmd_get(args: argparse.Namespace) -> int:
         params=params,
     )
     return _print_envelope(env, text_mode=args.text)
-
-
-def cmd_count(args: argparse.Namespace) -> int:
-    params: dict[str, Any] = {"workspace_id": args.workspace, "kind": args.kind}
-    if args.pinned_only:
-        params["pinned_only"] = True
-    if args.status:
-        params["status"] = args.status
-    env = _request(
-        "GET",
-        "/memory/count",
-        base_url=args.base_url,
-        timeout=args.timeout,
-        params=params,
-    )
-    return _print_envelope(env)
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -269,36 +232,6 @@ def cmd_skill(args: argparse.Namespace) -> int:
     return _print_envelope(env, text_mode=args.text)
 
 
-def cmd_rollback(args: argparse.Namespace) -> int:
-    body = {
-        "workspace_id": args.workspace,
-        "kind": args.kind,
-        "id": args.id,
-        "to_version": args.to_version,
-        "why": args.why,
-        "agent_id": args.agent_id,
-    }
-    env = _request(
-        "POST",
-        "/memory/rollback",
-        base_url=args.base_url,
-        timeout=args.timeout,
-        json=body,
-    )
-    return _print_envelope(env)
-
-
-def cmd_versions(args: argparse.Namespace) -> int:
-    env = _request(
-        "GET",
-        "/memory/versions",
-        base_url=args.base_url,
-        timeout=args.timeout,
-        params={"workspace_id": args.workspace, "kind": args.kind, "id": args.id},
-    )
-    return _print_envelope(env)
-
-
 # ============================================================
 # Argparse wiring
 # ============================================================
@@ -322,14 +255,6 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — 13 subcomma
     p.add_argument("--text", action="store_true", help="Plain markdown to stdout")
     p.set_defaults(handler=cmd_brief)
 
-    p = sub.add_parser("list", help="List rows of a kind as compact projections")
-    _global_args(p)
-    p.add_argument("--kind", required=True)
-    p.add_argument("--limit", type=int, default=20)
-    p.add_argument("--pinned-only", action="store_true")
-    p.add_argument("--status", default=None)
-    p.set_defaults(handler=cmd_list)
-
     p = sub.add_parser("get", help="Fetch one row by id")
     _global_args(p)
     p.add_argument("--kind", required=True)
@@ -337,13 +262,6 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — 13 subcomma
     p.add_argument("--fields", default=None, help="Comma-separated extra columns")
     p.add_argument("--text", action="store_true")
     p.set_defaults(handler=cmd_get)
-
-    p = sub.add_parser("count", help="COUNT(*) for a kind")
-    _global_args(p)
-    p.add_argument("--kind", required=True)
-    p.add_argument("--pinned-only", action="store_true")
-    p.add_argument("--status", default=None)
-    p.set_defaults(handler=cmd_count)
 
     p = sub.add_parser("search", help="Multi-kind compact-projection search")
     _global_args(p)
@@ -394,20 +312,6 @@ def _build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 — 13 subcomma
     p.add_argument("id")
     p.add_argument("--text", action="store_true")
     p.set_defaults(handler=cmd_skill)
-
-    p = sub.add_parser("rollback", help="Restore historical version as new version")
-    _global_args(p)
-    p.add_argument("--kind", required=True)
-    p.add_argument("--id", required=True)
-    p.add_argument("--to-version", type=int, required=True)
-    p.add_argument("--why", required=True)
-    p.set_defaults(handler=cmd_rollback)
-
-    p = sub.add_parser("versions", help="List version history")
-    _global_args(p)
-    p.add_argument("--kind", required=True)
-    p.add_argument("--id", required=True)
-    p.set_defaults(handler=cmd_versions)
 
     return parser
 

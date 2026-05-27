@@ -29,7 +29,7 @@ Three options were considered:
 
 - **A. One service per project, on different ports.** Simple isolation
   but every project needs a port allocation, the user has to remember
-  which port goes with which project, and `inject_memory_context.py`
+  which port goes with which project, and the UserPromptSubmit brief hook
   has to learn how to discover the right port. Bookkeeping doesn't
   scale.
 

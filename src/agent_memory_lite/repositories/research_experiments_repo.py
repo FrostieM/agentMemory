@@ -1,4 +1,4 @@
-"""SQL operations for ``research_experiments``."""
+"""SQL operations for canonical ``experiments``."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def insert_experiment_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO research_experiments (
+        INSERT INTO experiments (
             id, workspace_id, theory_id, snapshot_id, title, hypothesis,
             cohort_definition, success_criteria_json, command, status, priority,
             owner, due_at, source_episode_id, metadata_json, created_at,
@@ -69,9 +69,7 @@ def insert_experiment_row(
 
 
 def get_experiment(conn: sqlite3.Connection, experiment_id: str) -> Experiment | None:
-    row = conn.execute(
-        "SELECT * FROM research_experiments WHERE id = ?", (experiment_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM experiments WHERE id = ?", (experiment_id,)).fetchone()
     return row_to_experiment(row) if row is not None else None
 
 
@@ -115,7 +113,7 @@ def list_experiments(
 ) -> list[Experiment]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM research_experiments WHERE workspace_id = ? {extra_sql}",
+        f"SELECT * FROM experiments WHERE workspace_id = ? {extra_sql}",
         (workspace_id, *extra_params),
     ).fetchall()
     experiments = [row_to_experiment(row) for row in rows]
@@ -150,7 +148,7 @@ def mark_experiment_completed(
 ) -> None:
     conn.execute(
         """
-        UPDATE research_experiments
+        UPDATE experiments
         SET status = 'completed', updated_at = ?, completed_at = COALESCE(completed_at, ?)
         WHERE id = ?
         """,

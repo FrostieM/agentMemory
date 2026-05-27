@@ -1,9 +1,8 @@
 """Trust gate.
 
-Untrusted document content (project files, third-party docs) must never be
-promoted to core memory or procedural rules — those are operating instructions
-the agent will follow. Only user-asserted, verified-by-tool, or explicit
-decisions can be promoted there.
+Untrusted document content (project files, third-party docs) must never become
+execution-shaping decisions or behaviors. Only user-asserted,
+verified-by-tool, or explicit decisions can pass the high-trust floor.
 """
 
 from __future__ import annotations
@@ -13,10 +12,9 @@ from agent_memory_lite.models.candidates import MemoryCandidate, StoredMemoryCan
 from agent_memory_lite.models.enums import MemoryCandidateKind, TrustLevel
 
 # v3.5 sector-3 audit-followup: expanded list of kinds that an
-# UNTRUSTED_DOC candidate must NOT promote into. Previously only
-# PROCEDURAL_RULE / CONSTRAINT were guarded — DECISION / CORRECTION /
-# BUG / FIX could land as candidates from doc-sourced episodes, then
-# the operator could promote them into behaviors / decisions / core.
+# UNTRUSTED_DOC candidate must NOT promote into. DECISION / CORRECTION /
+# BUG / FIX can land as candidates from doc-sourced episodes, then the
+# operator could promote them into behaviors or decisions.
 # All six kinds carry execution-shaping semantic weight, so they all
 # need the higher trust floor.
 PROMOTABLE_KINDS: frozenset[MemoryCandidateKind] = frozenset(

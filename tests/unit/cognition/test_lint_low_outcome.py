@@ -4,25 +4,20 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
 from agent_memory_lite.cognition.lint import _prior_failures
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -129,7 +124,9 @@ def test_handles_pre_migration_db_gracefully() -> None:
     """When outcome_score column does not exist, _prior_failures must not raise."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     # Do NOT apply 0002. _prior_failures should still return rejected theories
     # and skip the outcome queries silently.
     c.execute(

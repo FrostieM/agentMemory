@@ -34,12 +34,12 @@ def _seed_skill(
 ) -> None:
     now = "2026-05-10T00:00:00+00:00"
     conn.execute(
-        """INSERT INTO agent_skills
-           (id, workspace_id, name, summary, when_to_use_json, inputs_json,
+        """INSERT INTO skills
+           (id, workspace_id, name, subtype, summary, when_to_use_json, inputs_json,
             outputs_json, tools_json, related_roles_json, source_episode_id,
             confidence, active, created_at, updated_at,
             usage_count, success_count, failure_count, last_invoked_at)
-           VALUES (?, ?, ?, ?, '[]', '[]', '[]', '[]', '[]', NULL, 0.9, 1,
+           VALUES (?, ?, ?, 'skill', ?, '[]', '[]', '[]', '[]', '[]', NULL, 0.9, 1,
                    ?, ?, 0, 0, 0, NULL)""",
         (skill_id, workspace_id, name, summary, now, now),
     )

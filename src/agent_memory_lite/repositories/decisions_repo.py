@@ -62,9 +62,9 @@ def insert_decision_row(
     created_at: str,
     references: list[str] | None = None,
 ) -> None:
-    """1.3.0: ``references`` is a list of file paths / ``path:symbol``
-    markers serialised into ``references_json``. Tolerates pre-0027
-    schemas via the helper's try/except.
+    """``references`` is a list of file paths / ``path:symbol`` markers
+    serialised into ``references_json``. Tolerates schemas without that
+    column via the helper's try/except.
     """
     insert_decision_with_refs(
         conn,

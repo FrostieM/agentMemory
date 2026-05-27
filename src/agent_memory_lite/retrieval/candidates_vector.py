@@ -32,9 +32,8 @@ def collect_vector(
         return []
     # v3.5 sector-2 audit-followup: tolerate embedder + vector-store
     # failures so a corrupt LanceDB table / Ollama OOM / model cold-start
-    # error cannot 500 the entire ``/memory/get_context``. Retrieval
-    # degrades gracefully to FTS-only when this returns ``[]``. The
-    # caller (``context_builder``) already handles empty vector results.
+    # error cannot 500 the entire compact read path. Retrieval
+    # degrades gracefully to FTS-only when this returns ``[]``.
     try:
         vectors = provider.embed_batch([query], kind="query")
     except Exception as exc:  # every embed failure must degrade to FTS-only, not crash

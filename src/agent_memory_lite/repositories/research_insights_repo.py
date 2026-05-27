@@ -1,4 +1,4 @@
-"""SQL operations for ``research_insights``."""
+"""SQL operations for canonical ``insights``."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def insert_insight_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO research_insights (
+        INSERT INTO insights (
             id, workspace_id, insight_type, summary, proposed_action,
             target_type, target_id, source_episode_ids_json, confidence,
             status, tags_json, created_at, updated_at
@@ -63,7 +63,7 @@ def insert_insight_row(
 
 
 def get_insight(conn: sqlite3.Connection, insight_id: str) -> ResearchInsight | None:
-    row = conn.execute("SELECT * FROM research_insights WHERE id = ?", (insight_id,)).fetchone()
+    row = conn.execute("SELECT * FROM insights WHERE id = ?", (insight_id,)).fetchone()
     return row_to_insight(row) if row is not None else None
 
 
@@ -90,7 +90,7 @@ def update_insight_row(
     values.append(updated_at)
     values.append(insight_id)
     conn.execute(
-        f"UPDATE research_insights SET {', '.join(assignments)} WHERE id = ?",
+        f"UPDATE insights SET {', '.join(assignments)} WHERE id = ?",
         tuple(values),
     )
 
@@ -134,7 +134,7 @@ def list_insights(
 ) -> list[ResearchInsight]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM research_insights WHERE workspace_id = ? {extra_sql}",
+        f"SELECT * FROM insights WHERE workspace_id = ? {extra_sql}",
         (workspace_id, *extra_params),
     ).fetchall()
     insights = [row_to_insight(row) for row in rows]

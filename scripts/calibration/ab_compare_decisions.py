@@ -10,7 +10,7 @@ Usage:
     python scripts/calibration/ab_compare_decisions.py \
         --db <path> --workspace <id>
 
-Calibration evidence in docs/V1_1_0_CALIBRATION.md.
+Historical calibration evidence lives in git history.
 """
 
 from __future__ import annotations

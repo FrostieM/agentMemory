@@ -13,14 +13,14 @@ import sqlite3
 
 from agent_memory_lite.api.errors import ValidationError
 from agent_memory_lite.extraction.trust_gate import passes_trust_gate
-from agent_memory_lite.ingestion.core_memory_writer import write_core_memory
+from agent_memory_lite.ingestion.behavior_writer import upsert_behavior_instruction
+from agent_memory_lite.ingestion.candidate_behavior import behavior_payload_from_candidate
 from agent_memory_lite.ingestion.decision_writer import write_decision
-from agent_memory_lite.ingestion.procedural_writer import write_procedural_rule
+from agent_memory_lite.ingestion.research_writer_insights import distill_insight
 from agent_memory_lite.models.candidates import StoredMemoryCandidate
-from agent_memory_lite.models.core_memory import CoreMemoryIn
 from agent_memory_lite.models.decisions import DecisionIn
-from agent_memory_lite.models.enums import MemoryCandidateKind
-from agent_memory_lite.models.procedural import ProceduralRuleIn
+from agent_memory_lite.models.enums import InsightStatus, InsightType, MemoryCandidateKind
+from agent_memory_lite.models.research import ResearchInsightIn
 
 
 def _promote_decision(
@@ -40,42 +40,54 @@ def _promote_decision(
     return "decision", decision.id
 
 
-def _promote_procedural_rule(
-    conn: sqlite3.Connection, candidate: StoredMemoryCandidate
-) -> tuple[str, str]:
-    rule = write_procedural_rule(
-        conn,
-        ProceduralRuleIn(
-            workspace_id=candidate.workspace_id,
-            rule_text=candidate.evidence or candidate.subject,
-            source_episode_id=candidate.source_episode_id,
-            confidence=candidate.confidence,
-            importance=candidate.importance,
-        ),
-    )
-    return "procedural_rule", rule.id
-
-
 def _promote_constraint(
     conn: sqlite3.Connection, candidate: StoredMemoryCandidate
 ) -> tuple[str, str]:
-    core = write_core_memory(
+    behavior = upsert_behavior_instruction(
+        conn, behavior_payload_from_candidate(candidate, workspace_id=candidate.workspace_id)
+    )
+    return "behavior", behavior.id
+
+
+def _insight_type_from_candidate(candidate: StoredMemoryCandidate) -> InsightType:
+    raw = str(candidate.metadata.get("insight_type") or "")
+    try:
+        return InsightType(raw)
+    except ValueError:
+        if raw in {"lesson_learned", "anti_pattern", "process_improvement"}:
+            return InsightType.LESSON
+        if raw == "hypothesis":
+            return InsightType.THEORY_CANDIDATE
+        return InsightType.OPEN_QUESTION
+
+
+def _promote_insight(conn: sqlite3.Connection, candidate: StoredMemoryCandidate) -> tuple[str, str]:
+    raw_episode_ids = candidate.metadata.get("source_episode_ids", [])
+    source_episode_ids = (
+        [str(item) for item in raw_episode_ids if isinstance(item, str)]
+        if isinstance(raw_episode_ids, list)
+        else []
+    )
+    insight = distill_insight(
         conn,
-        CoreMemoryIn(
+        ResearchInsightIn(
             workspace_id=candidate.workspace_id,
-            key=candidate.subject.strip().lower()[:80] or "candidate.constraint",
-            value=candidate.evidence or candidate.subject,
-            source_episode_id=candidate.source_episode_id,
+            insight_type=_insight_type_from_candidate(candidate),
+            summary=candidate.evidence or candidate.subject,
+            proposed_action=candidate.object,
+            source_episode_ids=source_episode_ids,
             confidence=candidate.confidence,
-            importance=candidate.importance,
+            status=InsightStatus.NEW,
+            tags=[],
         ),
     )
-    return "core_memory", core.id
+    return "insight", insight.id
 
 
 _PROMOTERS = {
     MemoryCandidateKind.DECISION: _promote_decision,
-    MemoryCandidateKind.PROCEDURAL_RULE: _promote_procedural_rule,
+    MemoryCandidateKind.INSIGHT: _promote_insight,
+    MemoryCandidateKind.PROCEDURAL_RULE: _promote_constraint,
     MemoryCandidateKind.CONSTRAINT: _promote_constraint,
 }
 
@@ -86,9 +98,9 @@ def promote_to_target(
     """Run the kind-specific promoter; raise when the kind isn't promotable.
 
     Round-2 audit: the trust gate used to run ONCE, at candidate-write
-    time inside ``auto_promote._filter``. Promotion — the actual
-    privilege escalation, candidate -> decision/procedural_rule/
-    core_memory — re-ran zero trust validation. A candidate whose
+    time inside ``auto_promote._filter``. Promotion is the actual
+    privilege escalation from candidate into decision or behavior memory.
+    The promotion path previously ran zero trust validation. A candidate whose
     ``trust_level`` was mutated after write (a direct DB edit, a future
     writer, or any path that skipped ``_filter``) could be promoted
     straight into execution-shaping memory. Re-check the gate here,
@@ -106,8 +118,7 @@ def promote_to_target(
             f"candidate {candidate.id} (kind={candidate.kind.value}, "
             f"trust={candidate.trust_level.value}) fails the trust gate: "
             "untrusted-document content cannot be promoted into "
-            "execution-shaping memory (decision / procedural_rule / "
-            "core_memory)."
+            "execution-shaping memory (decision / behavior)."
         )
     promoter = _PROMOTERS.get(candidate.kind)
     if promoter is None:

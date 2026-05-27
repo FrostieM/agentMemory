@@ -54,6 +54,7 @@ logs/
 # Per-developer Claude Code / agent runtime settings (contain absolute paths
 # baked by setup_agent.py --project; not portable across machines)
 .claude/
+.codex/
 
 # Per-developer analytic / triage reports (raw outputs from
 # memory_*_report.py / hygiene / dashboard scripts; not portable

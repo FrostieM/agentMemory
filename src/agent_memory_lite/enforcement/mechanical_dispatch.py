@@ -25,6 +25,12 @@ from agent_memory_lite.enforcement.mechanical_decision_provenance import (
 from agent_memory_lite.enforcement.mechanical_decision_provenance import (
     detect_decision_without_provenance,
 )
+from agent_memory_lite.enforcement.mechanical_impact_check_before_read import (
+    RULE_TAG as IMPACT_CHECK_BEFORE_READ_TAG,
+)
+from agent_memory_lite.enforcement.mechanical_impact_check_before_read import (
+    detect_read_without_impact_check,
+)
 from agent_memory_lite.enforcement.mechanical_magic_number import (
     RULE_TAG as MAGIC_NUMBER_TAG,
 )
@@ -77,6 +83,7 @@ _DETECTOR_REGISTRY: dict[str, _Detector] = {
     MAGIC_NUMBER_TAG: _run_magic_number,
     DECISION_PROVENANCE_TAG: _run_decision_provenance,
     READ_BEFORE_EDIT_TAG: detect_edit_without_read,
+    IMPACT_CHECK_BEFORE_READ_TAG: detect_read_without_impact_check,
     SEARCH_BEFORE_ARCH_TAG: detect_arch_write_without_search,
 }
 
@@ -110,7 +117,7 @@ def check_mechanical(
     ``trail`` carries the session's prior tool-call names (see
     ``session_trail.read_prior_tool_calls``); trail-aware detectors
     use it to check ordering invariants such as
-    Read/memory_file_digest-before-Edit.
+    memory_impact_check-before-Edit.
     """
     trail_value = trail or []
     violations: list[RuleViolation] = []

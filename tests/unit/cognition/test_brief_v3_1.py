@@ -17,11 +17,6 @@ import pytest
 from agent_memory_lite.cognition import brief as brief_mod
 from agent_memory_lite.cognition.brief import compose_brief
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -39,16 +34,12 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Production-like hybrid schema: legacy migrations apply first
-    (creating ``memory_candidates``, ``episodes``, ``decisions``), then
-    canonical overlays add ``insights`` + ``outcome_score`` columns."""
+    """Production-like canonical v3 schema."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     c = open_connection(tmp_path / "brief.db")
     apply_migrations(c)
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
     try:
         yield c
     finally:
@@ -64,7 +55,7 @@ def _seed_proposal_candidate(
         (f"ep_{cand_id}",),
     )
     conn.execute(
-        """INSERT INTO memory_candidates (
+        """INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id,
@@ -133,7 +124,7 @@ def test_brief_omits_proposals_when_status_not_new(conn: sqlite3.Connection) -> 
         hypothesis="Hypothesis: rejected-pattern detection",
     )
     conn.execute(
-        "UPDATE memory_candidates SET status = 'accepted' WHERE id = ?",
+        "UPDATE candidates SET status = 'accepted' WHERE id = ?",
         ("cand_prop_ins_promoted",),
     )
     conn.commit()

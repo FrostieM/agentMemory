@@ -2,7 +2,7 @@
 
 The normal eval harness runs against synthetic temporary databases. This module
 checks the real selected memory DB: known queries must surface known objects in
-`memory_get_context`, with the expected retrieval sources when specified.
+the compact read surface, with the expected retrieval sources when specified.
 
 Result types and the case loader live in
 ``retrieval_quality_models.py``; the per-case runner lives in

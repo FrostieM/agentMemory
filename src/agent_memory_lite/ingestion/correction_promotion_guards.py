@@ -35,7 +35,7 @@ def load_pending_correction(
     conn: sqlite3.Connection, *, workspace_id: str, candidate_id: str
 ) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        "SELECT * FROM memory_candidates WHERE id = ? AND workspace_id = ?",
+        "SELECT * FROM candidates WHERE id = ? AND workspace_id = ?",
         (candidate_id, workspace_id),
     ).fetchone()
     if row is None:
@@ -88,8 +88,7 @@ def guard_name_taken(
     if overwrite:
         return
     existing = conn.execute(
-        "SELECT id FROM behavior_instructions "
-        "WHERE workspace_id = ? AND name = ? AND COALESCE(active, 1) = 1",
+        "SELECT id FROM behaviors WHERE workspace_id = ? AND name = ? AND COALESCE(active, 1) = 1",
         (workspace_id, name),
     ).fetchone()
     if existing is None:

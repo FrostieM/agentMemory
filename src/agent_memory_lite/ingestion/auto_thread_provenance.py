@@ -1,6 +1,6 @@
 """Auto-thread source_episode_id from recent agent activity (Move 1).
 
-When `memory_write_decision` / `memory_write_theory` is called with
+When `memory_write(kind=decision)` / `memory_write_theory` is called with
 ``source_episode_id=None`` and the agent has recently ingested an
 episode in the same workspace, we wire the episode in automatically.
 

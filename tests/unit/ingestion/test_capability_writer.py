@@ -20,7 +20,7 @@ def test_capability_upserts_reuse_name_per_workspace(applied_conn: sqlite3.Conne
             purpose="Validate runtime health before changing data.",
             responsibilities=["Check health endpoints", "Report exact blockers"],
             boundaries=["Do not reset data without approval"],
-            tools=["/memory/get_context", "/health"],
+            tools=["/memory/brief", "/health"],
             confidence=0.8,
         ),
     )

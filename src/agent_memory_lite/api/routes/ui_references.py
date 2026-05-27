@@ -58,7 +58,7 @@ def add_references(
         "chunk": "chunks",
         "decision": "decisions",
         "theory": "theories",
-        "insight": "research_insights",
+        "insight": "insights",
     }
     source_table = (
         source_type_tables.get(str(row["source_type"]))
@@ -69,8 +69,8 @@ def add_references(
         ("source_episode_id", "episodes", "source"),
         ("episode_id", "episodes", "episode"),
         ("theory_id", "theories", "theory"),
-        ("snapshot_id", "memory_snapshots", "snapshot"),
-        ("experiment_id", "research_experiments", "experiment"),
+        ("snapshot_id", "snapshots", "snapshot"),
+        ("experiment_id", "experiments", "experiment"),
         ("source_id", source_table or "", "rates"),
         (
             "target_id",

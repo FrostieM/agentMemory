@@ -34,7 +34,7 @@ def _scrub(value: str | None) -> str | None:
     """Round-2 audit: re-redact LLM-extractor output. The episode
     raw_text is redacted upstream, but the Ollama model can echo a
     secret from the prompt into ``subject`` / ``evidence`` / ``object``;
-    those fields flow into ``memory_candidates`` rows + the audit log
+    those fields flow into ``candidates`` rows + the audit log
     without ever passing the redactor again. Scrub on the way out.
     ``redact`` rejects None, so guard the optional field."""
     if not value:
@@ -66,7 +66,7 @@ event. Reply with ONLY a JSON array — no markdown fences, no prose, no
 explanation, no leading or trailing text. Each item must be a JSON object
 with keys:
   kind: one of constraint, project_fact, decision, task_state, relationship,
-        procedural_rule, correction, bug, fix
+        rule, correction, bug, fix
   subject: short string
   predicate: short string
   object: optional string
@@ -164,7 +164,10 @@ class OllamaExtractor:
             if not isinstance(item, dict):
                 continue
             try:
-                kind = MemoryCandidateKind(item["kind"])
+                raw_kind = str(item["kind"])
+                if raw_kind == "rule":
+                    raw_kind = MemoryCandidateKind.PROCEDURAL_RULE.value
+                kind = MemoryCandidateKind(raw_kind)
             except (KeyError, ValueError):
                 continue
             if kind == MemoryCandidateKind.CORRECTION and not episode_is_user_message:

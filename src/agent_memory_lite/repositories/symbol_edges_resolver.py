@@ -8,7 +8,7 @@ matches one of the new qnames gets its ``dst_chunk_id`` populated.
 This closes the cross-file import case: file A imports ``B.foo``
 before file B is ingested, so the edge starts with
 ``dst_chunk_id=NULL``; once B is ingested and ``B.foo`` lands as a
-chunk, this resolver rewrites the edge so ``graph_neighbors`` can
+chunk, this resolver rewrites the edge so hard-graph readers can
 navigate from A → B.foo.
 """
 

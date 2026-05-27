@@ -2,8 +2,8 @@
 
 The pipeline runs the heuristic extractor (always) and, if configured, the
 Ollama LLM extractor. Each candidate goes through `meets_thresholds` and
-`passes_trust_gate`. Survivors land in `memory_candidates` for explicit review
-instead of mutating active decisions, procedural rules, or core memory.
+`passes_trust_gate`. Survivors land in `candidates` for explicit review
+instead of mutating active decisions or behaviors.
 
 Failures here never raise into the caller. Extraction is best-effort: we log and
 return `AutoPromoteStats` so the pipeline can include it in the result.

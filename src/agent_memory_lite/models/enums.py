@@ -10,8 +10,7 @@ and INSERT raw enum strings via plain SQL — the autonomous_loop, the
 code indexer, and the consolidation loop are all examples. Once such
 a writer ships a literal that the enum doesn't (yet) know about, the
 naive ``EnumCls(row["col"])`` call inside a row→model parser raises
-``ValueError`` and the whole read path (``/memory/get_context``,
-``/memory/list_*``, the brief) returns HTTP 500 silently.
+``ValueError`` and the whole compact read path returns HTTP 500 silently.
 
 ``coerce_enum`` is the universal safety net: it catches the
 ``ValueError``, returns the supplied ``fallback`` member, and lets
@@ -90,7 +89,7 @@ class ChunkKind(StrEnum):
     # bare strings in the chunks table for many releases before being
     # registered as enum values; until then every ``_row_to_chunk``
     # call on a real-code workspace raised ``ValueError`` and the
-    # whole ``/memory/get_context`` route returned HTTP 500.
+    # whole compact read route returned HTTP 500.
     BLOCK = "block"
     SYMBOL = "symbol"
 
@@ -129,7 +128,7 @@ class TheoryEvidenceKind(StrEnum):
     # in hygiene audits. The autonomous_loop bypassed the
     # ``add_theory_evidence`` repo helper and wrote the raw string
     # before this enum value existed, which caused every
-    # ``/memory/get_context`` call to crash with 500 the moment a
+    # compact read call to crash with 500 the moment a
     # theory carrying this evidence was gathered. Adding it as a
     # first-class enum value makes existing rows round-trip; see also
     # the defensive fallback in ``repositories/theories_search.py:
@@ -187,6 +186,7 @@ class MemoryCandidateKind(StrEnum):
     CONSTRAINT = "constraint"
     PROJECT_FACT = "project_fact"
     DECISION = "decision"
+    INSIGHT = "insight"
     TASK_STATE = "task_state"
     RELATIONSHIP = "relationship"
     PROCEDURAL_RULE = "procedural_rule"

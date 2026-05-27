@@ -7,7 +7,7 @@ A bug pattern hit production twice in v3.4 before being caught:
 2. The code indexer wrote ``chunks.kind='block'`` / ``'symbol'`` via raw
    SQL before those values were in ``ChunkKind``.
 
-Both crashed every ``/memory/get_context`` call with HTTP 500 — the
+Both crashed every compact read call with HTTP 500 — the
 ValueError raised by ``EnumCls(row["col"])`` inside a row→model parser
 escaped the whole envelope route.
 

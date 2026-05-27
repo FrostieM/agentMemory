@@ -12,7 +12,7 @@ from agent_memory_lite.models.facts import Fact
 def _row_to_fact(row: sqlite3.Row) -> Fact:
     # v3.5 audit-followup: drift-tolerant TrustLevel for the same reason
     # the other row→model parsers got it — a future writer that stamps an
-    # unregistered value must not 500 every /memory/get_context call.
+    # unregistered value must not 500 every compact read call.
     return Fact(
         id=row["id"],
         workspace_id=row["workspace_id"],

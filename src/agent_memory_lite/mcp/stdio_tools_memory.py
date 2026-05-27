@@ -20,14 +20,12 @@ Specialised:
   memory_status — self-introspection: anchor / registry / counts
   memory_plan — list one plan's steps by task_id, rank-ordered
 
-list / count / rollback / versions stay HTTP-only — accessible via
-``memory-cli`` for ops, but not in the hot MCP path. Keeps the
-agent's tool list small (single-screen).
+list / count / versions / rollback are deliberately absent from the active
+agent surface. Keeps the tool list small (single-screen).
 
-Legacy v2 tool names (``memory_record_with_evidence``,
-``memory_write_decision``, ``memory_ingest_episode``, etc.) are
-served by ``mcp/v2_compat.py`` which translates them onto this
-canonical backend — they no longer have their own implementation.
+Legacy v2-specific tool names are not registered on the stdio surface. Use
+``memory_write`` / ``memory_get`` / ``memory_search`` and compact projections
+directly.
 """
 
 from __future__ import annotations
@@ -253,7 +251,7 @@ MEMORY_TOOLS: list[types.Tool] = [
             "hot symbols (>=3 callers each), verdict (low / medium / high "
             "/ not_indexed), and an advisory naming the right follow-up "
             "tool. Replaces a 3-call sequence (file_digest + "
-            "graph_neighbors + ad-hoc Grep) with one cheap envelope. Use "
+            "legacy graph lookups + ad-hoc Grep) with one cheap envelope. Use "
             "this INSTEAD of Read whenever the goal is impact analysis or "
             "symbol discovery; Read is fallback for understanding unknown "
             "algorithm logic."

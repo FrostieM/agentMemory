@@ -11,12 +11,10 @@ What it does (idempotent — safe to re-run):
    - Ollama binary + daemon + qwen2.5:7b-instruct model
    - Memory SQLite db + LanceDB store
    - Claude Code, Codex, Cursor configuration directories
-3. Bootstraps the database if missing AND applies the v3.0.0-final
-   brain migrations (0002_outcome_loop, 0003_hebbian,
-   0004_consolidation_feedback, 0005_reflexes, 0006_self_model,
-   0007_bi_temporal, 0008_causal_links). All idempotent.
+3. Bootstraps the database if missing and applies all root migrations via
+   the shared ``apply_migrations`` runner. All migrations are idempotent.
 4. Seeds the 4 pinned discipline behaviors (graph-tools-first,
-   search-before-write, capability-link-on-write, maintain-plan-steps)
+   search-before-write, capability-suggestion-on-write, maintain-plan-steps)
    AND the 3 Phase-4 baseline reflex rules (advisory enforcement —
    operator promotes to block via memory_edit once they fire reliably).
 5. Sets `OLLAMA_PROBE_SKIP` based on Ollama availability.
@@ -32,8 +30,8 @@ What it does (idempotent — safe to re-run):
    - `PreToolUse` enforcement via `scripts/pre_tool_use_check.py`
      (fail-OPEN on any exception — never blocks tool calls on
      unrelated errors).
-   The legacy v2 `inject_memory_context.py` hook is auto-evicted on every
-   run — this is the canonical surface. Skip all hook wiring with `--no-hook`.
+   Any old context hook command is auto-evicted on every run. Skip all hook
+   wiring with `--no-hook`.
 8. Emits a per-runtime "generic" snippet to stdout for any agent not detected.
 9. Smoke-tests the MCP server (initialize + tools/list) and prints a "verified"
    summary.
@@ -57,39 +55,31 @@ from typing import Any
 
 import httpx
 
-from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (
+_REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[1]
+_SRC_ROOT_FOR_IMPORTS = _REPO_ROOT_FOR_IMPORTS / "src"
+for _path in (_SRC_ROOT_FOR_IMPORTS, _REPO_ROOT_FOR_IMPORTS):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (  # noqa: E402
     install_pre_tool_use_hook,
 )
-from agent_memory_lite.bootstrap.project_pre_commit_hook import (
+from agent_memory_lite.bootstrap.project_pre_commit_hook import (  # noqa: E402
     install_project_pre_commit_hook,
 )
-from agent_memory_lite.utils.time import iso_now
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO_ROOT / "docs" / "AGENT_CONTRACT.md"
 # Memory discipline stack hooks (see docs/MEMORY_AGENT_RUNTIMES.md).
-# The legacy v2 ``scripts/inject_memory_context.py`` hook still ships as
-# a backwards-compat surface but is no longer installed by this script;
-# ``_remove_v2_inject_hook`` evicts it from settings.json on every run.
+# ``_remove_v2_inject_hook`` evicts old context-hook commands from
+# settings.json on every run.
 V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
-V3_SCHEMA_PATH = REPO_ROOT / "migrations" / "canonical" / "0001_init.sql"
-# v3.0.0-final memory-brain migrations. Each is idempotent within a single
-# run (CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS), but ALTER
-# TABLE ADD COLUMN is NOT idempotent in SQLite -- _apply_brain_migrations
-# below swallows the "duplicate column" error on re-run.
-V3_BRAIN_MIGRATIONS = (
-    "0002_outcome_loop.sql",
-    "0003_hebbian.sql",
-    "0004_consolidation_feedback.sql",
-    "0005_reflexes.sql",
-    "0006_self_model.sql",
-    "0007_bi_temporal.sql",
-    "0008_causal_links.sql",
-)
 V3_POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
-PRETOOLUSE_HOOK_MATCHER = "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_.*"
+PRETOOLUSE_HOOK_MATCHER = (
+    "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*"
+)
 MARKER_BEGIN = "<!-- agent-memory-lite-contract:begin -->"
 MARKER_END = "<!-- agent-memory-lite-contract:end -->"
 DEFAULT_MODEL = "qwen2.5:7b-instruct"
@@ -275,13 +265,11 @@ def bootstrap_db() -> None:
 
 
 def _remove_v2_inject_hook(settings: dict[str, object]) -> int:
-    """Strip the legacy ``agent-memory-lite-inject`` entry from UserPromptSubmit.
+    """Strip old context-hook entries from UserPromptSubmit.
 
-    v2's ``inject_memory_context.py`` hook used to ship alongside the canonical
-    brief hook; running both on every prompt doubles token cost.  This is
-    now the canonical surface, so future setup_agent runs evict the v2
-    entry.  Idempotent: returns the count actually removed (0 when the
-    hook was never installed or already evicted).
+    Running an old context hook alongside the canonical brief hook doubles
+    prompt cost and can call removed endpoints. Idempotent: returns the
+    count actually removed (0 when no stale hook was present).
     """
     hooks = settings.get("hooks")
     if not isinstance(hooks, dict):
@@ -299,11 +287,17 @@ def _remove_v2_inject_hook(settings: dict[str, object]) -> int:
         if not isinstance(inner, list):
             kept.append(entry)
             continue
-        survivors = [
-            h
-            for h in inner
-            if not (isinstance(h, dict) and "agent-memory-lite-inject" in str(h.get("command", "")))
-        ]
+        survivors = []
+        for h in inner:
+            if not isinstance(h, dict):
+                survivors.append(h)
+                continue
+            command = str(h.get("command", ""))
+            is_legacy = (
+                "agent-memory-lite-inject" in command or "inject_memory_context.py" in command
+            )
+            if not is_legacy:
+                survivors.append(h)
         removed += len(inner) - len(survivors)
         if survivors:
             entry["hooks"] = survivors
@@ -320,7 +314,7 @@ def install_v3_brief_hook(
     vector_path: Path | None = None,
     workspace_id: str | None = None,
 ) -> None:
-    """Add the canonical UserPromptSubmit brief hook (replaces the v2 inject_memory_context path).
+    """Add the canonical UserPromptSubmit brief hook.
 
     Idempotent: identifies prior entries by the ``memory-brief`` marker (legacy ``v3-brief`` also accepted)
     and overwrites them on re-run.
@@ -451,130 +445,40 @@ def install_v3_postedit_hook(settings: dict[str, object], *, venv_python: Path) 
         existing["matcher"] = V3_POSTTOOLUSE_MATCHER
 
 
-# canonical-only columns that ``CREATE TABLE IF NOT EXISTS`` skips for v2-shape
-# tables. We patch them in explicitly via ALTER TABLE. Discovered when canonical
-# writer crashed on agentLight workspace:
-# ``sqlite3.OperationalError: table decisions has no column named gist``.
-# Add new entries here when the canonical schema grows additional columns on shared kinds.
-_V3_INPLACE_COLUMNS = (
-    ("decisions", "gist", "TEXT"),
-    ("theories", "gist", "TEXT"),
-    ("episodes", "gist", "TEXT"),
-    ("chunks", "gist", "TEXT"),
-)
+def install_codex_project_hooks(project_root: Path, *, venv_python: Path) -> str:
+    """Install the same project hook stack into <project>/.codex/hooks.json.
 
-
-def _apply_v3_inplace_columns(conn: Any) -> int:
-    """ALTER TABLE add canonical-only columns to v2-shape tables. Returns count added."""
-    added = 0
-    for table, column, sql_type in _V3_INPLACE_COLUMNS:
-        try:
-            cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-        except Exception:  # table may simply not exist yet (fresh canonical DB)
-            continue
-        if column in cols:
-            continue
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
-            added += 1
-        except Exception as exc:  # surface but don't crash setup
-            warn(f"could not ALTER {table} ADD {column}: {exc}")
-    return added
-
-
-def _apply_brain_migrations(conn: Any) -> int:
-    """Apply v3.0.0-final migrations 0002-0008. Returns count of statements that ran.
-
-    Each migration is CREATE-TABLE-IF-NOT-EXISTS for new tables and bare
-    ALTER-TABLE-ADD-COLUMN for columns on existing tables. SQLite refuses
-    duplicate ALTERs with ``OperationalError: duplicate column name`` --
-    we split each migration into individual statements and swallow that
-    exact error so the function is safe to re-run on a partially-or-
-    fully-migrated DB.
-
-    Each applied migration is recorded in the ``schema_migrations``
-    ledger (same table used by the canonical runner in
-    ``db/migrations.py``). This makes ``/health.applied_migrations``
-    accurate and lets a fresh-checkout setup skip already-applied
-    migrations cheaply. The version is prefixed with ``canonical/`` to
-    avoid colliding with the root migrations folder which uses bare
-    ``NNNN_slug`` keys.
+    Claude Code stores hooks inside .claude/settings.json. Codex Desktop reads
+    project hooks from .codex/hooks.json, so project setup must keep both files
+    on the same canonical v3 hook contract.
     """
-    import contextlib  # noqa: PLC0415
-    import sqlite3  # noqa: PLC0415
+    hooks_path = project_root / ".codex" / "hooks.json"
+    settings: dict[str, object] = {}
+    status = "created"
+    if hooks_path.exists():
+        try:
+            loaded = json.loads(hooks_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            hooks_path.with_suffix(".json.bak").write_text(
+                hooks_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            loaded = {}
+            status = "repaired"
+        if isinstance(loaded, dict):
+            settings = loaded
+            if status == "created":
+                status = "updated"
+        else:
+            status = "repaired"
 
-    # Ensure the ledger exists. db/migrations.py creates it lazily, but
-    # if the canonical schema landed via executescript without ever
-    # routing through apply_migrations() the table may be missing.
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations ("
-        "version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
-    )
-    already_applied = {
-        row[0]
-        for row in conn.execute(
-            "SELECT version FROM schema_migrations WHERE version LIKE 'canonical/%'"
-        ).fetchall()
-    }
+    _remove_v2_inject_hook(settings)
+    install_v3_brief_hook(settings, venv_python=venv_python)
+    install_v3_postedit_hook(settings, venv_python=venv_python)
+    install_pre_tool_use_hook(settings, venv_python=venv_python, hook_script=PRETOOLUSE_HOOK_SCRIPT)
 
-    migrations_dir = REPO_ROOT / "migrations" / "canonical"
-    applied = 0
-    for filename in V3_BRAIN_MIGRATIONS:
-        version = f"canonical/{Path(filename).stem}"
-        path = migrations_dir / filename
-        if not path.exists():
-            warn(f"brain migration missing: {path}")
-            continue
-        if version in already_applied:
-            # Already in ledger from a prior setup_agent run. The SQL is
-            # idempotent so re-running would still succeed, but skipping
-            # is faster and removes the noise from setup output.
-            continue
-        sql = path.read_text(encoding="utf-8")
-        # Strip ``-- ...`` comment lines BEFORE splitting on ``;`` so a
-        # semicolon inside a comment (common in our headers) does not
-        # fragment a single CREATE TABLE across two chunks. The v3
-        # migrations don't embed semicolons in literals or triggers, so
-        # this is sufficient.
-        clean_lines = [line for line in sql.splitlines() if not line.lstrip().startswith("--")]
-        clean_sql = "\n".join(clean_lines)
-        # Apply ALL statements in this migration inside a single
-        # transaction so a partial failure leaves the DB unchanged. If
-        # every statement succeeds (or is a tolerated duplicate-column
-        # skip), commit + record the version in the ledger.
-        # Already-in-transaction is fine — the outer commit() flushes.
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("BEGIN")
-        stmt_applied = 0
-        rollback = False
-        for stmt in (s.strip() for s in clean_sql.split(";")):
-            if not stmt:
-                continue
-            try:
-                conn.execute(stmt)
-                stmt_applied += 1
-            except sqlite3.OperationalError as exc:
-                msg = str(exc).lower()
-                if "duplicate column" in msg or "already exists" in msg:
-                    continue
-                warn(f"brain migration {filename} stmt failed: {exc}")
-                rollback = True
-                break
-            except sqlite3.Error as exc:
-                warn(f"brain migration {filename} stmt failed: {exc}")
-                rollback = True
-                break
-        if rollback:
-            with contextlib.suppress(sqlite3.Error):
-                conn.rollback()
-            continue
-        applied += stmt_applied
-        conn.execute(
-            "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-            (version, iso_now()),
-        )
-        conn.commit()
-    return applied
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return status
 
 
 def _seed_reflex_rules_for_setup(conn: Any, *, workspace_id: str) -> int:
@@ -608,56 +512,34 @@ def _seed_reflex_rules_for_setup(conn: Any, *, workspace_id: str) -> int:
         return 0
 
 
-def apply_v3_schema_and_seed(db_path: Path, *, workspace_id: str) -> None:
-    """Apply the canonical schema (idempotent IF NOT EXISTS) + seed 3 pinned discipline rules.
+def apply_migrations_and_seed(db_path: Path, *, workspace_id: str) -> None:
+    """Apply root migrations through the shared runner and seed discipline rules."""
+    import sqlite3  # noqa: PLC0415
 
-    Safe to call on a v2 DB: canonical adds new tables alongside v2 tables;
-    existing tables are skipped by CREATE TABLE IF NOT EXISTS.  For
-    columns that the canonical schema adds to *existing* v2 tables (gist on decisions /
-    theories / episodes), we patch via ALTER TABLE so the canonical writer
-    can populate them.
-    """
-    import sqlite3  # noqa: PLC0415 — std-lib local import keeps top imports tidy
-
-    if not V3_SCHEMA_PATH.exists():
-        warn(f"canonical schema missing at {V3_SCHEMA_PATH} -- skipping canonical deployment")
-        return
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
-        conn.executescript(V3_SCHEMA_PATH.read_text(encoding="utf-8"))
-        conn.commit()
-        # Patch canonical-only columns onto pre-existing v2-shape tables.
-        added = _apply_v3_inplace_columns(conn)
-        if added:
-            conn.commit()
-            ok(f"canonical inplace columns added (+{added}: gist on decisions/theories/episodes)")
-        # v3.0.0-final: apply brain-memory migrations 0002-0008. Idempotent.
-        brain_stmts = _apply_brain_migrations(conn)
-        if brain_stmts:
-            ok(
-                f"brain migrations applied ({brain_stmts} statements across {len(V3_BRAIN_MIGRATIONS)} files)"
-            )
-        # Defer the seed import: keeps setup_agent's top imports clean,
-        # and the script directory is added to sys.path below if needed.
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        applied = apply_migrations(conn)
+        if applied:
+            ok(f"migrations applied ({len(applied)}): {', '.join(applied[-5:])}")
         repo_root_str = str(REPO_ROOT)
         if repo_root_str not in sys.path:
             sys.path.insert(0, repo_root_str)
         from scripts.seed_memory_discipline import seed_discipline  # noqa: PLC0415
 
         results = seed_discipline(conn, workspace_id=workspace_id)
-        # v3.0.0-final Phase 4: seed the 3 baseline reflex rules. Always
-        # advisory at seed time -- operator promotes to block via memory_edit.
         reflex_inserted = _seed_reflex_rules_for_setup(conn, workspace_id=workspace_id)
     except sqlite3.Error as exc:
-        warn(f"canonical schema/seed failed: {exc}")
+        warn(f"migration/seed failed: {exc}")
         return
     finally:
         conn.close()
     inserted = sum(1 for r in results if r.status == "inserted")
     skipped = sum(1 for r in results if r.status == "skipped")
     ok(
-        f"canonical schema applied + discipline rules seeded "
+        f"schema current + discipline rules seeded "
         f"(inserted={inserted}, skipped={skipped}, "
         f"total={len(results)})"
     )
@@ -898,9 +780,7 @@ def configure_claude_code(diag: Diagnosis, *, install_hook: bool) -> None:
     ok("MCP server entry written to ~/.claude/settings.json")
 
     if install_hook:
-        # Canonical surface is now live; evict the legacy v2
-        # inject_memory_context hook on every run so we don't double-emit
-        # memory context on each UserPromptSubmit.
+        # Evict old context hooks so each UserPromptSubmit gets one brief.
         evicted = _remove_v2_inject_hook(settings)
         if evicted:
             ok(f"removed legacy v2 inject hook ({evicted} entr{'y' if evicted == 1 else 'ies'})")
@@ -1089,6 +969,8 @@ def configure_project(  # noqa: PLR0912, PLR0915
     ok(f"MCP entry + project-scoped hook written to {settings_path}")
     ok("memory brief + PostToolUse digest hooks installed (Phase 5 discipline stack)")
     ok(f"PreToolUse enforcement hook {pretooluse_status} (blocks rule-violating tool calls)")
+    codex_hooks_status = install_codex_project_hooks(project_root, venv_python=diag.venv_python)
+    ok(f"Codex project hooks {codex_hooks_status} in {project_root / '.codex' / 'hooks.json'}")
 
     contract_path = project_root / "CLAUDE.md"
     status = upsert_contract(contract_path)
@@ -1125,11 +1007,9 @@ def configure_project(  # noqa: PLR0912, PLR0915
     if seed_bootstrap:
         seed_memory_bootstrap(diag.venv_python, db_path=db_path, workspace_id=workspace_id)
 
-    # Canonical -- apply schema (idempotent) + seed the 3 pinned discipline
-    # rules so every Claude Code session in this project sees the graph-tools-
-    # first / search-before-write / capability-link-on-write rules in the
-    # brief's behaviors section.
-    apply_v3_schema_and_seed(db_path, workspace_id=workspace_id)
+    # Keep the project DB current through the same runner used by bootstrap_db,
+    # then seed discipline/reflex rows.
+    apply_migrations_and_seed(db_path, workspace_id=workspace_id)
 
     hook_result = install_project_pre_commit_hook(
         repo_root=REPO_ROOT, project_root=project_root, workspace_id=workspace_id
@@ -1195,7 +1075,7 @@ def smoke_test_mcp(diag: Diagnosis) -> bool:
         fail("MCP server did not respond within 30s")
         return False
 
-    if "agent-memory-lite" not in proc.stdout or '"memory_get_context"' not in proc.stdout:
+    if "agent-memory-lite" not in proc.stdout or '"memory_brief"' not in proc.stdout:
         fail("MCP server response missing expected fields")
         info(f"stderr tail: {proc.stderr[-500:]}")
         return False

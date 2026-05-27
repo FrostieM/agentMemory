@@ -155,7 +155,7 @@ def main() -> int:  # noqa: PLR0915 — single CLI main, naturally long
         )
     if ratio < 0.3 and (s_total + w_total) > 30:
         print("HINT: search rate is low. Agent may be missing the search-discipline BI.")
-        print('  Verify <behavior_instructions> envelope contains "Search before write".')
+        print('  Run memory_brief and verify body_md includes "search-before-write".')
 
     return 0
 

@@ -135,11 +135,11 @@ def fetch_top_capabilities(
     limit: int = 3,
     timeout: float = 5.0,
 ) -> dict[str, Any] | None:
-    """POST /memory/list_agent_capabilities with the user query. Returns ``None`` on error."""
+    """POST /memory/search for skill projections. Returns ``None`` on error."""
     try:
         response = httpx.post(
-            f"{base_url}/memory/list_agent_capabilities",
-            json={"workspace_id": workspace_id, "query": query, "limit": limit},
+            f"{base_url}/memory/search",
+            json={"workspace_id": workspace_id, "query": query, "kinds": ["skill"], "limit": limit},
             headers=headers or {},
             timeout=timeout,
             trust_env=False,
@@ -149,4 +149,14 @@ def fetch_top_capabilities(
         body = response.json()
     except (httpx.ConnectError, httpx.HTTPError, ValueError):
         return None
-    return body if isinstance(body, dict) else None
+    if not isinstance(body, dict):
+        return None
+    raw_hits = body.get("data")
+    hits = raw_hits if isinstance(raw_hits, list) else []
+    skills: list[dict[str, Any]] = []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        projection = hit.get("projection")
+        skills.append(projection if isinstance(projection, dict) else hit)
+    return {"roles": [], "skills": skills}

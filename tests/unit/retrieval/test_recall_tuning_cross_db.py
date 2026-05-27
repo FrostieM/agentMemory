@@ -26,8 +26,6 @@ import pytest
 from agent_memory_lite.retrieval import recall_tuning as rt
 from agent_memory_lite.retrieval import recall_tuning_cross_db as cdb
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "0034_recall_history.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -48,7 +46,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def _make_db(path: Path) -> None:
     """Create a recall_history DB at ``path`` using the v3.1 migration."""
     conn = sqlite3.connect(path)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(conn)
     conn.close()
 
 

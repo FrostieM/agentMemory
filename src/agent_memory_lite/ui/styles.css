@@ -117,7 +117,7 @@ code, pre, .mono {
 .ws-val:focus { outline: 1px solid var(--accent-soft); }
 .token-input { font-family: ui-monospace, monospace; font-size: 11px; }
 
-/* ===== UI nav strip (links between /ui, /ui/code, /ui/graph) ============= */
+/* ===== UI nav strip for v3 pages ======================================= */
 
 .app-nav {
   display: flex;
@@ -849,8 +849,8 @@ code, pre, .mono {
 /* "archived" badge — desaturated grey pill on inspector rows whose
    underlying row carries any soft-delete flag (is_archived=1 on
    chunks/episodes/files, status='archived'/'superseded'/'rejected'
-   on decisions/theories/insights, active=0 on capabilities &
-   behavior_instructions). The whole row is dimmed so the eye can
+   on decisions/theories/insights, active=0 on capabilities and
+   behaviors). The whole row is dimmed so the eye can
    skim the active items without losing the archived ones. */
 .row-archived {
   font-size: 9px;

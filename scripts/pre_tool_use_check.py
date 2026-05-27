@@ -21,7 +21,7 @@ Configure in ``~/.claude/settings.json``:
     {
       "hooks": {
         "PreToolUse": [{
-          "matcher": "Edit|Write|NotebookEdit|Bash|mcp__agent-memory-lite__memory_write_.*",
+          "matcher": "Read|Edit|Write|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*",
           "hooks": [{
             "type": "command",
             "command": "<venv-python> <repo>/scripts/pre_tool_use_check.py"
@@ -44,6 +44,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    from hook_audit import record_hook_event
+except ImportError:  # pragma: no cover - used when tests import scripts as a package
+    from scripts.hook_audit import record_hook_event
+
 with contextlib.suppress(AttributeError, ValueError):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 with contextlib.suppress(AttributeError, ValueError):
@@ -57,6 +62,18 @@ _DEFAULT_REGISTRY = (
     else Path.home() / ".agent_memory" / "workspaces.json"
 )
 _DEBUG_LOG_ENV = "MEMORY_PRETOOLUSE_DEBUG"
+
+
+def _env_values(*names: str) -> list[str]:
+    """Return non-empty env values in priority order, without duplicates."""
+    values: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value and value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values
 
 
 def _bypass_enabled() -> bool:
@@ -114,14 +131,14 @@ def _resolve_workspace(cwd: str) -> tuple[str, str] | None:
     """Walk up from ``cwd`` until a registered project_root matches.
 
     Returns ``(workspace_id, db_path)`` or None if nothing matches. An
-    explicit ``AGENT_MEMORY_WORKSPACE`` env var overrides the lookup
-    when the registry holds a matching id.
+    explicit ``MEMORY_WORKSPACE_ID`` env var overrides the lookup when
+    the registry holds a matching id. ``AGENT_MEMORY_WORKSPACE`` remains
+    a legacy fallback.
     """
     entries = _load_registry_entries()
     if not entries:
         return None
-    explicit = os.environ.get("AGENT_MEMORY_WORKSPACE", "").strip()
-    if explicit:
+    for explicit in _env_values("MEMORY_WORKSPACE_ID", "AGENT_MEMORY_WORKSPACE"):
         for entry in entries:
             if isinstance(entry, dict) and entry.get("id") == explicit:
                 db = _safe_registry_path(str(entry.get("db_path", "")))
@@ -153,38 +170,39 @@ def _read_event() -> dict[str, Any] | None:
     return event if isinstance(event, dict) else None
 
 
-def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str]:  # noqa: PLR0911 - guard chain
+def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # noqa: PLR0911 - guard chain
     """Resolve workspace + run dispatch.decide.
 
-    Returns ``(allow, diagnostic, workspace_id)``. ``workspace_id`` is
-    ``"-"`` when no registry match was found, so the debug log can
-    record both "hook ran but no workspace" and "hook ran for ws=X".
-    Every failure path along the way collapses to a fail-open allow.
+    Returns ``(allow, diagnostic, workspace_id, db_path)``.
+    ``workspace_id`` is ``"-"`` when no registry match was found, so
+    the debug log can record both "hook ran but no workspace" and
+    "hook ran for ws=X". Every failure path along the way collapses to
+    a fail-open allow.
     """
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input") or {}
     transcript_path = event.get("transcript_path")
     cwd = event.get("cwd") or os.getcwd()
     if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
-        return True, "", "-"
+        return True, "", "-", ""
     resolved = _resolve_workspace(cwd)
     if resolved is None:
-        return True, "", "-"
+        return True, "", "-", ""
     workspace_id, db_path = resolved
     if not Path(db_path).exists():
-        return True, "", workspace_id
+        return True, "", workspace_id, db_path
     try:
         from agent_memory_lite.enforcement.dispatch import decide  # noqa: PLC0415
         from agent_memory_lite.enforcement.session_trail import (  # noqa: PLC0415
             read_prior_tool_calls,
         )
     except ImportError:
-        return True, "", workspace_id
+        return True, "", workspace_id, db_path
     trail = read_prior_tool_calls(transcript_path)
     try:
         conn = sqlite3.connect(db_path)
     except sqlite3.Error:
-        return True, "", workspace_id
+        return True, "", workspace_id, db_path
     try:
         decision = decide(
             conn,
@@ -202,24 +220,46 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str]:  # noqa: 
         # tool call with a stderr traceback that Claude Code may or
         # may not handle gracefully. Better to allow the call and let
         # the agent / operator notice memory is degraded.
-        return True, "", workspace_id
+        return True, "", workspace_id, db_path
     finally:
         conn.close()
-    return decision.allow, decision.diagnostic, workspace_id
+    return decision.allow, decision.diagnostic, workspace_id, db_path
 
 
 def main() -> int:
     if _bypass_enabled():
         _debug_log(tool_name="-", workspace_id="-", decision="bypass")
+        record_hook_event(
+            hook="PreToolUse",
+            event={},
+            workspace_id="-",
+            status="skip",
+            detail="bypass",
+        )
         return 0
     event = _read_event()
     if event is None:
         _debug_log(tool_name="-", workspace_id="-", decision="no_event")
+        record_hook_event(
+            hook="PreToolUse",
+            event={},
+            workspace_id="-",
+            status="skip",
+            detail="no_event",
+        )
         return 0
     tool_name = str(event.get("tool_name") or "-")
-    allow_call, diagnostic, workspace_id = _decide_for_event(event)
+    allow_call, diagnostic, workspace_id, db_path = _decide_for_event(event)
     decision_label = "allow" if allow_call else "block"
     _debug_log(tool_name=tool_name, workspace_id=workspace_id, decision=decision_label)
+    record_hook_event(
+        hook="PreToolUse",
+        event=event,
+        workspace_id=workspace_id,
+        status=decision_label,
+        db_path=db_path,
+        detail=diagnostic[:500] if diagnostic else "",
+    )
     if allow_call:
         return 0
     print(diagnostic, file=sys.stderr)
@@ -242,6 +282,13 @@ def _safe_main() -> int:
     except Exception as exc:
         with contextlib.suppress(Exception):
             _debug_log(tool_name="-", workspace_id="-", decision=f"crash:{type(exc).__name__}")
+            record_hook_event(
+                hook="PreToolUse",
+                event={},
+                workspace_id="-",
+                status="crash",
+                detail=type(exc).__name__,
+            )
         return 0
 
 

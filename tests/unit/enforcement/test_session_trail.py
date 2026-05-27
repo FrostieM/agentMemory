@@ -105,8 +105,8 @@ def test_has_called_bare_name_match() -> None:
 
 def test_has_called_mcp_prefixed_match() -> None:
     """MCP tool names appear prefixed; matcher accepts suffix match."""
-    trail = ["mcp__agent-memory-lite__memory_file_digest"]
-    assert has_called(trail, "memory_file_digest") is True
+    trail = ["mcp__agent-memory-lite__memory_impact_check"]
+    assert has_called(trail, "memory_impact_check") is True
 
 
 def test_has_called_no_candidates_returns_false() -> None:

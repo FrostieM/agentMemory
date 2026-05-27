@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -22,14 +21,14 @@ from agent_memory_lite.models.plan_step import PlanStepIn
 from agent_memory_lite.repositories.plan_step_repo import get_plan_step, list_plan_steps
 from agent_memory_lite.storage import writer
 
-_SCHEMA = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(_SCHEMA.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:

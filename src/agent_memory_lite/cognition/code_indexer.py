@@ -48,6 +48,7 @@ from agent_memory_lite.chunking.code import chunk_code
 from agent_memory_lite.cognition.digest_worker import (
     compute_digest as _compute_digest,
 )
+from agent_memory_lite.fts.chunks_fts import delete_chunk_fts, insert_chunk_fts
 from agent_memory_lite.ingestion.file_persist_edges import persist_edges_for_file
 
 logger = logging.getLogger("agent_memory_lite.code_indexer")
@@ -128,6 +129,12 @@ def _delete_prior_chunks_and_edges(
         """,
         (workspace_id, file_id, file_id),
     )
+    rows = conn.execute(
+        "SELECT id FROM chunks WHERE workspace_id = ? AND file_id = ?",
+        (workspace_id, file_id),
+    ).fetchall()
+    for row in rows:
+        delete_chunk_fts(conn, str(row[0]))
     conn.execute(
         "DELETE FROM chunks WHERE workspace_id = ? AND file_id = ?",
         (workspace_id, file_id),
@@ -139,6 +146,7 @@ def _insert_chunks(
     *,
     workspace_id: str,
     file_id: str,
+    path: str,
     text: str,
     language: str | None,
 ) -> list[tuple[str, str | None]]:
@@ -173,6 +181,15 @@ def _insert_chunks(
                 ck.parent_qualified_name,
                 now,
             ),
+        )
+        insert_chunk_fts(
+            conn,
+            chunk_id=chunk_id,
+            workspace_id=workspace_id,
+            path=path,
+            symbols=ck.symbols + (ck.extra_symbols or []),
+            text=ck.text,
+            summary=None,
         )
         out.append((chunk_id, ck.qualified_name))
     return out
@@ -281,6 +298,7 @@ def index_file(
             conn,
             workspace_id=workspace_id,
             file_id=file_id,
+            path=rel_path,
             text=content,
             language=language,
         )

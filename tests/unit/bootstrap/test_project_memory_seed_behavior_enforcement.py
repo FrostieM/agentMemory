@@ -82,11 +82,12 @@ def test_applies_to_lists_target_action_keywords() -> None:
     checklist = applies_to_checklist_verbatim_instruction("ws", None)
     assert "git commit" in checklist.applies_to
     assert "deploy" in checklist.applies_to
-    assert "memory_write_decision" in checklist.applies_to
+    assert "memory_write kind=decision" in checklist.applies_to
 
     verification = verification_claims_cite_evidence_instruction("ws", None)
     assert any("verification" in t for t in verification.applies_to)
 
     resolve = memory_write_resolve_candidates_instruction("ws", None)
+    assert "memory_write response" in resolve.applies_to
     assert "candidates_written field" in resolve.applies_to
     assert "capability_suggestions field" in resolve.applies_to

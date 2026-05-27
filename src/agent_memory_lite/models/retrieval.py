@@ -1,9 +1,4 @@
-"""Retrieval domain types.
-
-Wire types (request/response for `/memory/get_context`) live in
-`api/schemas/context.py`. These domain types are what the retrieval pipeline
-moves around internally.
-"""
+"""Internal retrieval domain types used before compact projection rendering."""
 
 from __future__ import annotations
 

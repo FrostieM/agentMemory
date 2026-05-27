@@ -14,11 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from agent_memory_lite.maintenance.hygiene_models import HygieneFinding
 
-CAPABILITY_TABLES: tuple[tuple[str, str], ...] = (
-    ("agent_skills", "skill"),
-    ("agent_roles", "role"),
-    ("agent_playbooks", "playbook"),
-)
+CAPABILITY_SUBTYPES: tuple[str, ...] = ("skill", "role", "playbook")
 
 
 def find_stale_capabilities(
@@ -30,18 +26,19 @@ def find_stale_capabilities(
     they are stale yet."""
     cutoff = (datetime.now(UTC) - timedelta(days=stale_days)).isoformat()
     findings: list[HygieneFinding] = []
-    for table, kind in CAPABILITY_TABLES:
+    for kind in CAPABILITY_SUBTYPES:
         rows = conn.execute(
-            f"""
+            """
             SELECT id, name, last_invoked_at, usage_count, success_count, failure_count
-            FROM {table}
+            FROM skills
             WHERE workspace_id = ?
+              AND subtype = ?
               AND active = 1
               AND last_invoked_at IS NOT NULL
               AND last_invoked_at < ?
             ORDER BY last_invoked_at
             """,
-            (workspace_id, cutoff),
+            (workspace_id, kind, cutoff),
         ).fetchall()
         for row in rows:
             findings.append(

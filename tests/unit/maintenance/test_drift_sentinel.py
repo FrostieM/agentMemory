@@ -15,8 +15,6 @@ from agent_memory_lite.maintenance.drift_sentinel import (
     is_enabled,
 )
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,8 +24,7 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Production-like hybrid schema: legacy migrations create chunks/
-    files/chunks_fts; canonical layers maintenance_events on top.
+    """Production-like canonical v3 schema.
 
     FK enforcement is disabled in this fixture so tests can seed
     orphan chunks directly (same state production lands in when a
@@ -37,7 +34,6 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
 
     c = open_connection(tmp_path / "drift.db")
     apply_migrations(c)
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     c.execute("PRAGMA foreign_keys = OFF")
     try:
         yield c
@@ -181,7 +177,7 @@ def _seed_capability_link(
 ) -> None:
     """Insert a capability_link row directly. Useful for orphan-seeding:
     the test can point ``capability_id`` at a row that was never inserted
-    into agent_skills/playbooks/roles, mimicking the production state
+    into skills rows, mimicking the production state
     where a capability got deleted but its links survived."""
     conn.execute(
         """INSERT INTO capability_links
@@ -205,12 +201,12 @@ def _seed_capability_link(
 
 
 def _seed_real_skill(conn: sqlite3.Connection, *, skill_id: str, ws: str = "ws") -> None:
-    """Insert an agent_skills row so a capability_link pointing at it is
+    """Insert a skills(subtype='skill') row so a capability_link pointing at it is
     NOT dangling. Mirrors the minimal columns the test corpus needs."""
     conn.execute(
-        """INSERT INTO agent_skills (id, workspace_id, name, summary,
-                                     active, created_at, updated_at)
-           VALUES (?, ?, 'fixture-skill', 'fixture', 1,
+        """INSERT INTO skills (id, workspace_id, name, subtype, summary,
+                               active, created_at, updated_at)
+           VALUES (?, ?, 'fixture-skill', 'skill', 'fixture', 1,
                    '2026-05-20T00:00:00+00:00',
                    '2026-05-20T00:00:00+00:00')""",
         (skill_id, ws),

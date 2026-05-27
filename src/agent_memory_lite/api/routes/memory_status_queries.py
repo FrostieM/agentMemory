@@ -51,35 +51,25 @@ def gather_memory_counts(conn: sqlite3.Connection, ws: str) -> MemoryCounts:
             conn, "theories", "WHERE workspace_id=? AND status NOT IN ('archived','rejected')", ws
         ),
         theories_total=safe_count(conn, "theories", "WHERE workspace_id=?", ws),
-        behavior_instructions_active=safe_count(
-            conn, "behavior_instructions", "WHERE workspace_id=? AND active=1", ws
-        ),
-        behavior_instructions_total=safe_count(
-            conn, "behavior_instructions", "WHERE workspace_id=?", ws
-        ),
-        capabilities_active_total=(
-            safe_count(conn, "agent_roles", "WHERE workspace_id=? AND active=1", ws)
-            + safe_count(conn, "agent_skills", "WHERE workspace_id=? AND active=1", ws)
-            + safe_count(conn, "agent_playbooks", "WHERE workspace_id=? AND active=1", ws)
+        behaviors_active=safe_count(conn, "behaviors", "WHERE workspace_id=? AND active=1", ws),
+        behaviors_total=safe_count(conn, "behaviors", "WHERE workspace_id=?", ws),
+        capabilities_active_total=safe_count(
+            conn, "skills", "WHERE workspace_id=? AND active=1", ws
         ),
         episodes_total=safe_count(conn, "episodes", "WHERE workspace_id=?", ws),
         chunks_total=safe_count(conn, "chunks", "WHERE workspace_id=? AND is_archived=0", ws),
-        insights_new=safe_count(
-            conn, "research_insights", "WHERE workspace_id=? AND status='new'", ws
-        ),
+        insights_new=safe_count(conn, "insights", "WHERE workspace_id=? AND status='new'", ws),
         pending_candidates=safe_count(
-            conn, "memory_candidates", "WHERE workspace_id=? AND status='new'", ws
+            conn, "candidates", "WHERE workspace_id=? AND status='new'", ws
         ),
     )
 
 
 def gather_code_counts(conn: sqlite3.Connection, ws: str) -> CodeMemoryCounts:
-    # Schema reference: migrations/0028_chunk_symbol_metadata.sql adds
-    # ``qualified_name`` and ``symbol_kind`` columns to chunks. Fresh DBs
-    # before migration 0028 will safe_count to zero via the introspection
-    # guard rather than crash.
+    # ``qualified_name`` and ``symbol_kind`` are optional on partial-schema
+    # DBs; safe_count returns zero via introspection rather than crashing.
     return CodeMemoryCounts(
-        files=safe_count(conn, "file_digests", "WHERE workspace_id=?", ws),
+        files=safe_count(conn, "code_digests", "WHERE workspace_id=?", ws),
         chunks_with_symbols=safe_count(
             conn,
             "chunks",
@@ -104,7 +94,7 @@ def gather_adoption(conn: sqlite3.Connection, ws: str) -> AdoptionRatios:
         return AdoptionRatios(
             decisions_with_source_episode_ratio=0.0,
             decisions_linked_to_capability_ratio=0.0,
-            behavior_instructions_fired_ratio=0.0,
+            behaviors_fired_ratio=0.0,
         )
     dec_w_src = safe_count(
         conn,
@@ -122,11 +112,11 @@ def gather_adoption(conn: sqlite3.Connection, ws: str) -> AdoptionRatios:
         if table_exists(conn, "capability_links")
         else 0
     )
-    beh_active = safe_count(conn, "behavior_instructions", "WHERE workspace_id=? AND active=1", ws)
+    beh_active = safe_count(conn, "behaviors", "WHERE workspace_id=? AND active=1", ws)
     beh_fired = (
         safe_count(
             conn,
-            "behavior_instructions",
+            "behaviors",
             "WHERE workspace_id=? AND active=1 AND application_count > 0",
             ws,
         )
@@ -136,7 +126,7 @@ def gather_adoption(conn: sqlite3.Connection, ws: str) -> AdoptionRatios:
     return AdoptionRatios(
         decisions_with_source_episode_ratio=round(dec_w_src / dec_active, 3),
         decisions_linked_to_capability_ratio=round(dec_linked / dec_active, 3),
-        behavior_instructions_fired_ratio=(round(beh_fired / beh_active, 3) if beh_active else 0.0),
+        behaviors_fired_ratio=(round(beh_fired / beh_active, 3) if beh_active else 0.0),
     )
 
 

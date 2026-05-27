@@ -47,10 +47,9 @@ class MaintenanceEvent(BaseModel):
     target_id: str | None
     created_at: str
     resolved_at: str | None
-    # v3.4 #6 hygiene action queue. Default 'open' so rows written before
-    # migration 0036 backfill cleanly (the column has NOT NULL DEFAULT 'open'
-    # in SQLite). assigned_to / action_notes / claimed_at / dismissed_at
-    # stay None until the operator interacts with the event.
+    # Hygiene action queue. Default 'open' so rows without explicit triage
+    # state serialise cleanly. assigned_to / action_notes / claimed_at /
+    # dismissed_at stay None until the operator interacts with the event.
     action_status: MaintenanceActionStatus = MaintenanceActionStatus.OPEN
     assigned_to: str | None = None
     action_notes: str | None = None

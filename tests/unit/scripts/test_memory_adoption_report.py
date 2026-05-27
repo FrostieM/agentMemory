@@ -5,8 +5,8 @@ Locks the three discipline ratios computed from audit_log:
 * candidate_triage — promote/reject per candidate write
 * decision_provenance — fraction of decisions with source_episode_id
 
-Audit_log captures only mutations; read-side adoption (search /
-file_digest / get_context) is intentionally OUT of scope.
+Audit_log captures only mutations; read-side adoption is intentionally
+OUT of scope.
 """
 
 from __future__ import annotations

@@ -86,7 +86,7 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "/memory/ui/state" in js.text
     assert "/memory/ui/events" in js.text
     assert "/memory/search" in js.text
-    assert "/memory/get_context" in js.text
+    assert "/memory/brief" in js.text
     # Uses SSE for live events.
     assert "EventSource" in js.text
     # Honors the asymmetric isolation contract: per-call X-Memory-DB-Path
@@ -244,16 +244,15 @@ def test_ui_events_stream_and_search_telemetry(
             json={
                 "workspace_id": "default",
                 "query": "telemetry search smoke",
-                "mode": "fts",
                 "limit": 5,
             },
         )
-        explain = client.post(
-            "/memory/explain_context",
-            json={
+        explain = client.get(
+            "/memory/brief",
+            params={
                 "workspace_id": "default",
-                "query": "telemetry search smoke",
-                "max_tokens": 2500,
+                "task": "telemetry search smoke",
+                "max_tokens": 500,
             },
         )
         state = client.get("/memory/ui/state?workspace_id=default")
@@ -267,16 +266,10 @@ def test_ui_events_stream_and_search_telemetry(
     state_body = state.json()
     labels = [event["label"] for event in state_body["latest_events"]]
     stages = [event["stage"] for event in state_body["latest_events"]]
-    used_graph_events = [
-        event
-        for event in state_body["latest_events"]
-        if event["type"] == "graph_delta" and event["counts"].get("action") == "used"
-    ]
     assert "Search query accepted" in labels
     assert "fts" in stages
-    assert used_graph_events
-    assert any(event["stage"] == "context" for event in used_graph_events)
-    assert any(event["counts"].get("object_type") == "chunk" for event in used_graph_events)
+    assert "response" in stages
+    assert any(event["counts"].get("hits", 0) >= 1 for event in state_body["latest_events"])
     assert state_body["active_requests"] == []
 
 

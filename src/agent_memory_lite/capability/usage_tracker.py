@@ -1,12 +1,10 @@
 """Single chokepoint for capability invocation + outcome counters.
 
-Both routes that surface capabilities (``list_agent_capabilities`` with
-``mark_used=true``) and the workflow harness funnel through here so the
-counters cannot drift from reality silently. Every mutation writes an
+Capability search/invocation flows and the workflow harness funnel through
+here so counters cannot drift from reality silently. Every mutation writes an
 ``audit_log`` row so the source of every count is replayable.
 
-Tables: agent_skills, agent_roles, agent_playbooks. All three share the
-same set of maturity columns (migration 0021).
+Canonical table: skills, with subtype=skill/role/playbook.
 """
 
 from __future__ import annotations
@@ -19,11 +17,6 @@ from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.utils.time import iso_now
 
 CapabilityKind = Literal["skill", "role", "playbook"]
-KIND_TO_TABLE: dict[str, str] = {
-    "skill": "agent_skills",
-    "role": "agent_roles",
-    "playbook": "agent_playbooks",
-}
 SUPPORTED_KINDS: tuple[str, ...] = ("skill", "role", "playbook")
 
 
@@ -38,11 +31,9 @@ class CapabilityMaturitySnapshot:
     last_invoked_at: str | None
 
 
-def _table_for(kind: str) -> str:
-    table = KIND_TO_TABLE.get(kind)
-    if table is None:
+def _ensure_supported(kind: str) -> None:
+    if kind not in SUPPORTED_KINDS:
         raise ValueError(f"unsupported capability kind: {kind!r}")
-    return table
 
 
 def record_invocation(
@@ -53,17 +44,17 @@ def record_invocation(
     capability_id: str,
 ) -> bool:
     """Bump usage_count + last_invoked_at. Returns True on a real update."""
-    table = _table_for(kind)
+    _ensure_supported(kind)
     now_iso = iso_now()
     cursor = conn.execute(
-        f"""
-        UPDATE {table}
+        """
+        UPDATE skills
         SET usage_count = usage_count + 1,
             last_invoked_at = ?,
             updated_at = ?
-        WHERE id = ? AND workspace_id = ?
+        WHERE id = ? AND workspace_id = ? AND subtype = ?
         """,
-        (now_iso, now_iso, capability_id, workspace_id),
+        (now_iso, now_iso, capability_id, workspace_id, kind),
     )
     if cursor.rowcount <= 0:
         return False
@@ -92,17 +83,17 @@ def record_outcome(
     invocation actually happened. Outcome reports without a prior invocation
     are still accepted (e.g. retroactive batch tagging) but only adjust the
     success/failure tally."""
-    table = _table_for(kind)
+    _ensure_supported(kind)
     column = "success_count" if success else "failure_count"
     now_iso = iso_now()
     cursor = conn.execute(
         f"""
-        UPDATE {table}
+        UPDATE skills
         SET {column} = {column} + 1,
             updated_at = ?
-        WHERE id = ? AND workspace_id = ?
+        WHERE id = ? AND workspace_id = ? AND subtype = ?
         """,
-        (now_iso, capability_id, workspace_id),
+        (now_iso, capability_id, workspace_id, kind),
     )
     if cursor.rowcount <= 0:
         return False
@@ -126,15 +117,15 @@ def get_maturity_snapshot(
     capability_id: str,
 ) -> CapabilityMaturitySnapshot | None:
     """Read the current counters for inspection / hygiene checks."""
-    table = _table_for(kind)
+    _ensure_supported(kind)
     row = conn.execute(
-        f"""
+        """
         SELECT id, name, confidence, usage_count, success_count, failure_count,
                last_invoked_at
-        FROM {table}
-        WHERE id = ? AND workspace_id = ?
+        FROM skills
+        WHERE id = ? AND workspace_id = ? AND subtype = ?
         """,
-        (capability_id, workspace_id),
+        (capability_id, workspace_id, kind),
     ).fetchone()
     if row is None:
         return None

@@ -4,7 +4,7 @@ Lets an operator (or UI / curl) trigger the proposal scanner without
 waiting for the next brain-pass tick. Two verbs:
 
 * **GET** — preview-only. Returns the list of proposals that the
-  scanner WOULD emit, without writing them to ``memory_candidates``.
+  scanner WOULD emit, without writing them to ``candidates``.
   Use for /ui/review experimentation.
 * **POST** — preview + persist. Scans and writes each proposal as a
   ``memory_candidate(kind=theory_proposal)`` row (idempotent via

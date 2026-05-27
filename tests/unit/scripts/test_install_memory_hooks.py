@@ -8,7 +8,7 @@ Covers:
   (idempotency)
 * ``apply_hooks`` writes the settings.json structure Claude Code
   expects (events / matcher / command)
-* ``apply_seed`` runs the v3 schema + seeds 4 rules; idempotent
+* ``apply_seed`` runs the v3 schema + seeds the pinned discipline rules; idempotent
 * Backup file is created when ``--backup-first``
 * Dry-run does NOT touch disk
 * main() with --apply / --no-hooks / --no-seed / --json
@@ -90,13 +90,13 @@ def test_build_plan_includes_both_hooks(project: Path, registry_file: Path) -> N
         workspaces_file=registry_file,
     )
     events = {h.event for h in plan.hooks}
-    assert events == {"UserPromptSubmit", "PostToolUse"}
+    assert events == {"UserPromptSubmit", "PreToolUse", "PostToolUse"}
     assert all(h.status == "pending" for h in plan.hooks)
     assert plan.workspace_id == "test-ws"
     assert plan.seed_rules == [
         "graph-tools-first",
         "search-before-write",
-        "capability-link-on-write",
+        "capability-suggestion-on-write",
         "maintain-plan-steps",
     ]
 
@@ -128,9 +128,46 @@ def test_build_plan_marks_existing_hooks_skipped(project: Path, registry_file: P
         workspaces_file=registry_file,
     )
     user_prompt = next(h for h in plan.hooks if h.event == "UserPromptSubmit")
+    pre_tool = next(h for h in plan.hooks if h.event == "PreToolUse")
     post_tool = next(h for h in plan.hooks if h.event == "PostToolUse")
     assert user_prompt.status == "skipped"
+    assert pre_tool.status == "pending"
     assert post_tool.status == "pending"  # not yet installed
+
+
+def test_build_plan_treats_split_pretooluse_matchers_as_installed(
+    project: Path, registry_file: Path
+) -> None:
+    """setup_agent.py writes one PreToolUse entry per matcher token."""
+    settings_path = project / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    split_pretool_entries = [
+        {
+            "matcher": token,
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": '"python" "...pre_tool_use_check.py" # agent-memory-lite-pretooluse',
+                }
+            ],
+        }
+        for token in installer.PRETOOLUSE_MATCHER.split("|")
+    ]
+    settings_path.write_text(
+        json.dumps({"hooks": {"PreToolUse": split_pretool_entries}}),
+        encoding="utf-8",
+    )
+
+    plan = installer.build_plan(
+        project_root=project,
+        python_bin="python",
+        install_hooks=True,
+        install_seed=False,
+        workspaces_file=registry_file,
+    )
+
+    pre_tool = next(h for h in plan.hooks if h.event == "PreToolUse")
+    assert pre_tool.status == "skipped"
 
 
 def test_build_plan_no_workspace_when_not_registered(project: Path, tmp_path: Path) -> None:
@@ -175,11 +212,15 @@ def test_apply_hooks_writes_expected_structure(project: Path, registry_file: Pat
     installer.apply_hooks(plan, backup=False)
     settings = json.loads(plan.settings_path.read_text(encoding="utf-8"))
     user_prompt_entries = settings["hooks"]["UserPromptSubmit"]
+    pre_tool_entries = settings["hooks"]["PreToolUse"]
     post_tool_entries = settings["hooks"]["PostToolUse"]
     assert len(user_prompt_entries) == 1
+    assert len(pre_tool_entries) == 1
     assert len(post_tool_entries) == 1
+    assert pre_tool_entries[0]["matcher"].startswith("Read|Edit|Write|MultiEdit")
     assert post_tool_entries[0]["matcher"].startswith("Edit|Write|NotebookEdit")
     assert "inject_memory_brief" in user_prompt_entries[0]["hooks"][0]["command"]
+    assert "pre_tool_use_check" in pre_tool_entries[0]["hooks"][0]["command"]
     assert "post_edit_enqueue" in post_tool_entries[0]["hooks"][0]["command"]
     # All hooks now marked applied.
     assert all(h.status == "applied" for h in plan.hooks)
@@ -205,6 +246,7 @@ def test_apply_hooks_is_idempotent(project: Path, registry_file: Path) -> None:
     installer.apply_hooks(plan2, backup=False)
     settings = json.loads(plan2.settings_path.read_text(encoding="utf-8"))
     assert len(settings["hooks"]["UserPromptSubmit"]) == 1
+    assert len(settings["hooks"]["PreToolUse"]) == 1
     assert len(settings["hooks"]["PostToolUse"]) == 1
 
 
@@ -247,6 +289,89 @@ def test_apply_hooks_preserves_unrelated_settings(project: Path, registry_file: 
     assert "hooks" in settings
 
 
+def test_apply_hooks_removes_legacy_inject_context(project: Path, registry_file: Path) -> None:
+    settings_path = project / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": '"python" "C:/old/scripts/inject_memory_context.py"',
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    plan = installer.build_plan(
+        project_root=project,
+        python_bin="python",
+        install_hooks=True,
+        install_seed=False,
+        workspaces_file=registry_file,
+    )
+    installer.apply_hooks(plan, backup=False)
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    commands = [
+        hook["command"]
+        for entries in settings["hooks"].values()
+        for entry in entries
+        for hook in entry["hooks"]
+    ]
+    assert not any("inject_memory_context.py" in command for command in commands)
+    assert any("inject_memory_brief.py" in command for command in commands)
+
+
+def test_apply_hooks_repairs_stale_pretooluse_matcher(project: Path, registry_file: Path) -> None:
+    settings_path = project / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Edit|Write|NotebookEdit|Bash",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": '"python" "...pre_tool_use_check.py" # agent-memory-lite-pretooluse',
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = installer.build_plan(
+        project_root=project,
+        python_bin="python",
+        install_hooks=True,
+        install_seed=False,
+        workspaces_file=registry_file,
+    )
+    assert next(h for h in plan.hooks if h.event == "PreToolUse").status == "pending"
+
+    installer.apply_hooks(plan, backup=False)
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    pre_tool_entries = settings["hooks"]["PreToolUse"]
+    assert len(pre_tool_entries) == 1
+    assert pre_tool_entries[0]["matcher"] == installer.PRETOOLUSE_MATCHER
+
+
 # ============================================================
 # apply_seed
 # ============================================================
@@ -274,8 +399,15 @@ def test_apply_seed_creates_schema_and_seeds_rules(
         ).fetchall()
     finally:
         conn.close()
-    assert len(rows) == 4
-    assert all(pinned == 1 for _, pinned in rows)
+    names = {name for name, _ in rows}
+    assert {
+        "pretooluse:impact-check-before-read",
+        "pretooluse:read-before-edit",
+        "pretooluse:search-before-architectural-write",
+        "pretooluse:decision-must-have-provenance",
+        "pretooluse:no-magic-number-in-strategy",
+    } <= names
+    assert all(pinned == 1 for name, pinned in rows if name.startswith("pretooluse:"))
 
 
 def test_apply_seed_idempotent_on_second_pass(project: Path, registry_file: Path) -> None:
@@ -353,6 +485,7 @@ def test_main_apply_writes_settings_and_seeds(
     assert rc == 0
     settings = json.loads((project / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert "UserPromptSubmit" in settings["hooks"]
+    assert "PreToolUse" in settings["hooks"]
     assert "PostToolUse" in settings["hooks"]
     db_path = json.loads(registry_file.read_text(encoding="utf-8"))["workspaces"][0]["db_path"]
     assert Path(db_path).exists()

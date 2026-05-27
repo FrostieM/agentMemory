@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -22,8 +21,6 @@ from agent_memory_lite.mcp.stdio_guards import (
 )
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -33,7 +30,9 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # has somewhere to land + we can inspect the result.
     stub_conn = sqlite3.connect(":memory:")
     stub_conn.row_factory = sqlite3.Row
-    stub_conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(stub_conn)
     monkeypatch.setattr(_runtime, "db", lambda: stub_conn)
     relaxed = _runtime.settings.model_copy(
         update={

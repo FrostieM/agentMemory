@@ -24,9 +24,6 @@ from agent_memory_lite.retrieval.scoring import _clamp
 from agent_memory_lite.vector_store.base import VectorRow, VectorStoreUnavailableError
 from agent_memory_lite.vector_store.lancedb_store import _safe_json_loads
 
-SCHEMA = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
-
 # ---------- #1: FTS5 MATCH injection / operator-bomb ----------
 
 
@@ -34,7 +31,9 @@ SCHEMA = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "000
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:

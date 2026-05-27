@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-memory-lite"
-version = "3.7.1"
+version = "3.8.0"
 description = "Local memory subsystem for an AI agent (SQLite + FTS5 + LanceDB + local providers)."
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -117,9 +117,6 @@ ignore = ["PLR0913", "PLR2004", "E501"]
 "tests/integration/test_correction_detector_on_corpus.py" = ["RUF001", "RUF003", "PT006"]
 "tests/e2e/test_promote_to_behavior.py" = ["RUF001", "RUF003"]
 "scripts/crash_test/phases/p26_v110_correction.py" = ["RUF001", "RUF003"]
-# Hook capture flow has many early-return branches by design; loop-var
-# rebinding in the transcript tail-reader is an established idiom.
-"scripts/inject_memory_context.py" = ["PLR0911", "PLR0912", "SIM105"]
 "scripts/transcript_pair_extractor.py" = ["PLW2901"]
 # 2.2 Move 3: stopword list deliberately stored as one-line "x y z".split()
 # instead of a 50-line list literal so the file stays tiny.

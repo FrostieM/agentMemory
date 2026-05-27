@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read Claude Code's session JSONL and find the most recent assistant turn.
 
-The UserPromptSubmit hook (``inject_memory_context.py``) calls
+The UserPromptSubmit memory brief hook can call
 ``find_last_assistant_text(transcript_path)`` to retrieve the agent's
 last text-only claim within a recent time window. The hook then pairs
 that claim with the current user prompt; if the pair fits the
@@ -16,8 +16,8 @@ Invariants:
 * Bounded — only reads the tail of the file (default 400 lines).
 * Filters out tool_use / tool_result blocks; only pure text claims count.
 
-The function is callable from ``inject_memory_context.py`` as a library
-import; it has no side effects when imported.
+The function is callable as a library import and has no side effects
+when imported.
 """
 
 from __future__ import annotations

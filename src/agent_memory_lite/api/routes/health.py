@@ -47,8 +47,9 @@ class FeedbackSignalSummaryModel(BaseModel):
 class PendingReviewModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    decision_candidates: int
-    insight_candidates: int
+    decision_reviews: int
+    insight_reviews: int
+    correction_reviews: int
     total: int
 
 
@@ -80,7 +81,9 @@ _SHALLOW_INTEGRITY_STUB = RetrievalIntegritySummary(
 _SHALLOW_FEEDBACK_STUB = FeedbackSignalSummaryModel(
     enabled=False, total_rows=0, unique_sources=0, self_loop_ratio=0.0, last_feedback_at=None
 )
-_SHALLOW_REVIEW_STUB = PendingReviewModel(decision_candidates=0, insight_candidates=0, total=0)
+_SHALLOW_REVIEW_STUB = PendingReviewModel(
+    decision_reviews=0, insight_reviews=0, correction_reviews=0, total=0
+)
 
 
 def _base_response(settings: Any, versions: list[str]) -> dict[str, Any]:
@@ -141,8 +144,9 @@ def health(
         ),
         feedback_signal=FeedbackSignalSummaryModel(**feedback.to_dict()),
         pending_review=PendingReviewModel(
-            decision_candidates=review.decision_candidates_count,
-            insight_candidates=review.insight_candidates_count,
+            decision_reviews=review.decision_review_count,
+            insight_reviews=review.insight_review_count,
+            correction_reviews=review.correction_review_count,
             total=review.total,
         ),
     )

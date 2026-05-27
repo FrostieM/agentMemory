@@ -5,9 +5,9 @@ and the endpoint returns the active decisions / theories / behavior
 instructions whose territory the diff touches. Two matching modes:
 
 * **Declarative match (precise):** ``decisions.references_json`` is a
-  list of file paths or ``path:symbol`` markers (added in migration
-  0027). When a diff path appears in any decision's references list,
-  that decision is reported with ``match='declarative'``.
+  list of file paths or ``path:symbol`` markers. When a diff path appears
+  in any decision's references list, that decision is reported with
+  ``match='declarative'``.
 
 * **Substring fallback (approximate):** when no declarative match is
   available, scan ``decision_text`` and ``rationale`` for the file

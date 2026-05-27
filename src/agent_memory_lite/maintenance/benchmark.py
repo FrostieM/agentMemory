@@ -2,7 +2,7 @@
 
 Wires the timing primitive (``benchmark_runner.measure``) to the
 specific operations we want to track: integrity audit, hygiene report,
-quality gate, FTS search, and ``build_context`` end-to-end. The
+quality gate, FTS search, ``memory_search``, and ``memory_brief``. The
 ``BenchmarkResult`` / ``BenchmarkReport`` dataclasses are re-exported
 so existing import paths keep working.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 
+from agent_memory_lite.cognition.brief import compose_brief
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.fts.query import search_chunks_fts
 from agent_memory_lite.maintenance.benchmark_runner import (
@@ -22,8 +23,7 @@ from agent_memory_lite.maintenance.benchmark_runner import (
 from agent_memory_lite.maintenance.hygiene import run_hygiene_report
 from agent_memory_lite.maintenance.integrity import run_integrity_audit
 from agent_memory_lite.maintenance.quality_gate import run_quality_gate
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.storage.reader import search
 from agent_memory_lite.vector_store.base import VectorStore
 
 __all__ = ["BenchmarkReport", "BenchmarkResult", "run_memory_benchmarks"]
@@ -40,6 +40,7 @@ def run_memory_benchmarks(
     max_context_tokens: int = 2500,
     thresholds_ms: dict[str, float] | None = None,
 ) -> BenchmarkReport:
+    del embedding_provider
     thresholds = thresholds_ms or {}
     safe_runs = max(1, runs)
     safe_queries = queries or ["memory trust benchmark"]
@@ -90,16 +91,20 @@ def run_memory_benchmarks(
             limit=10,
         )
 
-    def make_get_context(query_text: str) -> Callable[[], object]:
-        return lambda: build_context(
+    def make_memory_search(query_text: str) -> Callable[[], object]:
+        return lambda: search(
             conn,
-            RetrievalQuery(
-                workspace_id=workspace_id,
-                query=query_text,
-                max_tokens=max_context_tokens,
-            ),
-            embedding_provider=embedding_provider,
-            vector_store=vector_store,
+            workspace_id=workspace_id,
+            query=query_text,
+            limit=10,
+        )
+
+    def make_memory_brief(query_text: str) -> Callable[[], object]:
+        return lambda: compose_brief(
+            conn,
+            workspace_id=workspace_id,
+            task=query_text,
+            max_tokens=max_context_tokens,
         )
 
     for index, query in enumerate(safe_queries, start=1):
@@ -113,10 +118,18 @@ def run_memory_benchmarks(
         )
         results.append(
             measure(
-                f"get_context[{index}]",
-                make_get_context(query),
+                f"memory_search[{index}]",
+                make_memory_search(query),
                 runs=safe_runs,
-                threshold_ms=thresholds.get("get_context"),
+                threshold_ms=thresholds.get("memory_search"),
+            )
+        )
+        results.append(
+            measure(
+                f"memory_brief[{index}]",
+                make_memory_brief(query),
+                runs=safe_runs,
+                threshold_ms=thresholds.get("memory_brief"),
             )
         )
     status = "degraded" if any(result.status == "degraded" for result in results) else "ok"

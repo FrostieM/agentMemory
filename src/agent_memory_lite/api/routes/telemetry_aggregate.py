@@ -17,23 +17,18 @@ from typing import Any
 # not in the bookkeeping set below is counted as a write.
 SEARCH_ACTIONS: frozenset[str] = frozenset(
     {
+        "brief",
+        "count",
+        "get",
+        "impact_check",
+        "invoke_skill",
+        "lint",
+        "list",
+        "plan",
         "search",
-        "get_context",
-        "explain_context",
-        "list_decisions",
-        "list_theories",
-        "list_behavior_instructions",
-        "list_audit",
-        "list_candidates",
-        "list_research_agenda",
-        "list_agent_capabilities",
-        "list_capability_links",
-        "list_maintenance_events",
-        "get_object",
         "what_references",
-        "memory_list_decisions",
-        "memory_list_theories",
-        "memory_list_candidates",
+        "list_audit",
+        "list_maintenance_events",
     }
 )
 
@@ -43,7 +38,7 @@ BOOKKEEPING_ACTIONS: frozenset[str] = frozenset(
     {
         "sentinel.run_recorded",
         "ui_event",
-        "memory_get_context",  # already counted as get_context
+        "memory_brief",
     }
 )
 
@@ -64,8 +59,7 @@ class TelemetryAggregate:
 def fetch_audit_rows(
     conn: sqlite3.Connection, *, workspace_id: str, since_iso: str, until_iso: str
 ) -> list[Any]:
-    """Select audit rows for the window. Falls back to a query without
-    ``agent_id`` when migration 0026 has not been applied yet."""
+    """Select audit rows for the window, tolerating audit tables without agent_id."""
     try:
         return conn.execute(
             """

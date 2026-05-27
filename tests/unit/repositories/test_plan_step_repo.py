@@ -1,7 +1,7 @@
 """Unit tests for repositories/plan_step_repo.py.
 
-These also exercise migration 0038 — the `applied_conn` fixture applies
-every root migration, so a SQL error in 0038_plan_steps.sql fails here.
+These also exercise the canonical init schema: the `applied_conn` fixture
+applies every root migration, so a SQL error in plan_steps fails here.
 """
 
 from __future__ import annotations

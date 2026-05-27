@@ -28,14 +28,14 @@ from agent_memory_lite.cognition.impact_check import (
     impact_check,
 )
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -366,6 +366,44 @@ def test_workspace_isolation(conn: sqlite3.Connection) -> None:
     )
     # ws_b never seeded this file.
     report = impact_check(conn, workspace_id="ws_b", file_path="src/iso.py")
+    assert report.verdict == "not_indexed"
+
+
+def test_absolute_path_resolves_to_canonical_relative_digest(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    project_root = tmp_path / "repo"
+    file_path = project_root / "src" / "foo.py"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text("def foo():\n    return 1\n", encoding="utf-8")
+    _seed_file(conn, file_id="f_abs", path="src/foo.py")
+    _seed_chunk(conn, chunk_id="c_abs", file_id="f_abs", qualified_name="foo")
+    _seed_digest(conn, digest_id="d_abs", file_path="src/foo.py")
+
+    report = impact_check(
+        conn,
+        workspace_id="ws",
+        file_path=str(file_path),
+        project_root=project_root,
+    )
+
+    assert report.verdict == "low"
+    assert report.file_path == "src/foo.py"
+    assert report.digest["file_path"] == "src/foo.py"
+
+
+def test_deleted_digest_is_not_trusted(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    _seed_digest(conn, digest_id="d_deleted", file_path="src/deleted.py")
+
+    report = impact_check(
+        conn,
+        workspace_id="ws",
+        file_path="src/deleted.py",
+        project_root=project_root,
+    )
+
     assert report.verdict == "not_indexed"
 
 

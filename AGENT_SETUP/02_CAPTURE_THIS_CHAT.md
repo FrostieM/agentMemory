@@ -1,4 +1,4 @@
-# Prompt: capture THIS active chat into project memory
+﻿# Prompt: capture THIS active chat into project memory
 
 Paste this into a chat where work has already happened. The agent will ensure
 agent-memory-lite is configured for the current project, then persist a faithful
@@ -60,7 +60,7 @@ summary episode and stop after Step 6. Do not pad.
 
 # Step 3 - write task state
 
-For the most recent/current task, call `memory_update_task_state`:
+For the most recent/current task, call `memory_write(kind="task")`:
 
 ```json
 {
@@ -75,20 +75,19 @@ For the most recent/current task, call `memory_update_task_state`:
   "files_in_scope": ["<relative paths>"]
 }
 ```
-
 If multiple distinct tasks happened in this chat, pick the most recent and write
 its state. The others should appear as episodes, not separate task rows.
 
 # Step 4 - write decisions, theories, and capabilities
 
-For each architectural decision, call `memory_write_decision`. One call per
+For each architectural decision, call `memory_write(kind="decision")`. One call per
 decision, with rationale.
 
 If the conversation formed a research hypothesis or edge theory, call
-`memory_write_theory`. If the conversation used a database export or replay
-dataset, call `memory_register_snapshot`. If the conversation planned or ran a
-research test, call `memory_write_experiment` and, when results exist,
-`memory_add_experiment_result`.
+`memory_write(kind="theory")`. If the conversation used a database export or
+replay dataset, record the relevant artifact in the theory payload or the task
+plan. If the conversation planned or ran a research test, capture the result as
+an insight or task follow-up on the compact v3 surface.
 
 Write theories with enough discipline that a future agent can test them:
 include validation criteria, expected evidence, and any decision IDs that depend
@@ -97,23 +96,23 @@ on the theory. If the conversation disproved a tempting claim, write it as a
 summary episode.
 
 If the conversation clarified a reusable role, skill, or repeatable workflow,
-call `memory_upsert_agent_role`, `memory_upsert_agent_skill`, or
-`memory_upsert_agent_playbook`. Use capability memory for operating knowledge
-that future agents should retrieve before doing similar work.
+call `memory_write(kind="skill")` with `subtype` set to `role`, `skill`, or
+`playbook`. Use capability memory for operating knowledge that future agents
+should retrieve before doing similar work.
 
 If a role, skill, or playbook is specifically required to review, test, or
-operate a theory, experiment, evidence item, insight, candidate, or decision,
-call `memory_link_capability`. This prevents capabilities from becoming a
-passive list that does not affect hypotheses.
+operate a theory, insight, candidate, or decision, record that requirement in
+the task or plan step. This keeps capability context visible without relying on
+removed legacy link routes.
 
-If `memory_ingest_episode` creates candidates, call `memory_list_candidates`
-for the same workspace and promote only the candidates that are truly supported
-by the conversation. Reject weak candidates so the audit trail keeps negative
-evidence.
+If extraction creates review candidates, use `/memory/review_queue` or the
+review UI for the same workspace and promote only candidates that are truly
+supported by the conversation. Reject weak candidates so the audit trail keeps
+negative evidence.
 
 # Step 5 - write episodes
 
-Walk the conversation chronologically and call `memory_ingest_episode` for each
+Walk the conversation chronologically and call `memory_write(kind="episode")` for each
 meaningful event. Group small steps; one call per logical unit. Aim for 5-20
 episodes per chat, fewer if it was short, never more than 30.
 
@@ -137,10 +136,10 @@ Important rules for `raw_text`:
 
 # Step 6 - verify by querying
 
-Call `memory_get_context` with a representative query about this chat. Confirm
+Call `memory_brief / memory_search` with a representative query about this chat. Confirm
 that at least one just-written episode, decision, theory, experiment, or insight
 appears in the response. If capabilities were written, confirm the response also
-contains `<agent_capabilities>` or call `memory_list_agent_capabilities` with
+contains `<agent_capabilities>` or call `memory_search(kinds=["skill"])` with
 the same query.
 
 Run a read-only retrieval integrity audit with
@@ -190,6 +189,6 @@ verification:  <ok | partial - context query returned no overlap; wrote a fallba
 How a future chat will find this:
 - Open this project in any MCP-aware agent runtime and ask about the task or
   files we touched.
-- The agent will call `memory_get_context` itself per the contract in
+- The agent will call `memory_brief / memory_search` itself per the contract in
   `<PROJECT_ROOT>/CLAUDE.md` and `<PROJECT_ROOT>/AGENTS.md`.
 ```

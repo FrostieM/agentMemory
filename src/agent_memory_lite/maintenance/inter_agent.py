@@ -140,7 +140,7 @@ def import_beliefs(
     beliefs: list[InterAgentBelief],
     source_episode_id: str,
 ) -> int:
-    """Detect conflicts and persist them as ``memory_candidates``.
+    """Detect conflicts and persist them as ``candidates``.
 
     Returns the count of candidate rows landed. Idempotent via
     deterministic candidate id.

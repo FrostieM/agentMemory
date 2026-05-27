@@ -32,11 +32,9 @@ NULLABLE_REFS: tuple[tuple[str, str, str], ...] = (
     ("chunks", "episode_id", "episodes"),
     ("theory_evidence", "source_episode_id", "episodes"),
     ("decisions", "source_episode_id", "episodes"),
-    ("behavior_instructions", "source_episode_id", "episodes"),
-    ("agent_playbooks", "source_episode_id", "episodes"),
-    ("agent_roles", "source_episode_id", "episodes"),
-    ("agent_skills", "source_episode_id", "episodes"),
-    ("memory_candidates", "source_episode_id", "episodes"),
+    ("behaviors", "source_episode_id", "episodes"),
+    ("skills", "source_episode_id", "episodes"),
+    ("candidates", "source_episode_id", "episodes"),
     ("decisions", "supersedes_decision_id", "decisions"),
 )
 

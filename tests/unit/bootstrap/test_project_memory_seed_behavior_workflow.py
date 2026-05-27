@@ -21,11 +21,10 @@ def test_memory_first_rule_closes_fallback_loophole() -> None:
     assert "TRIGGER" in rule
     assert "ACTION" in rule
     assert "KEY INVARIANT" in rule
-    assert "memory_ingest_file" in rule, "rule must require ingest, not fallback"
-    assert "memory_symbol_history" in rule, "rule must require symbol_history for context"
-    assert "memory_breaking_changes" in rule, "rule must require breaking_changes for context"
-    assert "WHAT" in rule, "rule must promise WHAT context"
-    assert "WHEN" in rule, "rule must promise WHEN context"
+    assert "memory_impact_check" in rule, "rule must require v3 impact check first"
+    assert "callers" in rule, "rule must include caller context"
+    assert "hot symbols" in rule, "rule must include hot-symbol context"
+    assert "verdict" in rule, "rule must include impact verdict"
 
 
 def test_memory_first_payload_metadata() -> None:

@@ -10,8 +10,6 @@ import pytest
 
 from agent_memory_lite.maintenance import experiment_proposal as ep
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,32 +21,20 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # don't accidentally hit a dev-box Ollama (the LLM-specific tests
     # set the flag explicitly).
     monkeypatch.delenv("MEMORY_EXPERIMENT_PROPOSAL_LLM_ENABLED", raising=False)
-    # v3.3 min-evidence gate — relax to 1 for legacy tests that seed
-    # insights without explicit source_episode_ids. The min-evidence
-    # behavior gets its own focused tests further down that re-set
-    # the env to the production default (3).
+    # Relax to 1 for focused tests that seed insights without explicit
+    # source_episode_ids. The production default (3) has its own tests below.
     monkeypatch.setenv("MEMORY_EXPERIMENT_PROPOSAL_MIN_EVIDENCE", "1")
 
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Real on-disk DB mirroring the production hybrid schema:
-
-    * canonical ``0001_init.sql`` → ``insights`` table
-    * legacy ``apply_migrations`` → ``memory_candidates`` table
-
-    Production has both because the v3 cutover bolted canonical on top
-    of legacy migrations. Tests need the same shape.
-    """
+    """Real on-disk DB using the canonical root migration."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     db_path = tmp_path / "src.db"
     c = open_connection(db_path)
-    # Legacy migrations first — creates memory_candidates, episodes, etc.
     apply_migrations(c)
-    # Canonical schema overlay — adds the v3 ``insights`` table.
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     try:
         yield c
     finally:
@@ -75,7 +61,7 @@ def _seed_insight(
     source_episode_ids: list[str] | None = None,
 ) -> None:
     """Seed an insight. When ``source_episode_ids`` are given, seed the
-    matching episode rows so the FK from memory_candidates (added by
+    matching episode rows so the FK from candidates (added by
     persist_proposal) resolves.
 
     v3.3: when caller passes nothing, default to a single auto-named
@@ -258,8 +244,7 @@ def test_persist_proposal_writes_candidate_row(conn: sqlite3.Connection) -> None
     candidate_id = ep.persist_proposal(conn, workspace_id="ws", proposal=proposal)
     assert candidate_id == "cand_prop_ins_kelly"
     row = conn.execute(
-        "SELECT kind, subject, predicate, object, confidence, status "
-        "FROM memory_candidates WHERE id = ?",
+        "SELECT kind, subject, predicate, object, confidence, status FROM candidates WHERE id = ?",
         (candidate_id,),
     ).fetchone()
     assert row is not None
@@ -291,7 +276,7 @@ def test_persist_proposal_is_idempotent(conn: sqlite3.Connection) -> None:
     ep.persist_proposal(conn, workspace_id="ws", proposal=proposal_v1)
     ep.persist_proposal(conn, workspace_id="ws", proposal=proposal_v2)
     rows = conn.execute(
-        "SELECT id, object, confidence FROM memory_candidates WHERE subject = 'ins_idem'"
+        "SELECT id, object, confidence FROM candidates WHERE subject = 'ins_idem'"
     ).fetchall()
     assert len(rows) == 1
     assert "v2 body" in rows[0]["object"]
@@ -311,9 +296,7 @@ def test_persist_proposal_metadata_marks_source(conn: sqlite3.Connection) -> Non
         source_episode_id="ep_meta",
     )
     ep.persist_proposal(conn, workspace_id="ws", proposal=proposal)
-    row = conn.execute(
-        "SELECT metadata_json FROM memory_candidates WHERE subject = 'ins_meta'"
-    ).fetchone()
+    row = conn.execute("SELECT metadata_json FROM candidates WHERE subject = 'ins_meta'").fetchone()
     meta = _json.loads(row["metadata_json"])
     assert meta.get("source") == "experiment_proposal_mvp"
 
@@ -330,9 +313,7 @@ def test_persist_proposal_skips_when_no_source_episode(conn: sqlite3.Connection)
     )
     out = ep.persist_proposal(conn, workspace_id="ws", proposal=proposal)
     assert out == ""
-    row = conn.execute(
-        "SELECT COUNT(*) FROM memory_candidates WHERE subject = 'ins_orphan'"
-    ).fetchone()
+    row = conn.execute("SELECT COUNT(*) FROM candidates WHERE subject = 'ins_orphan'").fetchone()
     assert row[0] == 0
 
 
@@ -426,7 +407,7 @@ def test_persist_proposal_preserves_promoted_status(conn: sqlite3.Connection) ->
     assert out1 == "cand_prop_ins_promo"
     # Operator promotes the candidate manually.
     conn.execute(
-        "UPDATE memory_candidates SET status = 'accepted' WHERE id = ?",
+        "UPDATE candidates SET status = 'accepted' WHERE id = ?",
         (out1,),
     )
     conn.commit()
@@ -442,7 +423,7 @@ def test_persist_proposal_preserves_promoted_status(conn: sqlite3.Connection) ->
     # Skip return because status != 'new'.
     assert out2 == ""
     row = conn.execute(
-        "SELECT object, confidence, status FROM memory_candidates WHERE id = ?",
+        "SELECT object, confidence, status FROM candidates WHERE id = ?",
         (out1,),
     ).fetchone()
     assert row["status"] == "accepted"
@@ -528,7 +509,7 @@ def test_persist_proposal_returns_empty_on_fk_violation(conn: sqlite3.Connection
     out = ep.persist_proposal(conn, workspace_id="ws", proposal=proposal)
     assert out == ""
     row = conn.execute(
-        "SELECT COUNT(*) FROM memory_candidates WHERE id = 'cand_prop_ins_orphan_fk'"
+        "SELECT COUNT(*) FROM candidates WHERE id = 'cand_prop_ins_orphan_fk'"
     ).fetchone()
     assert row[0] == 0
 
@@ -555,7 +536,7 @@ def _seed_triaged_candidate(
     with contextlib.suppress(sqlite3.IntegrityError):
         _seed_episode(conn, ep_id=ep_id, workspace_id=workspace_id)
     conn.execute(
-        """INSERT INTO memory_candidates (
+        """INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id,
@@ -798,7 +779,7 @@ def test_excluded_helper_failure_soft_no_table(tmp_path: Path) -> None:
     db = tmp_path / "bare.db"
     c = sqlite3.connect(db)
     c.row_factory = sqlite3.Row
-    # Only create insights table — no memory_candidates / candidates.
+    # Only create insights table — no candidates / candidates.
     c.executescript("""
         CREATE TABLE insights (
             id TEXT PRIMARY KEY, workspace_id TEXT, status TEXT,

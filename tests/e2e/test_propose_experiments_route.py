@@ -1,12 +1,8 @@
 """End-to-end tests for /memory/propose_experiments (v3.1 Vector 1).
 
-The e2e DB fixture applies the legacy ``migrations/*.sql`` set only,
-which creates ``research_insights`` but NOT the canonical v3
-``insights`` table (consolidation.py writes there in production where
-both schemas coexist). These tests therefore exercise only the HTTP
-plumbing on an empty workspace; the proposal-scanner semantics are
-covered exhaustively by ``tests/unit/maintenance/test_experiment_proposal.py``
-which sets up the hybrid schema directly.
+The e2e DB fixture uses the canonical root migration. These tests exercise
+HTTP plumbing on an empty workspace; proposal-scanner semantics are covered
+by ``tests/unit/maintenance/test_experiment_proposal.py``.
 """
 
 from __future__ import annotations
@@ -37,7 +33,7 @@ def test_propose_experiments_get_empty_workspace(client: TestClient) -> None:
     assert body["proposals"] == []
     assert body["persisted"] == 0
     assert body["candidate_ids"] == []
-    assert body["available"] is False  # legacy-only fixture; insights table missing
+    assert body["available"] is True
     assert body["feature_enabled"] is True
 
 
@@ -47,7 +43,7 @@ def test_propose_experiments_post_empty_workspace(client: TestClient) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["persisted"] == 0
-    assert body["available"] is False
+    assert body["available"] is True
 
 
 def test_propose_experiments_rejects_invalid_limit(client: TestClient) -> None:

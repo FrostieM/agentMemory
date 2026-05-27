@@ -34,7 +34,7 @@ from scripts.crash_test.phases.p21_v19_recurrence import P21V19Recurrence
 from scripts.crash_test.phases.p22_trust_safety import P22TrustSafety
 from scripts.crash_test.phases.p23_health_ui_html import P23HealthUiHtml
 from scripts.crash_test.phases.p24_ui_browser import P24UiBrowser
-from scripts.crash_test.phases.p25_v2_improvements import P25V2Improvements
+from scripts.crash_test.phases.p25_v3_quality_loops import P25V3QualityLoops
 from scripts.crash_test.phases.p26_v110_correction import P26V110Correction
 from scripts.crash_test.reporter import Reporter
 from scripts.crash_test.workspace import (
@@ -71,7 +71,7 @@ PHASES: list[type[Phase]] = [
     P20V18Reflective,
     P21V19Recurrence,
     P22TrustSafety,
-    P25V2Improvements,
+    P25V3QualityLoops,
     P26V110Correction,
     P23HealthUiHtml,
     P24UiBrowser,

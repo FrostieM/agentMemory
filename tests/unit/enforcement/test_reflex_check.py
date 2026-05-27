@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -15,16 +14,14 @@ from agent_memory_lite.enforcement.reflex_check import (
 )
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-REFLEX_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0005_reflexes.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(REFLEX_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -253,7 +250,9 @@ def test_pre_migration_db_returns_no_violations() -> None:
     """When reflex_rules table doesn't exist, check returns []."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     # Do NOT apply 0005.
     violations = check_reflexes(c, workspace_id="ws", tool_name="Edit", tool_payload={}, trail=[])
     assert violations == []

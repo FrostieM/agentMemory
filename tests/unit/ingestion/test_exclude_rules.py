@@ -19,6 +19,12 @@ def test_builtin_denylist_blocks_dot_git() -> None:
     assert is_excluded(".git/HEAD", is_dir=False, patterns=patterns)
 
 
+def test_builtin_denylist_blocks_agent_worktrees() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert is_excluded(".claude/worktrees/old/src/app.py", is_dir=False, patterns=patterns)
+    assert is_excluded(".codex/cache/tmp.py", is_dir=False, patterns=patterns)
+
+
 def test_unmatched_path_passes() -> None:
     patterns = collect_patterns(Path("/tmp"))
     assert not is_excluded("src/main.py", is_dir=False, patterns=patterns)

@@ -34,14 +34,14 @@ from agent_memory_lite.cognition.code_indexer import (
     resolve_all_pending_edges,
 )
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -270,6 +270,36 @@ def test_index_file_with_broken_sql_returns_error_result(
     )
     assert result.error.startswith("OperationalError:")
     assert result.digest_upserted is False
+
+
+def test_index_file_skips_oversized_extracted_edge(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_memory_lite.extraction.symbol_edges_py_helpers import ExtractedEdge  # noqa: PLC0415
+    from agent_memory_lite.ingestion import file_persist_edges  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        file_persist_edges,
+        "_extract_edges",
+        lambda _text, _language: [
+            ExtractedEdge(
+                src_qualified_name="main",
+                dst_qualified_name="x" * 401,
+                edge_type="calls",
+            )
+        ],
+    )
+
+    result = index_file(
+        conn,
+        workspace_id="ws",
+        rel_path="src/x.py",
+        content="def main():\n    return 1\n",
+        language="python",
+    )
+
+    assert result.error == ""
+    assert conn.execute("SELECT COUNT(*) FROM symbol_edges").fetchone()[0] == 0
 
 
 # ============================================================

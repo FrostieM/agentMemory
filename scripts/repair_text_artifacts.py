@@ -44,14 +44,13 @@ _TARGETS = (
     ("episodes", "raw_text"),
     ("chunks", "text"),
     ("chunks", "summary"),
-    ("research_insights", "summary"),
-    ("research_insights", "proposed_action"),
-    ("domain_concepts", "definition"),
-    ("agent_skills", "summary"),
-    ("agent_roles", "purpose"),
-    ("agent_playbooks", "goal"),
-    ("behavior_instructions", "rule"),
-    ("behavior_instructions", "rationale"),
+    ("insights", "summary"),
+    ("insights", "proposed_action"),
+    ("concepts", "definition"),
+    ("skills", "summary"),
+    ("skills", "body_md"),
+    ("behaviors", "rule"),
+    ("behaviors", "rationale"),
 )
 
 

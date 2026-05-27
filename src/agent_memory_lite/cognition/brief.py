@@ -1,6 +1,6 @@
 """memory_brief — <=500-token session-start brief composed from compact projections.
 
-The killer feature. Replaces the verbose v2 ``<memory_context>`` envelope
+The killer feature. Replaces the verbose historical context envelope
 with a tight pre-task brief assembled from SQL projections — no full
 markdown bodies, no LLM call on the hot path.
 
@@ -33,7 +33,7 @@ from agent_memory_lite.cognition.brief_behaviors import (
     _PRIORITY_WEIGHT,
     _applies_to_csv,
     _build_pinned_behaviors,
-    _collect_pinned_behaviors_both_tables,
+    _collect_pinned_behaviors,
     _iso_to_sort_key,
 )
 from agent_memory_lite.cognition.brief_cache import (
@@ -120,7 +120,7 @@ __all__ = [
     "_build_top_decisions",
     "_build_watch_outs",
     "_cache_remember",
-    "_collect_pinned_behaviors_both_tables",
+    "_collect_pinned_behaviors",
     "_iso_to_sort_key",
     "_redistribute_and_rebuild",
     "_session_seen",

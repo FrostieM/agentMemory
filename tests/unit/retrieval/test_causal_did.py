@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -13,14 +12,6 @@ from agent_memory_lite.retrieval.causal_did import (
     extract_did_links,
     is_enabled,
     threshold,
-)
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-CAUSAL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0008_causal_links.sql"
 )
 
 
@@ -34,9 +25,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    c.executescript(CAUSAL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -171,9 +162,21 @@ def test_failure_soft_when_table_missing() -> None:
     instead of raising."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    # Skip causal_links migration intentionally.
+    c.execute(
+        """CREATE TABLE decisions (
+           id TEXT PRIMARY KEY,
+           workspace_id TEXT NOT NULL,
+           title TEXT NOT NULL,
+           decision_text TEXT NOT NULL,
+           rationale TEXT,
+           outcome_score REAL NOT NULL DEFAULT 0.0,
+           status TEXT NOT NULL DEFAULT 'active',
+           supersedes_decision_id TEXT,
+           valid_from TEXT,
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL
+        )"""
+    )
     try:
         _seed_decision(c, dec_id="dec_old", title="o", outcome_score=-0.5)
         _seed_decision(c, dec_id="dec_new", title="n", outcome_score=0.5, supersedes="dec_old")

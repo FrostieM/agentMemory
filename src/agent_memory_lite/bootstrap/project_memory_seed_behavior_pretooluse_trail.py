@@ -35,16 +35,15 @@ _COMMON_KWARGS = {
 def read_before_edit_pretooluse_instruction(
     workspace_id: str, source_episode_id: str | None
 ) -> BehaviorInstructionIn:
-    """Block Edit/Write without prior Read or memory_file_digest in the session."""
+    """Block Edit/Write without prior memory_impact_check in the session."""
     return BehaviorInstructionIn(
         workspace_id=workspace_id,
         name="pretooluse:read-before-edit",
         rule=(
             "TRIGGER: Edit, Write, or NotebookEdit is about to fire AND the "
-            "session has not yet called Read, memory_file_digest, or "
-            "memory_find_symbols.\n\n"
-            "ACTION: call memory_file_digest(file_path) FIRST. If the digest "
-            "returns found=false, call memory_ingest_file then re-attempt.\n\n"
+            "session has not yet called memory_impact_check for this file.\n\n"
+            "ACTION: call memory_impact_check(file_path) FIRST and use its "
+            "digest, callers, hot symbols, and verdict to scope the edit.\n\n"
             "KEY INVARIANT: an Edit without prior context-load is patching by "
             "fragment. The hook blocks the Edit until the agent has loaded "
             "context for THIS session."
@@ -65,21 +64,55 @@ def read_before_edit_pretooluse_instruction(
     )
 
 
+def impact_check_before_read_pretooluse_instruction(
+    workspace_id: str, source_episode_id: str | None
+) -> BehaviorInstructionIn:
+    """Block Read / Grep without prior memory_impact_check in the session."""
+    return BehaviorInstructionIn(
+        workspace_id=workspace_id,
+        name="pretooluse:impact-check-before-read",
+        rule=(
+            "TRIGGER: Read or Grep is about to fire on a source file AND the "
+            "session has not yet called memory_impact_check.\n\n"
+            "ACTION: call memory_impact_check(file_path=<path>) FIRST and use "
+            "its digest, callers, hot symbols, and verdict to scope the read. "
+            "Read is a fallback for understanding algorithm logic only -- "
+            "impact_check is the default for source files.\n\n"
+            "KEY INVARIANT: a Read or Grep without prior context-load risks "
+            "tunnel vision: the agent edits or grep-walks based on a "
+            "partial view of the file's role. The hook blocks the read-side "
+            "tool until the agent has loaded context for THIS session."
+        ),
+        rationale=(
+            "Companion enforcement to read-before-edit. The edit-side hook "
+            "already enforces impact_check before Edit / Write; this closes "
+            "the gap for Read / Grep, which discipline rule 1 also requires."
+        ),
+        applies_to=[
+            "enforcement:mechanical",
+            "mechanical:impact-check-before-read",
+            "before Read tool",
+            "before Grep tool",
+        ],
+        source_episode_id=source_episode_id,
+        **_COMMON_KWARGS,
+    )
+
+
 def search_before_arch_write_pretooluse_instruction(
     workspace_id: str, source_episode_id: str | None
 ) -> BehaviorInstructionIn:
-    """Block memory_write_decision/theory without prior memory_search in session."""
+    """Block architectural memory_write calls without prior memory_search."""
     return BehaviorInstructionIn(
         workspace_id=workspace_id,
         name="pretooluse:search-before-architectural-write",
         rule=(
-            "TRIGGER: memory_write_decision, memory_write_theory, or "
-            "memory_record_with_evidence is about to fire AND the session "
-            "has not yet called memory_search, memory_list_decisions, "
-            "memory_list_theories, or memory_get_context.\n\n"
-            "ACTION: call memory_list_decisions(query=..., "
-            "include_superseded=true) for an architectural choice, OR "
-            "memory_list_theories for a research claim, FIRST. Then proceed.\n\n"
+            "TRIGGER: memory_write(kind=decision) or memory_write(kind=theory) "
+            "is about to fire AND the session has not yet called memory_search "
+            "for the same topic.\n\n"
+            'ACTION: call memory_search(query=..., kinds=["decision"]) for '
+            "an architectural choice, OR memory_search(query=..., "
+            'kinds=["theory"]) for a research claim, FIRST. Then proceed.\n\n'
             "KEY INVARIANT: an architectural write without prior-art search "
             "risks contradicting an existing decision or re-opening a "
             "settled question. The hook blocks the write until the agent "
@@ -93,9 +126,9 @@ def search_before_arch_write_pretooluse_instruction(
         applies_to=[
             "enforcement:mechanical",
             "mechanical:search-before-arch",
-            "memory_write_decision",
-            "memory_write_theory",
-            "memory_record_with_evidence",
+            "memory_write",
+            "memory_write kind=decision",
+            "memory_write kind=theory",
         ],
         source_episode_id=source_episode_id,
         **_COMMON_KWARGS,

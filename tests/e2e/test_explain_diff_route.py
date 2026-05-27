@@ -27,18 +27,20 @@ def _write_decision(
     *,
     references: list[str] | None = None,
 ) -> str:
-    body = {
-        "workspace_id": "diff-ws",
+    payload = {
         "title": title,
         "decision_text": text,
         "rationale": "test",
         "importance": 0.8,
     }
     if references is not None:
-        body["references"] = references
-    r = client.post("/memory/write_decision", json=body)
+        payload["references"] = references
+    r = client.post(
+        "/memory/write",
+        json={"workspace_id": "diff-ws", "kind": "decision", "payload": payload},
+    )
     assert r.status_code == 200, r.text
-    return r.json()["decision_id"]
+    return r.json()["data"]["decision_id"]
 
 
 def test_explain_diff_declarative_match(client: TestClient) -> None:

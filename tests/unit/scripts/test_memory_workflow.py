@@ -69,10 +69,12 @@ def test_workflow_completion_payloads_do_not_hide_task_state() -> None:
 
     payloads = script._completion_payloads(args)
 
-    assert payloads["ingest_episode"]["workspace_id"] == "project"
-    assert payloads["ingest_episode"]["raw_text"] == "Implemented and verified change."
-    assert payloads["update_task_state"]["status"] == "done"
-    assert payloads["update_task_state"]["next_action"] == "Commit"
+    assert payloads["write_episode"]["workspace_id"] == "project"
+    assert payloads["write_episode"]["kind"] == "episode"
+    assert payloads["write_episode"]["payload"]["raw_text"] == "Implemented and verified change."
+    assert payloads["write_task"]["kind"] == "task"
+    assert payloads["write_task"]["payload"]["status"] == "done"
+    assert payloads["write_task"]["payload"]["next_action"] == "Commit"
 
 
 def test_workflow_strict_completion_records_role_trace_and_verification() -> None:
@@ -98,7 +100,7 @@ def test_workflow_strict_completion_records_role_trace_and_verification() -> Non
     )
 
     payloads = script._completion_payloads(args)
-    raw_text = payloads["ingest_episode"]["raw_text"]
+    raw_text = payloads["write_episode"]["payload"]["raw_text"]
 
     assert "Role activation trace:" in raw_text
     assert "Memory systems architect" in raw_text
@@ -160,3 +162,14 @@ def test_workflow_accepts_json_after_subcommand() -> None:
 
     assert args.json is True
     assert args.command == "preflight"
+
+
+def test_workflow_prints_body_md(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    script = _load_script("memory_workflow.py")
+
+    script._print({"status": "ok", "command": "preflight", "body_md": "# brief"}, as_json=False)
+
+    out = capsys.readouterr().out
+    assert "# brief" in out

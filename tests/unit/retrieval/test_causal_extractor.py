@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -15,22 +14,14 @@ from agent_memory_lite.retrieval.causal_extractor import (
 )
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-CAUSAL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0008_causal_links.sql"
-)
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    c.executescript(CAUSAL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -96,6 +87,13 @@ def _seed_insight(
 
 def test_supersedes_yields_invalidated_link(conn: sqlite3.Connection) -> None:
     _seed_decision(conn, id_="dec_old")
+    conn.execute(
+        """INSERT INTO episodes
+           (id, workspace_id, source_type, raw_text, created_at)
+           VALUES ('ep_x', 'ws', 'agent_action', 'evidence', ?)""",
+        (iso_now(),),
+    )
+    conn.commit()
     _seed_decision(conn, id_="dec_new", supersedes="dec_old", source_episode_id="ep_x")
     report = extract_workspace(conn, workspace_id="ws")
     assert report.invalidated_links == 1
@@ -216,7 +214,9 @@ def test_insight_with_bad_json_skips(conn: sqlite3.Connection) -> None:
 def test_pre_migration_db_returns_zero_report() -> None:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     # No causal_links table.
     report = extract_workspace(c, workspace_id="ws")
     assert report.invalidated_links == 0

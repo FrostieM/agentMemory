@@ -2,9 +2,8 @@
 
 Verifies the full pipeline: ingest two episodes (claim + correction with
 cross-reference metadata), confirm the CorrectionExtractor surfaced a
-memory_candidate(kind=CORRECTION), promote it through the new endpoint,
-and check the resulting behavior_instruction reaches the next
-``/memory/get_context`` envelope.
+memory_candidate(kind=CORRECTION), promote it through the endpoint,
+and check the resulting behavior reaches compact search.
 
 This is the "the loop closes" test — without it, individual unit tests
 could each pass while the wiring between them is still broken.
@@ -74,37 +73,30 @@ def test_full_correction_loop_through_extractor_and_promote(client: TestClient) 
 
     # 3. CorrectionExtractor should have produced a memory_candidate.
     listed = client.post(
-        "/memory/list_candidates",
-        json={"workspace_id": "ws-loop", "statuses": ["new"], "limit": 20},
+        "/memory/review_queue",
+        json={"workspace_id": "ws-loop", "limit_per_kind": 20},
     )
     assert listed.status_code == 200, listed.text
-    candidates = [c for c in listed.json()["candidates"] if c["kind"] == "correction"]
+    candidates = [
+        item
+        for item in listed.json()["items"]
+        if item["target_type"] == "candidate" and item["details"]["kind"] == "correction"
+    ]
     assert candidates, "CorrectionExtractor did not produce a CORRECTION candidate"
     cand = candidates[0]
-    assert cand["confidence"] >= 0.5
-    assert "Verify before claiming" in cand["subject"]
+    assert cand["details"]["confidence"] >= 0.5
+    assert "Verify before claiming" in cand["summary"]
     # subject is the distilled rule from the correction's first sentence;
     # for this fixture it should reference MCP / 1.1.0 / release dates
-    subject_lower = cand["subject"].lower()
+    subject_lower = cand["summary"].lower()
     assert any(token in subject_lower for token in ("mcp", "1.1.0", "audit", "релиз"))
 
-    # 4. <pending_review> envelope surfaces the correction queue.
-    ctx = client.post(
-        "/memory/get_context",
-        json={"workspace_id": "ws-loop", "query": "anything", "max_tokens": 2000},
-    )
-    assert ctx.status_code == 200, ctx.text
-    text = ctx.json()["context_text"]
-    assert "<pending_review" in text
-    assert 'kind="correction_candidate"' in text
-    assert "promote_candidate_to_behavior" in text
-
-    # 5. Promote with operator-supplied name + decision_by.
+    # 4. Promote with operator-supplied name + decision_by.
     promoted = client.post(
         "/memory/promote_candidate_to_behavior",
         json={
             "workspace_id": "ws-loop",
-            "candidate_id": cand["candidate_id"],
+            "candidate_id": cand["target_id"],
             "name": "filter-audit-by-release-date",
             "rule_text_override": (
                 "When measuring whether a feature is dormant, filter "
@@ -114,34 +106,30 @@ def test_full_correction_loop_through_extractor_and_promote(client: TestClient) 
         },
     )
     assert promoted.status_code == 200, promoted.text
-    bi_id = promoted.json()["behavior_instruction_id"]
+    bi_id = promoted.json().get("behavior_id") or promoted.json().get("behavior_instruction_id")
     assert bi_id
 
-    # 6. New context envelope surfaces the behavior_instruction.
+    # 5. Compact search surfaces the behavior.
     ctx2 = client.post(
-        "/memory/get_context",
+        "/memory/search",
         json={
             "workspace_id": "ws-loop",
-            "query": "should I trust this measurement",
-            "max_tokens": 2000,
+            "query": "filter-audit-by-release-date release_date",
+            "kinds": ["behavior"],
+            "limit": 5,
         },
     )
     assert ctx2.status_code == 200, ctx2.text
-    text2 = ctx2.json()["context_text"]
-    assert "behavior_instructions" in text2
+    text2 = str(ctx2.json()["data"])
     assert "filter-audit-by-release-date" in text2 or "release_date" in text2
 
-    # 7. Candidate status flipped to promoted with target lineage.
-    promoted_listed = client.post(
-        "/memory/list_candidates",
-        json={"workspace_id": "ws-loop", "statuses": ["promoted"], "limit": 5},
+    # 6. Candidate status flipped to promoted with target lineage.
+    fetched = client.get(
+        "/memory/get",
+        params={"workspace_id": "ws-loop", "kind": "behavior", "id": bi_id},
     )
-    promoted_rows = [
-        c for c in promoted_listed.json()["candidates"] if c["candidate_id"] == cand["candidate_id"]
-    ]
-    assert promoted_rows
-    assert promoted_rows[0]["promoted_target_type"] == "behavior_instruction"
-    assert promoted_rows[0]["promoted_target_id"] == bi_id
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["data"]["id"] == bi_id
 
 
 def test_correction_pair_bypasses_episode_dedup(client: TestClient) -> None:
@@ -203,10 +191,14 @@ def test_correction_pair_bypasses_episode_dedup(client: TestClient) -> None:
     # candidates_written would be 0 on the second ingest.
     assert claim_id_a != claim_id_b, "claim episodes must be distinct"
     listed = client.post(
-        "/memory/list_candidates",
-        json={"workspace_id": "ws-loop", "statuses": ["new"], "limit": 50},
+        "/memory/review_queue",
+        json={"workspace_id": "ws-loop", "limit_per_kind": 50},
     )
-    corrections = [c for c in listed.json()["candidates"] if c["kind"] == "correction"]
+    corrections = [
+        item
+        for item in listed.json()["items"]
+        if item["target_type"] == "candidate" and item["details"]["kind"] == "correction"
+    ]
     assert len(corrections) >= 2, (
         f"dedup bypass broke: expected >=2 CORRECTION candidates from "
         f"two identical correction pairs, got {len(corrections)}"
@@ -240,11 +232,15 @@ def test_loop_disabled_when_flag_off(app_factory) -> None:
             {"kind": "user_correction", "correction_target_episode_id": claim_id},
         )
         listed = client.post(
-            "/memory/list_candidates",
-            json={"workspace_id": "ws-disabled", "statuses": ["new"], "limit": 20},
+            "/memory/review_queue",
+            json={"workspace_id": "ws-disabled", "limit_per_kind": 20},
         )
         assert listed.status_code == 200, listed.text
-        corrections = [c for c in listed.json()["candidates"] if c["kind"] == "correction"]
+        corrections = [
+            item
+            for item in listed.json()["items"]
+            if item["target_type"] == "candidate" and item["details"]["kind"] == "correction"
+        ]
         assert corrections == []
 
 

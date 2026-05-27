@@ -42,7 +42,7 @@ def _capability_text(row: sqlite3.Row, fields: list[str]) -> str:
 
 
 _ROLE_FIELDS = [
-    "purpose",
+    "summary",
     "responsibilities_json",
     "boundaries_json",
     "handoff_triggers_json",
@@ -57,7 +57,7 @@ _SKILL_FIELDS = [
     "related_roles_json",
 ]
 _PLAYBOOK_FIELDS = [
-    "goal",
+    "summary",
     "triggers_json",
     "steps_json",
     "success_criteria_json",
@@ -70,6 +70,7 @@ def _candidates_from(
     *,
     workspace_id: str,
     table: str,
+    subtype: str,
     fields: list[str],
     capability_type: str,
     sql_columns: str,
@@ -80,9 +81,9 @@ def _candidates_from(
         f"""
         SELECT {sql_columns}
         FROM {table}
-        WHERE workspace_id = ? AND active = 1
+        WHERE workspace_id = ? AND subtype = ? AND active = 1
         """,
-        (workspace_id,),
+        (workspace_id, subtype),
     ).fetchall()
     return [
         CapabilityCandidate(
@@ -103,18 +104,20 @@ def load_active_capabilities(
         *_candidates_from(
             conn,
             workspace_id=workspace_id,
-            table="agent_roles",
+            table="skills",
+            subtype="role",
             fields=_ROLE_FIELDS,
             capability_type="role",
             sql_columns=(
-                "id, name, purpose, responsibilities_json, boundaries_json, "
+                "id, name, summary, responsibilities_json, boundaries_json, "
                 "handoff_triggers_json, tools_json, confidence"
             ),
         ),
         *_candidates_from(
             conn,
             workspace_id=workspace_id,
-            table="agent_skills",
+            table="skills",
+            subtype="skill",
             fields=_SKILL_FIELDS,
             capability_type="skill",
             sql_columns=(
@@ -125,11 +128,12 @@ def load_active_capabilities(
         *_candidates_from(
             conn,
             workspace_id=workspace_id,
-            table="agent_playbooks",
+            table="skills",
+            subtype="playbook",
             fields=_PLAYBOOK_FIELDS,
             capability_type="playbook",
             sql_columns=(
-                "id, name, goal, triggers_json, steps_json, success_criteria_json, "
+                "id, name, summary, triggers_json, steps_json, success_criteria_json, "
                 "required_skills_json, confidence"
             ),
         ),

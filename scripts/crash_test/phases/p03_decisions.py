@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from scripts.crash_test.phases._base import CrashTestState, Phase, PhaseResult
-from scripts.crash_test.seeds import get, post, seed_decisions
+from scripts.crash_test.seeds import get, seed_decisions
 
 
 class P03Decisions(Phase):
@@ -29,14 +29,23 @@ class P03Decisions(Phase):
         ).fetchone()
         result.assert_eq("second.status", str(row2[0]), "active")
 
-        # list_decisions returns only active by default.
-        listed = post(
-            state.client,
-            "/memory/list_decisions",
-            {"workspace_id": state.workspace_id, "query": "vector", "limit": 10},
+        # Canonical search returns compact active decision projections.
+        listed = state.client.post(
+            "/memory/search",
+            json={
+                "workspace_id": state.workspace_id,
+                "kinds": ["decision"],
+                "query": "vector",
+                "limit": 10,
+            },
+            timeout=30.0,
         )
-        # Schemas surface ids under either "id" or "decision_id"; accept both.
-        active_ids = [d.get("id") or d.get("decision_id") for d in (listed.get("decisions") or [])]
+        listed.raise_for_status()
+        active_ids = [
+            item.get("projection", {}).get("id")
+            for item in (listed.json().get("data") or [])
+            if isinstance(item, dict)
+        ]
         result.assert_in("active list contains second", second_id, active_ids)
         result.assert_true("active list excludes superseded", first_id not in active_ids)
 

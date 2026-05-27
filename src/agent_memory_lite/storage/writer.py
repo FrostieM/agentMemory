@@ -39,6 +39,7 @@ _KIND_META: dict[str, tuple[str, str | None, str | None]] = {
     "concept": ("concepts", "definition", "definition_one_line"),
     "task": ("tasks", "goal", "goal_one_line"),
     "insight": ("insights", "summary", "gist"),
+    "snapshot": ("snapshots", "title", None),
     "code_digest": ("code_digests", "narrative", "purpose_short"),
     "chunk": ("chunks", "text", "gist"),
     "plan_step": ("plan_steps", None, None),
@@ -59,6 +60,7 @@ _HAS_UPDATED_AT = {
     "concept",
     "task",
     "insight",
+    "snapshot",
     "code_digest",
     "plan_step",
 }
@@ -81,6 +83,7 @@ _PREFIXES = {
     "concept": "concept",
     "task": "task",
     "insight": "insight",
+    "snapshot": "snap",
     "code_digest": "digest",
     "chunk": "chk",
     "plan_step": "pstep",

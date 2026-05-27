@@ -50,8 +50,6 @@
 
       <nav class="app-nav" aria-label="UI sections">
         <a class="app-nav-link is-active" href="/ui" data-nav="ui">Observatory</a>
-        <a class="app-nav-link" href="/ui/code" data-nav="code">Code</a>
-        <a class="app-nav-link" href="/ui/graph" data-nav="graph">Graph</a>
         <a class="app-nav-link" href="/ui/recall" data-nav="recall">Recall</a>
         <a class="app-nav-link" href="/ui/reflexes" data-nav="reflexes">Reflexes</a>
         <a class="app-nav-link" href="/ui/metrics" data-nav="metrics">Metrics</a>
@@ -63,12 +61,10 @@
         // Propagate active workspace_id into nav hrefs so navigating between
         // all UI pages keeps the same workspace. Re-runs on dropdown change
         // and on initial load. v3.0.0 final: full nav (recall, reflexes,
-        // metrics, review, browse) instead of the old ui/code/graph trio.
+        // metrics, review, browse) instead of the historical code/graph trio.
         (function () {
           const NAV_BASES = {
             ui: "/ui",
-            code: "/ui/code",
-            graph: "/ui/graph",
             recall: "/ui/recall",
             reflexes: "/ui/reflexes",
             metrics: "/ui/metrics",

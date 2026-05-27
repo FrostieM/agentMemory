@@ -66,18 +66,19 @@ def upsert_behavior_instruction_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO behavior_instructions (
+        INSERT INTO behaviors (
             id, workspace_id, name, kind, scope, priority, rule, rationale,
-            applies_to_json, conflict_policy, source_episode_id, confidence,
-            active, source_type, source_id, reviewed_by, reviewed_at, expires_at,
-            conflict_group, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rule_one_line, applies_to_json, conflict_policy, source_episode_id,
+            confidence, active, source_type, source_id, reviewed_by, reviewed_at,
+            expires_at, conflict_group, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, name) DO UPDATE SET
             kind = excluded.kind,
             scope = excluded.scope,
             priority = excluded.priority,
             rule = excluded.rule,
             rationale = excluded.rationale,
+            rule_one_line = excluded.rule_one_line,
             applies_to_json = excluded.applies_to_json,
             conflict_policy = excluded.conflict_policy,
             source_episode_id = excluded.source_episode_id,
@@ -100,6 +101,7 @@ def upsert_behavior_instruction_row(
             priority.value,
             rule,
             rationale,
+            rule,
             json.dumps(applies_to, sort_keys=True),
             conflict_policy.value,
             source_episode_id,
@@ -124,7 +126,7 @@ def get_behavior_instruction_by_name(
     name: str,
 ) -> BehaviorInstruction | None:
     row = conn.execute(
-        "SELECT * FROM behavior_instructions WHERE workspace_id = ? AND name = ?",
+        "SELECT * FROM behaviors WHERE workspace_id = ? AND name = ?",
         (workspace_id, name),
     ).fetchone()
     return row_to_instruction(row) if row is not None else None
@@ -133,9 +135,7 @@ def get_behavior_instruction_by_name(
 def get_behavior_instruction_by_id(
     conn: sqlite3.Connection, instruction_id: str
 ) -> BehaviorInstruction | None:
-    row = conn.execute(
-        "SELECT * FROM behavior_instructions WHERE id = ?", (instruction_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM behaviors WHERE id = ?", (instruction_id,)).fetchone()
     return row_to_instruction(row) if row is not None else None
 
 

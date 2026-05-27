@@ -1,16 +1,4 @@
-"""Persist lesson proposals as ``insight_candidates`` rows.
-
-Trust-gate invariant: this module ONLY writes to ``insight_candidates``.
-It must NEVER INSERT into ``research_insights`` directly. The
-no-auto-promote test asserts that. Promotion happens only via the
-explicit /memory/insight_candidates/{id}/accept endpoint.
-
-Audit volume policy: a single ``compaction.lesson_proposed`` audit row
-covers the whole batch (per plan blind spot #5). ``compaction.lesson_
-rejected_low_support`` is recorded as a count delta when proposals were
-generated but failed validation (the parser already filters them; the
-audit records the size of the discard).
-"""
+"""Persist lesson proposals as canonical review candidates."""
 
 from __future__ import annotations
 
@@ -18,7 +6,10 @@ import json
 import sqlite3
 
 from agent_memory_lite.compaction.lesson_proposal import LessonProposal
+from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
+from agent_memory_lite.models.enums import MemoryCandidateKind, MemoryCandidateStatus, TrustLevel
 from agent_memory_lite.repositories.audit_repo import insert_audit
+from agent_memory_lite.repositories.candidates_repo import insert_candidate_row
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
@@ -30,35 +21,41 @@ def write_lesson_candidates(
     proposals: list[LessonProposal],
     discarded_count: int = 0,
 ) -> list[str]:
-    """Insert each proposal as a pending row. Returns the new candidate ids.
-
-    Empty input → empty result, no audit row written.
-    """
+    """Insert each proposal as a reviewable candidate. Returns new ids."""
     if not proposals and discarded_count <= 0:
         return []
     now_iso = iso_now()
     candidate_ids: list[str] = []
     for proposal in proposals:
-        candidate_id = new_id(IdKind.INSIGHT_CANDIDATE)
-        conn.execute(
-            """
-            INSERT INTO insight_candidates
-            (id, workspace_id, insight_type, summary, proposed_action,
-             target_type, target_id, source_episode_ids_json, confidence,
-             status, tags_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, 'pending', '[]', ?, ?)
-            """,
-            (
-                candidate_id,
-                workspace_id,
-                proposal.insight_type,
-                proposal.summary,
-                proposal.proposed_action,
-                json.dumps(list(proposal.source_episode_ids)),
-                proposal.confidence,
-                now_iso,
-                now_iso,
-            ),
+        source_episode_ids = list(proposal.source_episode_ids)
+        candidate_id = new_id(IdKind.MEMORY_CANDIDATE)
+        candidate = MemoryCandidate(
+            kind=MemoryCandidateKind.INSIGHT,
+            subject=proposal.summary[:200],
+            predicate="should_promote_to_insight",
+            object=proposal.proposed_action,
+            evidence=proposal.summary,
+            confidence=proposal.confidence,
+            importance=proposal.confidence,
+            trust_level=TrustLevel.AGENT_INFERRED,
+            temporal=TemporalSpan(observed_at=now_iso, valid_from=now_iso),
+            write_targets=["insight"],
+            source_episode_id=None,
+            metadata={
+                "source": "lesson_review",
+                "insight_type": proposal.insight_type,
+                "proposed_action": proposal.proposed_action,
+                "source_episode_ids": source_episode_ids,
+                "source_episode_ids_json": json.dumps(source_episode_ids),
+            },
+        )
+        insert_candidate_row(
+            conn,
+            candidate_id=candidate_id,
+            workspace_id=workspace_id,
+            candidate=candidate,
+            status=MemoryCandidateStatus.NEW,
+            created_at=now_iso,
         )
         candidate_ids.append(candidate_id)
     if proposals:

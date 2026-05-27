@@ -89,11 +89,12 @@ def capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
             FROM capability_links l
             LEFT JOIN {table} c
               ON c.id = l.capability_id AND c.workspace_id = l.workspace_id
+             AND c.subtype = ?
             WHERE l.workspace_id = ?
               AND l.capability_type = ?
               AND c.id IS NULL
             """,
-            (workspace_id, capability_type.value),
+            (capability_type.value, workspace_id, capability_type.value),
         )
         if count:
             missing_capabilities[capability_type.value] = count
@@ -110,13 +111,13 @@ def capability_links_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
 
 
 def candidate_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
-    if not table_exists(conn, "memory_candidates"):
-        return IntegrityCheck(status="unknown", details={"reason": "memory_candidates missing"})
+    if not table_exists(conn, "candidates"):
+        return IntegrityCheck(status="unknown", details={"reason": "candidates missing"})
 
     rows = conn.execute(
         """
         SELECT status, COUNT(*) AS n
-        FROM memory_candidates
+        FROM candidates
         WHERE workspace_id = ?
         GROUP BY status
         """,
@@ -128,7 +129,7 @@ def candidate_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> Inte
     stale_rows = conn.execute(
         """
         SELECT updated_at
-        FROM memory_candidates
+        FROM candidates
         WHERE workspace_id = ? AND status = 'new'
         """,
         (workspace_id,),

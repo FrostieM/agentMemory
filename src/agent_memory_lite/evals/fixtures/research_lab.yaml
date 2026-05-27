@@ -71,12 +71,7 @@
         status: "accepted"
         tags: ["paper", "selector", "research-loop"]
   query: "paper selector gate open-rate research agenda"
-  expect_sections: ["active_theories", "research_agenda"]
   expect_substrings:
     - "Sparse paper opens"
-    - "Soft-gate replay for paper-open-rate"
     - "selector-gate"
-    - "Replay and backtest design"
-    - "capability_links"
     - "Waiting longer is low-information"
-    - "server_20260427T105823"

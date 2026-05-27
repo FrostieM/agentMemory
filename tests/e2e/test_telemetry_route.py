@@ -37,7 +37,7 @@ def _ingest(client: TestClient, text: str) -> None:
 def _search(client: TestClient, query: str) -> None:
     r = client.post(
         "/memory/search",
-        json={"workspace_id": "project-a", "query": query, "mode": "fts", "limit": 5},
+        json={"workspace_id": "project-a", "query": query, "limit": 5},
     )
     assert r.status_code == 200, r.text
 

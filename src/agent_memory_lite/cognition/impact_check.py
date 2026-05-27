@@ -3,9 +3,9 @@
 This is a **discipline primitive**. Its job is to make "ask the graph
 before reading the file" cheaper than "Read+Grep until you understand".
 
-Where v2 spread the same analysis across 3 separate tool calls
-(``memory_file_digest`` + ``memory_graph_neighbors`` + a Read on the
-file), this primitive returns everything an agent needs to make the
+Where the old surface spread the same analysis across separate digest,
+graph, and file-read steps, this primitive returns everything an agent
+needs to make the
 "can I just edit this safely?" decision in **one** envelope:
 
   * **Digest** — purpose_short, language, top symbols, staleness flag.
@@ -33,6 +33,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -112,10 +113,9 @@ _ADVISORY_BY_VERDICT = {
         "before changing signatures."
     ),
     "high": (
-        "HIGH impact: hub file (≥6 callers or hot symbols). Call "
-        "memory_graph_neighbors(qualified_name=<hot symbol>, direction='upstream') "
-        "for each hot symbol before editing. Consider memory_breaking_changes "
-        "after the edit."
+        "HIGH impact: hub file (≥6 callers or hot symbols). Fetch the "
+        "code_digest full caller fields with memory_get(kind='code_digest', "
+        "id='<file>') and use a focused source read before changing signatures."
     ),
 }
 
@@ -136,20 +136,30 @@ def _compute_verdict(*, indexed: bool, callers_count: int, hot_count: int) -> st
 
 
 def _load_digest(
-    conn: sqlite3.Connection, *, workspace_id: str, file_path: str
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    file_path: str,
+    project_root: Path | None = None,
 ) -> dict[str, Any] | None:
     """Pull the code_digests row for ``file_path`` into a compact dict."""
-    row = conn.execute(
-        """
-        SELECT file_path, file_sha1, language, chunk_count, symbol_count,
-               inbound_edge_count, outbound_edge_count, pagerank,
-               purpose_short, top_symbols_json, top_callers_json,
-               last_indexed_at, updated_at
-        FROM code_digests
-        WHERE workspace_id = ? AND file_path = ?
-        """,
-        (workspace_id, file_path),
-    ).fetchone()
+    row = None
+    for candidate in _path_candidates(file_path, project_root=project_root):
+        if project_root is not None and not _stored_path_exists(project_root, candidate):
+            continue
+        row = conn.execute(
+            """
+            SELECT file_path, file_sha1, language, chunk_count, symbol_count,
+                   inbound_edge_count, outbound_edge_count, pagerank,
+                   purpose_short, top_symbols_json, top_callers_json,
+                   last_indexed_at, updated_at
+            FROM code_digests
+            WHERE workspace_id = ? AND file_path = ?
+            """,
+            (workspace_id, candidate),
+        ).fetchone()
+        if row is not None:
+            break
     if row is None:
         return None
     top_symbols: list[Any] = []
@@ -178,6 +188,77 @@ def _load_digest(
     # the acceptance gate's `newest_age_minutes` target.
     digest["is_stale"] = _is_stale(row[11])
     return digest
+
+
+def _infer_project_root(conn: sqlite3.Connection) -> Path | None:
+    """Infer project root from a standard ``.agent_memory/memory.db`` path."""
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error:
+        return None
+    for row in rows:
+        name = str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
+        raw_path = str(row["file"] if isinstance(row, sqlite3.Row) else row[2])
+        if name != "main" or not raw_path or raw_path == ":memory:":
+            continue
+        db_path = Path(raw_path).resolve()
+        if db_path.name == "memory.db" and db_path.parent.name == ".agent_memory":
+            return db_path.parent.parent
+        return None
+    return None
+
+
+def _norm_path(path: str) -> str:
+    return path.strip().replace("\\", "/").removeprefix("./")
+
+
+def _relative_to(path: Path, root: Path) -> str | None:
+    try:
+        return _norm_path(str(path.resolve(strict=False).relative_to(root.resolve())))
+    except ValueError:
+        return None
+
+
+def _path_candidates(file_path: str, *, project_root: Path | None) -> list[str]:
+    """Return preferred DB path keys for a user-provided path."""
+    raw = file_path.strip()
+    normalized = _norm_path(raw)
+    candidates: list[str] = []
+
+    def add(value: str | None) -> None:
+        if value and value not in candidates:
+            candidates.append(value)
+
+    path_obj = Path(raw)
+    if path_obj.is_absolute():
+        if project_root is not None:
+            add(_relative_to(path_obj, project_root))
+        add(_norm_path(str(path_obj)))
+        return candidates
+
+    if project_root is not None and not normalized.startswith("src/"):
+        package_path = project_root / "src" / "agent_memory_lite" / normalized
+        if package_path.exists():
+            add(_norm_path(f"src/agent_memory_lite/{normalized}"))
+    add(normalized)
+    prefix = "src/agent_memory_lite/"
+    if normalized.startswith(prefix):
+        add(normalized.removeprefix(prefix))
+    elif normalized.startswith("agent_memory_lite/"):
+        add(f"src/{normalized}")
+    return candidates
+
+
+def _stored_path_exists(project_root: Path, stored_path: str) -> bool:
+    path = Path(stored_path)
+    if path.is_absolute():
+        return path.exists()
+    normalized = _norm_path(stored_path)
+    if (project_root / normalized).exists():
+        return True
+    if not normalized.startswith("src/"):
+        return (project_root / "src" / "agent_memory_lite" / normalized).exists()
+    return False
 
 
 def _is_stale(last_indexed_at: str | None, threshold_minutes: int = 120) -> bool:
@@ -277,6 +358,7 @@ def impact_check(
     file_path: str,
     callers_limit: int = 20,
     hot_threshold: int = 3,
+    project_root: Path | str | None = None,
 ) -> ImpactReport:
     """One-shot pre-edit / pre-read impact analysis for ``file_path``.
 
@@ -286,8 +368,14 @@ def impact_check(
     Token target:  ~80-150 tokens for the full envelope, so calling this
     is cheaper than ``Read``-ing even a small file.
     """
+    root = Path(project_root).resolve() if project_root is not None else _infer_project_root(conn)
     try:
-        digest = _load_digest(conn, workspace_id=workspace_id, file_path=file_path)
+        digest = _load_digest(
+            conn,
+            workspace_id=workspace_id,
+            file_path=file_path,
+            project_root=root,
+        )
     except sqlite3.Error:
         return ImpactReport(
             file_path=file_path,
@@ -300,14 +388,15 @@ def impact_check(
             verdict="not_indexed",
             advisory=_ADVISORY_BY_VERDICT["not_indexed"],
         )
+    resolved_file_path = str(digest.get("file_path") or file_path)
     try:
         callers = _load_callers(
-            conn, workspace_id=workspace_id, file_path=file_path, limit=callers_limit
+            conn, workspace_id=workspace_id, file_path=resolved_file_path, limit=callers_limit
         )
         hot_symbols = _load_hot_symbols(
             conn,
             workspace_id=workspace_id,
-            file_path=file_path,
+            file_path=resolved_file_path,
             threshold=hot_threshold,
         )
     except sqlite3.Error:
@@ -330,7 +419,7 @@ def impact_check(
             "[stale digest — last_indexed_at older than 2h; rerun PostToolUse hook] " + advisory
         )
     return ImpactReport(
-        file_path=file_path,
+        file_path=resolved_file_path,
         digest=digest,
         callers=callers,
         hot_symbols=hot_symbols,

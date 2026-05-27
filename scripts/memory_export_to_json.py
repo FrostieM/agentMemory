@@ -13,16 +13,16 @@ storage, just `git push` / `git pull`.
 Tables exported (durable operator-curated knowledge):
 
 * decisions, theories, theory_evidence
-* domain_concepts, research_insights
-* behavior_instructions, agent_roles, agent_skills, agent_playbooks
+* concepts, insights
+* behaviors, skills
 * capability_links
 
 Tables NOT exported (transient or re-derivable):
 
 * chunks, episodes, audit_log, maintenance_events
-* memory_candidates, memory_state_snapshots
+* candidates
 * chunk_symbol_metadata, symbol_edges, symbol_versions, soft_edges,
-  file_digests, active_edits — all derivable from re-running
+  file_digests and other derived coordination rows — all derivable from re-running
   memory_ingest_file on the source files.
 
 Output layout::
@@ -64,12 +64,10 @@ EXPORT_TABLES: tuple[str, ...] = (
     "decisions",
     "theories",
     "theory_evidence",
-    "domain_concepts",
-    "research_insights",
-    "behavior_instructions",
-    "agent_roles",
-    "agent_skills",
-    "agent_playbooks",
+    "concepts",
+    "insights",
+    "behaviors",
+    "skills",
     "capability_links",
 )
 

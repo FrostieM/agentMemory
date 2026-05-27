@@ -1,4 +1,4 @@
-"""Integration: ingest → build_context exercises the full hybrid pipeline."""
+"""Integration: ingest -> memory_search exercises the compact retrieval path."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ import pytest
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.storage.reader import search
 
 pytestmark = pytest.mark.integration
 
@@ -25,28 +24,28 @@ def _episode(text: str) -> EpisodeIn:
     )
 
 
-def test_hybrid_pipeline_finds_recent_episode(
+def test_compact_search_finds_recent_episode(
     applied_conn: sqlite3.Connection,
     fake_embedding_provider,
     fake_vector_store,
 ) -> None:
-    ingest_episode(
+    result = ingest_episode(
         applied_conn,
         _episode("Wired RRF fusion across FTS + vector signals."),
         embedding_provider=fake_embedding_provider,
         vector_store=fake_vector_store,
     )
 
-    built = build_context(
+    hits = search(
         applied_conn,
-        RetrievalQuery(workspace_id="default", query="RRF fusion vector signals"),
-        embedding_provider=fake_embedding_provider,
-        vector_store=fake_vector_store,
+        workspace_id="default",
+        query="RRF fusion vector signals",
+        kinds=["chunk"],
+        limit=8,
     )
 
-    assert built.hits, "expected at least one retrieval hit"
-    assert any("RRF" in hit.text or "fusion" in hit.text for hit in built.hits)
-    assert "<memory_context>" in built.text
+    assert hits, "expected at least one retrieval hit"
+    assert result.chunk.id in [hit.projection["id"] for hit in hits]
 
 
 def test_pipeline_without_provider_falls_back_to_fts(
@@ -56,12 +55,15 @@ def test_pipeline_without_provider_falls_back_to_fts(
         applied_conn,
         _episode("FTS-only retrieval still works without vector backend."),
     )
-    built = build_context(
+    hits = search(
         applied_conn,
-        RetrievalQuery(workspace_id="default", query="FTS retrieval"),
+        workspace_id="default",
+        query="FTS retrieval",
+        kinds=["chunk"],
+        limit=8,
     )
-    assert built.hits
-    assert all("fts" in hit.sources for hit in built.hits)
+    assert hits
+    assert all(hit.kind == "chunk" for hit in hits)
 
 
 def test_workspace_isolation_in_retrieval(
@@ -69,7 +71,7 @@ def test_workspace_isolation_in_retrieval(
     fake_embedding_provider,
     fake_vector_store,
 ) -> None:
-    ingest_episode(
+    result = ingest_episode(
         applied_conn,
         _episode("default workspace content"),
         embedding_provider=fake_embedding_provider,
@@ -89,11 +91,12 @@ def test_workspace_isolation_in_retrieval(
         vector_store=fake_vector_store,
     )
 
-    built = build_context(
+    hits = search(
         applied_conn,
-        RetrievalQuery(workspace_id="default", query="content"),
-        embedding_provider=fake_embedding_provider,
-        vector_store=fake_vector_store,
+        workspace_id="default",
+        query="content",
+        kinds=["chunk"],
+        limit=8,
     )
-    assert all("default" in hit.text or "default" in hit.workspace_id for hit in built.hits)
-    assert not any("other workspace" in hit.text for hit in built.hits)
+    assert result.chunk.id in [hit.projection["id"] for hit in hits]
+    assert not any("other workspace" in str(hit.projection) for hit in hits)

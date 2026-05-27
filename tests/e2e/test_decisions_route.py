@@ -13,112 +13,123 @@ def client(app_factory) -> Iterator[TestClient]:
         yield c
 
 
+def _write_decision(
+    client: TestClient,
+    *,
+    headers: dict[str, str] | None = None,
+    workspace_id: str = "default",
+    **payload,
+):
+    return client.post(
+        "/memory/write",
+        headers=headers or {},
+        json={"workspace_id": workspace_id, "kind": "decision", "payload": payload},
+    )
+
+
+def _list_decisions(client: TestClient, **params):
+    body = {
+        "workspace_id": "default",
+        "kinds": ["decision"],
+        "query": params.get("query", ""),
+        "limit": params.get("limit", 10),
+    }
+    return client.post("/memory/search", json=body)
+
+
+def _get_decision(client: TestClient, decision_id: str, *, fields: str):
+    return client.get(
+        "/memory/get",
+        params={"workspace_id": "default", "kind": "decision", "id": decision_id, "fields": fields},
+    )
+
+
 def test_write_decision_returns_active(client: TestClient) -> None:
-    response = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "Use SQLite + LanceDB",
-            "decision_text": "Lite memory uses SQLite + LanceDB.",
-            "rationale": "no Docker available",
-        },
+    response = _write_decision(
+        client,
+        title="Use SQLite + LanceDB",
+        decision_text="Lite memory uses SQLite + LanceDB.",
+        rationale="no Docker available",
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "active"
-    assert body["decision_id"].startswith("dec_")
+    assert body["ok"] is True
+    assert body["data"]["status"] == "active"
+    assert body["data"]["decision_id"].startswith("dec_")
 
 
 def test_supersedes_chain_via_http(client: TestClient) -> None:
-    first = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "v1",
-            "decision_text": "first",
-        },
+    first = _write_decision(client, title="v1", decision_text="first").json()["data"]
+    second = _write_decision(
+        client,
+        title="v2",
+        decision_text="second",
+        supersedes_decision_id=first["decision_id"],
     ).json()
-    second = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "v2",
-            "decision_text": "second",
-            "supersedes_decision_id": first["decision_id"],
-        },
-    ).json()
-    assert second["superseded_decision_id"] == first["decision_id"]
+    assert second["data"]["superseded_decision_id"] == first["decision_id"]
 
 
 def test_unknown_supersedes_returns_404(client: TestClient) -> None:
-    response = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "x",
-            "decision_text": "y",
-            "supersedes_decision_id": "dec_missing",
-        },
+    response = _write_decision(
+        client,
+        title="x",
+        decision_text="y",
+        supersedes_decision_id="dec_missing",
     )
-    assert response.status_code == 404
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "not_found"
 
 
 def test_list_decisions_searches_by_topic(client: TestClient) -> None:
-    first = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "Live execution watchdog",
-            "decision_text": "Keep live execution HTTP health cache-backed and non-blocking.",
-            "rationale": "Operators need the topic-level decision without knowing its id.",
-            "importance": 0.9,
-        },
+    first = _write_decision(
+        client,
+        title="Live execution watchdog",
+        decision_text="Keep live execution HTTP health cache-backed and non-blocking.",
+        rationale="Operators need the topic-level decision without knowing its id.",
+        importance=0.9,
     )
     assert first.status_code == 200, first.text
-    second = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": "Frontend layout",
-            "decision_text": "Use operator-first dashboards.",
-            "importance": 0.9,
-        },
+    second = _write_decision(
+        client,
+        title="Frontend layout",
+        decision_text="Use operator-first dashboards.",
+        importance=0.9,
     )
     assert second.status_code == 200, second.text
 
-    response = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "default", "query": "live execution health", "limit": 1},
-    )
+    response = _list_decisions(client, query="live execution health", limit=1)
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert [item["title"] for item in body["decisions"]] == ["Live execution watchdog"]
-    assert body["decisions"][0]["decision_text"].endswith("non-blocking.")
+    projections = [item["projection"] for item in body["data"]]
+    assert [item["title"] for item in projections] == ["Live execution watchdog"]
+    full = _get_decision(
+        client,
+        projections[0]["id"],
+        fields="decision_text",
+    ).json()
+    assert full["data"]["decision_text"].endswith("non-blocking.")
 
 
 def test_list_decisions_repairs_display_mojibake(client: TestClient) -> None:
     mojibake_dash = "\u00e2\u0080\u0094"
-    response = client.post(
-        "/memory/write_decision",
-        json={
-            "workspace_id": "default",
-            "title": f"API process {mojibake_dash} worker",
-            "decision_text": f"Split API {mojibake_dash} worker for reliability.",
-            "importance": 0.9,
-        },
+    response = _write_decision(
+        client,
+        title=f"API process {mojibake_dash} worker",
+        decision_text=f"Split API {mojibake_dash} worker for reliability.",
+        importance=0.9,
     )
     assert response.status_code == 200, response.text
 
-    listed = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "default", "query": "API worker", "limit": 1},
-    )
+    listed = _list_decisions(client, query="API worker", limit=1)
 
     assert listed.status_code == 200, listed.text
-    item = listed.json()["decisions"][0]
+    item = listed.json()["data"][0]["projection"]
     assert item["title"] == "API process \u2014 worker"
-    assert item["decision_text"] == "Split API \u2014 worker for reliability."
+    full = _get_decision(client, item["id"], fields="decision_text").json()
+    assert full["data"]["decision_text"] == "Split API \u2014 worker for reliability."
 
 
 # ---------- 2.2 Move 1: auto-thread source_episode_id ----------
@@ -141,21 +152,14 @@ def test_auto_thread_fills_from_recent_ingest_episode(client: TestClient) -> Non
     )
     assert ep.status_code == 200, ep.text
     episode_id = ep.json()["episode_id"]
-    dec = client.post(
-        "/memory/write_decision",
+    dec = _write_decision(
+        client,
         headers=headers,
-        json={
-            "workspace_id": "default",
-            "title": "Move auth to JWT",
-            "decision_text": "Replace session cookies with JWT.",
-        },
+        title="Move auth to JWT",
+        decision_text="Replace session cookies with JWT.",
     )
     assert dec.status_code == 200, dec.text
-    listed = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "default", "query": "Move auth to JWT", "limit": 1},
-    ).json()
-    assert listed["decisions"][0]["source_episode_id"] == episode_id
+    assert dec.json()["data"]["source_episode_id"] == episode_id
 
 
 def test_allow_orphan_skips_auto_thread(client: TestClient) -> None:
@@ -171,22 +175,15 @@ def test_allow_orphan_skips_auto_thread(client: TestClient) -> None:
             "source_type": "agent_action",
         },
     )
-    dec = client.post(
-        "/memory/write_decision",
+    dec = _write_decision(
+        client,
         headers=headers,
-        json={
-            "workspace_id": "default",
-            "title": "Pre-existing decision",
-            "decision_text": "Decision predates the recording of any episode.",
-            "allow_orphan": True,
-        },
+        title="Pre-existing decision",
+        decision_text="Decision predates the recording of any episode.",
+        allow_orphan=True,
     )
     assert dec.status_code == 200, dec.text
-    listed = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "default", "query": "Pre-existing decision", "limit": 1},
-    ).json()
-    assert listed["decisions"][0]["source_episode_id"] is None
+    assert dec.json()["data"]["source_episode_id"] is None
 
 
 def test_explicit_source_episode_id_wins_over_auto_thread(client: TestClient) -> None:
@@ -212,19 +209,12 @@ def test_explicit_source_episode_id_wins_over_auto_thread(client: TestClient) ->
             "source_type": "agent_action",
         },
     )
-    dec = client.post(
-        "/memory/write_decision",
+    dec = _write_decision(
+        client,
         headers=headers,
-        json={
-            "workspace_id": "default",
-            "title": "Explicit source decision",
-            "decision_text": "T",
-            "source_episode_id": older,
-        },
+        title="Explicit source decision",
+        decision_text="T",
+        source_episode_id=older,
     )
     assert dec.status_code == 200, dec.text
-    listed = client.post(
-        "/memory/list_decisions",
-        json={"workspace_id": "default", "query": "Explicit source decision", "limit": 1},
-    ).json()
-    assert listed["decisions"][0]["source_episode_id"] == older
+    assert dec.json()["data"]["source_episode_id"] == older

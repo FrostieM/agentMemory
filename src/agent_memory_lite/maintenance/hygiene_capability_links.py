@@ -35,7 +35,7 @@ _SPECS = [
     ),
     (
         "experiment",
-        "research_experiments",
+        "experiments",
         """
         id,
         title AS label,

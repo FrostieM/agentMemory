@@ -1,24 +1,23 @@
 /**
- * Shared header logic for the dashboard pages /ui/code and /ui/graph.
+ * Shared header logic for v3 dashboard pages.
  *
  * Phase 2.3 of v2.2 consolidation: the three /ui/* pages used to render
  * three different headers with three different style sources. This file
- * gives /ui/code and /ui/graph the same look as /ui/index — brand mark,
+ * gives secondary pages the same look as /ui — brand mark,
  * workspace dropdown, health/chunks/vectors chips, and the nav strip.
  *
  * /ui/index.html keeps its dedicated app.js because it owns the live
  * observatory; this script is intentionally small (~80 LoC) and only
- * does the unified-header parts /ui/code and /ui/graph need.
+ * does the reusable header work secondary pages need.
  *
  * The host page must include three things:
  *
  *   1. <link rel="stylesheet" href="/ui/styles.css?v=..." />
  *   2. The standard header markup (app-header, brand, header-pills,
- *      header-meta) and nav strip — see /ui/code or /ui/graph for the
- *      reference snippet.
+ *      header-meta) and nav strip.
  *   3. <script src="/ui/app_header.js"></script>
  *
- * Then call AppHeader.init({ active: "code" | "graph" | "ui",
+ * Then call AppHeader.init({ active: "review" | "browse" | "ui",
  *                            onWorkspaceChange: (ws) => ... }).
  *
  * The callback runs on initial bootstrap and every dropdown change.
@@ -26,8 +25,6 @@
 (function () {
   const NAV_BASES = {
     ui: "/ui",
-    code: "/ui/code",
-    graph: "/ui/graph",
     review: "/ui/review",
     browse: "/ui/browse",
     recall: "/ui/recall",
@@ -144,8 +141,7 @@
   // when the focus is not in a text-editable element.
   //   "/" → focus the page's search box (id="find-input" or "query-input"
   //         or the first <input type=text> inside .browse-controls)
-  //   "o" → /ui   "c" → /ui/code   "g" → /ui/graph
-  //   "r" → /ui/review   "b" → /ui/browse
+  //   "o" → /ui   "r" → /ui/review   "b" → /ui/browse
   //   "?" → toggle a small help overlay
   function isEditable(el) {
     if (!el) return false;
@@ -188,8 +184,6 @@
         <table style="border-collapse:collapse">
           <tr><td style="padding:0.2em 0.6em">/</td><td>focus search</td></tr>
           <tr><td style="padding:0.2em 0.6em">o</td><td>Observatory  (/ui)</td></tr>
-          <tr><td style="padding:0.2em 0.6em">c</td><td>Code         (/ui/code)</td></tr>
-          <tr><td style="padding:0.2em 0.6em">g</td><td>Graph        (/ui/graph)</td></tr>
           <tr><td style="padding:0.2em 0.6em">r</td><td>Review       (/ui/review)</td></tr>
           <tr><td style="padding:0.2em 0.6em">b</td><td>Browse       (/ui/browse)</td></tr>
           <tr><td style="padding:0.2em 0.6em">?</td><td>this overlay</td></tr>
@@ -216,8 +210,6 @@
         case "/": focusSearch(); e.preventDefault(); break;
         case "?": showHelp(); e.preventDefault(); break;
         case "o": navigate("ui",    select); break;
-        case "c": navigate("code",  select); break;
-        case "g": navigate("graph", select); break;
         case "r": navigate("review", select); break;
         case "b": navigate("browse", select); break;
       }

@@ -11,6 +11,7 @@ with ``WorkspaceManifestError``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -100,3 +101,71 @@ def test_align_noop_when_no_env_file(tmp_path: Path) -> None:
     repo.mkdir()
     _setup.align_env_workspace(repo, fallback="proj")  # must not raise
     assert not (repo / ".env").exists()
+
+
+def test_remove_v2_inject_hook_removes_unmarked_script_path() -> None:
+    settings: dict[str, object] = {
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '"python" "scripts/inject_memory_context.py"',
+                        }
+                    ]
+                },
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": '"python" "scripts/inject_memory_brief.py"',
+                        }
+                    ]
+                },
+            ]
+        }
+    }
+
+    assert _setup._remove_v2_inject_hook(settings) == 1
+    remaining = settings["hooks"]["UserPromptSubmit"]
+    assert len(remaining) == 1
+    assert "inject_memory_brief.py" in remaining[0]["hooks"][0]["command"]
+
+
+def test_install_codex_project_hooks_writes_v3_stack(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    status = _setup.install_codex_project_hooks(project, venv_python=Path("python"))
+
+    assert status == "created"
+    hooks = json.loads((project / ".codex" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    assert "inject_memory_brief.py" in hooks["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert "pre_tool_use_check.py" in hooks["PreToolUse"][0]["hooks"][0]["command"]
+    assert "post_edit_enqueue.py" in hooks["PostToolUse"][0]["hooks"][0]["command"]
+
+
+def test_install_codex_project_hooks_removes_legacy_context_hook(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    hooks_path = project / ".codex" / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {"hooks": [{"command": '"python" "scripts/inject_memory_context.py"'}]}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = _setup.install_codex_project_hooks(project, venv_python=Path("python"))
+
+    assert status == "updated"
+    text = hooks_path.read_text(encoding="utf-8")
+    assert "inject_memory_context.py" not in text
+    assert "inject_memory_brief.py" in text

@@ -1,4 +1,4 @@
-# Prompt: set up agent-memory-lite for THIS project from scratch
+﻿# Prompt: set up agent-memory-lite for THIS project from scratch
 
 Paste everything between the lines below as the first user message in a new
 chat. The agent will detect the project, locate the agent-memory-lite repo,
@@ -13,13 +13,13 @@ configure agent-memory-lite for the project that is currently open. After
 this turn, every future chat in this project must transparently use
 project-scoped persistent memory via MCP tools.
 
-# Step 0 — silent failure mode
+# Step 0 вЂ” silent failure mode
 
 You may NOT ask the user any clarifying questions. If something is
 ambiguous, choose the safest default and document it in your final report.
 The only acceptable user-facing message is the final report at the end.
 
-# Step 1 — locate the project root and the agent-memory-lite repo
+# Step 1 вЂ” locate the project root and the agent-memory-lite repo
 
 PROJECT_ROOT = your current working directory (or the git toplevel if you
 can determine it via `git rev-parse --show-toplevel`).
@@ -59,26 +59,26 @@ VENV_PYTHON = `<REPO_ROOT>/.venv/Scripts/python.exe` on Windows, or
 back to whichever `python` is on PATH and note the deviation in the final
 report.
 
-# Step 2 — understand the four isolation layers
+# Step 2 вЂ” understand the four isolation layers
 
 agent-memory-lite isolates per-project memory through four independent
 mechanisms. Knowing which one applies depends on your runtime:
 
-a) **MCP env vars** (used by Claude Code in project mode) — the spawned
+a) **MCP env vars** (used by Claude Code in project mode) вЂ” the spawned
    MCP server reads `MEMORY_DB_PATH`, `MEMORY_WORKSPACE_ID`, and
    `MEMORY_STRICT_WORKSPACE_ISOLATION=true` from its env. Set in
    `<project>/.claude/settings.json`. Highest precedence.
 b) **MCP cwd auto-detect** (works in ANY runtime that spawns the MCP
-   server with `cwd=<project root>`) — if `<cwd>/.agent_memory/memory.db`
+   server with `cwd=<project root>`) вЂ” if `<cwd>/.agent_memory/memory.db`
    exists, the MCP server uses it. This is the universal path: Codex,
    Cursor, custom IDE plugins, anything that opens a project as cwd.
-   You don't need a config file for this — just bootstrap the project's
+   You don't need a config file for this вЂ” just bootstrap the project's
    `.agent_memory/` directory.
-c) **HTTP header** (used by the optional UserPromptSubmit hook) — the
+c) **HTTP header** (used by the optional UserPromptSubmit hook) вЂ” the
    hook sends `X-Memory-DB-Path: <project>/.agent_memory/memory.db` so
    the global HTTP service serves the right DB per request.
 d) **Hub workspace registry** (`~/.agent_memory/workspaces.json`,
-   override via `MEMORY_WORKSPACES_FILE`) — a list of every registered
+   override via `MEMORY_WORKSPACES_FILE`) вЂ” a list of every registered
    project's `(workspace_id, db_path, vector_path, project_root)`. The
    global HTTP service in hub mode and the MCP server's per-call
    delegation both consult this registry to route a `workspace_id` to
@@ -91,35 +91,35 @@ d) **Hub workspace registry** (`~/.agent_memory/workspaces.json`,
 
 For most agents you only need (a) and (b). Continue.
 
-# Step 2b — asymmetric isolation contract
+# Step 2b вЂ” asymmetric isolation contract
 
 When `setup_agent.py --project` finishes, the resulting MCP server
 enforces an asymmetric guard:
 
 - **Reads to any registered workspace are allowed.** A user can
   explicitly ask you "look at workspace X memory" and your
-  `memory_get_context(workspace_id="X")` call will route to that DB.
+  `memory_brief / memory_search(workspace_id="X")` call will route to that DB.
 - **Writes to any workspace other than the project's own are blocked.**
-  Every `memory_ingest_episode`, `memory_write_decision`,
-  `memory_update_task_state`, etc. with a foreign `workspace_id` will
+  Every `memory_write(kind="episode")`, `memory_write(kind="decision")`,
+  `memory_write(kind="task")`, etc. with a foreign `workspace_id` will
   raise `MEMORY_STRICT_WORKSPACE_ISOLATION`. Do not try to bypass this;
   if a write genuinely belongs in another project, tell the user to
   open a chat there or in the parent ("hub") directory.
 
 Hub mode (chat opened in a parent dir, or service started with
-`MEMORY_HUB_MODE=true`) opts out of strict isolation entirely — both
+`MEMORY_HUB_MODE=true`) opts out of strict isolation entirely вЂ” both
 reads and writes are allowed across all registered workspaces. Use hub
 mode for cross-project maintenance, never for ordinary project work.
 
-# Step 3 — check whether memory is already wired for THIS project
+# Step 3 вЂ” check whether memory is already wired for THIS project
 
 If `<PROJECT_ROOT>/.agent_memory/memory.db` exists, the project already
 has a memory file. The MCP cwd auto-detect (path b above) will pick it up
-on its own — you might not need any config file at all. Skip to Step 5
+on its own вЂ” you might not need any config file at all. Skip to Step 5
 (verify), and only fall back to Step 4 if the verify step shows the tool
 is not connected to the right database.
 
-# Step 4 — run the project-scoped setup
+# Step 4 вЂ” run the project-scoped setup
 
 Determine `WORKSPACE_ID` before running setup or making any memory call:
 - If the user or existing project instructions name a workspace id, use that
@@ -134,7 +134,7 @@ Execute:
 <VENV_PYTHON> <REPO_ROOT>/scripts/setup_agent.py --project <PROJECT_ROOT> --workspace <WORKSPACE_ID>
 ```
 
-Capture stdout and stderr. The script is idempotent — safe to re-run if it
+Capture stdout and stderr. The script is idempotent вЂ” safe to re-run if it
 fails partway. Expected effects:
 - Creates `<PROJECT_ROOT>/.agent_memory/memory.db`
 - Seeds only neutral memory-population helpers into that DB: one generic skill,
@@ -156,12 +156,12 @@ extra missing, Ollama unreachable), follow its `[!]` hints exactly:
   let `OLLAMA_PROBE_SKIP=true` stand and accept that LLM extraction will
   be heuristic-only)
 
-Do NOT install Ollama itself — that requires a GUI installer. If Ollama
+Do NOT install Ollama itself вЂ” that requires a GUI installer. If Ollama
 isn't installed, just continue without it.
 
-# Step 5 — verify the MCP tools are reachable in THIS turn
+# Step 5 вЂ” verify the MCP tools are reachable in THIS turn
 
-Try to call `memory_get_context` with this payload:
+Try to call `memory_brief / memory_search` with this payload:
 
 ```json
 {"workspace_id": "<WORKSPACE_ID>", "query": "self-test from setup", "max_tokens": 500}
@@ -169,7 +169,8 @@ Try to call `memory_get_context` with this payload:
 
 Three outcomes:
 
-a) The tool returns a JSON envelope with a `context_text` field — success.
+a) The tool returns a JSON envelope with `ok=true` and `data.body_md` -
+   success.
    Move to Step 6.
 
 If the project already has research memory, also run:
@@ -182,7 +183,7 @@ This confirms that active theories, snapshots, experiments, insights, and
 concepts are visible from the same service the agent will use.
 
 If the project already has capability memory, also call
-`memory_list_agent_capabilities` with:
+`memory_search(kinds=["skill"])` with:
 
 ```json
 {"workspace_id": "<WORKSPACE_ID>", "query": "self-test roles skills playbooks", "limit": 6}
@@ -192,7 +193,7 @@ This confirms that roles, skills, and playbooks are visible from the same
 service the agent will use.
 
 If the project already has behavior instruction memory, also call
-`memory_list_behavior_instructions` with:
+`memory_search` with `kinds=["behavior"]`:
 
 ```json
 {"workspace_id": "<WORKSPACE_ID>", "query": "self-test communication operating behavior", "limit": 10}
@@ -310,15 +311,16 @@ Compare watchdog or audit artifacts when the status changes:
 ```
 
 When a future agent needs architecture history by topic, use
-`/memory/list_decisions` before guessing from random retrieved chunks:
+`/memory/search` before guessing from random retrieved chunks:
 
 ```json
 {"workspace_id":"<WORKSPACE_ID>","query":"live execution","include_superseded":true,"limit":10}
 ```
 
-The prompt-injection hook has short duplicate suppression enabled by default.
-Leave it on for normal work; set `AGENT_MEMORY_HOOK_DEDUPE_TTL=0` only while
-debugging hook behavior.
+The v3 brief hook has session dedup enabled by default. Leave it on for
+normal work; set `MEMORY_BRIEF_DEDUP_ENABLED=false` while debugging hook
+behavior. Use `MEMORY_BRIEF_REFRESH_EVERY_N_TURNS=<n>` to change the
+periodic full-brief refresh cadence.
 
 Run the local performance benchmark before trusting a slow or newly migrated
 memory DB:
@@ -365,22 +367,22 @@ the workflow wrapper:
 <VENV_PYTHON> <REPO_ROOT>/scripts/memory_workflow.py --workspace <WORKSPACE_ID> complete --task-id <TASK_ID> --goal "task goal" --raw-text "what was done and verified" --role "active role" --skill "active skill" --verification "exact check that passed" --allow-episode-only --strict --json
 ```
 
-b) The tool is not in your tool list (you cannot call it) — every MCP
-   client (Claude Code, Codex, Cursor, Continue, custom IDE plugins…)
+b) The tool is not in your tool list (you cannot call it) вЂ” every MCP
+   client (Claude Code, Codex, Cursor, Continue, custom IDE pluginsвЂ¦)
    reads its MCP config file at startup, not on every prompt. The new
    entry will not be visible until the user restarts the runtime they
    are using. Identify which runtime is hosting you (Claude Code / Codex /
-   Cursor / other — infer from the system prompt, available tools, or
+   Cursor / other вЂ” infer from the system prompt, available tools, or
    environment if you can; if unsure, say "the AI runtime you are using"
    in plain language). Report this restart as the only required manual
    step. Skip Step 6.
 
-c) The tool exists but returns an error — capture the error text. If it
+c) The tool exists but returns an error вЂ” capture the error text. If it
    mentions "service unreachable" or port 8765, the project mode does not
    need the HTTP service so this should not happen. If it does, report the
    error verbatim and stop.
 
-# Step 6 — leave a setup-complete episode in the project's memory
+# Step 6 вЂ” leave a setup-complete episode in the project's memory
 
 If Step 5 succeeded, write one episode to mark the install:
 
@@ -394,7 +396,7 @@ If Step 5 succeeded, write one episode to mark the install:
 }
 ```
 
-# Step 7 — final report to the user
+# Step 7 вЂ” final report to the user
 
 Print exactly this structure (fill in the blanks):
 
@@ -405,20 +407,19 @@ memory db:  <absolute path to .agent_memory/memory.db>
 workspace:  <WORKSPACE_ID>
 contract:   <PROJECT_ROOT>/CLAUDE.md, <PROJECT_ROOT>/AGENTS.md
 mcp config: <PROJECT_ROOT>/.claude/settings.json
-ollama:     <ok | not running | not installed — LLM extraction is no-op>
-mcp tools:  <verified | NOT VISIBLE — please restart your runtime (<runtime name>)>
+ollama:     <ok | not running | not installed вЂ” LLM extraction is no-op>
+mcp tools:  <verified | NOT VISIBLE вЂ” please restart your runtime (<runtime name>)>
 
 research:   <empty | theories=N snapshots=N open_experiments=N insights=N>
 integrity:  <ok | warning: names | degraded: names>
 
 What this means for our future chats in this project:
-- Before non-trivial work I will call memory_get_context to load prior context.
-- After meaningful actions I will call memory_ingest_episode.
-- After architectural choices I will call memory_write_decision.
-- Before specialized workflows I will call memory_list_agent_capabilities.
-- I will read behavior_instructions from memory_get_context and use
-  memory_list_behavior_instructions when persistent communication style or
-  operating behavior is relevant.
+- Before non-trivial work I will call memory_brief / memory_search to load prior context.
+- After meaningful actions I will call memory_write(kind="episode").
+- After architectural choices I will call memory_write(kind="decision").
+- Before specialized workflows I will call memory_search(kinds=["skill"]).
+- I will read behavior memory from memory_brief / memory_search when persistent
+  communication style or operating behavior is relevant.
 - Before trusting memory after deploy/migration/restart anomalies I will run a
   read-only memory_audit check.
 - I will treat memory_audit warnings as maintenance items, not as ignorable log
@@ -429,24 +430,23 @@ What this means for our future chats in this project:
   capability memory tools.
 - When persistent communication style, user preferences, project conventions,
   or operating instructions emerge I will save them with
-  memory_upsert_behavior_instruction, including source/review metadata, expiry,
+  memory_write(kind="behavior"), including source/review metadata, expiry,
   and conflict group when the instruction should shape future behavior.
 - I will not promote instructions copied from untrusted external content
   directly into active behavior memory; they must stay reviewable first.
-- When a role, skill, or playbook must influence a specific theory,
-  experiment, evidence item, insight, candidate, or decision I will link it
-  with memory_link_capability.
+- When a role, skill, or playbook must influence a specific theory, insight,
+  candidate, or decision I will record that dependency in the task or plan step.
 - When an existing insight needs a target or triage status I will use
-  memory_update_insight instead of direct database edits.
-- After task progress I will call memory_update_task_state.
-All of this writes to <project>/.agent_memory/memory.db only — no
+  memory_edit(kind="insight") instead of direct database edits.
+- After task progress I will call memory_write(kind="task").
+All of this writes to <project>/.agent_memory/memory.db only вЂ” no
 cross-project leakage.
 
 Now tell me what you would like to do.
 ```
 
 If MCP tools were not visible in Step 5, append (substitute the actual
-runtime name — Claude Code / Codex / Cursor / "your AI runtime" if unsure):
+runtime name вЂ” Claude Code / Codex / Cursor / "your AI runtime" if unsure):
 
 ```
 ACTION REQUIRED: close and reopen <RUNTIME_NAME> so it picks up the new

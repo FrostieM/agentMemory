@@ -1,8 +1,7 @@
 """Wire schemas for v1.10 promote-memory-candidate-to-behavior endpoint.
 
 Used by ``POST /memory/promote_candidate_to_behavior`` to convert a
-``memory_candidates(kind=correction)`` row into a durable
-``behavior_instructions`` row. The conversion is operator-driven —
+``candidates(kind=correction)`` row into a durable behavior. The conversion is operator-driven —
 the trust gate stays intact and corrections never auto-promote.
 """
 
@@ -47,14 +46,14 @@ class PromoteCandidateToBehaviorRequest(BaseModel):
     conflict_policy: BehaviorConflictPolicy = BehaviorConflictPolicy.CURRENT_USER_WINS
     applies_to: list[str] = Field(default_factory=list)
     decided_by: str | None = None
-    # When True, the resulting behavior_instruction is also pinned so it
+    # When True, the resulting behavior is also pinned so it
     # rides the active-context envelope regardless of query relevance.
     # Useful for critical operating rules ("never modify production
     # without confirmation") where missing the rule on a noisy query
     # would be the worst-case outcome.
     pinned: bool = False
     # When False (default), promotion refuses to replace an existing
-    # active behavior_instruction with the same name in the workspace.
+    # active behavior with the same name in the workspace.
     # Pass True to replace, with full audit trail preserved.
     overwrite: bool = False
 

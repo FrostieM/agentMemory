@@ -1,7 +1,6 @@
 """Canonical HTTP routes -- mounts at /memory/* on the FastAPI app.
 
-The 6 core tools + 2 hook primitives + memory_invoke_skill +
-memory_rollback, all returning the uniform ``Envelope`` shape. Each
+The strict v3 tools + hook primitives all return the uniform ``Envelope`` shape. Each
 route is a thin wrapper around the storage / cognition functions; no
 business logic lives here.
 
@@ -14,10 +13,12 @@ retired so there is one path per canonical name.
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import ValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from agent_memory_lite.api.deps import (
     DbDep,
@@ -25,34 +26,34 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.errors import MemoryServiceError
+from agent_memory_lite.api.errors import ValidationError as ApiValidationError
 from agent_memory_lite.api.schemas.memory import (
     ArchiveRequest,
     EditRequest,
     Envelope,
     LintRequest,
     PinRequest,
-    RollbackRequest,
     SearchRequest,
     WriteRequest,
 )
+from agent_memory_lite.api.ui_telemetry import trace_memory_operation
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
-from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
+from agent_memory_lite.ingestion.canonical_writer import write_canonical
+from agent_memory_lite.maintenance.implicit_feedback import record_implicit_archive
+from agent_memory_lite.maintenance.sentinel_scheduler import maybe_run_sentinels
+from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.storage.reader import (
-    count_kind,
     get_object,
-    list_kind,
     plan_for_task,
     search,
 )
 from agent_memory_lite.storage.writer import (
     archive,
     edit,
-    list_versions,
     pin,
-    rollback,
-    write,
 )
 
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -66,32 +67,15 @@ def _err(code: str, message: str) -> Envelope:
     return Envelope(ok=False, error={"code": code, "message": message})
 
 
-# ============================================================
-# memory_view (list_kind / get_object)
-# ============================================================
-
-
-@router.get("/list", response_model=Envelope)
-def list_endpoint(
-    conn: DbDep,
-    settings: SettingsDep,
-    workspace_id: str = Query(min_length=1),
-    kind: str = Query(min_length=1),
-    limit: int = Query(default=20, ge=1, le=100),
-    pinned_only: bool = Query(default=False),
-    status: str | None = Query(default=None),
-) -> Envelope:
-    """List rows of a kind as compact projections."""
-    ensure_workspace_readable(workspace_id, settings)
-    rows = list_kind(
-        conn,
-        workspace_id=workspace_id,
-        kind=kind,
-        limit=limit,
-        pinned_only=pinned_only,
-        status=status,
-    )
-    return _ok(rows)
+def _maybe_autorun_sentinels(workspace_id: str, settings: SettingsDep) -> None:
+    with contextlib.suppress(Exception):
+        maybe_run_sentinels(
+            workspace_id=workspace_id,
+            settings=settings,
+            db_path=settings.db_path,
+            embedding_provider=None,
+            vector_store=None,
+        )
 
 
 @router.get("/get", response_model=Envelope)
@@ -106,26 +90,19 @@ def get_endpoint(
     """Fetch one row by id. Returns compact projection by default."""
     ensure_workspace_readable(workspace_id, settings)
     field_list = [f.strip() for f in fields.split(",")] if fields else None
-    obj = get_object(conn, workspace_id=workspace_id, kind=kind, object_id=id, fields=field_list)
+    try:
+        obj = get_object(
+            conn,
+            workspace_id=workspace_id,
+            kind=kind,
+            object_id=id,
+            fields=field_list,
+        )
+    except ValueError as exc:
+        raise ApiValidationError(str(exc)) from exc
     if obj is None:
         return _err("not_found", f"{kind}:{id} not found in {workspace_id}")
     return _ok(obj)
-
-
-@router.get("/count", response_model=Envelope)
-def count_endpoint(
-    conn: DbDep,
-    settings: SettingsDep,
-    workspace_id: str = Query(min_length=1),
-    kind: str = Query(min_length=1),
-    pinned_only: bool = Query(default=False),
-    status: str | None = Query(default=None),
-) -> Envelope:
-    ensure_workspace_readable(workspace_id, settings)
-    n = count_kind(
-        conn, workspace_id=workspace_id, kind=kind, pinned_only=pinned_only, status=status
-    )
-    return _ok({"count": n})
 
 
 @router.get("/plan", response_model=Envelope)
@@ -149,15 +126,42 @@ def plan_endpoint(
 @router.post("/search", response_model=Envelope)
 def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_readable(req.workspace_id, settings)
-    hits = search(
-        conn,
+    _maybe_autorun_sentinels(req.workspace_id, settings)
+    with trace_memory_operation(
         workspace_id=req.workspace_id,
-        query=req.query,
-        kinds=req.kinds,
-        limit=req.limit,
-        rerank=req.rerank,
-    )
-    data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
+        endpoint="/memory/search",
+        operation="search",
+        label="Search memory",
+        snippet=req.query,
+    ) as trace:
+        trace.stage_done(
+            "input",
+            "Search query accepted",
+            counts={"limit": req.limit, "kinds": len(req.kinds or [])},
+            snippet=req.query,
+        )
+        trace.stage_started("fts", "Compact memory lookup")
+        hits = search(
+            conn,
+            workspace_id=req.workspace_id,
+            query=req.query,
+            kinds=req.kinds,
+            limit=req.limit,
+            rerank=req.rerank,
+        )
+        data = [{"kind": h.kind, "projection": h.projection, "score": h.score} for h in hits]
+        trace.stage_done("fts", "Compact matches found", counts={"hits": len(data)})
+        trace.stage_done("response", "Search response ready", counts={"hits": len(data)})
+    if settings.audit_read_operations:
+        with contextlib.suppress(sqlite3.Error):
+            insert_audit(
+                conn,
+                workspace_id=req.workspace_id,
+                action="search",
+                target_type="search_query",
+                target_id=req.query[:120],
+                after={"limit": req.limit, "mode": "v3", "hits": len(data)},
+            )
     return _ok(data)
 
 
@@ -178,29 +182,20 @@ def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> E
 @router.post("/write", response_model=Envelope)
 def write_endpoint(req: WriteRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_writable(req.workspace_id, settings)
-    if req.kind == "plan_step":
-        # plan_step creates route through the business writer so `rank`
-        # is auto-assigned -- the generic writer has no rank default and
-        # the INSERT fails the NOT NULL constraint on plan_steps.rank.
-        try:
-            out = add_plan_step_from_payload(
-                conn,
-                workspace_id=req.workspace_id,
-                payload=req.payload,
-                agent_id=req.agent_id,
-                source_episode_id=req.source_episode_id,
-            )
-        except ValidationError as exc:
-            return _err("invalid_args", f"invalid plan_step payload: {exc}")
-    else:
-        out = write(
+    try:
+        out = write_canonical(
             conn,
             workspace_id=req.workspace_id,
             kind=req.kind,
             payload=req.payload,
             agent_id=req.agent_id,
             source_episode_id=req.source_episode_id,
+            settings=settings,
         )
+    except PydanticValidationError as exc:
+        return _err("invalid_args", f"invalid {req.kind} payload: {exc}")
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, str(exc))
     if out is None:
         return _err("unsupported_kind", f"writer does not support kind={req.kind}")
     return _ok(out)
@@ -251,11 +246,19 @@ def archive_endpoint(req: ArchiveRequest, conn: DbDep, settings: SettingsDep) ->
     )
     if out is None:
         return _err("not_found_or_unsupported", f"cannot archive {req.kind}:{req.id}")
+    with contextlib.suppress(Exception):
+        record_implicit_archive(
+            conn,
+            settings=settings,
+            workspace_id=req.workspace_id,
+            source_type=req.kind,
+            source_id=req.id,
+        )
     return _ok(out)
 
 
 # ============================================================
-# memory_brief / memory_lint / memory_invoke_skill / memory_rollback / memory_versions
+# memory_brief / memory_lint / memory_invoke_skill / memory_impact_check
 # ============================================================
 
 
@@ -277,6 +280,7 @@ def brief_endpoint(
     prompt.
     """
     ensure_workspace_readable(workspace_id, settings)
+    _maybe_autorun_sentinels(workspace_id, settings)
     b = compose_brief(
         conn,
         workspace_id=workspace_id,
@@ -334,8 +338,8 @@ def impact_check_endpoint(
 ) -> Envelope:
     """Pre-edit / pre-read impact analysis. Discipline primitive.
 
-    Replaces the 3-call sequence (memory_file_digest +
-    memory_graph_neighbors + ad-hoc analysis) with one envelope:
+    Replaces the old multi-step digest + graph + ad-hoc analysis
+    sequence with one envelope:
     digest + callers + hot_symbols + verdict + advisory.
 
     Verdict rollup:
@@ -355,34 +359,3 @@ def impact_check_endpoint(
         hot_threshold=hot_threshold,
     )
     return _ok(report.to_dict())
-
-
-@router.post("/rollback", response_model=Envelope)
-def rollback_endpoint(req: RollbackRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
-    ensure_workspace_writable(req.workspace_id, settings)
-    out = rollback(
-        conn,
-        workspace_id=req.workspace_id,
-        kind=req.kind,
-        object_id=req.id,
-        to_version=req.to_version,
-        agent_id=req.agent_id,
-        why=req.why,
-    )
-    if out is None:
-        return _err("not_found_or_invalid", "rollback failed: missing version or empty why")
-    return _ok(out)
-
-
-@router.get("/versions", response_model=Envelope)
-def versions_endpoint(
-    conn: DbDep,
-    settings: SettingsDep,
-    workspace_id: str = Query(min_length=1),
-    kind: str = Query(min_length=1),
-    id: str = Query(min_length=1),  # noqa: A002 -- wire-shape field name
-) -> Envelope:
-    """List version history for a target, newest first."""
-    ensure_workspace_readable(workspace_id, settings)
-    rows = list_versions(conn, workspace_id=workspace_id, kind=kind, object_id=id)
-    return _ok(rows)

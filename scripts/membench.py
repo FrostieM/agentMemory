@@ -1,33 +1,4 @@
-"""scripts/membench.py — MVP retrieval-quality benchmark.
-
-What problem this solves: agent-memory-lite ships 8 retrieval-shaping
-vectors (V1-V6 + DiD/Granger/Embedding causality), 30+ env knobs, and
-three transfer-learning tiers. Every commit nudges the recall surface
-in some direction. Until this script existed there was no number to
-compare against — "did my change improve retrieval?" was an opinion.
-
-How the benchmark seeds itself: a workspace's own active decisions
-are the most-grounded queries we have. For each row we run
-``/memory/search`` with the decision title as the query string, then
-ask: does this same decision_id come back in top-K results, and at
-what rank? If it doesn't, retrieval is broken at the most basic
-level — agent searches for the literal title of a decision it wrote
-yesterday and the decision isn't there.
-
-This is a sanity benchmark, not a generalization benchmark — but it
-catches the big regressions (broken FTS index, mis-weighted reranker,
-mis-routed workspace filter) before they reach production. v2 of
-this script can add adversarial / paraphrased queries; the structure
-here keeps that follow-up cheap.
-
-CLI::
-
-    python scripts/membench.py --workspace agent-memory-lite --json
-    python scripts/membench.py --workspace X --save-baseline path.json
-    python scripts/membench.py --workspace X --compare-baseline path.json
-
-Exit code 0 healthy / 1 mrr drop >5% from baseline / 2 server unreachable.
-"""
+"""MVP retrieval-quality benchmark for the canonical v3 search surface."""
 
 from __future__ import annotations
 
@@ -41,9 +12,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
-DEFAULT_LIMIT = 10  # rank window we measure within
-DEFAULT_MAX_QUERIES = 100  # cap so a 500-decision workspace doesn't take forever
-_REGRESSION_THRESHOLD = 0.05  # 5% MRR drop = exit 1
+DEFAULT_LIMIT = 10
+DEFAULT_MAX_QUERIES = 100
+_REGRESSION_THRESHOLD = 0.05
 
 
 @dataclass
@@ -53,17 +24,16 @@ class BenchmarkReport:
     mrr: float
     recall_at_5: float
     recall_at_10: float
-    misses: list[str] = field(default_factory=list)  # decision_ids not found in top-K
+    misses: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         d = asdict(self)
-        d["misses"] = d["misses"][:5]  # cap miss list in JSON output
+        d["misses"] = self.misses[:5]
         return d
 
 
 def _load_decisions(db_path: Path, workspace_id: str, *, limit: int) -> list[tuple[str, str]]:
-    """Pull (id, title) for every active decision. Title becomes the
-    benchmark query; id is the ground-truth expected result."""
+    """Pull active decision ids and titles for literal-title recall checks."""
     conn = sqlite3.connect(db_path)
     try:
         rows = conn.execute(
@@ -79,17 +49,13 @@ def _load_decisions(db_path: Path, workspace_id: str, *, limit: int) -> list[tup
 
 
 def _search(base_url: str, workspace_id: str, query: str, *, k: int, timeout: float) -> list[str]:
-    """POST /memory/list_decisions with the query string; return the
-    ordered list of ``decision_id`` values. We use the decisions-specific
-    endpoint instead of /memory/search because /memory/search returns
-    chunks (text fragments backed by FTS+vector), not structured rows —
-    the decision_id we need as ground truth doesn't appear there.
-    Returns ``[]`` on any error so the caller scores it as a miss
-    without crashing the whole run."""
-    payload = json.dumps({"workspace_id": workspace_id, "query": query, "limit": k}).encode()
+    """POST /memory/search and return ordered decision ids."""
+    body = json.dumps(
+        {"workspace_id": workspace_id, "kinds": ["decision"], "query": query, "limit": k}
+    ).encode("utf-8")
     req = urllib.request.Request(
-        f"{base_url}/memory/list_decisions",
-        data=payload,
+        f"{base_url}/memory/search",
+        data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -98,12 +64,12 @@ def _search(base_url: str, workspace_id: str, query: str, *, k: int, timeout: fl
             data = json.loads(resp.read())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         return []
-    hits = data.get("decisions") or []
     out: list[str] = []
-    for h in hits:
-        if not isinstance(h, dict):
+    for hit in data.get("data") or []:
+        if not isinstance(hit, dict):
             continue
-        rid = h.get("decision_id") or h.get("id")
+        projection = hit.get("projection") if isinstance(hit.get("projection"), dict) else hit
+        rid = projection.get("decision_id") or projection.get("id")
         if isinstance(rid, str):
             out.append(rid)
     return out
@@ -113,8 +79,6 @@ def _ndcg_at_k(rank: int | None, k: int) -> float:
     """Single-relevant-doc NDCG@K. rank is 1-indexed or None for miss."""
     if rank is None or rank > k:
         return 0.0
-    # Idealized DCG with one relevant doc at position 1 = 1.0
-    # Actual DCG = 1 / log2(rank + 1)
     import math  # noqa: PLC0415
 
     return 1.0 / math.log2(rank + 1)
@@ -129,15 +93,13 @@ def run_benchmark(
     max_queries: int = DEFAULT_MAX_QUERIES,
     timeout: float = 10.0,
 ) -> BenchmarkReport:
-    """Pull active decisions, query each title, measure rank of the
-    decision's own id in the response."""
+    """Measure whether each active decision title retrieves its own row."""
     queries = _load_decisions(db_path, workspace_id, limit=max_queries)
     if not queries:
         return BenchmarkReport(workspace_id, 0, 0.0, 0.0, 0.0)
     rr_sum = 0.0
     hits_at_5 = 0
     hits_at_10 = 0
-    ndcg_sum = 0.0
     misses: list[str] = []
     for did, title in queries:
         result_ids = _search(base_url, workspace_id, title, k=limit, timeout=timeout)
@@ -154,7 +116,7 @@ def run_benchmark(
             hits_at_5 += 1
         if rank <= 10:
             hits_at_10 += 1
-        ndcg_sum += _ndcg_at_k(rank, limit)
+        _ndcg_at_k(rank, limit)
     n = len(queries)
     return BenchmarkReport(
         workspace_id=workspace_id,
@@ -186,7 +148,7 @@ def _format_text(report: BenchmarkReport) -> str:
 
 
 def _compare_baseline(report: BenchmarkReport, baseline_path: Path) -> tuple[dict[str, float], int]:
-    """Return (delta dict, exit_code). Exit 1 if MRR dropped > 5%."""
+    """Return (delta dict, exit_code). Exit 1 if MRR dropped by more than 5%."""
     try:
         prev = json.loads(baseline_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -201,7 +163,7 @@ def _compare_baseline(report: BenchmarkReport, baseline_path: Path) -> tuple[dic
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="MemBench MVP — retrieval quality baseline.")
+    parser = argparse.ArgumentParser(description="MemBench MVP retrieval quality baseline.")
     parser.add_argument("--workspace", required=True)
     parser.add_argument(
         "--db-path",

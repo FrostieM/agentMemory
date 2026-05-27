@@ -53,12 +53,10 @@ IMPORT_TABLES: tuple[str, ...] = (
     "decisions",
     "theories",
     "theory_evidence",
-    "domain_concepts",
-    "research_insights",
-    "behavior_instructions",
-    "agent_roles",
-    "agent_skills",
-    "agent_playbooks",
+    "concepts",
+    "insights",
+    "behaviors",
+    "skills",
     "capability_links",
 )
 

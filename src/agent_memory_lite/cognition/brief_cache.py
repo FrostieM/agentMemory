@@ -111,15 +111,13 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     bug fix found became a Cartesian product that took ~2 minutes on a
     busy workspace.
     """
-    # Optional tables -- added only when present. The candidates table
-    # is named ``memory_candidates`` in legacy DBs and ``candidates`` in
-    # canonical; ``plan_steps`` (migration 0038) may be absent on a
-    # pre-migration DB. capability_links + plan_steps feed the brief's
-    # active-plan section (Phase 3/4); the rest feed the other sections.
+    # Optional tables -- added only when present. ``plan_steps`` may be
+    # absent on a partial-schema DB.
+    # capability_links + plan_steps feed the brief's active-plan section
+    # (Phase 3/4); the rest feed the other sections.
     optional: list[str] = []
-    cand_table = next((n for n in ("memory_candidates", "candidates") if _has_table(conn, n)), "")
-    if cand_table:
-        optional.append(cand_table)
+    if _has_table(conn, "candidates"):
+        optional.append("candidates")
     if _has_table(conn, "plan_steps"):
         optional.append("plan_steps")
     # One scalar sub-query per table -- episodes keys on created_at, the

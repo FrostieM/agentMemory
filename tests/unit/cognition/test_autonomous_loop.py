@@ -17,8 +17,6 @@ from agent_memory_lite.cognition.autonomous_loop import (
     run_autonomous_pass,
 )
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,14 +27,16 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Hybrid schema (legacy + canonical) so memory_candidates,
+    """Hybrid schema (legacy + canonical) so candidates,
     theories, theory_evidence, episodes, insights all exist."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     c = open_connection(tmp_path / "loop.db")
     apply_migrations(c)
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -84,7 +84,7 @@ def _seed_candidate(
     ws: str = "ws",
 ) -> None:
     conn.execute(
-        """INSERT INTO memory_candidates
+        """INSERT INTO candidates
            (id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json,
             write_targets_json, metadata_json, source_episode_id, status,
@@ -216,9 +216,7 @@ def test_run_autonomous_pass_promotes_confident_candidate(
     ).fetchone()[0]
     assert n_ev == 4
     # Candidate flipped to accepted.
-    cand = conn.execute(
-        "SELECT status FROM memory_candidates WHERE id = 'cand_prop_ins_kelly'"
-    ).fetchone()
+    cand = conn.execute("SELECT status FROM candidates WHERE id = 'cand_prop_ins_kelly'").fetchone()
     assert cand[0] == "accepted"
 
 
@@ -245,9 +243,7 @@ def test_run_autonomous_pass_holds_weak_candidate(
     assert report.promoted == 0
     assert report.held == 1
     # Candidate stays new.
-    cand = conn.execute(
-        "SELECT status FROM memory_candidates WHERE id = 'cand_prop_ins_weak'"
-    ).fetchone()
+    cand = conn.execute("SELECT status FROM candidates WHERE id = 'cand_prop_ins_weak'").fetchone()
     assert cand[0] == "new"
     # No theory written.
     n_theories = conn.execute("SELECT COUNT(*) FROM theories WHERE workspace_id = 'ws'").fetchone()[

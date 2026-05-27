@@ -36,7 +36,7 @@ def _json_list(raw: str | None) -> list[str]:
 def _row_to_candidate(row: sqlite3.Row) -> StoredMemoryCandidate:
     # v3.5 audit-followup: three drift sites in one parser. Vector 1/5
     # both wrote new kind literals before the enum caught up; if anyone
-    # invents another value, /memory/get_context + /pending_review would
+    # invents another value, compact reads + /pending_review would
     # 500 every call. Fallback PROJECT_FACT (generic-bucket) for kind,
     # UNKNOWN for trust, NEW for status.
     return StoredMemoryCandidate(
@@ -74,7 +74,7 @@ def insert_candidate_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO memory_candidates (
+        INSERT INTO candidates (
             id, workspace_id, kind, subject, predicate, object, evidence,
             confidence, importance, trust_level, temporal_json, write_targets_json,
             metadata_json, source_episode_id, status, created_at, updated_at
@@ -103,7 +103,7 @@ def insert_candidate_row(
 
 
 def get_candidate(conn: sqlite3.Connection, candidate_id: str) -> StoredMemoryCandidate | None:
-    row = conn.execute("SELECT * FROM memory_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    row = conn.execute("SELECT * FROM candidates WHERE id = ?", (candidate_id,)).fetchone()
     return _row_to_candidate(row) if row is not None else None
 
 
@@ -118,7 +118,7 @@ def update_candidate_status(
 ) -> None:
     conn.execute(
         """
-        UPDATE memory_candidates
+        UPDATE candidates
         SET status = ?,
             promoted_target_type = COALESCE(?, promoted_target_type),
             promoted_target_id = COALESCE(?, promoted_target_id),
@@ -149,7 +149,7 @@ def list_candidates(
 ) -> list[StoredMemoryCandidate]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM memory_candidates WHERE workspace_id = ? {extra_sql}",
+        f"SELECT * FROM candidates WHERE workspace_id = ? {extra_sql}",
         (workspace_id, *extra_params),
     ).fetchall()
     candidates = [_row_to_candidate(row) for row in rows]

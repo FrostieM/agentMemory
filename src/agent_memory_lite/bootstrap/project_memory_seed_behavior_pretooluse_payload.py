@@ -72,17 +72,17 @@ def no_magic_number_in_strategy_pretooluse_instruction(
 def decision_must_have_provenance_pretooluse_instruction(
     workspace_id: str, source_episode_id: str | None
 ) -> BehaviorInstructionIn:
-    """Block memory_write_decision that carries no source episode or rationale."""
+    """Block decision writes that carry no source episode or rationale."""
     return BehaviorInstructionIn(
         workspace_id=workspace_id,
         name="pretooluse:decision-must-have-provenance",
         rule=(
-            "TRIGGER: memory_write_decision or memory_record_with_evidence "
-            "is about to fire AND payload sets neither source_episode_id nor "
-            "allow_orphan=true AND rationale is under 30 chars.\n\n"
-            "ACTION: either call memory_ingest_episode first and pass the "
-            "returned episode_id, OR pass allow_orphan=true with a "
-            ">=30-char rationale explaining the source.\n\n"
+            "TRIGGER: memory_write(kind=decision) is about to fire AND payload "
+            "sets neither source_episode_id nor allow_orphan=true AND rationale "
+            "is under 30 chars.\n\n"
+            "ACTION: either call memory_write(kind=episode) first and pass the "
+            "returned episode_id as source_episode_id, OR pass allow_orphan=true "
+            "with a >=30-char rationale explaining the source.\n\n"
             "KEY INVARIANT: a decision without provenance is an unprovable "
             "architectural claim. The PreToolUse hook refuses to write one."
         ),
@@ -95,8 +95,8 @@ def decision_must_have_provenance_pretooluse_instruction(
         applies_to=[
             "enforcement:mechanical",
             "mechanical:decision-provenance",
-            "memory_write_decision",
-            "memory_record_with_evidence",
+            "memory_write",
+            "memory_write kind=decision",
         ],
         source_episode_id=source_episode_id,
         **_COMMON_KWARGS,

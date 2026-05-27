@@ -11,24 +11,24 @@ lives in ``file_persist.py``.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
+from agent_memory_lite.ingestion.file_audit import record_file_ingest_audit
 from agent_memory_lite.ingestion.file_chunking import chunk_for_kind, chunk_kind_for
 from agent_memory_lite.ingestion.file_chunks_loop import persist_chunks_loop
+from agent_memory_lite.ingestion.file_existing import refresh_existing_file_metadata
 from agent_memory_lite.ingestion.file_persist import run_vector_phase
 from agent_memory_lite.ingestion.file_post_chunk import (
     run_post_chunk_phase,
     run_pre_chunk_cleanup,
 )
+from agent_memory_lite.ingestion.file_result import FileIngestResult
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
-from agent_memory_lite.models.files import FileRecord
 from agent_memory_lite.redaction.redactor import redact
-from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.repositories.files_repo import get_file_by_path, upsert_file_row
 from agent_memory_lite.utils.hashing import blake2b_hex
@@ -37,33 +37,38 @@ from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
 
 
-@dataclass(frozen=True, slots=True)
-class FileIngestResult:
-    file: FileRecord
-    chunks_written: int
-    edges_written: int
-    versions_written: int
-    skipped: bool
-
-
 def ingest_file(
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
     path: str,
     content: str,
+    source_bytes: bytes | None = None,
     language: str | None = None,
     embedding_provider: EmbeddingProvider | None = None,
     vector_store: VectorStore | None = None,
     settings: Settings | None = None,
 ) -> FileIngestResult:
     timestamp = iso_now()
-    content_hash = blake2b_hex(content)
+    hash_source = source_bytes if source_bytes is not None else content
+    size_bytes = len(source_bytes) if source_bytes is not None else len(content.encode("utf-8"))
+    content_hash = blake2b_hex(hash_source)
     if embedding_provider is not None:
         pin_or_check(conn, workspace_id, embedding_provider)
 
     existing = get_file_by_path(conn, workspace_id=workspace_id, path=path)
     if existing is not None and existing.content_hash == content_hash:
+        if existing.size_bytes != size_bytes or existing.language != language:
+            existing = refresh_existing_file_metadata(
+                conn,
+                existing=existing,
+                workspace_id=workspace_id,
+                path=path,
+                language=language,
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                timestamp=timestamp,
+            )
         return FileIngestResult(
             file=existing,
             chunks_written=0,
@@ -78,8 +83,8 @@ def ingest_file(
     # into chunks.text + chunks_fts. A file containing API keys,
     # ``.env``-style assignments, or JWTs would have landed in plaintext.
     # Redact the body BEFORE chunking so secrets never reach the chunker.
-    # The content_hash is computed on the original bytes (already done
-    # above) so idempotency is preserved.
+    # When the caller has source bytes, content_hash and size_bytes track
+    # the exact file on disk; redaction only affects chunk text.
     redacted = redact(content)
     content = redacted.text
     chunk_records = chunk_for_kind(content, language=language)
@@ -92,7 +97,7 @@ def ingest_file(
             path=path,
             language=language,
             content_hash=content_hash,
-            size_bytes=len(content.encode("utf-8")),
+            size_bytes=size_bytes,
             metadata={"trust_level": TrustLevel.UNTRUSTED_DOC.value},
             timestamp=timestamp,
         )
@@ -130,19 +135,15 @@ def ingest_file(
             chunk_qnames=new_chunk_qnames,
             settings=settings,
         )
-        insert_audit(
+        record_file_ingest_audit(
             conn,
             workspace_id=workspace_id,
-            action="ingest_file",
-            target_type="file",
-            target_id=file_id,
-            source_episode_id=episode.id,
-            after={
-                "path": path,
-                "chunks": len(new_chunk_ids),
-                "edges": post.edges_written,
-                "versions": post.versions_written,
-            },
+            file_id=file_id,
+            episode_id=episode.id,
+            path=path,
+            chunks=len(new_chunk_ids),
+            edges=post.edges_written,
+            versions=post.versions_written,
         )
 
     if embedding_provider is not None and vector_store is not None:

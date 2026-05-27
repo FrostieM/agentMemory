@@ -25,6 +25,15 @@ def _post(base_url: str, path: str, payload: dict[str, Any], timeout: float) -> 
     return data
 
 
+def _get(base_url: str, path: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+    response = httpx.get(f"{base_url.rstrip('/')}{path}", params=params, timeout=timeout)
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} returned non-object JSON")
+    return data
+
+
 def fetch_status(
     *,
     base_url: str,
@@ -35,29 +44,33 @@ def fetch_status(
 ) -> dict[str, Any]:
     theories = _post(
         base_url,
-        "/memory/list_theories",
+        "/memory/search",
         {
             "workspace_id": workspace_id,
-            "query": query,
-            "include_evidence": True,
-            "evidence_limit": 2,
+            "query": query or "research theories",
+            "kinds": ["theory"],
             "limit": limit,
         },
         timeout,
     )
-    agenda = _post(
+    research = _post(
         base_url,
-        "/memory/list_research_agenda",
-        {"workspace_id": workspace_id, "query": query, "limit": limit},
-        timeout,
-    )
-    context = _post(
-        base_url,
-        "/memory/get_context",
+        "/memory/search",
         {
             "workspace_id": workspace_id,
-            "query": query or "research agenda theories experiments insights",
-            "max_tokens": 2500,
+            "query": query or "research agenda theories experiments insights snapshots concepts",
+            "kinds": ["theory", "insight", "concept", "snapshot"],
+            "limit": limit,
+        },
+        timeout,
+    )
+    context = _get(
+        base_url,
+        "/memory/brief",
+        {
+            "workspace_id": workspace_id,
+            "task": query or "research agenda theories experiments insights",
+            "max_tokens": 2000,
         },
         timeout,
     )
@@ -65,7 +78,7 @@ def fetch_status(
         "workspace_id": workspace_id,
         "query": query,
         "theories": theories,
-        "agenda": agenda,
+        "research": research,
         "context": context,
     }
 
@@ -75,67 +88,67 @@ def _line(label: str, value: object) -> str:
 
 
 def format_status(status: dict[str, Any]) -> str:
-    theories = list(status["theories"].get("theories", []))
-    agenda = dict(status["agenda"])
-    snapshots = list(agenda.get("snapshots", []))
-    experiments = list(agenda.get("experiments", []))
-    insights = list(agenda.get("insights", []))
-    concepts = list(agenda.get("concepts", []))
-    context_text = str(status["context"].get("context_text", ""))
-
+    theory_hits = list(status["theories"].get("data", []))
+    theories = [
+        hit.get("projection", {})
+        for hit in theory_hits
+        if isinstance(hit, dict) and isinstance(hit.get("projection"), dict)
+    ]
+    research_hits = list(status["research"].get("data", []))
+    by_kind: dict[str, list[dict[str, Any]]] = {
+        "snapshot": [],
+        "insight": [],
+        "concept": [],
+    }
+    for hit in research_hits:
+        if not isinstance(hit, dict):
+            continue
+        projection = hit.get("projection")
+        if isinstance(projection, dict):
+            by_kind.setdefault(str(hit.get("kind")), []).append(projection)
+    snapshots = by_kind.get("snapshot", [])
+    insights = by_kind.get("insight", [])
+    concepts = by_kind.get("concept", [])
     lines = [
         "Research memory status",
         _line("workspace", status["workspace_id"]),
         _line("query", status.get("query") or "(default)"),
         _line("theories", len(theories)),
         _line("snapshots", len(snapshots)),
-        _line("open_experiments", len(experiments)),
         _line("insights", len(insights)),
         _line("concepts", len(concepts)),
-        _line("has_theories", "<active_theories>" in context_text),
-        _line("has_agenda", "<research_agenda>" in context_text),
+        _line("has_theories", bool(theories)),
+        _line("has_research", bool(research_hits)),
     ]
 
     if theories:
         lines.append("")
         lines.append("Top theories:")
         for item in theories[:5]:
-            theory = item["theory"]
             lines.append(
-                f"  - {theory['theory_id']} [{theory['status']}, {theory['confidence']:.2f}] "
-                f"{theory['title']}"
-            )
-    if experiments:
-        lines.append("")
-        lines.append("Open experiments:")
-        for experiment in experiments[:5]:
-            lines.append(
-                f"  - {experiment['experiment_id']} [{experiment['status']}, "
-                f"priority={experiment['priority']:.2f}] {experiment['title']}"
+                f"  - {item['id']} [{item.get('status')}, {item.get('confidence', 0.0):.2f}] "
+                f"{item.get('title')}"
             )
     if insights:
         lines.append("")
         lines.append("Insights:")
         for insight in insights[:5]:
             lines.append(
-                f"  - {insight['insight_id']} [{insight['insight_type']}, "
-                f"{insight['confidence']:.2f}] {insight['summary']}"
+                f"  - {insight['id']} [{insight.get('insight_type')}] {insight.get('gist')}"
             )
     if snapshots:
         lines.append("")
         lines.append("Snapshots:")
         for snapshot in snapshots[:3]:
             lines.append(
-                f"  - {snapshot['snapshot_id']} {snapshot['snapshot_key']} "
-                f"rows={snapshot['total_rows']}"
+                f"  - {snapshot['id']} {snapshot.get('snapshot_key')} "
+                f"rows={snapshot.get('total_rows')}"
             )
     return "\n".join(lines)
 
 
 def _is_empty(status: dict[str, Any]) -> bool:
-    return not status["theories"].get("theories") and not any(
-        status["agenda"].get(key) for key in ("snapshots", "experiments", "insights", "concepts")
-    )
+    return not status["theories"].get("data") and not status["research"].get("data")
 
 
 def main(argv: list[str] | None = None) -> int:

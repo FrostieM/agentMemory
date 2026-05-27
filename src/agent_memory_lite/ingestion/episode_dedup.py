@@ -2,8 +2,8 @@
 
 Agents tend to ingest near-identical episode text repeatedly ("re-ran
 the test", "running tests again"). Without dedup the workspace fills
-with low-information rows and ``get_context`` keeps surfacing the
-same content under slightly different keywords.
+with low-information rows and compact search keeps surfacing the same
+content under slightly different keywords.
 
 When ``MEMORY_EPISODE_DEDUP_ENABLED=1``, ``ingest_episode`` runs the
 new redacted text through the embedding provider once, queries the

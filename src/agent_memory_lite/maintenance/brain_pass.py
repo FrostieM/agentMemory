@@ -3,8 +3,8 @@
 This module is the single integration point that keeps the brain alive
 between sessions. It runs from the existing trigger-on-traffic
 sentinel_scheduler -- no separate cron, no Task Scheduler entry, no
-operator-run scripts. Whenever ``/memory/get_context`` fires (or the
-in-process MCP local fallback runs), the scheduler checks
+operator-run scripts. Whenever a compact read fires (or the in-process
+MCP local fallback runs), the scheduler checks
 ``MEMORY_SENTINEL_AUTORUN_HOURS`` and, if overdue, spawns a daemon
 thread that runs both the YAML retrieval-quality sentinels AND this
 brain pass.
@@ -647,6 +647,12 @@ def run_brain_pass(
     Each step is independent + failure-soft. Returns a report capturing
     per-step row counts so the operator can see whether anything moved.
     """
+    # The sentinel scheduler owns a raw sqlite3.connect() path. Brain-pass
+    # steps intentionally use row["field"] adapters, so normalize here at
+    # the integration boundary instead of requiring every caller to remember
+    # the repository connection factory.
+    if conn.row_factory is None:
+        conn.row_factory = sqlite3.Row
     started = iso_now()
     report = BrainPassReport(workspace_id=workspace_id, started_at=started, finished_at=started)
     _step_outcome(conn, workspace_id, started, settings, report)

@@ -1,4 +1,4 @@
-"""SQL operations for ``domain_concepts``."""
+"""SQL operations for canonical ``concepts``."""
 
 from __future__ import annotations
 
@@ -33,13 +33,15 @@ def upsert_concept_row(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO domain_concepts (
-            id, workspace_id, name, kind, definition, aliases_json, tags_json,
-            source_episode_id, confidence, active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO concepts (
+            id, workspace_id, name, kind, definition, definition_one_line,
+            aliases_json, tags_json, source_episode_id, confidence, active,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, name) DO UPDATE SET
             kind = excluded.kind,
             definition = excluded.definition,
+            definition_one_line = excluded.definition_one_line,
             aliases_json = excluded.aliases_json,
             tags_json = excluded.tags_json,
             source_episode_id = excluded.source_episode_id,
@@ -52,6 +54,7 @@ def upsert_concept_row(
             workspace_id,
             name,
             kind.value,
+            definition,
             definition,
             json.dumps(aliases, sort_keys=True),
             json.dumps(tags, sort_keys=True),
@@ -68,14 +71,14 @@ def get_concept_by_name(
     conn: sqlite3.Connection, *, workspace_id: str, name: str
 ) -> DomainConcept | None:
     row = conn.execute(
-        "SELECT * FROM domain_concepts WHERE workspace_id = ? AND name = ?",
+        "SELECT * FROM concepts WHERE workspace_id = ? AND name = ?",
         (workspace_id, name),
     ).fetchone()
     return row_to_concept(row) if row is not None else None
 
 
 def get_concept_by_id(conn: sqlite3.Connection, concept_id: str) -> DomainConcept | None:
-    row = conn.execute("SELECT * FROM domain_concepts WHERE id = ?", (concept_id,)).fetchone()
+    row = conn.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
     return row_to_concept(row) if row is not None else None
 
 
@@ -97,7 +100,7 @@ def list_concepts(
 ) -> list[DomainConcept]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM domain_concepts WHERE workspace_id = ? {extra_sql}",
+        f"SELECT * FROM concepts WHERE workspace_id = ? {extra_sql}",
         (workspace_id, *extra_params),
     ).fetchall()
     terms = tokens_from(query)

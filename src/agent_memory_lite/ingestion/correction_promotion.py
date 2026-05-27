@@ -1,8 +1,7 @@
-"""v1.10: shared service to promote a CORRECTION candidate to a behavior_instruction.
+"""Promote a correction candidate to a behavior instruction.
 
-Used by both the FastAPI route (``api/routes/promote_to_behavior.py``)
-and the MCP stdio tool (``mcp/stdio_handlers_review.py``) so HTTP-only
-and MCP-only deployments behave identically.
+Used by the FastAPI route (``api/routes/promote_to_behavior.py``). The
+MCP stdio surface is v3-only and no longer exposes the old review tools.
 
 Trust gate stays intact: the candidate must exist, be ``status='new'``,
 and have ``kind='correction'``. The function never bypasses
@@ -76,7 +75,7 @@ def promote_correction_to_behavior(
     candidate still status='new'" inconsistency. Raises
     ``CorrectionPromotionError`` (codes ``not_found`` / ``wrong_kind``
     / ``already_decided`` / ``name_taken``) when promotion is blocked.
-    See ``docs/V1_2_0.md``.
+    Historical design notes live in git history.
     """
     row = load_pending_correction(
         conn, workspace_id=payload.workspace_id, candidate_id=payload.candidate_id
@@ -121,7 +120,7 @@ def promote_correction_to_behavior(
             pin_memory_object(
                 conn,
                 workspace_id=payload.workspace_id,
-                kind="behavior_instruction",
+                kind="behavior",
                 object_id=instruction.id,
                 pinned=True,
             )
@@ -130,7 +129,7 @@ def promote_correction_to_behavior(
         now_iso = iso_now()
         conn.execute(
             """
-            UPDATE memory_candidates
+            UPDATE candidates
             SET status = 'promoted',
                 promoted_target_type = 'behavior_instruction',
                 promoted_target_id = ?,

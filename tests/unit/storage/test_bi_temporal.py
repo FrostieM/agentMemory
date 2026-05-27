@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -13,18 +12,14 @@ from agent_memory_lite.storage.bi_temporal import has_validity_columns, where_va
 from agent_memory_lite.storage.reader import list_kind
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-BI_TEMPORAL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0007_bi_temporal.sql"
-)
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(BI_TEMPORAL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -69,8 +64,7 @@ def test_has_validity_columns_true_after_migration(conn: sqlite3.Connection) -> 
 def test_has_validity_columns_false_pre_migration() -> None:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    # Do NOT apply 0007.
+    c.execute("CREATE TABLE theories (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL)")
     assert not has_validity_columns(c, "theories")
     c.close()
 
@@ -146,7 +140,9 @@ def test_pre_migration_db_still_returns_rows() -> None:
     """No valid_from/valid_to columns -> as_of param is a no-op, rows still come back."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     # Do NOT apply 0007.
     c.execute(
         """INSERT INTO concepts

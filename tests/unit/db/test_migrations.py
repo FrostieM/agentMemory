@@ -6,10 +6,17 @@ from pathlib import Path
 import pytest
 
 from agent_memory_lite.db.connection import close_connection, open_connection
+from agent_memory_lite.db.migration_validation import (
+    _CANONICAL_SENTINEL_TABLES,
+    _LEGACY_V2_TABLES,
+)
 from agent_memory_lite.db.migrations import (
     MIGRATION_DIR,
     apply_migrations,
     discover_migrations,
+)
+from agent_memory_lite.db.migrations import (
+    main as migration_main,
 )
 
 
@@ -75,10 +82,9 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
     conn = open_connection(db_path)
     try:
         applied = apply_migrations(conn, MIGRATION_DIR)
-        # 1.0.0 consolidates the historical 0001..0019 chain into a
-        # single 0001_init. Verifying ``chunks_fts`` exists below is
-        # what actually proves FTS landed.
-        assert "0001_init" in applied
+        assert applied == ["0001_init"]
+        versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
+        assert [row[0] for row in versions] == ["0001_init"]
         tables = {
             row[0]
             for row in conn.execute(
@@ -89,9 +95,11 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "episodes",
             "chunks",
             "decisions",
-            "task_state",
-            "core_memory",
-            "procedural_rules",
+            "tasks",
+            "behaviors",
+            "skills",
+            "concepts",
+            "code_digests",
             "files",
             "entities",
             "facts",
@@ -101,6 +109,117 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "chunks_fts",
         ):
             assert required in tables, f"missing table: {required}"
+        legacy_tables = {
+            "active_edits",
+            "agent_playbooks",
+            "agent_roles",
+            "agent_skills",
+            "behavior_instructions",
+            "core_memory",
+            "domain_concepts",
+            "procedural_rules",
+            "research_insights",
+            "task_state",
+        }
+        assert tables.isdisjoint(legacy_tables)
+    finally:
+        close_connection(conn)
+
+
+def test_project_migration_rejects_pre_squash_0001_marker() -> None:
+    conn = open_connection(":memory:")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            ("0001_init", "2026-01-01T00:00:00Z"),
+        )
+        with pytest.raises(RuntimeError, match="canonical v3 tables"):
+            apply_migrations(conn, MIGRATION_DIR)
+    finally:
+        close_connection(conn)
+
+
+def test_project_migration_rejects_malformed_applied_baseline() -> None:
+    conn = open_connection(":memory:")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+            ("0001_init", "2026-01-01T00:00:00Z"),
+        )
+        for table in sorted(_CANONICAL_SENTINEL_TABLES):
+            conn.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY)")
+
+        with pytest.raises(RuntimeError, match=r"malformed canonical v3 tables.*behaviors"):
+            apply_migrations(conn, MIGRATION_DIR)
+    finally:
+        close_connection(conn)
+
+
+def test_project_migration_rejects_legacy_tables_before_0001() -> None:
+    conn = open_connection(":memory:")
+    try:
+        conn.execute("CREATE TABLE core_memory (id TEXT PRIMARY KEY)")
+        with pytest.raises(RuntimeError, match="legacy tables"):
+            apply_migrations(conn, MIGRATION_DIR)
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            ).fetchall()
+        }
+        assert "core_memory" in tables
+        assert "behaviors" not in tables
+    finally:
+        close_connection(conn)
+
+
+@pytest.mark.parametrize("legacy_table", sorted(_LEGACY_V2_TABLES))
+def test_project_migration_rejects_legacy_tables_in_applied_baseline(
+    legacy_table: str,
+) -> None:
+    conn = open_connection(":memory:")
+    try:
+        apply_migrations(conn, MIGRATION_DIR)
+        conn.execute(f"CREATE TABLE {legacy_table} (id TEXT PRIMARY KEY)")
+
+        with pytest.raises(RuntimeError, match=legacy_table):
+            apply_migrations(conn, MIGRATION_DIR)
+    finally:
+        close_connection(conn)
+
+
+def test_migration_module_cli_applies_root_migration(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    rc = migration_main(["--db", str(db_path)])
+    assert rc == 0
+
+    conn = open_connection(db_path)
+    try:
+        versions = conn.execute("SELECT version FROM schema_migrations").fetchall()
+        assert [row[0] for row in versions] == ["0001_init"]
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
+            ).fetchall()
+        }
+        assert "behaviors" in tables
     finally:
         close_connection(conn)
 

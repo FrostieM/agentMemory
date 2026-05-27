@@ -1,4 +1,4 @@
-"""Research-context eval runner.
+"""Research compact-surface eval runner.
 
 Per-kind seed handlers live in ``runner_research_seeders.py``.
 """
@@ -8,10 +8,10 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from agent_memory_lite.cognition.brief import compose_brief
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.evals.runner_research_seeders import HANDLERS
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.retrieval.context_builder import build_context
+from agent_memory_lite.storage.reader import search
 from agent_memory_lite.vector_store.base import VectorStore
 
 
@@ -54,21 +54,28 @@ def run_research_context(
     embedding_provider: EmbeddingProvider | None,
     vector_store: VectorStore | None,
 ) -> list[str]:
+    del embedding_provider, vector_store
     seed_research_setup(conn, case, workspace_id)
-    query = RetrievalQuery(
+    query_text = str(case["query"])
+    hits = search(
+        conn,
         workspace_id=workspace_id,
-        query=str(case["query"]),
+        query=query_text,
+        limit=int(case.get("top_k", 10)),
+    )
+    brief = compose_brief(
+        conn,
+        workspace_id=workspace_id,
+        task=query_text,
         max_tokens=int(case.get("max_tokens", 2500)),
     )
-    built = build_context(
-        conn, query, embedding_provider=embedding_provider, vector_store=vector_store
-    )
     failures: list[str] = []
-    rendered = built.text
+    rendered = brief.body_md + "\n" + "\n".join(f"{hit.kind}: {hit.projection}" for hit in hits)
+    section_names = {section.name for section in brief.sections}
     for section in case.get("expect_sections", []):
         section_name = str(section)
-        if f"<{section_name}" not in rendered:
-            failures.append(f"missing section <{section_name}>")
+        if section_name not in section_names:
+            failures.append(f"missing brief section {section_name!r}")
     for needle in case.get("expect_substrings", []):
         if str(needle) not in rendered:
             failures.append(f"missing substring {needle!r}")

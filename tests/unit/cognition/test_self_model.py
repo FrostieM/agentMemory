@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -16,14 +15,6 @@ from agent_memory_lite.cognition.self_model import (
     refresh_self_model,
 )
 from agent_memory_lite.utils.time import iso_now
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-OUTCOME_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-SELF_MODEL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0006_self_model.sql"
-)
 
 
 @pytest.fixture(autouse=True)
@@ -39,9 +30,9 @@ def _isolate_brief_cache() -> Iterator[None]:
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    c.executescript(SELF_MODEL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -198,9 +189,6 @@ def test_pre_migration_db_returns_none() -> None:
     """No self_model table → refresh returns None, brief still composes."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(OUTCOME_PATH.read_text(encoding="utf-8"))
-    # Do NOT apply 0006.
     assert refresh_self_model(c, workspace_id="ws") is None
     assert load_self_model(c, workspace_id="ws") is None
     c.close()

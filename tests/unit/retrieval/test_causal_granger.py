@@ -12,7 +12,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -23,11 +22,6 @@ from agent_memory_lite.retrieval.causal_granger import (
     is_enabled,
     threshold,
     window_days,
-)
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-CAUSAL_PATH = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0008_causal_links.sql"
 )
 
 
@@ -47,8 +41,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(CAUSAL_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -241,7 +236,6 @@ def test_failure_soft_when_table_missing() -> None:
     report instead of raising."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(CAUSAL_PATH.read_text(encoding="utf-8"))
     try:
         result = extract_granger_links(c, workspace_id="ws")
         assert result == GrangerReport(pairs_scanned=0, links_emitted=0)

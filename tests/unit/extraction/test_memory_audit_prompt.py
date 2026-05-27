@@ -27,20 +27,19 @@ def test_classify_builtin_read_tools() -> None:
 
 
 def test_classify_memory_writes_bare_and_mcp_prefixed() -> None:
-    assert classify_tool("memory_ingest_episode") == "memory_write"
-    assert classify_tool("memory_write_decision") == "memory_write"
-    assert classify_tool("memory_record_with_evidence") == "memory_write"
+    assert classify_tool("memory_write") == "memory_write"
+    assert classify_tool("memory_edit") == "memory_write"
+    assert classify_tool("memory_archive") == "memory_write"
     # MCP-prefixed form (Claude Code shows tools as mcp__server__tool)
-    assert classify_tool("mcp__agent-memory-lite__memory_ingest_episode") == "memory_write"
-    assert classify_tool("mcp__agent-memory-lite__memory_link_capability") == "memory_write"
-    assert classify_tool("mcp__agent-memory-lite__memory_upsert_concept") == "memory_write"
+    assert classify_tool("mcp__agent-memory-lite__memory_write") == "memory_write"
 
 
 def test_classify_memory_reads() -> None:
-    assert classify_tool("memory_get_context") == "memory_read"
+    assert classify_tool("memory_brief") == "memory_read"
+    assert classify_tool("memory_get") == "memory_read"
     assert classify_tool("memory_search") == "memory_read"
-    assert classify_tool("memory_file_digest") == "memory_read"
-    assert classify_tool("mcp__agent-memory-lite__memory_find_symbols") == "memory_read"
+    assert classify_tool("memory_impact_check") == "memory_read"
+    assert classify_tool("mcp__agent-memory-lite__memory_plan") == "memory_read"
 
 
 def test_classify_unknown_tool_is_other() -> None:
@@ -74,7 +73,7 @@ def test_decide_audit_with_memory_writes_returns_no_inject() -> None:
         memory_writes=1,
         memory_reads=0,
         other=0,
-        tool_names=("Edit", "Edit", "Bash", "Read", "memory_ingest_episode"),
+        tool_names=("Edit", "Edit", "Bash", "Read", "memory_write"),
     )
     d = decide_audit(stats)
     assert d.inject is False, "writes were present — no audit needed"
@@ -93,7 +92,7 @@ def test_decide_audit_mutations_without_writes_injects() -> None:
     assert d.inject is True
     assert "[memory-audit]" in d.prompt
     assert "0 memory writes" in d.prompt
-    assert "memory_ingest_episode" in d.prompt
+    assert "memory_write(kind=episode)" in d.prompt
     assert "4 file mutations" in d.prompt
 
 
@@ -290,7 +289,7 @@ def test_end_to_end_assistant_with_writes_no_audit(tmp_path: Path) -> None:
                         {"type": "tool_use", "name": "Edit", "id": "e2"},
                         {
                             "type": "tool_use",
-                            "name": "mcp__agent-memory-lite__memory_ingest_episode",
+                            "name": "mcp__agent-memory-lite__memory_write",
                             "id": "m1",
                         },
                     ],
@@ -323,4 +322,4 @@ def test_end_to_end_assistant_without_writes_audit_fires(tmp_path: Path) -> None
     stats = analyze_last_assistant_turn(f)
     d = decide_audit(stats)
     assert d.inject is True
-    assert "memory_ingest_episode" in d.prompt
+    assert "memory_write(kind=episode)" in d.prompt

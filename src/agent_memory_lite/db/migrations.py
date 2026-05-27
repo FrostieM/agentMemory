@@ -1,18 +1,19 @@
-"""Forward-only migration runner.
-
-Discovers `migrations/NNNN_*.sql`, sorts lexically, and applies any not present in
-the `schema_migrations` tracking table. Each file is executed via SQLite's
-`executescript`. Migrations are expected to be DDL using `IF NOT EXISTS`, so a
-mid-script failure leaves the DB in a state that re-running can recover from.
-"""
+"""Forward-only SQLite migration runner."""
 
 from __future__ import annotations
 
+import argparse
 import re
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_memory_lite.db.migration_validation import (
+    CANONICAL_BASELINE_VERSION,
+    reject_legacy_pre_v3_db,
+    validate_canonical_baseline,
+)
 from agent_memory_lite.utils.time import iso_now
 
 MIGRATION_DIR = Path(__file__).resolve().parents[3] / "migrations"
@@ -23,10 +24,6 @@ _FILENAME_RE = re.compile(r"^\d{4}_[A-Za-z0-9_]+$")
 class Migration:
     version: str
     path: Path
-
-    @property
-    def sql(self) -> str:
-        return self.path.read_text(encoding="utf-8")
 
 
 def _ensure_tracking_table(conn: sqlite3.Connection) -> None:
@@ -58,6 +55,10 @@ def discover_migrations(directory: Path | None = None) -> list[Migration]:
     return migrations
 
 
+def _uses_project_migration_dir(directory: Path | None) -> bool:
+    return directory is None or directory.resolve() == MIGRATION_DIR.resolve()
+
+
 def apply_migrations(
     conn: sqlite3.Connection,
     directory: Path | None = None,
@@ -65,23 +66,42 @@ def apply_migrations(
     """Apply any pending migrations. Returns the list of versions applied this call."""
     _ensure_tracking_table(conn)
     applied = _applied_versions(conn)
-    pending = [m for m in discover_migrations(directory) if m.version not in applied]
+    migrations = discover_migrations(directory)
+    if _uses_project_migration_dir(directory):
+        if CANONICAL_BASELINE_VERSION in applied:
+            validate_canonical_baseline(conn)
+        else:
+            reject_legacy_pre_v3_db(conn)
+    pending = [m for m in migrations if m.version not in applied]
     new_versions: list[str] = []
     for migration in pending:
-        conn.executescript(migration.sql)
+        conn.executescript(migration.path.read_text(encoding="utf-8"))
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
             (migration.version, iso_now()),
         )
         new_versions.append(migration.version)
     if new_versions:
-        # Without an explicit commit the INSERT into schema_migrations rolls
-        # back the next time the connection is closed without a manual
-        # commit elsewhere. ``executescript`` clears the autocommit flag on
-        # some Python/SQLite combos, so even the bare INSERT can sit in an
-        # uncommitted transaction. setup_agent.py --doctor caught the
-        # symptom on 2026-05-20 — applied set lost 0037 between two
-        # successive runs because the prior apply path used the connection
-        # without committing.
         conn.commit()
     return new_versions
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Apply agent-memory-lite migrations.")
+    parser.add_argument("--db", required=True, help="SQLite database path")
+    parser.add_argument("--migrations", type=Path, default=MIGRATION_DIR)
+    args = parser.parse_args(argv)
+
+    (db_path := Path(args.db)).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        applied = apply_migrations(conn, args.migrations)
+    finally:
+        conn.close()
+    if applied:
+        print("\n".join(applied))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

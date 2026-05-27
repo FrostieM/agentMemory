@@ -1,4 +1,4 @@
-"""POST /memory/list_audit — read the per-item audit trail."""
+"""POST /memory/audit - read the per-item audit trail."""
 
 from __future__ import annotations
 
@@ -46,15 +46,15 @@ class ListAuditResponse(BaseModel):
     entries: list[AuditItem]
 
 
-@router.post("/memory/list_audit", response_model=ListAuditResponse)
+@router.post("/memory/audit", response_model=ListAuditResponse)
 def list_audit_route(
     body: ListAuditRequest, conn: DbDep, settings: SettingsDep
 ) -> ListAuditResponse:
     ensure_workspace_readable(body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
-        endpoint="/memory/list_audit",
-        operation="list_audit",
+        endpoint="/memory/audit",
+        operation="audit",
         label="Audit log",
         snippet=body.target_id or body.action or "",
     ) as trace:

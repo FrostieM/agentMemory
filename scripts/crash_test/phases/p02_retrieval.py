@@ -1,57 +1,47 @@
-"""Phase 02: search + get_context + explain_context + get_object."""
+"""Phase 02: compact search + brief + object fetch."""
 
 from __future__ import annotations
 
 from scripts.crash_test.phases._base import CrashTestState, Phase, PhaseResult
-from scripts.crash_test.seeds import post
+from scripts.crash_test.seeds import get, post
 
 
 class P02Retrieval(Phase):
     name = "p02_retrieval"
-    description = "Search modes, context envelope sections, explain/get_object lookups."
+    description = "Compact search, brief rendering, and direct object lookup."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
-        # FTS exact lookup hits seeded episode body.
-        fts = post(
+        search = post(
             state.client,
             "/memory/search",
-            {"workspace_id": state.workspace_id, "query": "rrf_norm", "mode": "fts", "limit": 5},
+            {"workspace_id": state.workspace_id, "query": "rrf_norm", "limit": 5},
         )
-        hits = fts.get("hits") or fts.get("results") or []
-        result.assert_ge("fts hits", len(hits), 1)
+        hits = search.get("data") or search.get("hits") or search.get("results") or []
+        result.assert_ge("search hits", len(hits), 1)
 
-        # /memory/search supports only mode=fts in v1.0; vector + hybrid go
-        # through /memory/get_context. So we exercise vector indirectly via
-        # the context envelope which fuses FTS + vector via RRF.
-
-        # get_context — envelope must contain the canonical sections.
-        ctx = post(
+        brief = get(
             state.client,
-            "/memory/get_context",
+            "/memory/brief",
             {
                 "workspace_id": state.workspace_id,
-                "query": "retrieval pipeline",
+                "task": "retrieval pipeline",
                 "max_tokens": 2000,
             },
         )
-        text = str(ctx.get("context_text", ""))
-        for section in (
-            "<memory_context>",
-            "<retrieved_chunks",
-            "</memory_context>",
-        ):
-            result.assert_in("envelope contains", section, text)
+        data = brief.get("data") if isinstance(brief.get("data"), dict) else {}
+        result.assert_true("brief returned body", bool(str(data.get("body_md", "")).strip()))
 
-        # explain_context returns retrieval breakdown.
-        explain = post(
-            state.client,
-            "/memory/explain_context",
-            {"workspace_id": state.workspace_id, "query": "retrieval pipeline", "max_tokens": 1500},
-        )
-        result.assert_true(
-            "explain returns object",
-            isinstance(explain, dict) and bool(explain),
-            hint=str(explain)[:120],
-        )
+        first = hits[0].get("projection", hits[0]) if isinstance(hits[0], dict) else {}
+        if isinstance(first, dict) and first.get("id"):
+            fetched = get(
+                state.client,
+                "/memory/get",
+                {
+                    "workspace_id": state.workspace_id,
+                    "kind": first.get("kind", "chunk"),
+                    "id": first["id"],
+                },
+            )
+            result.assert_true("direct get returns data", bool(fetched.get("data")))
         return result

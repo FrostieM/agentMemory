@@ -1,8 +1,8 @@
 """``memory_pin`` dispatcher.
 
-Pinned decisions / behavior instructions / core memory entries stay
-in the active context envelope regardless of query relevance or token
-budget. Architecturally this mirrors the archive-service shape: one
+Pinned decisions and behaviors stay in the active context envelope
+regardless of query relevance or token budget. Architecturally this
+mirrors the archive-service shape: one
 callable that knows the right column per kind and writes via the
 per-kind table. Roles / skills / playbooks intentionally stay
 un-pinned — they already ride the capability ranker which surfaces
@@ -22,8 +22,8 @@ from agent_memory_lite.utils.time import iso_now
 # (set_decision_pinned) because the row lifecycle includes status /
 # valid_to bookkeeping; everything else is a plain ``UPDATE pinned``.
 _TABLE_BY_KIND: dict[str, str] = {
-    "behavior_instruction": "behavior_instructions",
-    "core_memory": "core_memory",
+    "behavior": "behaviors",
+    "behavior_instruction": "behaviors",
 }
 
 
@@ -78,7 +78,4 @@ def pin_memory_object(
             pinned=pinned,
         )
         return {"kind": kind, "id": object_id, "pinned": pinned, "found": ok}
-    raise ValueError(
-        f"unsupported pin kind: {kind!r}; pinning supports: "
-        "decision, behavior_instruction, core_memory"
-    )
+    raise ValueError(f"unsupported pin kind: {kind!r}; pinning supports: decision, behavior")

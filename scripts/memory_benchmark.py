@@ -22,10 +22,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--vector-path", "--vectors", dest="vector_path", default=None)
     parser.add_argument("--query", action="append", default=[])
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument("--max-context-tokens", type=int, default=2500)
+    parser.add_argument("--max-brief-tokens", type=int, default=2500)
     parser.add_argument("--with-vector", action="store_true")
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--max-get-context-ms", type=float, default=None)
+    parser.add_argument("--max-memory-search-ms", type=float, default=None)
+    parser.add_argument("--max-memory-brief-ms", type=float, default=None)
     parser.add_argument("--max-fts-search-ms", type=float, default=None)
     parser.add_argument("--max-integrity-audit-ms", type=float, default=None)
     parser.add_argument("--max-hygiene-report-ms", type=float, default=None)
@@ -47,8 +48,10 @@ def _settings(args: argparse.Namespace) -> Settings:
 
 def _thresholds(args: argparse.Namespace) -> dict[str, float]:
     thresholds: dict[str, float] = {}
-    if args.max_get_context_ms is not None:
-        thresholds["get_context"] = args.max_get_context_ms
+    if args.max_memory_search_ms is not None:
+        thresholds["memory_search"] = args.max_memory_search_ms
+    if args.max_memory_brief_ms is not None:
+        thresholds["memory_brief"] = args.max_memory_brief_ms
     if args.max_fts_search_ms is not None:
         thresholds["fts_search"] = args.max_fts_search_ms
     if args.max_integrity_audit_ms is not None:
@@ -87,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             runs=args.runs,
             embedding_provider=provider,
             vector_store=store,
-            max_context_tokens=args.max_context_tokens,
+            max_context_tokens=args.max_brief_tokens,
             thresholds_ms=_thresholds(args),
         )
         payload = report.to_dict()

@@ -3,7 +3,7 @@
 The v3.4 autonomous loop bypassed the ``add_theory_evidence`` repo
 helper and INSERTed a literal ``'autonomous_corroboration'`` string
 before that value existed in ``TheoryEvidenceKind``. Once one such
-row landed in the DB, every ``/memory/get_context`` that gathered the
+row landed in the DB, every compact read that gathered the
 parent theory crashed with ``ValueError`` and returned HTTP 500 — for
 ~2.5h on the copyBot workspace before the bug was caught.
 
@@ -51,7 +51,7 @@ def test_coerce_kind_accepts_existing_enum_instance() -> None:
 
 def test_coerce_kind_falls_back_to_neutral_on_unknown() -> None:
     """An unknown ``kind`` string must NOT raise — that was the bug
-    that returned HTTP 500 on every get_context."""
+    that returned HTTP 500 on every compact read."""
     assert _coerce_evidence_kind("some_future_kind_we_dont_know_yet") is (
         TheoryEvidenceKind.NEUTRAL
     )

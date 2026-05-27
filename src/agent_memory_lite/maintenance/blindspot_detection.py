@@ -134,6 +134,7 @@ def find_blindspots(
     days: int | None = None,
     min_episodes: int | None = None,
     limit: int | None = None,
+    enrich: bool = True,
 ) -> list[Blindspot]:
     """Tokens appearing in ``>= min_episodes`` distinct episodes within
     the lookback window but in ZERO active decisions.
@@ -203,6 +204,8 @@ def find_blindspots(
         )
     )
     capped = out[:cap]
+    if not enrich:
+        return capped
     # v3.1 LLM augmentation — best-effort enrichment per row. Failure-soft.
     from agent_memory_lite.maintenance.blindspot_enrich import (  # noqa: PLC0415
         maybe_enrich_with_llm,

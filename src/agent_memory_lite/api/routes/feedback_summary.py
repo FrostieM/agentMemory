@@ -1,7 +1,7 @@
 """GET /memory/feedback_summary — read-only feedback signal rollup.
 
 Returns a workspace-wide signal summary plus per-source aggregate rows from
-the migration 0020 view. Optionally triggers a fresh EWMA recompute when
+the feedback signal view. Optionally triggers a fresh EWMA recompute when
 ``recompute=true`` and ``MEMORY_FEEDBACK_EWMA_ENABLED`` is on.
 """
 

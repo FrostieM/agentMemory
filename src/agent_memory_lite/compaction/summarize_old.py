@@ -6,8 +6,8 @@ selected window and audits the action. Original episodes are left untouched
 
 v1.8: when MEMORY_REFLECTIVE_COMPACT_ENABLED is on AND a Settings instance
 is passed, an additional Ollama pass extracts lesson candidates into
-``insight_candidates``. The two passes are independent — the digest
-summary is byte-identical to v1.3 when the reflective flag is off.
+the canonical review queue. The two passes are independent; the digest
+summary is byte-identical when the reflective flag is off.
 """
 
 from __future__ import annotations

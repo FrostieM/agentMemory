@@ -85,8 +85,8 @@ def read_prior_tool_calls(
 def has_called(trail: list[str], *candidates: str) -> bool:
     """Did any of the ``candidates`` tool names appear in the trail?
 
-    Accepts both bare names (``Read``) and MCP-prefixed names
-    (``mcp__agent-memory-lite__memory_file_digest``); matches by
+    Accepts both bare names (``memory_impact_check``) and MCP-prefixed names
+    (``mcp__agent-memory-lite__memory_impact_check``); matches by
     suffix so callers don't need to know the prefix shape.
     """
     if not candidates:

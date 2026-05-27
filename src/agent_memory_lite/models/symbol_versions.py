@@ -6,7 +6,7 @@ was ingested. We keep one row per (qualified_name, content_hash)
 combination so an agent can ask "what changed in
 ``paperBot.calculate`` last week?" or "which active symbols had a
 SIGNATURE change since deploy?" — the latter being the foundation
-of breaking-change detection (paired with ``graph_neighbors`` for
+of code-change detection (paired with the indexed hard graph for
 downstream impact).
 """
 

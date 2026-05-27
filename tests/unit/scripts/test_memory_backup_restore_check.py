@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import sys
 from contextlib import closing
 from pathlib import Path
 from types import ModuleType
@@ -33,3 +34,18 @@ def test_backup_sqlite_db_captures_committed_wal_rows(tmp_path: Path) -> None:
     with closing(sqlite3.connect(target)) as conn:
         rows = conn.execute("SELECT value FROM items").fetchall()
     assert rows == [("from-wal",)]
+
+
+def test_run_restored_audit_timeout_reports_and_reaps_child() -> None:
+    script = _load_script("memory_backup_restore_check.py")
+
+    exit_code, stdout, stderr, timed_out, elapsed = script._run_restored_audit(
+        [sys.executable, "-c", "import time; time.sleep(5)"],
+        timeout_seconds=0.1,
+    )
+
+    assert exit_code is None
+    assert stdout == ""
+    assert stderr == ""
+    assert timed_out is True
+    assert elapsed >= 0

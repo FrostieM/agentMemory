@@ -1,8 +1,8 @@
 """Fresh-process smoke check for the agent-memory-lite MCP handlers.
 
 This is intentionally narrower than a full MCP protocol test. It proves that a
-new stdio-server process can answer the slowest/highest-risk handler,
-`memory_get_context`, without hanging on model/vector-store initialization.
+new stdio-server process can answer the v3 compact MCP handlers without hanging
+on model/vector-store initialization.
 """
 
 from __future__ import annotations
@@ -14,9 +14,31 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agent_memory_lite.config.settings import Settings
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_ROOT = _REPO_ROOT / "src"
+for _path in (_SRC_ROOT, _REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+if TYPE_CHECKING:
+    from agent_memory_lite.config.settings import Settings
+
+EXPECTED_V3_MCP_TOOLS = {
+    "memory_search",
+    "memory_get",
+    "memory_write",
+    "memory_edit",
+    "memory_pin",
+    "memory_archive",
+    "memory_brief",
+    "memory_lint",
+    "memory_invoke_skill",
+    "memory_impact_check",
+    "memory_status",
+    "memory_plan",
+}
 
 _HELPER = r"""
 from __future__ import annotations
@@ -25,35 +47,45 @@ import json
 import os
 import time
 
-from agent_memory_lite.mcp import stdio_server
+from agent_memory_lite.mcp import stdio_handlers_memory
+from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
 
 payload = json.loads(os.environ["MEMORY_MCP_SMOKE_PAYLOAD"])
 started = time.perf_counter()
-result = stdio_server._handle_get_context(payload)
+brief = stdio_handlers_memory._handle_v3_brief(payload)
+status = stdio_handlers_memory._handle_v3_status({
+    "workspace_id": payload["workspace_id"],
+    "include_environment": False,
+    "include_active_memory": False,
+})
 elapsed = time.perf_counter() - started
-text = str(result.get("context_text", ""))
-sources = result.get("sources", [])
+brief_data = brief.get("data") if isinstance(brief, dict) else {}
+status_data = status.get("data") if isinstance(status, dict) else {}
+memory = status_data.get("memory", {}) if isinstance(status_data, dict) else {}
+text = str(brief_data.get("body_md", "")) if isinstance(brief_data, dict) else ""
+sections = brief_data.get("sections", []) if isinstance(brief_data, dict) else []
 print(json.dumps({
     "elapsed_sec": round(elapsed, 3),
-    "context_chars": len(text),
-    "sources_count": len(sources) if isinstance(sources, list) else 0,
-    "has_memory_context": "<memory_context" in text,
-    "has_behavior_instructions": "<behavior_instructions" in text,
-    "has_agent_capabilities": "<agent_capabilities" in text,
-    "has_active_decisions": "<active_decisions" in text,
+    "brief_chars": len(text),
+    "sections": sections if isinstance(sections, list) else [],
+    "has_brief": bool(brief.get("ok")) and bool(text),
+    "has_behaviors": int(memory.get("behaviors_active") or 0) > 0,
+    "has_agent_capabilities": int(memory.get("capabilities_active_total") or 0) > 0,
+    "has_active_decisions": int(memory.get("decisions_active") or 0) > 0,
+    "tool_names": sorted(t.name for t in ALL_TOOLS),
 }, ensure_ascii=False, sort_keys=True))
 """
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Smoke-test MCP memory_get_context latency.")
+    parser = argparse.ArgumentParser(description="Smoke-test MCP v3 compact tool latency.")
     parser.add_argument("--workspace", "--workspace-id", dest="workspace", default=None)
     parser.add_argument("--db-path", "--db", dest="db_path", default=None)
     parser.add_argument("--vector-path", "--vectors", dest="vector_path", default=None)
     parser.add_argument(
         "--query",
         default="memory MCP smoke behavior instructions roles skills",
-        help="Query used for memory_get_context.",
+        help="Task text passed to memory_brief.",
     )
     parser.add_argument("--max-tokens", type=int, default=2500)
     parser.add_argument("--max-seconds", type=float, default=5.0)
@@ -65,6 +97,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _settings(args: argparse.Namespace) -> Settings:
+    from agent_memory_lite.config.settings import Settings  # noqa: PLC0415
+
     settings = Settings(_env_file=None)
     updates: dict[str, Any] = {}
     if args.workspace:
@@ -79,7 +113,7 @@ def _settings(args: argparse.Namespace) -> Settings:
 def _run_helper(settings: Settings, args: argparse.Namespace) -> dict[str, Any]:
     payload = {
         "workspace_id": settings.workspace_id,
-        "query": args.query,
+        "task": args.query,
         "max_tokens": args.max_tokens,
     }
     env = os.environ.copy()
@@ -88,7 +122,10 @@ def _run_helper(settings: Settings, args: argparse.Namespace) -> dict[str, Any]:
     env["VECTOR_DB_PATH"] = str(settings.vector_db_path)
     env["MEMORY_WORKSPACE_ID"] = settings.workspace_id
     env.setdefault("OLLAMA_PROBE_SKIP", "true")
-    env.setdefault("MCP_GET_CONTEXT_HTTP_DELEGATE", "true")
+    pythonpath = os.pathsep.join(str(p) for p in (_SRC_ROOT, _REPO_ROOT))
+    env["PYTHONPATH"] = (
+        pythonpath if not env.get("PYTHONPATH") else pythonpath + os.pathsep + env["PYTHONPATH"]
+    )
 
     started = time.perf_counter()
     completed = subprocess.run(
@@ -108,16 +145,20 @@ def _run_helper(settings: Settings, args: argparse.Namespace) -> dict[str, Any]:
             "stderr": completed.stderr.strip(),
             "failure": f"subprocess exited {completed.returncode}",
         }
+    stdout = completed.stdout.strip()
+    json_line = stdout.splitlines()[-1] if stdout else ""
     try:
-        result = json.loads(completed.stdout)
+        result = json.loads(json_line)
     except json.JSONDecodeError as exc:
         return {
             "status": "degraded",
             "elapsed_sec": round(wall_elapsed, 3),
-            "stdout": completed.stdout.strip(),
+            "stdout": stdout,
             "stderr": completed.stderr.strip(),
             "failure": f"invalid helper JSON: {exc}",
         }
+    if stdout and stdout != json_line:
+        result["helper_prefix_stdout"] = stdout[: -len(json_line)].strip()
     result["wall_elapsed_sec"] = round(wall_elapsed, 3)
     result["status"] = "ok"
     return result
@@ -128,19 +169,30 @@ def _evaluate(result: dict[str, Any], args: argparse.Namespace) -> tuple[str, li
     warnings: list[str] = []
     if result.get("status") != "ok":
         failures.append(str(result.get("failure") or "mcp smoke helper failed"))
-    if not result.get("has_memory_context"):
-        failures.append("memory_get_context did not return <memory_context>")
+    if not result.get("has_brief"):
+        failures.append("memory_brief did not return a compact brief")
     if (
         float(result.get("wall_elapsed_sec") or result.get("elapsed_sec") or 999.0)
         > args.max_seconds
     ):
-        failures.append(f"memory_get_context exceeded {args.max_seconds:.1f}s")
-    if args.require_behavior and not result.get("has_behavior_instructions"):
-        failures.append("context is missing <behavior_instructions>")
+        failures.append(f"memory_brief/status exceeded {args.max_seconds:.1f}s")
+    if args.require_behavior and not result.get("has_behaviors"):
+        failures.append("workspace has no active behaviors")
     if args.require_capabilities and not result.get("has_agent_capabilities"):
-        failures.append("context is missing <agent_capabilities>")
+        failures.append("workspace has no active capabilities")
+    tool_names = result.get("tool_names")
+    if isinstance(tool_names, list):
+        actual = {str(name) for name in tool_names}
+        missing = sorted(EXPECTED_V3_MCP_TOOLS - actual)
+        extra = sorted(actual - EXPECTED_V3_MCP_TOOLS)
+        if missing or extra:
+            failures.append(
+                f"MCP tool surface mismatch: missing={missing or []}; extra={extra or []}"
+            )
+    else:
+        failures.append("MCP helper did not report tool_names")
     if not result.get("has_active_decisions"):
-        warnings.append("context is missing <active_decisions>")
+        warnings.append("workspace has no active decisions")
     return ("degraded" if failures else "ok"), failures, warnings
 
 

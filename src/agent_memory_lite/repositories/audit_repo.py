@@ -41,10 +41,8 @@ def insert_audit(
     # default=str: a non-serializable payload value must not crash the operation being audited.
     before_json = None if before is None else json.dumps(before, sort_keys=True, default=str)
     after_json = None if after is None else json.dumps(after, sort_keys=True, default=str)
-    # 1.3.0 schema migration 0026 adds the ``agent_id`` column. Use a
-    # try/except fallback so pre-migration databases (rare, only legacy
-    # workspaces that haven't applied 0026 yet) still write without
-    # failing — agent_id is silently dropped in that case.
+    # Use a try/except fallback so partial audit schemas without agent_id
+    # still write without failing; agent_id is silently dropped in that case.
     try:
         conn.execute(
             """
@@ -68,10 +66,9 @@ def insert_audit(
             ),
         )
     except sqlite3.Error:
-        # The modern insert failed — almost always a legacy schema
-        # missing the 0026 agent_id column; retry without it. Catching
-        # the sqlite base class (not just OperationalError) routes any
-        # other failure to the best-effort fallback below instead of
+        # The full insert failed -- usually a schema missing agent_id; retry
+        # without it. Catching the sqlite base class (not just OperationalError)
+        # routes any other failure to the best-effort fallback below instead of
         # crashing the operation being audited.
         try:
             conn.execute(

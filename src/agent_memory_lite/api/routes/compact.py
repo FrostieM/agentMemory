@@ -17,9 +17,8 @@ def compact_route(body: CompactRequest, conn: DbDep, settings: SettingsDep) -> C
     ensure_workspace_writable(body.workspace_id, settings)
     # 1.2.5: pass settings so reflective compaction (v1.8) actually
     # runs. Pre-1.2.5 settings was None at this call site, which
-    # silently disabled lesson_candidate emission even when the
-    # MEMORY_REFLECTIVE_COMPACT_ENABLED flag was on. Diagnosed in
-    # copyBot 2026-05-09: 332 episodes, 0 insight_candidates ever.
+    # silently disabled lesson candidate emission even when the
+    # MEMORY_REFLECTIVE_COMPACT_ENABLED flag was on.
     # Body's summarize_age_days takes priority; falls back to the
     # workspace default settings.compact_age_days.
     age_days = body.summarize_age_days or settings.compact_age_days

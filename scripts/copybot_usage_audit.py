@@ -121,7 +121,8 @@ def audit_behavior(c: sqlite3.Connection) -> None:
     section("Behavior instructions (which actually fire)")
     rows = c.execute(
         "SELECT id, name, kind, scope, active, application_count, last_applied_at, "
-        "expires_at, conflict_group FROM behavior_instructions WHERE workspace_id = ?",
+        "expires_at, conflict_group FROM behaviors "
+        "WHERE workspace_id = ? AND kind != 'core_memory'",
         (WORKSPACE,),
     ).fetchall()
     active = [r for r in rows if r[4]]
@@ -153,8 +154,8 @@ def audit_behavior(c: sqlite3.Connection) -> None:
 def audit_capabilities(c: sqlite3.Connection, table: str, kind: str) -> None:
     rows = c.execute(
         f"SELECT id, name, active, usage_count, success_count, failure_count, "
-        f"last_invoked_at FROM {table} WHERE workspace_id = ?",
-        (WORKSPACE,),
+        f"last_invoked_at FROM {table} WHERE workspace_id = ? AND subtype = ?",
+        (WORKSPACE, kind),
     ).fetchall()
     active = [r for r in rows if r[2]]
     kv(f"{kind} total", len(rows))
@@ -176,7 +177,7 @@ def audit_capabilities(c: sqlite3.Connection, table: str, kind: str) -> None:
 def audit_candidates_lifetime(c: sqlite3.Connection) -> None:
     section("Candidates lifetime (extraction noise vs signal)")
     rows = c.execute(
-        "SELECT kind, status FROM memory_candidates WHERE workspace_id = ?",
+        "SELECT kind, status FROM candidates WHERE workspace_id = ?",
         (WORKSPACE,),
     ).fetchall()
     kv("total candidates ever", len(rows))
@@ -316,9 +317,9 @@ def main() -> int:
         audit_theories(c)
         audit_behavior(c)
         section("Capabilities (roles / skills / playbooks)")
-        audit_capabilities(c, "agent_roles", "role")
-        audit_capabilities(c, "agent_skills", "skill")
-        audit_capabilities(c, "agent_playbooks", "playbook")
+        audit_capabilities(c, "skills", "role")
+        audit_capabilities(c, "skills", "skill")
+        audit_capabilities(c, "skills", "playbook")
         audit_candidates_lifetime(c)
         audit_capability_links(c)
         audit_episodes_chunks(c)

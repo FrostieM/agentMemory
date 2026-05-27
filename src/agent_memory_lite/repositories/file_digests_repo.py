@@ -1,4 +1,4 @@
-"""SQL operations for the ``file_digests`` table (1.8.0)."""
+"""SQL operations for the canonical ``code_digests`` table."""
 
 from __future__ import annotations
 
@@ -31,20 +31,25 @@ def _row_to_digest(row: sqlite3.Row) -> FileDigest:
 def upsert_digest(conn: sqlite3.Connection, payload: FileDigestIn) -> FileDigest:
     now = iso_now()
     existing = conn.execute(
-        "SELECT id FROM file_digests WHERE workspace_id = ? AND file_path = ?",
+        "SELECT id FROM code_digests WHERE workspace_id = ? AND file_path = ?",
         (payload.workspace_id, payload.file_path),
     ).fetchone()
     digest_id = existing["id"] if existing is not None else new_id(IdKind.FILE_DIGEST)
     structured_json = json.dumps(payload.structured, sort_keys=True)
+    purpose_short = payload.narrative[:400]
+    top_symbols_json = json.dumps(payload.structured.get("top_symbols") or [], sort_keys=True)
+    top_callers_json = json.dumps(payload.structured.get("top_callers") or [], sort_keys=True)
+    top_callees_json = json.dumps(payload.structured.get("top_callees") or [], sort_keys=True)
     if existing is None:
         conn.execute(
             """
-            INSERT INTO file_digests (
+            INSERT INTO code_digests (
                 id, workspace_id, file_path, language, chunk_count,
                 symbol_count, inbound_edge_count, outbound_edge_count,
-                versions_recent, narrative, structured_json,
+                versions_recent, purpose_short, narrative, top_symbols_json,
+                top_callers_json, top_callees_json, structured_json,
                 last_indexed_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 digest_id,
@@ -56,7 +61,11 @@ def upsert_digest(conn: sqlite3.Connection, payload: FileDigestIn) -> FileDigest
                 payload.inbound_edge_count,
                 payload.outbound_edge_count,
                 payload.versions_recent,
+                purpose_short,
                 payload.narrative,
+                top_symbols_json,
+                top_callers_json,
+                top_callees_json,
                 structured_json,
                 payload.last_indexed_at,
                 now,
@@ -65,11 +74,12 @@ def upsert_digest(conn: sqlite3.Connection, payload: FileDigestIn) -> FileDigest
     else:
         conn.execute(
             """
-            UPDATE file_digests SET
+            UPDATE code_digests SET
                 language = ?, chunk_count = ?, symbol_count = ?,
                 inbound_edge_count = ?, outbound_edge_count = ?,
-                versions_recent = ?, narrative = ?, structured_json = ?,
-                last_indexed_at = ?, updated_at = ?
+                versions_recent = ?, purpose_short = ?, narrative = ?,
+                top_symbols_json = ?, top_callers_json = ?, top_callees_json = ?,
+                structured_json = ?, last_indexed_at = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -79,7 +89,11 @@ def upsert_digest(conn: sqlite3.Connection, payload: FileDigestIn) -> FileDigest
                 payload.inbound_edge_count,
                 payload.outbound_edge_count,
                 payload.versions_recent,
+                purpose_short,
                 payload.narrative,
+                top_symbols_json,
+                top_callers_json,
+                top_callees_json,
                 structured_json,
                 payload.last_indexed_at,
                 now,
@@ -105,7 +119,7 @@ def upsert_digest(conn: sqlite3.Connection, payload: FileDigestIn) -> FileDigest
 
 def get_digest(conn: sqlite3.Connection, *, workspace_id: str, file_path: str) -> FileDigest | None:
     row = conn.execute(
-        "SELECT * FROM file_digests WHERE workspace_id = ? AND file_path = ?",
+        "SELECT * FROM code_digests WHERE workspace_id = ? AND file_path = ?",
         (workspace_id, file_path),
     ).fetchone()
     return _row_to_digest(row) if row is not None else None
@@ -115,7 +129,7 @@ def list_digests(
     conn: sqlite3.Connection, *, workspace_id: str, limit: int = 50
 ) -> list[FileDigest]:
     rows = conn.execute(
-        "SELECT * FROM file_digests WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?",
+        "SELECT * FROM code_digests WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT ?",
         (workspace_id, limit),
     ).fetchall()
     return [_row_to_digest(r) for r in rows]

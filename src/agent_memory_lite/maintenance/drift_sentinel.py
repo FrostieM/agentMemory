@@ -25,7 +25,7 @@ Checks shipped:
   without scanning the FK matrix.
 * ``dangling_capability_links`` — capability_links rows whose
   (capability_type, capability_id) target no longer exists in
-  agent_roles / agent_skills / agent_playbooks. The schema has no
+  skills(subtype='role'/'skill'/'playbook'). The schema has no
   FK on (capability_type, capability_id) so deleting a capability
   leaves dangling refs that PRAGMA foreign_key_check cannot see;
   today (2026-05-20) we hand-cleaned 16 such orphans that had
@@ -116,7 +116,7 @@ def _check_dangling_capability_links(
     conn: sqlite3.Connection, workspace_id: str
 ) -> tuple[str, int] | None:
     """Count capability_links whose (capability_type, capability_id) no
-    longer resolves to an agent_role / skill / playbook row in this
+    longer resolves to a canonical skills row in this
     workspace. Returns ``(detail, count)`` when count > 0, ``None`` when
     clean.
 
@@ -129,21 +129,13 @@ def _check_dangling_capability_links(
     try:
         row = conn.execute(
             """SELECT COUNT(*) FROM capability_links cl
-                 LEFT JOIN agent_skills s
+                 LEFT JOIN skills s
                         ON s.id = cl.capability_id
-                       AND cl.capability_type = 'skill'
-                 LEFT JOIN agent_playbooks p
-                        ON p.id = cl.capability_id
-                       AND cl.capability_type = 'playbook'
-                 LEFT JOIN agent_roles r
-                        ON r.id = cl.capability_id
-                       AND cl.capability_type = 'role'
+                       AND s.workspace_id = cl.workspace_id
+                       AND s.subtype = cl.capability_type
                 WHERE cl.workspace_id = ?
-                  AND (
-                      (cl.capability_type = 'skill' AND s.id IS NULL)
-                   OR (cl.capability_type = 'playbook' AND p.id IS NULL)
-                   OR (cl.capability_type = 'role' AND r.id IS NULL)
-                  )""",
+                  AND cl.capability_type IN ('role', 'skill', 'playbook')
+                  AND s.id IS NULL""",
             (workspace_id,),
         ).fetchone()
     except sqlite3.OperationalError:

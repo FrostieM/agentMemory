@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -16,8 +15,6 @@ from agent_memory_lite.cognition.brief import (
     fetch_skill_body,
     fit_to_budget,
 )
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +33,9 @@ def _isolate_brief_cache() -> Iterator[None]:
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -473,7 +472,7 @@ def test_active_plan_dropped_when_doing_line_will_not_fit(conn: sqlite3.Connecti
 def test_resolve_target_workspace_accepts_plan_step(conn: sqlite3.Connection) -> None:
     """Phase 4: a plan_step is a valid capability-link target — the
     PLAN_STEP enum value plus the TARGET_TABLES entry let the resolver
-    find it, so memory_link_capability can bind skills to steps."""
+    find it, so capability suggestions can still target plan steps."""
     from agent_memory_lite.models.enums import CapabilityLinkTargetType  # noqa: PLC0415
     from agent_memory_lite.repositories.capability_links_repo import (  # noqa: PLC0415
         resolve_target_workspace,

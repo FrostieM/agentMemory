@@ -1,4 +1,4 @@
-"""Phase 05: agent_roles / agent_skills / agent_playbooks + capability_links."""
+"""Phase 05: canonical skills + capability suggestions."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from scripts.crash_test.seeds import post, seed_capabilities
 
 class P05Capabilities(Phase):
     name = "p05_capabilities"
-    description = "Capability upserts + list + capability_links to research targets."
+    description = "Canonical skill write/search plus theory capability suggestions."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
@@ -17,50 +17,39 @@ class P05Capabilities(Phase):
         for key in ("role_id", "skill_id", "playbook_id"):
             result.assert_true(f"{key} returned", bool(ids[key]))
 
-        # List endpoint surfaces all three.
+        # Compact search surfaces the canonical skill row.
         listed = post(
             state.client,
-            "/memory/list_agent_capabilities",
-            {"workspace_id": state.workspace_id, "limit": 10},
+            "/memory/search",
+            {
+                "workspace_id": state.workspace_id,
+                "query": "End-to-end memory verification",
+                "kinds": ["skill"],
+                "limit": 10,
+            },
         )
-        roles = listed.get("roles") or []
-        skills = listed.get("skills") or []
-        playbooks = listed.get("playbooks") or []
-        result.assert_ge("listed roles", len(roles), 1)
+        skills = listed.get("data") or listed.get("hits") or []
         result.assert_ge("listed skills", len(skills), 1)
-        result.assert_ge("listed playbooks", len(playbooks), 1)
 
-        # capability_links: link skill -> a theory we seeded earlier.
-        theory_ids = state.bag.get("theory_ids") or []
-        if theory_ids:
-            link = post(
-                state.client,
-                "/memory/link_capability",
-                {
-                    "workspace_id": state.workspace_id,
-                    "target_type": "theory",
-                    "target_id": theory_ids[0],
-                    "capability_type": "skill",
-                    "capability_name": "End-to-end memory verification",
-                    "relation": "method",
-                    "rationale": "QA fixture validates retrieval end to end.",
-                    "strength": 0.8,
+        theory = post(
+            state.client,
+            "/memory/write",
+            {
+                "workspace_id": state.workspace_id,
+                "kind": "theory",
+                "payload": {
+                    "title": "End-to-end memory verification coverage",
+                    "claim": "Canonical endpoint changes need end-to-end verification.",
+                    "status": "testing",
+                    "confidence": 0.55,
                 },
-            )
-            result.assert_true(
-                "capability_link created", bool(link.get("link_id") or link.get("id"))
-            )
-            listed_links = post(
-                state.client,
-                "/memory/list_capability_links",
-                {
-                    "workspace_id": state.workspace_id,
-                    "target_type": "theory",
-                    "target_id": theory_ids[0],
-                    "limit": 10,
-                },
-            )
-            result.assert_ge("links listed", len(listed_links.get("links") or []), 1)
-        else:
-            result.note("no theory ids in bag, skipped link assertions")
+            },
+        )
+        suggestions = theory.get("data", {}).get("capability_suggestions") or []
+        result.assert_ge("theory has capability suggestions", len(suggestions), 1)
+        result.assert_eq(
+            "top suggestion is canonical skill",
+            suggestions[0].get("capability_name"),
+            "End-to-end memory verification",
+        )
         return result

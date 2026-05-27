@@ -3,7 +3,7 @@
 Looks for explicit cues in episode text:
 
 - "Decision: ..." / "Решение: ..." → DECISION candidate.
-- "Rule: ..." / "Правило: ..." → PROCEDURAL_RULE candidate (only when the
+- "Rule: ..." / "Правило: ..." -> rule candidate (only when the
   episode is user-asserted; the trust gate also enforces this).
 
 The extractor never produces high-confidence claims on its own — it surfaces
@@ -70,7 +70,7 @@ class HeuristicExtractor:
                     trust_level=episode.trust_level,
                     temporal=temporal,
                     source_episode_id=episode.id,
-                    write_targets=["procedural", "audit"],
+                    write_targets=["behavior", "audit"],
                 )
             )
 

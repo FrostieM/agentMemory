@@ -35,6 +35,11 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from hook_audit import record_hook_event
+except ImportError:  # pragma: no cover - used when tests import scripts as a package
+    from scripts.hook_audit import record_hook_event
+
 REGISTRY_PATH = (
     Path(os.environ["MEMORY_WORKSPACES_FILE"])
     if os.environ.get("MEMORY_WORKSPACES_FILE")
@@ -83,6 +88,18 @@ def _list_registry() -> list[dict[str, object]]:
     return entries if isinstance(entries, list) else []
 
 
+def _safe_registry_path(raw: str) -> str:
+    """Reject registry db_path shapes that are not safe local DB paths."""
+    raw = (raw or "").strip()
+    if not raw or "\x00" in raw:
+        return ""
+    if raw.startswith(("\\\\", "//")):
+        return ""
+    if not os.path.isabs(raw):
+        return ""
+    return raw
+
+
 def _resolve_workspace(file_path: Path) -> tuple[str, str]:
     """Walk parents to find the workspace this file belongs to.
 
@@ -99,7 +116,11 @@ def _resolve_workspace(file_path: Path) -> tuple[str, str]:
                 continue
             root = str(entry.get("project_root", "")).rstrip("\\/").casefold()
             if root and target == root:
-                return (str(entry.get("id", "")), str(entry.get("db_path", "")))
+                workspace_id = str(entry.get("id", ""))
+                db_path = _safe_registry_path(str(entry.get("db_path", "")))
+                if workspace_id and db_path:
+                    return (workspace_id, db_path)
+                return ("", "")
     return ("", "")
 
 
@@ -107,13 +128,34 @@ def main() -> int:
     event = _read_event()
     file_path = _extract_file_path(event)
     if not file_path:
+        record_hook_event(
+            hook="PostToolUse",
+            event=event,
+            workspace_id="",
+            status="skip",
+            detail="no_file_path",
+        )
         return 0
     try:
         src = Path(file_path)
         if not src.is_file():
+            record_hook_event(
+                hook="PostToolUse",
+                event=event,
+                workspace_id="",
+                status="skip",
+                detail="not_a_file",
+            )
             return 0
         workspace_id, db_path = _resolve_workspace(src)
         if not workspace_id or not db_path:
+            record_hook_event(
+                hook="PostToolUse",
+                event=event,
+                workspace_id="",
+                status="skip",
+                detail="no_workspace",
+            )
             return 0
         # Defer the heavy import until we have something to enqueue. The
         # queue I/O itself is cheap (one append per hook); we don't want
@@ -121,8 +163,24 @@ def main() -> int:
         from agent_memory_lite.cognition.digest_worker import enqueue  # noqa: PLC0415
 
         enqueue(workspace_id=workspace_id, db_path=db_path, file_path=str(src.resolve()))
+        record_hook_event(
+            hook="PostToolUse",
+            event=event,
+            workspace_id=workspace_id,
+            status="ok",
+            detail="digest_enqueued",
+            db_path=db_path,
+            extra={"file_path": str(src.resolve())},
+        )
     except Exception:  # hook must never raise into the agent
         with contextlib.suppress(Exception):
+            record_hook_event(
+                hook="PostToolUse",
+                event=event,
+                workspace_id="",
+                status="crash",
+                detail="silent_error_path",
+            )
             sys.stderr.write("post_edit_enqueue: silent error path\n")
     return 0
 

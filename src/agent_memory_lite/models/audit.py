@@ -1,6 +1,6 @@
 """Audit log entries.
 
-Every write that mutates non-trivial state (decisions, facts, core memory) gets
+Every write that mutates non-trivial state (decisions, facts, behaviors) gets
 an audit row. `before_json` is null on creation; `after_json` is null on deletion.
 """
 

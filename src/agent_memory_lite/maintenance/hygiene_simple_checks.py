@@ -30,13 +30,13 @@ __all__ = [
 def find_stale_candidates(
     conn: sqlite3.Connection, *, workspace_id: str, stale_days: int
 ) -> list[HygieneFinding]:
-    if not table_exists(conn, "memory_candidates"):
+    if not table_exists(conn, "candidates"):
         return []
     cutoff = datetime.now(UTC) - timedelta(days=stale_days)
     rows = conn.execute(
         """
         SELECT id, kind, subject, updated_at
-        FROM memory_candidates
+        FROM candidates
         WHERE workspace_id = ? AND status = 'new'
         ORDER BY updated_at
         """,
@@ -51,7 +51,7 @@ def find_stale_candidates(
             HygieneFinding(
                 kind="stale_candidate",
                 severity="warning",
-                target_type="memory_candidate",
+                target_type="candidate",
                 target_id=str(row["id"]),
                 summary="Candidate remained new past the review window.",
                 details={
@@ -66,12 +66,12 @@ def find_stale_candidates(
 
 
 def find_insight_gaps(conn: sqlite3.Connection, *, workspace_id: str) -> list[HygieneFinding]:
-    if not table_exists(conn, "research_insights"):
+    if not table_exists(conn, "insights"):
         return []
     rows = conn.execute(
         """
         SELECT id, insight_type, summary, status, target_type, target_id
-        FROM research_insights
+        FROM insights
         WHERE workspace_id = ? AND status IN ('new', 'accepted')
           AND (COALESCE(target_type, '') = '' OR COALESCE(target_id, '') = '')
         ORDER BY updated_at DESC
@@ -82,7 +82,7 @@ def find_insight_gaps(conn: sqlite3.Connection, *, workspace_id: str) -> list[Hy
         HygieneFinding(
             kind="unlinked_insight",
             severity="warning",
-            target_type="research_insight",
+            target_type="insight",
             target_id=str(row["id"]),
             summary="Active insight is not linked to a target object.",
             details={

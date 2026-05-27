@@ -40,22 +40,17 @@ def _empty_section(name: str, budget: int) -> BriefSection:
 
 
 def _read_proposal_candidates(conn: sqlite3.Connection, workspace_id: str) -> list[sqlite3.Row]:
-    """Audit M3 fix: try legacy ``memory_candidates`` first (hybrid
-    schemas have it), fall back to canonical ``candidates`` on
-    canonical-only deploys. Returns [] when neither table has rows.
-    """
-    for table in ("memory_candidates", "candidates"):
-        try:
-            return conn.execute(
-                f"SELECT id, subject, object FROM {table} "
-                "WHERE workspace_id = ? AND kind = 'theory_proposal' "
-                "AND status = 'new' "
-                "ORDER BY updated_at DESC LIMIT 5",
-                (workspace_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            continue
-    return []
+    """Read canonical pending theory-proposal candidates."""
+    try:
+        return conn.execute(
+            "SELECT id, subject, object FROM candidates "
+            "WHERE workspace_id = ? AND kind = 'theory_proposal' "
+            "AND status = 'new' "
+            "ORDER BY updated_at DESC LIMIT 5",
+            (workspace_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
 
 
 def build_open_proposals(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:

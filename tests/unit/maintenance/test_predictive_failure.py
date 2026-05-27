@@ -10,11 +10,6 @@ import pytest
 
 from agent_memory_lite.maintenance import predictive_failure as pf
 
-CANONICAL_INIT = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-CANONICAL_OUTCOME = (
-    Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0002_outcome_loop.sql"
-)
-
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,21 +21,13 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Hybrid schema mirroring production: legacy + canonical overlay.
-
-    Production has both because the v3 cutover bolted canonical on top
-    of legacy migrations. ``outcome_score`` on ``decisions`` comes from
-    ``canonical/0002_outcome_loop.sql``.
-    """
+    """Fresh schema from the root migration runner."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
     db_path = tmp_path / "src.db"
     c = open_connection(db_path)
     apply_migrations(c)
-    # Canonical schema overlays — adds outcome_score columns.
-    c.executescript(CANONICAL_INIT.read_text(encoding="utf-8"))
-    c.executescript(CANONICAL_OUTCOME.read_text(encoding="utf-8"))
     try:
         yield c
     finally:

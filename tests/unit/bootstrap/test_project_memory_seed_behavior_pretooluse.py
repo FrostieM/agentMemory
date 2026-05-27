@@ -11,6 +11,7 @@ from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_payload
     no_magic_number_in_strategy_pretooluse_instruction,
 )
 from agent_memory_lite.bootstrap.project_memory_seed_behavior_pretooluse_trail import (
+    impact_check_before_read_pretooluse_instruction,
     read_before_edit_pretooluse_instruction,
     search_before_arch_write_pretooluse_instruction,
 )
@@ -20,6 +21,7 @@ PRETOOLUSE_FACTORIES = (
     no_magic_number_in_strategy_pretooluse_instruction,
     decision_must_have_provenance_pretooluse_instruction,
     read_before_edit_pretooluse_instruction,
+    impact_check_before_read_pretooluse_instruction,
     search_before_arch_write_pretooluse_instruction,
 )
 
@@ -27,6 +29,7 @@ EXPECTED_DETECTOR_TAGS = {
     no_magic_number_in_strategy_pretooluse_instruction: "mechanical:no-magic-number",
     decision_must_have_provenance_pretooluse_instruction: "mechanical:decision-provenance",
     read_before_edit_pretooluse_instruction: "mechanical:read-before-edit",
+    impact_check_before_read_pretooluse_instruction: "mechanical:impact-check-before-read",
     search_before_arch_write_pretooluse_instruction: "mechanical:search-before-arch",
 }
 

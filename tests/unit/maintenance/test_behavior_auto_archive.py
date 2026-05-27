@@ -20,10 +20,7 @@ from agent_memory_lite.maintenance.behavior_auto_archive import (
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
-    """Legacy schema fixture: behavior_apply writes to the
-    ``behavior_instructions`` table (per capability/behavior_apply.py),
-    so the archive scanner targets the same one. Use ``apply_migrations``
-    to set up the live schema shape."""
+    """Use apply_migrations to set up the live canonical schema."""
     from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
     from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
 
@@ -48,10 +45,10 @@ def _seed_behavior(
     priority: str = "user_preference",
     age_days: int = 60,
 ) -> None:
-    """Seed one behavior_instructions row with the given knobs."""
+    """Seed one canonical behavior row with the given knobs."""
     created = (datetime.now(UTC) - timedelta(days=age_days)).isoformat()
     conn.execute(
-        """INSERT INTO behavior_instructions
+        """INSERT INTO behaviors
            (id, workspace_id, name, kind, rule, rationale,
             priority, active, application_count, last_applied_at,
             pinned, created_at, updated_at)
@@ -74,7 +71,7 @@ def _seed_behavior(
 
 
 def _is_active(conn: sqlite3.Connection, bid: str) -> bool:
-    row = conn.execute("SELECT active FROM behavior_instructions WHERE id = ?", (bid,)).fetchone()
+    row = conn.execute("SELECT active FROM behaviors WHERE id = ?", (bid,)).fetchone()
     return bool(row and row["active"])
 
 
@@ -162,8 +159,7 @@ def test_archived_row_carries_reviewed_by_tag(conn: sqlite3.Connection) -> None:
     _seed_behavior(conn, bid="bi_dead2", name="dead-rule-2")
     auto_archive_dead_behaviors(conn, workspace_id="ws", age_days=30)
     row = conn.execute(
-        "SELECT reviewed_by, reviewed_at, expires_at FROM behavior_instructions "
-        "WHERE id = 'bi_dead2'"
+        "SELECT reviewed_by, reviewed_at, expires_at FROM behaviors WHERE id = 'bi_dead2'"
     ).fetchone()
     assert row["reviewed_by"] == "auto_archive_v3_2"
     assert row["reviewed_at"] is not None
@@ -171,7 +167,7 @@ def test_archived_row_carries_reviewed_by_tag(conn: sqlite3.Connection) -> None:
 
 
 def test_failure_soft_when_table_missing(tmp_path: Path) -> None:
-    """Pre-migration DB (no behavior_instructions table) returns zero
+    """Pre-migration DB (no behaviors table) returns zero
     instead of raising — brain_pass keeps moving."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row

@@ -10,8 +10,6 @@ from agent_memory_lite.maintenance.usage_feedback import (
 )
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.retrieval.context_builder import build_context
 
 
 def test_usage_feedback_is_recorded_and_boosted(
@@ -51,15 +49,6 @@ def test_usage_feedback_is_recorded_and_boosted(
         )[result.chunk.id]
         > 0
     )
-
-    context = build_context(
-        applied_conn,
-        RetrievalQuery(workspace_id="project-a", query="heap_watchdog", max_tokens=1200),
-        embedding_provider=fake_embedding_provider,
-        vector_store=fake_vector_store,
-    )
-
-    assert context.hits[0].metadata["usage_feedback_boost"] > 0
 
 
 def test_usage_feedback_report_summarizes_noisy_and_helpful_sources(

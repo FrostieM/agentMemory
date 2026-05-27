@@ -1,8 +1,8 @@
 """Grading helpers for the retrieval-quality eval.
 
-Split out of ``retrieval_quality_runner.py`` so each module stays
-under the SLOC ceiling. Builds the failure list a runner attaches to
-``RetrievalQualityResult``.
+Builds the failure list a runner attaches to ``RetrievalQualityResult``.
+The current eval surface checks compact v3 search hits plus the brief,
+not the removed XML context envelope.
 """
 
 from __future__ import annotations
@@ -79,8 +79,8 @@ def grade_failures(
         failures.append(f"missing expected context ids: {missing_context_ids}")
     failures.extend(_check_sources(case, matched_ids, source_map))
     for section in case.expected_sections:
-        if f"<{section}" not in built_text:
-            failures.append(f"missing context section <{section}>")
+        if section not in render_levels and f"## {section}" not in built_text:
+            failures.append(f"missing brief section {section!r}")
     missing_titles = [
         item for item in case.expected_object_titles if item not in matched_object_titles
     ]
@@ -99,5 +99,5 @@ def grade_failures(
         failures.append("unexpected context omissions under sentinel budget")
     for needle in case.expected_substrings:
         if needle not in built_text:
-            failures.append(f"missing context substring {needle!r}")
+            failures.append(f"missing retrieval substring {needle!r}")
     return failures

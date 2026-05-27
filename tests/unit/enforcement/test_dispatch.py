@@ -132,7 +132,7 @@ def test_semantic_skipped_when_ollama_not_configured(
     assert patched_ollama == []
 
 
-def test_trail_aware_mechanical_blocks_without_read(
+def test_trail_aware_mechanical_blocks_without_impact_check(
     patched_ollama: list[str],
 ) -> None:
     del patched_ollama
@@ -146,10 +146,10 @@ def test_trail_aware_mechanical_blocks_without_read(
         ollama_model=None,
     )
     assert d.allow is False
-    assert "Read" in d.violations[0].why
+    assert "memory_impact_check" in d.violations[0].why
 
 
-def test_trail_aware_mechanical_passes_after_read(
+def test_trail_aware_mechanical_passes_after_impact_check(
     patched_ollama: list[str],
 ) -> None:
     del patched_ollama
@@ -158,7 +158,7 @@ def test_trail_aware_mechanical_passes_after_read(
         rules,
         tool_name="Edit",
         tool_input={"file_path": "src/x.py", "new_string": "x"},
-        trail=["Read"],
+        trail=["memory_impact_check"],
         ollama_base_url=None,
         ollama_model=None,
     )

@@ -37,7 +37,7 @@ def test_telemetry_partitions_by_agent_id_header(client: TestClient) -> None:
     for q in ("event", "telemetry", "body"):
         r = client.post(
             "/memory/search",
-            json={"workspace_id": "agent-tel-ws", "query": q, "mode": "fts", "limit": 5},
+            json={"workspace_id": "agent-tel-ws", "query": q, "limit": 5},
             headers={"X-Memory-Agent-Id": "agent-B"},
         )
         assert r.status_code == 200, r.text
@@ -60,7 +60,7 @@ def test_telemetry_search_hit_rate_present(client: TestClient) -> None:
     for q in ("nothing-to-find-1", "nothing-to-find-2"):
         client.post(
             "/memory/search",
-            json={"workspace_id": "agent-tel-ws", "query": q, "mode": "fts", "limit": 5},
+            json={"workspace_id": "agent-tel-ws", "query": q, "limit": 5},
         )
     r = client.get("/memory/telemetry?workspace_id=agent-tel-ws&days=1")
     body = r.json()

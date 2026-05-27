@@ -290,23 +290,31 @@ def scenario_c_capability_inspection(conn: sqlite3.Connection, ws: str) -> None:
     hdr("SCENARIO C -- Roles / Skills / Playbooks / Capability links")
 
     counts: dict[str, int] = {}
-    for table in ("agent_roles", "agent_skills", "agent_playbooks", "capability_links"):
+    for subtype in ("role", "skill", "playbook"):
         try:
             n = conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE workspace_id=?", (ws,)
+                "SELECT COUNT(*) FROM skills WHERE workspace_id=? AND subtype=?",
+                (ws, subtype),
             ).fetchone()[0]
-            counts[table] = int(n)
+            counts[f"skills.{subtype}"] = int(n)
         except sqlite3.OperationalError:
-            counts[table] = -1  # table missing
+            counts[f"skills.{subtype}"] = -1  # table missing
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM capability_links WHERE workspace_id=?", (ws,)
+        ).fetchone()[0]
+        counts["capability_links"] = int(n)
+    except sqlite3.OperationalError:
+        counts["capability_links"] = -1
     info(f"counts: {counts}")
-    check("workspace has agent_skills", counts.get("agent_skills", 0) > 0)
-    check("workspace has agent_playbooks", counts.get("agent_playbooks", 0) > 0)
+    check("workspace has skills(subtype=skill)", counts.get("skills.skill", 0) > 0)
+    check("workspace has skills(subtype=playbook)", counts.get("skills.playbook", 0) > 0)
     check("workspace has capability_links", counts.get("capability_links", 0) > 0)
 
     step("top-3 skills by usage_count + success_count")
     rows = conn.execute(
         """SELECT name, usage_count, success_count, failure_count, last_invoked_at
-           FROM agent_skills WHERE workspace_id=?
+           FROM skills WHERE workspace_id=? AND subtype='skill'
            ORDER BY usage_count DESC LIMIT 3""",
         (ws,),
     ).fetchall()
@@ -318,7 +326,8 @@ def scenario_c_capability_inspection(conn: sqlite3.Connection, ws: str) -> None:
 
     step("top-3 playbooks by recency")
     rows = conn.execute(
-        """SELECT name, goal, usage_count FROM agent_playbooks WHERE workspace_id=?
+        """SELECT name, summary AS goal, usage_count FROM skills
+           WHERE workspace_id=? AND subtype='playbook'
            ORDER BY updated_at DESC LIMIT 3""",
         (ws,),
     ).fetchall()
@@ -651,23 +660,15 @@ def scenario_l_cold_start() -> None:
     hdr("SCENARIO L -- Cold start: brain_pass on a freshly-migrated empty DB")
     from agent_memory_lite.cognition.brief import compose_brief as cb  # noqa: PLC0415
     from agent_memory_lite.config.settings import Settings as _Settings  # noqa: PLC0415
+    from agent_memory_lite.db.migrations import (  # noqa: PLC0415
+        apply_migrations as _apply_migrations,
+    )
     from agent_memory_lite.maintenance.brain_pass import run_brain_pass as _run  # noqa: PLC0415
 
-    # Build an in-memory DB with all 8 migrations applied.
+    # Build an in-memory DB with the root migration chain applied.
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
-    migrations_dir = REPO_ROOT / "migrations" / "canonical"
-    db.executescript((migrations_dir / "0001_init.sql").read_text(encoding="utf-8"))
-    for n in (
-        "0002_outcome_loop.sql",
-        "0003_hebbian.sql",
-        "0004_consolidation_feedback.sql",
-        "0005_reflexes.sql",
-        "0006_self_model.sql",
-        "0007_bi_temporal.sql",
-        "0008_causal_links.sql",
-    ):
-        db.executescript((migrations_dir / n).read_text(encoding="utf-8"))
+    _apply_migrations(db)
     db.commit()
     step("running brain_pass on completely empty workspace")
     report = _run(db, workspace_id="cold_start_ws", settings=_Settings())

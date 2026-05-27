@@ -68,8 +68,8 @@ def test_decision_provenance_rule_blocks_bare_write_decision() -> None:
     rules = [_rule("beh_dp", DECISION_PROVENANCE_TAG)]
     violations = check_mechanical(
         rules,
-        tool_name="memory_write_decision",
-        tool_input={"title": "T", "decision_text": "..."},
+        tool_name="memory_write",
+        tool_input={"kind": "decision", "payload": {"title": "T", "decision_text": "..."}},
     )
     assert len(violations) == 1
     assert violations[0].rule_id == "beh_dp"
@@ -79,8 +79,8 @@ def test_decision_provenance_rule_allows_orphan_marked_decision() -> None:
     rules = [_rule("beh_dp", DECISION_PROVENANCE_TAG)]
     violations = check_mechanical(
         rules,
-        tool_name="memory_write_decision",
-        tool_input={"title": "T", "allow_orphan": True},
+        tool_name="memory_write",
+        tool_input={"kind": "decision", "payload": {"title": "T", "allow_orphan": True}},
     )
     assert violations == []
 
@@ -118,11 +118,11 @@ def test_multiple_rules_yield_multiple_violations() -> None:
         _rule("beh_mn", MAGIC_NUMBER_TAG),
         _rule("beh_dp", DECISION_PROVENANCE_TAG),
     ]
-    # Magic-number rule does NOT fire on memory_write_decision call.
+    # Magic-number rule does NOT fire on memory_write(kind=decision) call.
     violations = check_mechanical(
         rules,
-        tool_name="memory_write_decision",
-        tool_input={"title": "T"},
+        tool_name="memory_write",
+        tool_input={"kind": "decision", "payload": {"title": "T"}},
     )
     assert {v.rule_id for v in violations} == {"beh_dp"}
 

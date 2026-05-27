@@ -15,57 +15,65 @@ def client(app_factory) -> Iterator[TestClient]:
 
 def test_initial_update(client: TestClient) -> None:
     response = client.post(
-        "/memory/update_task_state",
+        "/memory/write",
         json={
             "workspace_id": "default",
-            "task_id": "phase-3",
-            "goal": "ship Phase 3",
-            "status": "in_progress",
-            "next_action": "wire LLM extractor",
+            "kind": "task",
+            "payload": {
+                "task_id": "phase-3",
+                "goal": "ship Phase 3",
+                "status": "in_progress",
+                "next_action": "wire LLM extractor",
+            },
         },
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "in_progress"
+    assert response.json()["data"]["status"] == "in_progress"
 
 
-def test_task_state_in_get_context(client: TestClient) -> None:
+def test_task_state_in_compact_search(client: TestClient) -> None:
     client.post(
-        "/memory/update_task_state",
+        "/memory/write",
         json={
             "workspace_id": "default",
-            "task_id": "phase-3",
-            "goal": "ship Phase 3",
-            "status": "in_progress",
-            "next_action": "wire decisions",
+            "kind": "task",
+            "payload": {
+                "task_id": "phase-3",
+                "goal": "ship Phase 3",
+                "status": "in_progress",
+                "next_action": "wire decisions",
+            },
         },
     ).raise_for_status()
 
     response = client.post(
-        "/memory/get_context",
+        "/memory/search",
         json={
             "workspace_id": "default",
-            "task_id": "phase-3",
             "query": "what is the next action",
+            "kinds": ["task"],
+            "limit": 5,
         },
     )
     assert response.status_code == 200
-    body = response.json()
-    assert "<task_state task_id=" in body["context_text"]
-    assert "wire decisions" in body["context_text"]
+    assert "wire decisions" in str(response.json()["data"])
 
 
-def test_decision_appears_in_get_context(client: TestClient) -> None:
+def test_decision_appears_in_compact_search(client: TestClient) -> None:
     client.post(
-        "/memory/write_decision",
+        "/memory/write",
         json={
             "workspace_id": "default",
-            "title": "Use SQLite",
-            "decision_text": "Lite memory uses SQLite as source of record.",
+            "kind": "decision",
+            "payload": {
+                "title": "Use SQLite",
+                "decision_text": "Lite memory uses SQLite as source of record.",
+            },
         },
     ).raise_for_status()
     response = client.post(
-        "/memory/get_context",
-        json={"workspace_id": "default", "query": "anything"},
+        "/memory/search",
+        json={"workspace_id": "default", "query": "SQLite", "kinds": ["decision"], "limit": 5},
     )
     body = response.json()
-    assert "Use SQLite" in body["context_text"]
+    assert "Use SQLite" in str(body["data"])

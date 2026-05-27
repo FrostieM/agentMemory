@@ -56,7 +56,7 @@ def list_behavior_instructions(
 ) -> list[BehaviorInstruction]:
     extra_sql, extra_params = date_range_clause(since=since, until=until)
     rows = conn.execute(
-        f"SELECT * FROM behavior_instructions WHERE workspace_id = ? {extra_sql}",
+        f"SELECT * FROM behaviors WHERE workspace_id = ? {extra_sql}",
         (workspace_id, *extra_params),
     ).fetchall()
     terms = tokens_from(query)
@@ -84,7 +84,7 @@ def list_suppressed_behavior_instructions(
     limit: int = 20,
 ) -> list[SuppressedBehaviorInstruction]:
     rows = conn.execute(
-        "SELECT * FROM behavior_instructions WHERE workspace_id = ?",
+        "SELECT * FROM behaviors WHERE workspace_id = ?",
         (workspace_id,),
     ).fetchall()
     terms = tokens_from(query)

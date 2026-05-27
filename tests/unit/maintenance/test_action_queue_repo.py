@@ -146,10 +146,7 @@ def test_claim_returns_none_for_missing_event(applied_conn: sqlite3.Connection) 
 
 
 def test_row_to_event_defaults_action_status_when_column_missing() -> None:
-    """The read path is resilient to a pre-migration row (no
-    action_status column). This is the only path that runs against a
-    DB created before migration 0036 — for example legacy test
-    fixtures."""
+    """The read path is resilient to rows without action_status."""
     from agent_memory_lite.repositories.maintenance_queries import row_to_event  # noqa: PLC0415
 
     legacy = sqlite3.connect(":memory:")

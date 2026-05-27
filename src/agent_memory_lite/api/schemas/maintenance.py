@@ -35,9 +35,8 @@ class MaintenanceEventResponse(BaseModel):
     target_id: str | None
     created_at: str
     resolved_at: str | None
-    # v3.4 #6 — operator-side triage columns. Defaults match what
-    # migration 0036 backfills, so rows written before the migration
-    # serialise cleanly on the wire (action_status='open', rest None).
+    # Operator-side triage columns. Defaults match the canonical schema, so
+    # older rows serialise cleanly on the wire (action_status='open', rest None).
     action_status: MaintenanceActionStatus = MaintenanceActionStatus.OPEN
     assigned_to: str | None = None
     action_notes: str | None = None

@@ -107,6 +107,11 @@ def build_digest(
     settings: Settings | None = None,
 ) -> FileDigestIn:
     qnames = [c.qualified_name for c in chunks if c.qualified_name]
+    top_symbols = [
+        {"name": c.qualified_name, "kind": c.symbol_kind, "line": c.line_start}
+        for c in chunks
+        if c.qualified_name
+    ][:100]
     kinds = _summarize_kinds(chunks)
     since_iso = (datetime.now(UTC) - timedelta(days=_RECENT_DAYS)).isoformat()
     versions_recent = _count_recent_versions(
@@ -138,6 +143,7 @@ def build_digest(
         narrative_source = "llm"
     structured: dict[str, object] = {
         "qualified_names": qnames[:100],
+        "top_symbols": top_symbols,
         "kinds": kinds,
         "narrative_source": narrative_source,
     }

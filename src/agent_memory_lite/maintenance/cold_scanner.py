@@ -21,14 +21,14 @@ from agent_memory_lite.utils.time import iso_now
 
 # Tables we scan + the ids/timestamp/pinned shape per kind. Only decisions
 # carry the pinned column (per v1.0.1 pin endpoint scope: decision /
-# behavior_instruction / core_memory). Theories, chunks, and concepts have
+# behavior/core-memory). Theories, chunks, and concepts have
 # no pinned column, so the per-kind config marks them as has_pinned=False.
 _SCAN_CONFIG: tuple[tuple[str, str, str, bool], ...] = (
     # (kind, table, id_column, has_pinned)
     ("chunk", "chunks", "id", False),
     ("decision", "decisions", "id", True),
     ("theory", "theories", "id", False),
-    ("concept", "domain_concepts", "id", False),
+    ("concept", "concepts", "id", False),
 )
 
 

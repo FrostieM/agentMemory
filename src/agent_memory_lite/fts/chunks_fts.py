@@ -1,6 +1,6 @@
 """Application-managed FTS5 sync for the `chunks_fts` virtual table.
 
-Triggers were intentionally not installed — see migrations/0002_chunks_fts.sql.
+Triggers are intentionally not installed; the FTS table is created by the squashed v3 schema in migrations/0001_init.sql.
 Every chunk insert/delete in the service must go through these helpers.
 """
 

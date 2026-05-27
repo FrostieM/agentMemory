@@ -8,8 +8,7 @@ the advisory fire reliably without false positives.
    the agent must have called ``memory_impact_check`` in this session.
 
 2. ``decision-write-requires-search`` -- before writing a new decision
-   (``memory_write`` with ``kind=decision`` or the legacy
-   ``memory_write_decision``), the agent must have called
+   (``memory_write`` with ``kind=decision``), the agent must have called
    ``memory_search`` first so it sees prior decisions.
 
 3. ``deploy-requires-playbook`` -- before any ``Bash`` matching the

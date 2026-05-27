@@ -11,17 +11,17 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class PendingReviewItem:
-    kind: str  # "decision_candidate" / "insight_candidate" / "correction_candidate"
+    kind: str
     id: str
     title: str
-    extra: str  # short hint (theory_id / insight_type / promote endpoint suggestion)
+    extra: str
 
 
 @dataclass(frozen=True, slots=True)
 class PendingReviewSummary:
-    decision_candidates_count: int
-    insight_candidates_count: int
-    correction_candidates_count: int = 0
+    decision_review_count: int
+    insight_review_count: int
+    correction_review_count: int = 0
     items: list[PendingReviewItem] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -31,11 +31,7 @@ class PendingReviewSummary:
 
     @property
     def total(self) -> int:
-        return (
-            self.decision_candidates_count
-            + self.insight_candidates_count
-            + self.correction_candidates_count
-        )
+        return self.decision_review_count + self.insight_review_count + self.correction_review_count
 
     def is_empty(self) -> bool:
         return self.total == 0

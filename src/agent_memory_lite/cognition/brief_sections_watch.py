@@ -30,7 +30,7 @@ def _build_blindspots(conn: sqlite3.Connection, workspace_id: str, budget: int) 
 
         if not is_enabled():
             return BriefSection(name="blindspots", budget=budget, lines=[])
-        rows = find_blindspots(conn, workspace_id=workspace_id)
+        rows = find_blindspots(conn, workspace_id=workspace_id, enrich=False)
     except Exception:  # pragma: no cover - defensive
         return BriefSection(name="blindspots", budget=budget, lines=[])
     if not rows:

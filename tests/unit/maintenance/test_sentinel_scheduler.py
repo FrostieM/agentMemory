@@ -139,7 +139,7 @@ def test_scheduled_when_overdue_no_yaml_stamps_last_run(
 def test_in_flight_lock_blocks_concurrent_run(
     applied_conn: sqlite3.Connection, tmp_db_path: Path
 ) -> None:
-    """Two simultaneous get_context calls must not spawn two daemons.
+    """Two simultaneous traffic-triggered checks must not spawn two daemons.
 
     Pre-acquire the workspace's lock to simulate an in-flight run, then call
     maybe_run_sentinels and assert it bails out — without the lock fix,
@@ -214,7 +214,6 @@ def test_run_sentinel_pass_aborts_on_mismatched_db(tmp_path: Path) -> None:
     last-run row -- the assertion below is load-bearing only because of
     that.
     """
-    schema = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
     workspaces_file = tmp_path / "workspaces.json"
     WorkspaceRegistry(workspaces_file).register(
         workspace_id="ws-a",
@@ -229,7 +228,9 @@ def test_run_sentinel_pass_aborts_on_mismatched_db(tmp_path: Path) -> None:
     wrong_db = tmp_path / "wrong.db"
     seed = sqlite3.connect(str(wrong_db))
     try:
-        seed.executescript(schema.read_text(encoding="utf-8"))
+        from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+        apply_migrations(seed)
         seed.commit()
     finally:
         seed.close()

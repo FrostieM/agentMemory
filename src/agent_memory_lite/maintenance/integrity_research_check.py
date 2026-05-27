@@ -15,7 +15,7 @@ from agent_memory_lite.maintenance.integrity_models import (
 
 
 def research_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> IntegrityCheck:
-    required = ("theories", "research_experiments", "research_insights")
+    required = ("theories", "experiments", "insights")
     missing = [table for table in required if not table_exists(conn, table)]
     if missing:
         return IntegrityCheck(status="unknown", details={"missing_tables": missing})
@@ -47,7 +47,7 @@ def research_hygiene_check(conn: sqlite3.Connection, workspace_id: str) -> Integ
     open_experiment_rows = conn.execute(
         """
         SELECT updated_at
-        FROM research_experiments
+        FROM experiments
         WHERE workspace_id = ? AND status IN ('planned', 'running', 'blocked')
         """,
         (workspace_id,),

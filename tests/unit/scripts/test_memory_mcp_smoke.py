@@ -22,18 +22,19 @@ def test_mcp_smoke_evaluate_requires_behavior_and_capabilities() -> None:
         {
             "status": "ok",
             "wall_elapsed_sec": 0.2,
-            "has_memory_context": True,
-            "has_behavior_instructions": False,
+            "has_brief": True,
+            "has_behaviors": False,
             "has_agent_capabilities": False,
             "has_active_decisions": False,
+            "tool_names": sorted(script.EXPECTED_V3_MCP_TOOLS),
         },
         Namespace(max_seconds=5.0, require_behavior=True, require_capabilities=True),
     )
 
     assert status == "degraded"
-    assert "context is missing <behavior_instructions>" in failures
-    assert "context is missing <agent_capabilities>" in failures
-    assert warnings == ["context is missing <active_decisions>"]
+    assert "workspace has no active behaviors" in failures
+    assert "workspace has no active capabilities" in failures
+    assert warnings == ["workspace has no active decisions"]
 
 
 def test_mcp_smoke_evaluate_passes_fast_context() -> None:
@@ -42,10 +43,11 @@ def test_mcp_smoke_evaluate_passes_fast_context() -> None:
         {
             "status": "ok",
             "wall_elapsed_sec": 0.2,
-            "has_memory_context": True,
-            "has_behavior_instructions": True,
+            "has_brief": True,
+            "has_behaviors": True,
             "has_agent_capabilities": True,
             "has_active_decisions": True,
+            "tool_names": sorted(script.EXPECTED_V3_MCP_TOOLS),
         },
         Namespace(max_seconds=5.0, require_behavior=True, require_capabilities=True),
     )

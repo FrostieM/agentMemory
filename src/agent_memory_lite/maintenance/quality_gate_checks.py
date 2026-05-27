@@ -81,12 +81,12 @@ def strict_theory_findings(
 def strict_experiment_findings(
     conn: sqlite3.Connection, *, workspace_id: str
 ) -> list[QualityGateFinding]:
-    if not table_exists(conn, "research_experiments"):
+    if not table_exists(conn, "experiments"):
         return []
     rows = conn.execute(
         """
         SELECT id, title, status, priority, success_criteria_json, hypothesis
-        FROM research_experiments
+        FROM experiments
         WHERE workspace_id = ?
           AND status IN ('planned', 'running', 'blocked')
           AND priority >= 0.8

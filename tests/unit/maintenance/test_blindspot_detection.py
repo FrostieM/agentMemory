@@ -5,13 +5,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
 from agent_memory_lite.maintenance import blindspot_detection as bs
-
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +26,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:

@@ -32,7 +32,7 @@ def test_list_and_resolve_maintenance_event(app_factory, tmp_db_path) -> None:
 
     with TestClient(app) as client:
         listed = client.post(
-            "/memory/list_maintenance_events",
+            "/memory/maintenance_events",
             json={"workspace_id": "project-a", "statuses": ["open"]},
         )
         assert listed.status_code == 200, listed.text

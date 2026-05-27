@@ -27,6 +27,12 @@ def _write_registry(path: Path, entries: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps({"version": 1, "workspaces": entries}), encoding="utf-8")
 
 
+def test_env_first_prefers_canonical_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_WORKSPACE_ID", "canonical-ws")
+    monkeypatch.setenv("AGENT_MEMORY_WORKSPACE", "legacy-ws")
+    assert v3hook._env_first("MEMORY_WORKSPACE_ID", "AGENT_MEMORY_WORKSPACE") == "canonical-ws"
+
+
 def test_resolve_finds_workspace_by_project_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,6 +219,7 @@ def test_main_falls_back_to_global_when_cwd_unregistered(
     )
     monkeypatch.setattr(v3hook, "REGISTRY_PATH", registry)
     monkeypatch.setattr(v3hook, "HOOK_FALLBACK_DISABLED", False)
+    monkeypatch.setattr(v3hook, "DEFAULT_WORKSPACE", "")
 
     # Stub _fetch_brief to confirm the workspace_id passed in is "global".
     captured: dict[str, Any] = {}
@@ -246,6 +253,125 @@ def test_main_falls_back_to_global_when_cwd_unregistered(
     assert "global_fallback" in out
     assert "<memory_brief>" in out
     assert "# fallback body" in out
+
+
+def test_main_global_fallback_uses_default_paths_when_registry_lacks_global(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    registry = tmp_path / "workspaces.json"
+    _write_registry(registry, [])
+    global_root = tmp_path / "global-root"
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(v3hook, "REGISTRY_PATH", registry)
+    monkeypatch.setattr(v3hook, "GLOBAL_FALLBACK_ROOT", global_root)
+    monkeypatch.setattr(v3hook, "HOOK_FALLBACK_DISABLED", False)
+    monkeypatch.setattr(v3hook, "DEFAULT_WORKSPACE", "")
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", False)
+    calls: dict[str, Any] = {}
+
+    def fake_bootstrap(db_path: str, *, workspace_id: str) -> None:
+        calls["bootstrap"] = {"db_path": db_path, "workspace_id": workspace_id}
+
+    monkeypatch.setattr(v3hook, "_bootstrap_global_workspace", fake_bootstrap)
+
+    def fake_fetch(
+        *,
+        base_url: str,
+        workspace_id: str,
+        max_tokens: int,
+        headers: Any,
+        session_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        del base_url, max_tokens, session_id
+        captured["workspace_id"] = workspace_id
+        captured["headers"] = headers
+        return {"body_md": "# fallback body"}
+
+    monkeypatch.setattr(v3hook, "_fetch_brief", fake_fetch)
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO('{"prompt": "anything", "cwd": "/some/unregistered/path"}')
+    )
+    monkeypatch.setattr("os.getcwd", lambda: "/some/unregistered/path")
+
+    assert v3hook.main() == 0
+    capsys.readouterr()
+    assert captured["workspace_id"] == "global"
+    assert captured["headers"]["X-Memory-DB-Path"] == str(global_root / "memory.db")
+    assert captured["headers"]["X-Memory-Vector-Path"] == str(global_root / "vectors.lance")
+    assert calls["bootstrap"] == {
+        "db_path": str(global_root / "memory.db"),
+        "workspace_id": "global",
+    }
+
+
+def test_main_uses_canonical_env_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    captured: dict[str, Any] = {}
+    db_path = tmp_path / "env.db"
+    vector_path = tmp_path / "env.lance"
+    monkeypatch.setenv("MEMORY_DB_PATH", str(db_path))
+    monkeypatch.setenv("VECTOR_DB_PATH", str(vector_path))
+    monkeypatch.setattr(v3hook, "DEFAULT_WORKSPACE", "env-ws")
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", False)
+
+    def fake_fetch(
+        *,
+        base_url: str,
+        workspace_id: str,
+        max_tokens: int,
+        headers: Any,
+        session_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        del base_url, max_tokens, session_id
+        captured["workspace_id"] = workspace_id
+        captured["headers"] = headers
+        return {"body_md": "# env body"}
+
+    monkeypatch.setattr(v3hook, "_fetch_brief", fake_fetch)
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "x"}'))
+    assert v3hook.main() == 0
+    capsys.readouterr()
+    assert captured["workspace_id"] == "env-ws"
+    assert captured["headers"]["X-Memory-DB-Path"] == str(db_path)
+    assert captured["headers"]["X-Memory-Vector-Path"] == str(vector_path)
+
+
+def test_main_rejects_relative_env_db_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setenv("MEMORY_DB_PATH", "relative.db")
+    monkeypatch.setattr(v3hook, "REGISTRY_PATH", tmp_path / "missing-workspaces.json")
+    monkeypatch.setattr(v3hook, "DEFAULT_WORKSPACE", "env-ws")
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", False)
+
+    def fake_fetch(
+        *,
+        base_url: str,
+        workspace_id: str,
+        max_tokens: int,
+        headers: Any,
+        session_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        del base_url, workspace_id, max_tokens, session_id
+        captured["headers"] = headers
+        return {"body_md": "# env body"}
+
+    monkeypatch.setattr(v3hook, "_fetch_brief", fake_fetch)
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "x"}'))
+    assert v3hook.main() == 0
+    capsys.readouterr()
+    assert "X-Memory-DB-Path" not in captured["headers"]
 
 
 def test_main_respects_hook_fallback_disabled(

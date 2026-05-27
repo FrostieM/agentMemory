@@ -2,7 +2,7 @@
 
 End-to-end coverage for /memory/claim_maintenance_event,
 /memory/dismiss_maintenance_event, and the extended
-/memory/list_maintenance_events with action_statuses filter.
+/memory/maintenance_events with action_statuses filter.
 
 Pairs with tests/unit/maintenance/test_action_queue_repo.py — repo
 tests pin the SQL contract, these pin the wire contract."""
@@ -103,7 +103,7 @@ def test_list_filter_by_action_status(app_factory, tmp_db_path) -> None:
         assert r.status_code == 200, r.text
 
         only_open = client.post(
-            "/memory/list_maintenance_events",
+            "/memory/maintenance_events",
             json={"workspace_id": "project-a", "action_statuses": ["open"]},
         )
         assert only_open.status_code == 200, only_open.text
@@ -111,7 +111,7 @@ def test_list_filter_by_action_status(app_factory, tmp_db_path) -> None:
         assert ids == ["me_open"]
 
         only_claimed = client.post(
-            "/memory/list_maintenance_events",
+            "/memory/maintenance_events",
             json={"workspace_id": "project-a", "action_statuses": ["claimed"]},
         )
         assert only_claimed.status_code == 200, only_claimed.text

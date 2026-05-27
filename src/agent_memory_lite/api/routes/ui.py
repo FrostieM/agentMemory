@@ -34,7 +34,7 @@ router = APIRouter(include_in_schema=False)
 # their own modules so this file stays under the ≤150-SLOC ceiling.
 # All three routers are registered alongside in api/app.py:
 #
-#   ui_pages.router    — /ui /ui/code /ui/graph /ui/review /ui/{asset}
+#   ui_pages.router    — /ui /ui/review /ui/{asset}
 #   ui_vendor.router   — /ui/vendor/{asset}
 #   ui.router          — /memory/ui/state SSE + helpers (this file)
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 # fall back to a quoted phrase or token list to avoid syntax errors from
 # user-supplied queries.
 _FTS_SPECIAL = re.compile(r'[\\"():*^+\-]')
+_ASCII_ANCHOR = re.compile(r"[A-Za-z0-9_.-]+")
 # v3.5 sector-2 audit-followup: cap token count + total length to prevent
 # query DoS (a 10KB query expanded to thousands of OR-terms ran a
 # per-token postings scan on the entire FTS5 index).
@@ -51,24 +52,23 @@ def _sanitize(query: str) -> str:
     return " ".join(f'"{tok}"' for tok in tokens)
 
 
-def search_chunks_fts(
+def _mixed_language_anchor_query(query: str) -> str:
+    if query.isascii():
+        return ""
+    return " ".join(_ASCII_ANCHOR.findall(query))
+
+
+def _search_safe(
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
-    query: str,
-    limit: int = 30,
-) -> list[ChunkFtsHit]:
-    safe = _sanitize(query)
+    safe: str,
+    limit: int,
+) -> list[sqlite3.Row]:
     if not safe:
         return []
-    # v3.5 sector-2 audit-followup: tolerate FTS5 syntax errors. The
-    # sanitizer strips known operators but the BM25 grammar evolves;
-    # an uncaught ``sqlite3.OperationalError`` previously escaped to
-    # the FastAPI layer as 500 (same blast radius as the v3.4 enum
-    # drift). On unparseable input fall back to empty result + retry
-    # with the LIKE-style trigram path inside the caller (if any).
     try:
-        rows = conn.execute(
+        return conn.execute(
             """
             SELECT
                 chunks_fts.chunk_id   AS chunk_id,
@@ -92,6 +92,29 @@ def search_chunks_fts(
         ).fetchall()
     except sqlite3.OperationalError:
         return []
+
+
+def search_chunks_fts(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    query: str,
+    limit: int = 30,
+) -> list[ChunkFtsHit]:
+    safe = _sanitize(query)
+    if not safe:
+        return []
+    # v3.5 sector-2 audit-followup: tolerate FTS5 syntax errors. The
+    # sanitizer strips known operators but the BM25 grammar evolves;
+    # an uncaught ``sqlite3.OperationalError`` previously escaped to
+    # the FastAPI layer as 500 (same blast radius as the v3.4 enum
+    # drift). On unparseable input fall back to empty result + retry
+    # with the LIKE-style trigram path inside the caller (if any).
+    rows = _search_safe(conn, workspace_id=workspace_id, safe=safe, limit=limit)
+    if not rows:
+        anchor_safe = _sanitize(_mixed_language_anchor_query(query))
+        if anchor_safe and anchor_safe != safe:
+            rows = _search_safe(conn, workspace_id=workspace_id, safe=anchor_safe, limit=limit)
     return [
         ChunkFtsHit(
             chunk_id=str(row["chunk_id"]),

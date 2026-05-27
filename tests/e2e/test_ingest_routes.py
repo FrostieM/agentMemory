@@ -38,11 +38,13 @@ def test_ingest_then_search_finds_episode(client: TestClient) -> None:
 
     response = client.post(
         "/memory/search",
-        json={"workspace_id": "default", "query": "retrieval", "mode": "fts"},
+        json={"workspace_id": "default", "query": "retrieval", "limit": 10},
     )
     assert response.status_code == 200
-    hits = response.json()["hits"]
-    assert any(h["chunk_id"] == chunk_id for h in hits)
+    body = response.json()
+    assert body["ok"] is True
+    hits = body["data"]
+    assert any(h["projection"]["id"] == chunk_id for h in hits)
 
 
 def test_ingest_redacts_secrets_before_storage(client: TestClient) -> None:

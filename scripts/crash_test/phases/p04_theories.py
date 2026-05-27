@@ -5,10 +5,13 @@ from __future__ import annotations
 from scripts.crash_test.phases._base import CrashTestState, Phase, PhaseResult
 from scripts.crash_test.seeds import post, seed_theories
 
+from agent_memory_lite.ingestion.theory_evidence_writer import add_theory_evidence
+from agent_memory_lite.models.theories import TheoryEvidenceIn
+
 
 class P04Theories(Phase):
     name = "p04_theories"
-    description = "Theory + evidence + research_agenda surface (experiments, snapshots, concepts)."
+    description = "Theory + evidence + canonical research memory surface."
 
     def run(self, state: CrashTestState) -> PhaseResult:
         result = PhaseResult(name=self.name, description=self.description)
@@ -17,20 +20,19 @@ class P04Theories(Phase):
         result.assert_eq("three theories written", len(theory_ids), 3)
 
         # Add an evidence row to the validated theory (theory_ids[1]).
-        ev = post(
-            state.client,
-            "/memory/add_theory_evidence",
-            {
-                "workspace_id": state.workspace_id,
-                "theory_id": theory_ids[1],
-                "kind": "supporting",
-                "summary": "QA fixture: validation criteria met by replay run",
-                "metrics": {"n": 42, "score": 0.9},
-                "confidence": 0.85,
-            },
+        ev = add_theory_evidence(
+            state.conn,
+            TheoryEvidenceIn(
+                workspace_id=state.workspace_id,
+                theory_id=theory_ids[1],
+                kind="supporting",
+                summary="QA fixture: validation criteria met by replay run",
+                metrics={"n": 42, "score": 0.9},
+                confidence=0.85,
+            ),
         )
-        state.bag["evidence_id"] = ev.get("evidence_id")
-        result.assert_true("evidence_id returned", bool(ev.get("evidence_id")), hint=str(ev)[:120])
+        state.bag["evidence_id"] = ev.id
+        result.assert_true("evidence_id returned", bool(ev.id), hint=str(ev)[:120])
 
         # Snapshot (research dataset, not memory state).
         snap = post(
@@ -108,13 +110,18 @@ class P04Theories(Phase):
         state.bag["insight_id"] = insight.get("insight_id")
         result.assert_true("insight written", bool(insight.get("insight_id")))
 
-        agenda = post(
+        theory_search = post(
             state.client,
-            "/memory/list_research_agenda",
-            {"workspace_id": state.workspace_id, "limit": 10},
+            "/memory/search",
+            {
+                "workspace_id": state.workspace_id,
+                "query": "qa replay validation",
+                "kinds": ["theory", "insight", "concept"],
+                "limit": 10,
+            },
         )
         result.assert_true(
-            "agenda has snapshots+experiments+insights",
-            bool(agenda) and isinstance(agenda, dict),
+            "canonical research search returns theory/insight/concept",
+            bool(theory_search.get("data")) and isinstance(theory_search, dict),
         )
         return result

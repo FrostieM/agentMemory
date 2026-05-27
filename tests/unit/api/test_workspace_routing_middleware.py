@@ -8,8 +8,8 @@ brief endpoint unusable cross-workspace — copyBot's brief always
 returned agent-memory-lite's data, hiding the v3 pinned rules from
 the copyBot agent and dropping v3 adoption to 0%.
 
-These tests pin the contract: both legacy ``/memory/*`` and v3
-``/memory/*`` paths are routing targets when hub mode is on.
+These tests pin the contract: all ``/memory/*`` paths are routing
+targets when hub mode is on.
 """
 
 from __future__ import annotations
@@ -49,13 +49,13 @@ def _make_middleware(*, hub_mode: bool) -> WorkspaceRoutingMiddleware:
 @pytest.mark.parametrize(
     "path",
     [
-        "/memory/get_context",
-        "/memory/list_decisions",
+        "/memory/brief",
+        "/memory/list",
         "/memory/hygiene_report",
     ],
 )
-def test_routing_matches_legacy_memory_paths(path: str) -> None:
-    """Legacy /memory/* paths are routing targets in hub mode."""
+def test_routing_matches_memory_paths(path: str) -> None:
+    """/memory/* paths are routing targets in hub mode."""
     mw = _make_middleware(hub_mode=True)
     assert mw._is_target_request(_scope("GET", path)) is True
 
@@ -87,7 +87,7 @@ def test_routing_matches_v3_memory_paths(path: str) -> None:
         "/health",
         "/openapi.json",
         "/ui",
-        "/ui/code",
+        "/ui/review",
         "/memoryctl/foo",  # similar prefix but not /memory/
         "/v3/something_else",
         "/v3memory/brief",
@@ -102,8 +102,8 @@ def test_routing_skips_non_memory_paths(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "/memory/get_context",
         "/memory/brief",
+        "/memory/search",
     ],
 )
 def test_routing_disabled_when_hub_mode_off(path: str) -> None:
@@ -115,8 +115,8 @@ def test_routing_disabled_when_hub_mode_off(path: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "/memory/get_context",
         "/memory/brief",
+        "/memory/search",
     ],
 )
 def test_routing_skipped_when_caller_set_explicit_db_header(path: str) -> None:

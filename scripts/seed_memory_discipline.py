@@ -75,18 +75,19 @@ DISCIPLINE_RULES: list[dict[str, Any]] = [
         "applies_to_json": json.dumps(["decision writes", "theory writes", "behavior writes"]),
     },
     {
-        "name": "capability-link-on-write",
+        "name": "capability-suggestion-on-write",
         "kind": "operating_rule",
         "rule": (
             "When writing a decision or theory, scan the response's "
-            "capability_suggestions and call memory_link_capability for "
-            "any match. Capability links surface the right role/skill/"
-            "playbook to the next agent automatically."
+            "capability_suggestions and record the best match in the "
+            "task or plan step when it should shape execution."
         ),
-        "rule_one_line": ("Link the capability after writing a decision or theory."),
+        "rule_one_line": (
+            "Capture relevant capability suggestions after writing a decision or theory."
+        ),
         "rationale": (
-            "Unlinked decisions leave the capability layer cold; the next "
-            "agent re-derives execution knowledge from raw episodes."
+            "Capability suggestions keep execution knowledge visible without "
+            "depending on legacy link routes."
         ),
         "applies_to_json": json.dumps(["decision writes", "theory writes"]),
     },

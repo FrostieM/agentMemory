@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
@@ -16,16 +15,14 @@ from agent_memory_lite.retrieval.coactivation_log import (
 from agent_memory_lite.storage.reader import SearchHit
 from agent_memory_lite.utils.time import iso_now
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0001_init.sql"
-HEBBIAN_PATH = Path(__file__).resolve().parents[3] / "migrations" / "canonical" / "0003_hebbian.sql"
-
 
 @pytest.fixture
 def conn() -> Iterator[sqlite3.Connection]:
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    c.executescript(HEBBIAN_PATH.read_text(encoding="utf-8"))
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    apply_migrations(c)
     try:
         yield c
     finally:
@@ -99,8 +96,6 @@ def test_log_coactivation_failure_soft_on_missing_table() -> None:
     """No retrieval_coactivation table → returns 0, does not raise."""
     c = sqlite3.connect(":memory:")
     c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    # Don't apply 0003_hebbian.sql. Log call must silently no-op.
     n = log_coactivation(c, workspace_id="ws", query="q", hits=[_hit("decision", "x")])
     assert n == 0
     c.close()

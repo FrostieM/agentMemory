@@ -2,21 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.ingestion.capability_writer import upsert_agent_role
+from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
-from agent_memory_lite.ingestion.research_writer import write_experiment
-from agent_memory_lite.ingestion.theory_writer import write_theory
 from agent_memory_lite.maintenance.retrieval_quality import (
     RetrievalQualityCase,
     run_retrieval_quality_evals,
 )
-from agent_memory_lite.models.capabilities import AgentRoleIn
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
-from agent_memory_lite.models.research import ExperimentIn
-from agent_memory_lite.models.retrieval import RetrievalQuery
-from agent_memory_lite.models.theories import TheoryIn
-from agent_memory_lite.retrieval.context_builder import build_context
 
 
 def test_retrieval_quality_detects_expected_chunk_and_sources(
@@ -45,7 +38,7 @@ def test_retrieval_quality_detects_expected_chunk_and_sources(
                 query="heap_watchdog memory pressure",
                 expected_ids=[result.chunk.id],
                 expected_context_ids=[result.chunk.id],
-                expected_sources=["fts", "vector"],
+                expected_sources=["fts"],
                 top_k=3,
             )
         ],
@@ -82,73 +75,68 @@ def test_retrieval_quality_degrades_on_missing_expected_id(
     assert report.failures
 
 
-def test_context_budget_prefers_relevant_research_agenda_over_capability_block(
+def test_brief_budget_surfaces_relevant_decision_under_compact_surface(
     applied_conn: sqlite3.Connection,
 ) -> None:
-    write_theory(
+    write_canonical(
         applied_conn,
-        TheoryIn(
-            workspace_id="project-a",
-            title="Shadow bias theory",
-            claim="Shadow can overstate real paper edge.",
-            validation_criteria=["paired cohort delta"],
-            experiment_plan="Run paired cohort replay.",
-            importance=0.9,
-        ),
+        workspace_id="project-a",
+        kind="decision",
+        payload={
+            "title": "Shadow vs real-paper edge delta on paired-cohort",
+            "decision_text": "Track paired cohort delta before changing selector policy.",
+            "rationale": "The compact brief must surface current decisions under budget.",
+            "importance": 0.9,
+        },
     )
-    write_experiment(
+    write_canonical(
         applied_conn,
-        ExperimentIn(
-            workspace_id="project-a",
-            title="Shadow vs real-paper edge delta on paired-cohort",
-            hypothesis="Paired cohort delta is positive.",
-            cohort_definition="wallets with paired shadow and paper closes",
-            success_criteria={"min_wallets": 30},
-            priority=0.9,
-        ),
-    )
-    upsert_agent_role(
-        applied_conn,
-        AgentRoleIn(
-            workspace_id="project-a",
-            name="Very verbose research operator",
-            purpose=" ".join(["long capability text"] * 140),
-            confidence=0.95,
-        ),
+        workspace_id="project-a",
+        kind="behavior",
+        payload={
+            "name": "Very verbose research operator",
+            "kind": "operating_rule",
+            "scope": "workspace",
+            "priority": "user_preference",
+            "rule": " ".join(["long behavior text"] * 140),
+            "confidence": 0.95,
+        },
     )
 
-    built = build_context(
+    report = run_retrieval_quality_evals(
         applied_conn,
-        RetrievalQuery(
-            workspace_id="project-a",
-            query="shadow versus real paper edge delta paired cohort experiment",
-            max_tokens=2500,
-        ),
+        workspace_id="project-a",
+        cases=[
+            RetrievalQualityCase(
+                name="decision_budget",
+                query="shadow versus real paper edge delta paired cohort",
+                expected_sections=["decisions"],
+                expected_object_titles=[
+                    "Shadow vs real-paper edge delta on paired-cohort",
+                ],
+                min_render_level="summary",
+                expected_omissions_absent=True,
+                max_tokens=2500,
+            )
+        ],
     )
 
-    assert "Shadow vs real-paper edge delta on paired-cohort" in built.text
-    assert "<research_agenda" in built.text
-    assert built.budget_diagnostics["intent"] == ["research"]
-    research_section = {item["name"]: item for item in built.budget_diagnostics["sections"]}[
-        "research_agenda"
-    ]
-    assert research_section["render_level"] in {"stub", "summary", "full"}
-    assert research_section["objects_included"] >= 1
+    assert report.status == "ok"
+    assert report.results[0].render_levels["decisions"] == "summary"
 
 
 def test_retrieval_quality_checks_object_titles_and_render_level(
     applied_conn: sqlite3.Connection,
 ) -> None:
-    write_experiment(
+    write_canonical(
         applied_conn,
-        ExperimentIn(
-            workspace_id="project-a",
-            title="Shadow vs real-paper edge delta on paired-cohort",
-            hypothesis="Paired cohort delta is positive.",
-            cohort_definition="wallets with paired shadow and paper closes",
-            success_criteria={"min_wallets": 30},
-            priority=0.9,
-        ),
+        workspace_id="project-a",
+        kind="decision",
+        payload={
+            "title": "Shadow vs real-paper edge delta on paired-cohort",
+            "decision_text": "Paired cohort delta is positive enough to keep tracking.",
+            "importance": 0.9,
+        },
     )
 
     report = run_retrieval_quality_evals(
@@ -158,7 +146,7 @@ def test_retrieval_quality_checks_object_titles_and_render_level(
             RetrievalQualityCase(
                 name="research_budget_stub",
                 query="shadow versus real paper edge delta paired cohort experiment",
-                expected_sections=["research_agenda"],
+                expected_sections=["decisions"],
                 expected_object_titles=[
                     "Shadow vs real-paper edge delta on paired-cohort",
                 ],
@@ -170,4 +158,4 @@ def test_retrieval_quality_checks_object_titles_and_render_level(
     )
 
     assert report.status == "ok"
-    assert report.results[0].render_levels["research_agenda"] in {"stub", "summary", "full"}
+    assert report.results[0].render_levels["decisions"] == "summary"
