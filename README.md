@@ -231,6 +231,11 @@ fresh chat and the agent wires everything itself.
 
 ## Status
 
+**v3.8.1** (2026-05-27). Patch release for post-release hook stability:
+project-resolved prompt briefs no longer emit false global-fallback notices,
+and post-edit code digest refreshes update canonical project-relative paths
+instead of absolute-path duplicates.
+
 **v3.8.0** (2026-05-27). The active project surface is now v3-only: compact
 MCP tools, canonical v3 tables, root migrations, one migration runner, and
 registry-routed Claude/Codex hooks. Legacy v2 storage, route, doc, and setup
