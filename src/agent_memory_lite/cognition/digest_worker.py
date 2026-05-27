@@ -32,6 +32,7 @@ or ``scripts/memory_consolidation_task.sh`` (POSIX, future).
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import logging
@@ -60,6 +61,7 @@ class QueueEntry:
     db_path: str
     file_path: str
     ts: float
+    project_root: str = ""
 
 
 def enqueue(
@@ -67,6 +69,7 @@ def enqueue(
     workspace_id: str,
     db_path: str,
     file_path: str,
+    project_root: str = "",
     queue_path: Path | None = None,
 ) -> None:
     """Append one entry to the queue file. Used by the PostToolUse hook."""
@@ -76,6 +79,7 @@ def enqueue(
         "workspace_id": workspace_id,
         "db_path": db_path,
         "file_path": file_path,
+        "project_root": project_root,
         "ts": time.time(),
     }
     with path.open("a", encoding="utf-8") as f:
@@ -102,10 +106,19 @@ def _read_queue(queue_path: Path) -> list[QueueEntry]:
                 ws = str(obj.get("workspace_id", ""))
                 db = str(obj.get("db_path", ""))
                 fp = str(obj.get("file_path", ""))
+                root = str(obj.get("project_root", ""))
                 ts = float(obj.get("ts", 0.0))
                 if not ws or not db or not fp:
                     continue
-                out.append(QueueEntry(workspace_id=ws, db_path=db, file_path=fp, ts=ts))
+                out.append(
+                    QueueEntry(
+                        workspace_id=ws,
+                        db_path=db,
+                        file_path=fp,
+                        ts=ts,
+                        project_root=root,
+                    )
+                )
     except OSError as exc:
         logger.warning("digest_queue_read_failed", extra={"error": str(exc)})
         return []
@@ -131,6 +144,25 @@ def _clear_queue(queue_path: Path) -> None:
         queue_path.write_text("", encoding="utf-8")
     except OSError as exc:
         logger.warning("digest_queue_clear_failed", extra={"error": str(exc)})
+
+
+def _resolve_entry_paths(entry: QueueEntry) -> tuple[Path, str]:
+    """Return (read_path, digest_file_path) for an enqueued edit.
+
+    Hooks enqueue absolute file paths so the worker can read files from any
+    current working directory. Code memory uses project-relative file paths as
+    the canonical key, so convert to relative when the queue includes the
+    project root.
+    """
+    read_path = Path(entry.file_path)
+    root = Path(entry.project_root) if entry.project_root else None
+    if not read_path.is_absolute() and root is not None:
+        read_path = root / read_path
+    digest_path = entry.file_path
+    if root is not None:
+        with contextlib.suppress(ValueError, OSError):
+            digest_path = read_path.resolve().relative_to(root.resolve()).as_posix()
+    return read_path, digest_path
 
 
 # ============================================================
@@ -330,7 +362,7 @@ def process_entry(entry: QueueEntry) -> str | None:
     DB unreachable, parse fail). All failures are logged but never
     abort the worker.
     """
-    src_path = Path(entry.file_path)
+    src_path, digest_file_path = _resolve_entry_paths(entry)
     if not src_path.is_file():
         logger.info("digest_worker_skip_missing", extra={"file": entry.file_path})
         return None
@@ -342,7 +374,7 @@ def process_entry(entry: QueueEntry) -> str | None:
             extra={"file": entry.file_path, "error": str(exc)},
         )
         return None
-    result = compute_digest(entry.file_path, content)
+    result = compute_digest(digest_file_path, content)
     try:
         conn = sqlite3.connect(entry.db_path)
         try:

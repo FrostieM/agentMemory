@@ -100,7 +100,7 @@ def _safe_registry_path(raw: str) -> str:
     return raw
 
 
-def _resolve_workspace(file_path: Path) -> tuple[str, str]:
+def _resolve_workspace(file_path: Path) -> tuple[str, str, str]:
     """Walk parents to find the workspace this file belongs to.
 
     Returns (workspace_id, db_path) — empty strings if no registered
@@ -119,9 +119,9 @@ def _resolve_workspace(file_path: Path) -> tuple[str, str]:
                 workspace_id = str(entry.get("id", ""))
                 db_path = _safe_registry_path(str(entry.get("db_path", "")))
                 if workspace_id and db_path:
-                    return (workspace_id, db_path)
-                return ("", "")
-    return ("", "")
+                    return (workspace_id, db_path, str(parent.resolve()))
+                return ("", "", "")
+    return ("", "", "")
 
 
 def main() -> int:
@@ -147,7 +147,7 @@ def main() -> int:
                 detail="not_a_file",
             )
             return 0
-        workspace_id, db_path = _resolve_workspace(src)
+        workspace_id, db_path, project_root = _resolve_workspace(src)
         if not workspace_id or not db_path:
             record_hook_event(
                 hook="PostToolUse",
@@ -162,7 +162,12 @@ def main() -> int:
         # to add tens of ms for events that don't apply.
         from agent_memory_lite.cognition.digest_worker import enqueue  # noqa: PLC0415
 
-        enqueue(workspace_id=workspace_id, db_path=db_path, file_path=str(src.resolve()))
+        enqueue(
+            workspace_id=workspace_id,
+            db_path=db_path,
+            file_path=str(src.resolve()),
+            project_root=project_root,
+        )
         record_hook_event(
             hook="PostToolUse",
             event=event,

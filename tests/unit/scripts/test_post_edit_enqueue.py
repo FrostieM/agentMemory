@@ -78,9 +78,10 @@ def test_resolve_workspace_direct_match(tmp_path: Path, monkeypatch: pytest.Monk
         ],
     )
     monkeypatch.setattr(hook, "REGISTRY_PATH", registry)
-    ws, db = hook._resolve_workspace(target)
+    ws, db, root = hook._resolve_workspace(target)
     assert ws == "proj"
     assert db.endswith("proj.db")
+    assert Path(root) == project.resolve()
 
 
 def test_resolve_workspace_no_registry_match(
@@ -91,9 +92,10 @@ def test_resolve_workspace_no_registry_match(
     monkeypatch.setattr(hook, "REGISTRY_PATH", registry)
     target = tmp_path / "elsewhere.py"
     target.write_text("# x", encoding="utf-8")
-    ws, db = hook._resolve_workspace(target)
+    ws, db, root = hook._resolve_workspace(target)
     assert ws == ""
     assert db == ""
+    assert root == ""
 
 
 def test_resolve_workspace_rejects_unsafe_db_path(
@@ -117,7 +119,7 @@ def test_resolve_workspace_rejects_unsafe_db_path(
         ],
     )
     monkeypatch.setattr(hook, "REGISTRY_PATH", registry)
-    assert hook._resolve_workspace(target) == ("", "")
+    assert hook._resolve_workspace(target) == ("", "", "")
 
 
 # ============================================================
@@ -158,6 +160,7 @@ def test_main_enqueues_when_workspace_resolves(
     payload = json.loads(line)
     assert payload["workspace_id"] == "proj"
     assert payload["file_path"].endswith("edited.py")
+    assert Path(payload["project_root"]) == project.resolve()
 
 
 def test_main_silent_when_file_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -437,7 +437,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear hook flow with explicit ea
             fallback_db, fallback_vectors = _global_fallback_paths()
             db_path = db_path or fallback_db
             vector_path = vector_path or fallback_vectors
-    used_global_fallback = True
+        used_global_fallback = True
 
     if used_global_fallback and db_path:
         with contextlib.suppress(Exception):

@@ -42,7 +42,11 @@ def db_path(tmp_path: Path) -> Path:
 def test_enqueue_and_read_roundtrip(tmp_path: Path) -> None:
     qpath = tmp_path / "queue.jsonl"
     dw.enqueue(
-        workspace_id="ws", db_path=str(tmp_path / "x.db"), file_path="/a/b.py", queue_path=qpath
+        workspace_id="ws",
+        db_path=str(tmp_path / "x.db"),
+        file_path="/a/b.py",
+        project_root="/a",
+        queue_path=qpath,
     )
     dw.enqueue(
         workspace_id="ws", db_path=str(tmp_path / "x.db"), file_path="/a/c.py", queue_path=qpath
@@ -50,6 +54,7 @@ def test_enqueue_and_read_roundtrip(tmp_path: Path) -> None:
     entries = dw._read_queue(qpath)
     assert len(entries) == 2
     assert {e.file_path for e in entries} == {"/a/b.py", "/a/c.py"}
+    assert {e.project_root for e in entries} == {"/a", ""}
 
 
 def test_read_queue_skips_malformed_lines(tmp_path: Path) -> None:
@@ -217,6 +222,30 @@ def test_process_entry_writes_digest_row(db_path: Path, tmp_path: Path) -> None:
         row = conn.execute("SELECT id, purpose_short FROM code_digests").fetchone()
         assert row[0] == digest_id
         assert row[1] == "Hello world."
+    finally:
+        conn.close()
+
+
+def test_process_entry_uses_relative_digest_key_when_project_root_present(
+    db_path: Path, tmp_path: Path
+) -> None:
+    project = tmp_path / "project"
+    src = project / "scripts" / "hook.py"
+    src.parent.mkdir(parents=True)
+    src.write_text('"""Hook."""\ndef run(): pass\n', encoding="utf-8")
+    entry = dw.QueueEntry(
+        workspace_id="default",
+        db_path=str(db_path),
+        file_path=str(src),
+        project_root=str(project),
+        ts=1.0,
+    )
+    digest_id = dw.process_entry(entry)
+    assert digest_id is not None
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute("SELECT file_path, purpose_short FROM code_digests").fetchall()
+        assert rows == [("scripts/hook.py", "Hook.")]
     finally:
         conn.close()
 
