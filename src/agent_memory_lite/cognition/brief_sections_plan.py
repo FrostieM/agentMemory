@@ -45,13 +45,13 @@ _TITLE_WORDS = 10
 _BODY_WORDS = 16
 _APPLY_WORDS = 14
 
-# The most-recently-updated in-progress task that owns at least one live
+# The most-recently-updated open task that owns at least one live
 # plan step. The EXISTS sub-query filters BEFORE the LIMIT, so the
-# plan-bearing task is found no matter how many plan-less in-progress
+# plan-bearing task is found no matter how many plan-less open
 # tasks happen to have been touched more recently.
 _PLAN_TASK_SQL = (
     "SELECT t.task_id AS task_id, t.goal_one_line AS goal_one_line FROM tasks t "
-    "WHERE t.workspace_id = ? AND t.status = 'in_progress' "
+    "WHERE t.workspace_id = ? AND t.status IN ('active', 'in_progress') "
     "AND EXISTS (SELECT 1 FROM plan_steps p "
     "WHERE p.workspace_id = t.workspace_id AND p.task_id = t.task_id "
     "AND p.valid_to IS NULL) "
@@ -149,7 +149,7 @@ def _render_lines(
 def _active_plan_lines(conn: sqlite3.Connection, workspace_id: str, budget: int) -> list[str]:
     """Fitted plan lines, or ``[]`` when there is nothing worth pinning.
 
-    Empty when: no in-progress task owns live plan steps; the table is
+    Empty when: no open task owns live plan steps; the table is
     absent (pre-migration DB); every live step is skipped (a "0/0 done"
     header is pure noise); or the budget is too tight to keep the count
     line or the in-progress line (a header with the plan's identity or
@@ -182,9 +182,9 @@ def _active_plan_lines(conn: sqlite3.Connection, workspace_id: str, budget: int)
 
 
 def _build_active_plan(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
-    """Compact pinned view of an in-progress task's plan.
+    """Compact pinned view of an open task's plan.
 
-    Picks the most-recently-updated in-progress task that has live plan
+    Picks the most-recently-updated open task that has live plan
     steps. Empty when no such task exists — compose_brief redistributes
     the freed budget.
     """

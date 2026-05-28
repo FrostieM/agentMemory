@@ -62,6 +62,7 @@ class _Runtime:
         self._conns_by_path: dict[str, sqlite3.Connection] = {}
         self._provider: EmbeddingProvider | None = None
         self._store: VectorStore | None = None
+        self._stores_by_path: dict[str, VectorStore] = {}
         # Audit 1 #3: with N workspaces sharing one ``_Runtime`` (hub
         # mode), concurrent ``db_for`` calls can race on the cache. The
         # GIL makes single dict operations atomic, but the check-then-
@@ -125,6 +126,30 @@ class _Runtime:
             self._store = get_vector_store(self.settings)
         return self._store
 
+    def store_for(self, workspace_id: str | None) -> VectorStore:
+        resolved = _registry_paths_for(self, workspace_id) if workspace_id else None
+        anchor_vector_path = self.settings.vector_db_path.resolve()
+        use_anchor_store = resolved is None
+        path = anchor_vector_path
+        if resolved is not None:
+            db_path, vector_path = resolved
+            use_anchor_store = Path(db_path).resolve() == self.settings.db_path.resolve()
+            if not use_anchor_store:
+                path = Path(vector_path).resolve()
+                use_anchor_store = path == anchor_vector_path
+        if use_anchor_store:
+            return self.store()
+        key = str(path)
+        cached = self._stores_by_path.get(key)
+        if cached is None:
+            with self._open_lock:
+                cached = self._stores_by_path.get(key)
+                if cached is None:
+                    settings = self.settings.model_copy(update={"vector_db_path": path})
+                    cached = get_vector_store(settings)
+                    self._stores_by_path[key] = cached
+        return cached
+
     def close(self) -> None:
         if self.conn is not None:
             close_connection(self.conn)
@@ -136,6 +161,10 @@ class _Runtime:
         if self._store is not None:
             self._store.close()
             self._store = None
+        for store in self._stores_by_path.values():
+            with contextlib.suppress(Exception):
+                store.close()
+        self._stores_by_path.clear()
 
 
 def _registry_paths_for(runtime: _Runtime, workspace_id: str) -> tuple[str, str] | None:

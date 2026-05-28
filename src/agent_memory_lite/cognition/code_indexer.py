@@ -35,6 +35,7 @@ caller can aggregate counts.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -97,13 +98,15 @@ def _upsert_file_row(
     conn.execute(
         """
         INSERT INTO files (id, workspace_id, path, language, content_hash,
-                           size_bytes, last_indexed_at, metadata_json, is_archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 0)
+            size_bytes, last_indexed_at, metadata_json, is_archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, '{"managed_by":"code_memory_indexer"}', 0)
         ON CONFLICT(workspace_id, path) DO UPDATE SET
+            id=excluded.id,
             language=excluded.language,
             content_hash=excluded.content_hash,
             size_bytes=excluded.size_bytes,
-            last_indexed_at=excluded.last_indexed_at
+            last_indexed_at=excluded.last_indexed_at,
+            metadata_json=excluded.metadata_json
         """,
         (file_id, workspace_id, rel_path, language, content_hash, size_bytes, now),
     )
@@ -115,19 +118,29 @@ def _delete_prior_chunks_and_edges(
     """Wipe chunks + edges for one file before re-indexing.
 
     symbol_edges FK to chunks.id, so we delete edges first.  We DON'T
-    cascade-drop the file row — chunks/edges churn but the file row's
+    cascade-drop the file row - chunks/edges churn but the file row's
     stable id stays so external references (search hits, audit log)
     don't go orphan.
     """
-    # Edges where src OR dst is in this file's chunks.
+    # Source edges are owned by this file and must be rebuilt. Inbound edges
+    # from other files are preserved as pending references so the resolver can
+    # retarget them to the new chunk ids after the file is reindexed.
     conn.execute(
         """
         DELETE FROM symbol_edges
         WHERE workspace_id = ?
-          AND (src_chunk_id IN (SELECT id FROM chunks WHERE file_id = ?)
-               OR dst_chunk_id IN (SELECT id FROM chunks WHERE file_id = ?))
+          AND src_chunk_id IN (SELECT id FROM chunks WHERE file_id = ?)
         """,
-        (workspace_id, file_id, file_id),
+        (workspace_id, file_id),
+    )
+    conn.execute(
+        """
+        UPDATE symbol_edges
+        SET dst_chunk_id = NULL
+        WHERE workspace_id = ?
+          AND dst_chunk_id IN (SELECT id FROM chunks WHERE file_id = ?)
+        """,
+        (workspace_id, file_id),
     )
     rows = conn.execute(
         "SELECT id FROM chunks WHERE workspace_id = ? AND file_id = ?",
@@ -139,6 +152,14 @@ def _delete_prior_chunks_and_edges(
         "DELETE FROM chunks WHERE workspace_id = ? AND file_id = ?",
         (workspace_id, file_id),
     )
+
+
+def _existing_file_id(conn: sqlite3.Connection, *, workspace_id: str, rel_path: str) -> str | None:
+    row = conn.execute(
+        "SELECT id FROM files WHERE workspace_id = ? AND path = ?",
+        (workspace_id, rel_path),
+    ).fetchone()
+    return str(row[0]) if row else None
 
 
 def _insert_chunks(
@@ -259,6 +280,16 @@ def _existing_file_sha(conn: sqlite3.Connection, *, workspace_id: str, rel_path:
     return row[0] if row else None
 
 
+def _existing_digest_sha(
+    conn: sqlite3.Connection, *, workspace_id: str, rel_path: str
+) -> str | None:
+    row = conn.execute(
+        "SELECT file_sha1 FROM code_digests WHERE workspace_id = ? AND file_path = ?",
+        (workspace_id, rel_path),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def index_file(
     conn: sqlite3.Connection,
     *,
@@ -276,73 +307,117 @@ def index_file(
     """
     result = IndexResult(file_path=rel_path)
     content_hash = _sha1(content)
-    if not force:
-        prior = _existing_file_sha(conn, workspace_id=workspace_id, rel_path=rel_path)
-        if prior == content_hash:
-            result.skipped_unchanged = True
-            return result
     file_id = _stable_file_id(workspace_id, rel_path)
     result.file_id = file_id
     try:
-        _upsert_file_row(
-            conn,
-            file_id=file_id,
-            workspace_id=workspace_id,
-            rel_path=rel_path,
-            language=language,
-            content_hash=content_hash,
-            size_bytes=len(content.encode("utf-8", errors="replace")),
-        )
-        _delete_prior_chunks_and_edges(conn, workspace_id=workspace_id, file_id=file_id)
-        chunk_qnames = _insert_chunks(
-            conn,
-            workspace_id=workspace_id,
-            file_id=file_id,
-            path=rel_path,
-            text=content,
-            language=language,
-        )
-        result.chunks = len(chunk_qnames)
-        # Persist edges using v2 extractor + cross-file resolver.
-        edges_written = persist_edges_for_file(
-            conn,
-            workspace_id=workspace_id,
-            text=content,
-            language=language,
-            chunk_qnames=chunk_qnames,
-        )
-        result.edges = edges_written
-        # Count this file's inbound + outbound for the digest row.
-        inbound = conn.execute(
-            """
-            SELECT COUNT(*) FROM symbol_edges
-            WHERE workspace_id = ? AND dst_chunk_id IN
-                (SELECT id FROM chunks WHERE file_id = ?)
-            """,
-            (workspace_id, file_id),
-        ).fetchone()[0]
-        outbound = conn.execute(
-            """
-            SELECT COUNT(*) FROM symbol_edges
-            WHERE workspace_id = ? AND src_chunk_id IN
-                (SELECT id FROM chunks WHERE file_id = ?)
-            """,
-            (workspace_id, file_id),
-        ).fetchone()[0]
-        _upsert_digest_with_edge_counts(
-            conn,
-            workspace_id=workspace_id,
-            file_id=file_id,
-            rel_path=rel_path,
-            content=content,
-            inbound=int(inbound),
-            outbound=int(outbound),
-        )
-        result.digest_upserted = True
+        existing_file_id = _existing_file_id(conn, workspace_id=workspace_id, rel_path=rel_path)
+        if not force:
+            prior_file_sha = _existing_file_sha(conn, workspace_id=workspace_id, rel_path=rel_path)
+            prior_digest_sha = _existing_digest_sha(
+                conn, workspace_id=workspace_id, rel_path=rel_path
+            )
+            if (
+                prior_file_sha == content_hash
+                and prior_digest_sha == content_hash
+                and existing_file_id == file_id
+            ):
+                result.skipped_unchanged = True
+                return result
+
+        savepoint = f"index_file_{uuid.uuid4().hex}"
+        conn.execute(f"SAVEPOINT {savepoint}")
+        try:
+            _replace_indexed_file(
+                conn,
+                workspace_id=workspace_id,
+                rel_path=rel_path,
+                content=content,
+                language=language,
+                content_hash=content_hash,
+                file_id=file_id,
+                existing_file_id=existing_file_id,
+                result=result,
+            )
+        except (sqlite3.Error, ValueError, TypeError):
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            with contextlib.suppress(sqlite3.Error):
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            raise
+        conn.execute(f"RELEASE SAVEPOINT {savepoint}")
     except (sqlite3.Error, ValueError, TypeError) as exc:
         result.error = f"{type(exc).__name__}: {exc}"
         logger.warning("index_file_failed", extra={"file": rel_path, "error": result.error})
     return result
+
+
+def _replace_indexed_file(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    rel_path: str,
+    content: str,
+    language: str | None,
+    content_hash: str,
+    file_id: str,
+    existing_file_id: str | None,
+    result: IndexResult,
+) -> None:
+    """Replace one file's code-memory rows inside the caller's savepoint."""
+    for prior_file_id in sorted({file_id, *(filter(None, [existing_file_id]))}):
+        _delete_prior_chunks_and_edges(conn, workspace_id=workspace_id, file_id=prior_file_id)
+    _upsert_file_row(
+        conn,
+        file_id=file_id,
+        workspace_id=workspace_id,
+        rel_path=rel_path,
+        language=language,
+        content_hash=content_hash,
+        size_bytes=len(content.encode("utf-8", errors="replace")),
+    )
+    chunk_qnames = _insert_chunks(
+        conn,
+        workspace_id=workspace_id,
+        file_id=file_id,
+        path=rel_path,
+        text=content,
+        language=language,
+    )
+    result.chunks = len(chunk_qnames)
+    edges_written = persist_edges_for_file(
+        conn,
+        workspace_id=workspace_id,
+        text=content,
+        language=language,
+        chunk_qnames=chunk_qnames,
+    )
+    result.edges = edges_written
+    inbound = conn.execute(
+        """
+        SELECT COUNT(*) FROM symbol_edges
+        WHERE workspace_id = ? AND dst_chunk_id IN
+            (SELECT id FROM chunks WHERE file_id = ?)
+        """,
+        (workspace_id, file_id),
+    ).fetchone()[0]
+    outbound = conn.execute(
+        """
+        SELECT COUNT(*) FROM symbol_edges
+        WHERE workspace_id = ? AND src_chunk_id IN
+            (SELECT id FROM chunks WHERE file_id = ?)
+        """,
+        (workspace_id, file_id),
+    ).fetchone()[0]
+    _upsert_digest_with_edge_counts(
+        conn,
+        workspace_id=workspace_id,
+        file_id=file_id,
+        rel_path=rel_path,
+        content=content,
+        inbound=int(inbound),
+        outbound=int(outbound),
+    )
+    result.digest_upserted = True
 
 
 # ============================================================

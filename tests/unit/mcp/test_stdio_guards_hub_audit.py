@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
+from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.mcp import stdio_guards
 from agent_memory_lite.mcp.stdio_guards import (
     _audit_hub_cross_workspace_write,
@@ -23,7 +25,7 @@ from agent_memory_lite.mcp.stdio_runtime import _runtime
 
 
 @pytest.fixture(autouse=True)
-def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _isolate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     reset_hub_write_warned()
     monkeypatch.delenv("MEMORY_HUB_WRITE_AUDIT_ENABLED", raising=False)
     # Stub the runtime's anchor DB to an in-memory conn so insert_audit
@@ -34,9 +36,22 @@ def _isolate(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     apply_migrations(stub_conn)
     monkeypatch.setattr(_runtime, "db", lambda: stub_conn)
+    workspaces_file = tmp_path / "workspaces.json"
+    registry = WorkspaceRegistry(workspaces_file)
+    registry.register(
+        workspace_id="foreign-beta",
+        db_path=str(tmp_path / "foreign-beta.db"),
+        vector_path=str(tmp_path / "foreign-beta.lance"),
+    )
+    registry.register(
+        workspace_id="foreign-gamma",
+        db_path=str(tmp_path / "foreign-gamma.db"),
+        vector_path=str(tmp_path / "foreign-gamma.lance"),
+    )
     relaxed = _runtime.settings.model_copy(
         update={
             "workspace_id": "anchor-alpha",
+            "workspaces_file": workspaces_file,
             "hub_mode": True,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
@@ -102,6 +117,12 @@ def test_distinct_foreign_pairs_each_warn(caplog: pytest.LogCaptureFixture) -> N
         _ensure_workspace_writable("foreign-gamma")
     warns = [r for r in caplog.records if "cross-workspace" in r.getMessage()]
     assert len(warns) == 2
+
+
+def test_unregistered_cross_workspace_write_is_rejected() -> None:
+    """Unknown workspace IDs must not write arbitrary rows into the anchor DB."""
+    with pytest.raises(ValueError, match="is not registered"):
+        _ensure_workspace_writable("never-registered")
 
 
 def test_env_flag_disables_audit(

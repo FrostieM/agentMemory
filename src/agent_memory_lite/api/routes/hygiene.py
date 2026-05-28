@@ -16,6 +16,7 @@ from agent_memory_lite.api.schemas.hygiene import (
     QualityGateFindingResponse,
     QualityGateResponse,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.hygiene import run_hygiene_report
 from agent_memory_lite.maintenance.hygiene_persist import persist_findings
 from agent_memory_lite.maintenance.quality_gate import run_quality_gate
@@ -48,6 +49,7 @@ def hygiene_report_route(
     # maintenance_events. Off unless both ?persist=true AND the env flag.
     if persist and settings.hygiene_persist_enabled:
         ensure_workspace_writable(workspace_id, settings)
+        ensure_workspace_matches_db(conn, workspace_id, settings)
         persist_findings(
             conn,
             workspace_id=workspace_id,

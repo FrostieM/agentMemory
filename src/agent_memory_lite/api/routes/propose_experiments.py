@@ -32,6 +32,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.experiment_proposal import (
     find_proposal_candidates,
     is_enabled,
@@ -132,6 +133,7 @@ def propose_experiments_post(
     must hold or another project's chat could pollute this workspace.
     """
     ensure_workspace_writable(workspace_id, settings)
+    ensure_workspace_matches_db(conn, workspace_id, settings)
     enabled = is_enabled()
     proposals, available = _scan_with_availability(conn, workspace_id=workspace_id, limit=limit)
     candidate_ids: list[str] = []

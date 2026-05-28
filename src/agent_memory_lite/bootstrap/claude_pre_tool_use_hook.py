@@ -19,13 +19,23 @@ from pathlib import Path
 from typing import Any
 
 HOOK_MARKER = "agent-memory-lite-pretooluse"
+# Canonical PreToolUse matcher set. Anything that reads or mutates source
+# in the agent's tool surface lives here, plus Bash and the memory MCP
+# tools. The detector ``mechanical_impact_check_before_read`` covers the
+# four read-side tools (Read, Grep, Glob, NotebookRead) so they MUST be
+# matched here, otherwise the hook never fires for them and the discipline
+# rule cannot be enforced.
+# This tuple is the single source of truth for every script that installs
+# or validates the hook (setup_agent, install_memory_hooks, _setup_doctor).
 HOOK_MATCHERS = (
     "Read",
     "Edit",
     "Write",
     "MultiEdit",
     "NotebookEdit",
+    "NotebookRead",
     "Grep",
+    "Glob",
     "Bash",
     "mcp__agent-memory-lite__memory_.*",
 )

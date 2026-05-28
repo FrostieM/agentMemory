@@ -62,6 +62,10 @@ for _path in (_SRC_ROOT, _REPO_ROOT):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (  # noqa: E402
+    HOOK_MATCHER as _CANONICAL_PRETOOLUSE_HOOK_MATCHER,
+)
+
 
 # Force UTF-8 stdout — the human render has → / em-dash / non-ASCII
 # glyphs that crash a default Windows cp1251 console.
@@ -77,9 +81,9 @@ PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
 SEED_SCRIPT = REPO_ROOT / "scripts" / "seed_memory_discipline.py"
 POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_MARKER = "agent-memory-lite-pretooluse"
-PRETOOLUSE_MATCHER = (
-    "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*"
-)
+# Sourced from bootstrap.claude_pre_tool_use_hook.HOOK_MATCHER so any new
+# tool added to the canonical tuple lights up in the installer too.
+PRETOOLUSE_MATCHER = _CANONICAL_PRETOOLUSE_HOOK_MATCHER
 
 
 # ============================================================

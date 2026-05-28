@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="LLM_BASE_URL")
     llm_model: str = Field(default="qwen2.5:7b-instruct", validation_alias="LLM_MODEL")
     ollama_probe_skip: bool = Field(default=False, validation_alias="OLLAMA_PROBE_SKIP")
+    # Inline LLM extraction runs on the SYNCHRONOUS episode-write path (see
+    # ingestion/auto_promote.py): a 7B Ollama generation before the write
+    # returns. The OllamaExtractor default of 30s is too long for an
+    # interactive write -- cap it tightly so a slow or cold model degrades
+    # to "no LLM candidates" instead of blocking the writer (and the MCP
+    # client). This is the "abort after T" guard; the fast heuristic +
+    # correction extractors still run regardless.
+    llm_extract_timeout_sec: float = Field(
+        10.0, gt=0.0, le=120.0, validation_alias="MEMORY_LLM_EXTRACT_TIMEOUT_SEC"
+    )
 
     # 2.1.3 LLM narrative + 2.1.4 similar_signature soft edges.
     # fmt: off

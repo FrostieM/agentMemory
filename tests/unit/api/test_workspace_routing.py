@@ -9,6 +9,7 @@ database because hub routing was bypassed.
 
 from __future__ import annotations
 
+import ast
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,39 @@ def _register(settings: _FakeSettings, workspace_id: str, db_path: Path) -> None
 def _conn(path: Path) -> sqlite3.Connection:
     """A real file-backed connection so ``PRAGMA database_list`` has a path."""
     return sqlite3.connect(str(path))
+
+
+def test_http_routes_with_db_writes_also_check_physical_db() -> None:
+    """Every route-level write guard must pair with the physical DB guard.
+
+    Exceptions:
+    * ui_brain_actions centralizes both checks in _ensure_write_routed.
+    * evals writes into a temporary in-memory evaluation DB, not DbDep.
+    """
+    routes_dir = Path(__file__).parents[3] / "src" / "agent_memory_lite" / "api" / "routes"
+    missing: list[tuple[str, str, int]] = []
+    for path in sorted(routes_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            calls: set[str] = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    if isinstance(child.func, ast.Name):
+                        calls.add(child.func.id)
+                    elif isinstance(child.func, ast.Attribute):
+                        calls.add(child.func.attr)
+            if "ensure_workspace_writable" not in calls:
+                continue
+            if path.name == "ui_brain_actions.py" and node.name == "_ensure_write_routed":
+                continue
+            if path.name == "evals.py" and node.name == "run_evals_route":
+                continue
+            if "ensure_workspace_matches_db" not in calls:
+                missing.append((path.name, node.name, node.lineno))
+
+    assert missing == []
 
 
 def test_matches_db_rejects_leak_even_with_hub_mode_off(tmp_path: Path) -> None:
@@ -105,14 +139,13 @@ def test_matches_db_allows_anchor_workspace_on_anchor_db(tmp_path: Path) -> None
         conn.close()
 
 
-def test_matches_db_noop_for_unregistered_workspace(tmp_path: Path) -> None:
-    """An unregistered, non-anchor workspace has no authoritative path, so the
-    guard skips rather than guess (``forbid_default_workspace`` covers the
-    ``default`` workspace separately)."""
+def test_matches_db_rejects_unregistered_workspace_on_physical_db(tmp_path: Path) -> None:
+    """Unregistered non-anchor writes must not fall through into the anchor DB."""
     settings = _settings(tmp_path)
     conn = _conn(settings.db_path)
     try:
-        ensure_workspace_matches_db(conn, "never-registered", settings)  # no raise
+        with pytest.raises(ValidationError, match="is not registered"):
+            ensure_workspace_matches_db(conn, "never-registered", settings)
     finally:
         conn.close()
 

@@ -15,6 +15,7 @@ from agent_memory_lite.cognition.brief import (
     fetch_skill_body,
     fit_to_budget,
 )
+from agent_memory_lite.cognition.brief_sections_core import _build_state
 
 
 @pytest.fixture(autouse=True)
@@ -102,14 +103,16 @@ def _seed_task(conn: sqlite3.Connection, **kwargs) -> None:
         "goal_one_line": "Do X compactly",
         "status": "in_progress",
         "next_action": "Step 1",
+        "blockers_json": "[]",
         "updated_at": "ts",
     }
     defaults.update(kwargs)
     conn.execute(
         """INSERT INTO tasks
-           (id, workspace_id, task_id, goal, goal_one_line, status, next_action, updated_at)
+           (id, workspace_id, task_id, goal, goal_one_line, status, next_action,
+            blockers_json, updated_at)
            VALUES (:id, :workspace_id, :task_id, :goal, :goal_one_line,
-                   :status, :next_action, :updated_at)""",
+                   :status, :next_action, :blockers_json, :updated_at)""",
         defaults,
     )
     conn.commit()
@@ -320,6 +323,89 @@ def test_compose_brief_with_task(conn: sqlite3.Connection) -> None:
     assert "Finish v3 Phase 1" in brief.body_md
     assert "Write writer module" in brief.body_md
     assert "in_progress" in brief.body_md
+
+
+def test_compose_brief_state_excludes_closed_tasks(conn: sqlite3.Connection) -> None:
+    _seed_task(
+        conn,
+        id="task_done",
+        task_id="td",
+        goal_one_line="Closed stale task",
+        status="done",
+        next_action="Do not resume",
+        updated_at="2026-05-27T00:00:00Z",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## State" not in brief.body_md
+    assert "Closed stale task" not in brief.body_md
+
+
+def test_compose_brief_state_finds_open_task_behind_newer_closed_tasks(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_task(
+        conn,
+        id="task_open_old",
+        task_id="too",
+        goal_one_line="Older open task",
+        status="in_progress",
+        updated_at="2026-05-27T00:00:00Z",
+    )
+    for idx in range(12):
+        _seed_task(
+            conn,
+            id=f"task_done_new_{idx}",
+            task_id=f"tdn{idx}",
+            goal_one_line=f"Newer closed task {idx}",
+            status="done",
+            updated_at=f"2026-05-27T00:00:{idx + 1:02d}Z",
+        )
+
+    brief = compose_brief(conn, workspace_id="ws")
+
+    assert "Older open task" in brief.body_md
+    assert "Newer closed task" not in brief.body_md
+
+
+def test_compose_brief_state_counts_blockers_from_direct_query(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_task(
+        conn,
+        id="task_blockers",
+        task_id="tbk",
+        goal_one_line="Blocked state task",
+        blockers_json='["first blocker", "second blocker"]',
+    )
+
+    brief = compose_brief(conn, workspace_id="ws")
+
+    assert "Blocked state task" in brief.body_md
+    assert "(blockers: 2)" in brief.body_md
+
+
+def test_compose_brief_active_status_counts_as_open_plan_task(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_task(
+        conn,
+        id="task_active_status",
+        task_id="tas",
+        goal_one_line="Active status plan",
+        status="active",
+    )
+    _seed_plan_step(
+        conn,
+        id="tas_active",
+        task_id="tas",
+        rank=1.0,
+        title="current active-status work",
+        status="active",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Active plan" in brief.body_md
+    assert "Active status plan" in brief.body_md
+    assert "current active-status work" in brief.body_md
 
 
 def test_compose_brief_renders_active_plan(conn: sqlite3.Connection) -> None:
@@ -664,6 +750,13 @@ def test_compose_brief_state_section_skipped_when_empty(conn: sqlite3.Connection
     brief = compose_brief(conn, workspace_id="ws")
     assert "no active tasks" not in brief.body_md
     assert "## State" not in brief.body_md
+
+
+def test_state_section_drops_header_when_task_line_does_not_fit(
+    conn: sqlite3.Connection,
+) -> None:
+    _seed_task(conn, id="task_tight", task_id="tt", goal_one_line="tight state")
+    assert _build_state(conn, "ws", budget=2).lines == []
 
 
 def test_fetch_skill_body_returns_body_md(conn: sqlite3.Connection) -> None:

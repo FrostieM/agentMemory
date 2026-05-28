@@ -11,10 +11,10 @@ and to verify a live connection actually landed on that workspace's DB:
 This resolver lives in ``config`` -- the lowest shared layer -- so both
 callers reach the SAME logic instead of ``maintenance`` importing across
 the ``maintenance -> api`` layer boundary. ``api/workspace_routing.py``
-keeps the thin ``ensure_workspace_matches_db`` wrapper that turns a guard
-failure into the API-layer ``ValidationError``; the sentinel scheduler
-calls ``connection_matches_workspace`` directly and skips a misrouted
-pass.
+keeps the strict write guard that rejects unregistered workspaces and
+turns a guard failure into the API-layer ``ValidationError``. The sentinel
+scheduler calls the softer ``connection_matches_workspace`` predicate
+directly and skips only on definite DB mismatches.
 """
 
 from __future__ import annotations
@@ -64,6 +64,27 @@ def resolve_workspace_paths(
     return ResolvedWorkspacePaths(db_path=entry.db_path, vector_path=vector_path)
 
 
+def workspace_db_path(workspace_id: str | None, settings: Settings) -> str | None:
+    """Return the authoritative DB path for a writable workspace.
+
+    The anchor workspace is authoritative even when it is not listed in the
+    registry. Foreign workspaces must be registered; otherwise callers must not
+    silently fall back to the anchor DB for writes.
+    """
+    if not workspace_id:
+        return None
+    if workspace_id == settings.workspace_id:
+        return str(settings.db_path)
+    try:
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        entry = registry.get(workspace_id)
+    except Exception:
+        return None
+    if entry is None or not entry.db_path:
+        return None
+    return entry.db_path
+
+
 def _connection_db_path(conn: sqlite3.Connection) -> str:
     """Absolute file backing the connection's ``main`` schema.
 
@@ -87,12 +108,7 @@ def _expected_db_path(workspace_id: str, settings: Settings) -> str | None:
     an unregistered workspace that is also not the service's anchor.
     The guard skips rather than guess in that case.
     """
-    resolved = resolve_workspace_paths(workspace_id, settings)
-    if resolved is not None:
-        return resolved.db_path
-    if workspace_id and workspace_id == settings.workspace_id:
-        return str(settings.db_path)
-    return None
+    return workspace_db_path(workspace_id, settings)
 
 
 def _connections_match(actual: str, expected: str) -> bool:
@@ -121,16 +137,17 @@ def connection_matches_workspace(
 ) -> bool:
     """True when ``conn``'s physical DB is ``workspace_id``'s registered DB.
 
-    Also True ("skip -- do not guess") when there is nothing
+    This is intentionally a soft sentinel predicate, not a write guard.
+    It returns True ("skip -- do not guess") when there is nothing
     authoritative to compare against: an unregistered non-anchor
-    workspace, a registry that co-locates the workspace in the anchor
-    DB, or an in-memory connection with no physical file. Returns
-    ``False`` ONLY on a definite mismatch -- the connection landed on a
-    different file than the registry records for this workspace.
+    workspace, or an in-memory connection with no physical file. It
+    returns ``False`` ONLY on a definite mismatch -- the connection
+    landed on a different file than the registry records for this
+    workspace.
 
-    Shared predicate behind ``ensure_workspace_matches_db`` (the API
-    write guard, which raises ``ValidationError``) and the sentinel
-    scheduler's pre-pass guard (which skips a misrouted pass).
+    Mutation paths must use ``workspace_db_path`` / the API or MCP write
+    guards so unregistered workspace IDs cannot fall through into the
+    anchor DB.
     """
     expected = _expected_db_path(workspace_id, settings)
     if expected is None:

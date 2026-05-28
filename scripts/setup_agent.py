@@ -62,6 +62,9 @@ for _path in (_SRC_ROOT_FOR_IMPORTS, _REPO_ROOT_FOR_IMPORTS):
         sys.path.insert(0, str(_path))
 
 from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (  # noqa: E402
+    HOOK_MATCHER as _CANONICAL_PRETOOLUSE_HOOK_MATCHER,
+)
+from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (  # noqa: E402
     install_pre_tool_use_hook,
 )
 from agent_memory_lite.bootstrap.project_pre_commit_hook import (  # noqa: E402
@@ -77,9 +80,9 @@ V3_BRIEF_HOOK_SCRIPT = REPO_ROOT / "scripts" / "inject_memory_brief.py"
 V3_POSTEDIT_HOOK_SCRIPT = REPO_ROOT / "scripts" / "post_edit_enqueue.py"
 V3_POSTTOOLUSE_MATCHER = "Edit|Write|NotebookEdit|MultiEdit"
 PRETOOLUSE_HOOK_SCRIPT = REPO_ROOT / "scripts" / "pre_tool_use_check.py"
-PRETOOLUSE_HOOK_MATCHER = (
-    "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*"
-)
+# Sourced from bootstrap.claude_pre_tool_use_hook.HOOK_MATCHER so a new
+# tool added to that canonical tuple lights up here automatically.
+PRETOOLUSE_HOOK_MATCHER = _CANONICAL_PRETOOLUSE_HOOK_MATCHER
 MARKER_BEGIN = "<!-- agent-memory-lite-contract:begin -->"
 MARKER_END = "<!-- agent-memory-lite-contract:end -->"
 DEFAULT_MODEL = "qwen2.5:7b-instruct"

@@ -17,6 +17,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.cold_scanner import (
     emit_cold_candidate_events,
     find_cold_candidates,
@@ -60,6 +61,7 @@ def cold_candidates_route(
         # Auto-queue is a write — guard accordingly. Read-only enumeration
         # without queue=true never writes anything.
         ensure_workspace_writable(workspace_id, settings)
+        ensure_workspace_matches_db(conn, workspace_id, settings)
         emit_cold_candidate_events(conn, workspace_id=workspace_id, candidates=candidates)
         conn.commit()
         queued = True

@@ -32,6 +32,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.cognition.self_model import (
     load_self_model,
     refresh_self_model,
@@ -52,6 +53,11 @@ def _ok(data: Any) -> dict[str, Any]:
 
 def _err(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "data": None, "error": {"code": code, "message": message}}
+
+
+def _ensure_write_routed(conn: Any, workspace_id: str, settings: Any) -> None:
+    ensure_workspace_writable(workspace_id, settings)
+    ensure_workspace_matches_db(conn, workspace_id, settings)
 
 
 # ============================================================
@@ -120,7 +126,7 @@ class UpsertReflexRuleRequest(BaseModel):
 def upsert_reflex_rule(
     body: UpsertReflexRuleRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     if body.enforcement not in ("advisory", "block"):
         return _err("validation", "enforcement must be 'advisory' or 'block'")
     now = iso_now()
@@ -186,7 +192,7 @@ class ReflexRuleActionRequest(BaseModel):
 def toggle_active(
     body: ReflexRuleActionRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         conn.execute(
             "UPDATE reflex_rules SET active=1-active, updated_at=? WHERE id=? AND workspace_id=?",
@@ -202,7 +208,7 @@ def toggle_active(
 def promote_reflex(
     body: ReflexRuleActionRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         conn.execute(
             "UPDATE reflex_rules SET enforcement='block', updated_at=? "
@@ -219,7 +225,7 @@ def promote_reflex(
 def demote_reflex(
     body: ReflexRuleActionRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         conn.execute(
             "UPDATE reflex_rules SET enforcement='advisory', updated_at=? "
@@ -236,7 +242,7 @@ def demote_reflex(
 def delete_reflex(
     body: ReflexRuleActionRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         conn.execute(
             "DELETE FROM reflex_rules WHERE id=? AND workspace_id=?",
@@ -262,7 +268,7 @@ class SelfModelRequest(BaseModel):
 def self_model_refresh(
     body: SelfModelRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         ollama_url = settings.llm_base_url if body.use_ollama else None
         ollama_model = settings.llm_model if body.use_ollama else None
@@ -377,7 +383,7 @@ class PromoteInsightsRequest(BaseModel):
 def insight_promote(
     body: PromoteInsightsRequest, conn: DbDep, settings: SettingsDep
 ) -> dict[str, Any]:
-    ensure_workspace_writable(body.workspace_id, settings)
+    _ensure_write_routed(conn, body.workspace_id, settings)
     try:
         stats = promote_eligible_insights(conn, workspace_id=body.workspace_id)
         conn.commit()

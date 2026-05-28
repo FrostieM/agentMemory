@@ -59,7 +59,17 @@ def _build_extractors(
             )
         )
     if settings.llm_backend == "ollama" and not settings.ollama_probe_skip:
-        extractors.append(OllamaExtractor(settings.llm_base_url, settings.llm_model))
+        # Tight inline timeout ("abort after T"): the synchronous write path
+        # must not block on a slow / cold 7B generation. On timeout the
+        # extractor returns [] and the write completes with only the fast
+        # heuristic + correction candidates.
+        extractors.append(
+            OllamaExtractor(
+                settings.llm_base_url,
+                settings.llm_model,
+                timeout=settings.llm_extract_timeout_sec,
+            )
+        )
     return extractors
 
 

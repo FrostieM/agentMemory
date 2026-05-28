@@ -14,12 +14,16 @@ retired so there is one path per canonical name.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import sqlite3
-from typing import Any
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, cast
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import ValidationError as PydanticValidationError
 
+from agent_memory_lite.api import deps as api_deps
 from agent_memory_lite.api.deps import (
     DbDep,
     SettingsDep,
@@ -38,12 +42,15 @@ from agent_memory_lite.api.schemas.memory import (
     WriteRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
+from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.maintenance.implicit_feedback import record_implicit_archive
 from agent_memory_lite.maintenance.sentinel_scheduler import maybe_run_sentinels
+from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.storage.reader import (
     get_object,
@@ -55,8 +62,16 @@ from agent_memory_lite.storage.writer import (
     edit,
     pin,
 )
+from agent_memory_lite.vector_store.base import VectorStore
+from agent_memory_lite.vector_store.factory import get_vector_store
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+
+@dataclass(frozen=True)
+class _ResolvedDependency:
+    value: Any
+    cleanup: Callable[[], None] | None = None
 
 
 def _ok(data: dict[str, Any] | list[Any] | None) -> Envelope:
@@ -76,6 +91,126 @@ def _maybe_autorun_sentinels(workspace_id: str, settings: SettingsDep) -> None:
             embedding_provider=None,
             vector_store=None,
         )
+
+
+def _resolve_embedding_provider(
+    request: Request, settings: SettingsDep
+) -> tuple[EmbeddingProvider, Callable[[], None] | None]:
+    override = request.app.dependency_overrides.get(api_deps.get_embedding_provider_dep)
+    if override is not None:
+        resolved = _call_lazy_override(override, request=request, settings=settings)
+        return cast(EmbeddingProvider, resolved.value), resolved.cleanup
+    return api_deps.get_embedding_provider_dep(settings), None
+
+
+def _resolve_vector_store(
+    request: Request, settings: SettingsDep
+) -> tuple[VectorStore, Callable[[], None] | None]:
+    override = request.app.dependency_overrides.get(api_deps.get_vector_store_dep)
+    if override is not None:
+        resolved = _call_lazy_override(override, request=request, settings=settings)
+        return cast(VectorStore, resolved.value), resolved.cleanup
+    store, owned = api_deps.resolve_vector_store_for_request(request, settings)
+    return store, store.close if owned else None
+
+
+def _call_lazy_override(
+    override: Any, *, request: Request, settings: SettingsDep
+) -> _ResolvedDependency:
+    """Call common FastAPI dependency overrides outside FastAPI's solver."""
+    try:
+        signature = inspect.signature(override)
+    except (TypeError, ValueError):
+        return _wrap_dependency_result(override())
+
+    required = [
+        param
+        for param in signature.parameters.values()
+        if param.default is inspect.Parameter.empty
+        and param.kind
+        in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    ]
+    if not required:
+        return _wrap_dependency_result(override())
+
+    named: dict[str, Any] = {}
+    for param in required:
+        if _is_request_param(param):
+            named[param.name] = request
+        elif _is_settings_param(param):
+            named[param.name] = settings
+    if len(named) == len(required):
+        return _wrap_dependency_result(override(**named))
+    if len(required) == 1:
+        param = required[0]
+        return _wrap_dependency_result(
+            override(request if _looks_like_request_name(param.name) else settings)
+        )
+    if len(required) == 2:
+        return _wrap_dependency_result(override(request, settings))
+    return _wrap_dependency_result(override())
+
+
+def _wrap_dependency_result(result: Any) -> _ResolvedDependency:
+    if inspect.isgenerator(result):
+        return _enter_generator_dependency(result)
+    if hasattr(result, "__enter__") and hasattr(result, "__exit__"):
+        value = result.__enter__()
+
+        def cleanup() -> None:
+            result.__exit__(None, None, None)
+
+        return _ResolvedDependency(value=value, cleanup=cleanup)
+    return _ResolvedDependency(value=result)
+
+
+def _enter_generator_dependency(generator: Any) -> _ResolvedDependency:
+    try:
+        value = next(generator)
+    except StopIteration as exc:
+        raise RuntimeError("dependency override did not yield") from exc
+
+    def cleanup() -> None:
+        try:
+            next(generator)
+        except StopIteration:
+            return
+        finally:
+            generator.close()
+        raise RuntimeError("dependency override yielded more than once")
+
+    return _ResolvedDependency(value=value, cleanup=cleanup)
+
+
+def _is_request_param(param: inspect.Parameter) -> bool:
+    return param.name == "request" or _annotation_name(param.annotation) == "Request"
+
+
+def _is_settings_param(param: inspect.Parameter) -> bool:
+    return param.name == "settings" or _annotation_name(param.annotation) == "Settings"
+
+
+def _looks_like_request_name(name: str) -> bool:
+    return name in {"request", "req"}
+
+
+def _annotation_name(annotation: Any) -> str:
+    if annotation is inspect.Parameter.empty:
+        return ""
+    if isinstance(annotation, str):
+        return annotation.rsplit(".", 1)[-1].strip("'\"")
+    return getattr(annotation, "__name__", "")
+
+
+def _validate_episode_payload(req: WriteRequest) -> None:
+    body = {**req.payload, "workspace_id": req.workspace_id}
+    if req.source_episode_id is not None:
+        body["source_episode_id"] = req.source_episode_id
+    EpisodeIn(**body)
 
 
 @router.get("/get", response_model=Envelope)
@@ -180,30 +315,106 @@ def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> E
 
 
 @router.post("/write", response_model=Envelope)
-def write_endpoint(req: WriteRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
-    ensure_workspace_writable(req.workspace_id, settings)
+def write_route(
+    req: WriteRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+    request: Request,
+) -> Envelope:
+    return write_endpoint(
+        req,
+        conn,
+        settings,
+        request=request,
+    )
+
+
+def _resolve_episode_write_dependencies(
+    req: WriteRequest,
+    settings: SettingsDep,
+    *,
+    request: Request | None,
+    embedding_provider: EmbeddingProvider | None,
+    vector_store: VectorStore | None,
+    dependency_cleanups: list[Callable[[], None]],
+) -> tuple[EmbeddingProvider, VectorStore]:
+    _validate_episode_payload(req)
+    resolved_vector_store = vector_store
+    if resolved_vector_store is None:
+        if request is None:
+            resolved_vector_store = get_vector_store(settings)
+        else:
+            resolved_vector_store, vector_store_cleanup = _resolve_vector_store(request, settings)
+            if vector_store_cleanup is not None:
+                dependency_cleanups.append(vector_store_cleanup)
+
+    resolved_embedding_provider = embedding_provider
+    if resolved_embedding_provider is None:
+        if request is None:
+            resolved_embedding_provider = api_deps.get_embedding_provider_dep(settings)
+        else:
+            resolved_embedding_provider, provider_cleanup = _resolve_embedding_provider(
+                request, settings
+            )
+            if provider_cleanup is not None:
+                dependency_cleanups.append(provider_cleanup)
+
+    return resolved_embedding_provider, resolved_vector_store
+
+
+def write_endpoint(
+    req: WriteRequest,
+    conn: DbDep,
+    settings: SettingsDep,
+    request: Request | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
+) -> Envelope:
+    dependency_cleanups: list[Callable[[], None]] = []
     try:
-        out = write_canonical(
-            conn,
-            workspace_id=req.workspace_id,
-            kind=req.kind,
-            payload=req.payload,
-            agent_id=req.agent_id,
-            source_episode_id=req.source_episode_id,
-            settings=settings,
-        )
-    except PydanticValidationError as exc:
-        return _err("invalid_args", f"invalid {req.kind} payload: {exc}")
-    except MemoryServiceError as exc:
-        return _err(exc.error_code, str(exc))
-    if out is None:
-        return _err("unsupported_kind", f"writer does not support kind={req.kind}")
-    return _ok(out)
+        ensure_workspace_writable(req.workspace_id, settings)
+        ensure_workspace_matches_db(conn, req.workspace_id, settings)
+        if req.kind == "episode":
+            try:
+                embedding_provider, vector_store = _resolve_episode_write_dependencies(
+                    req,
+                    settings,
+                    request=request,
+                    embedding_provider=embedding_provider,
+                    vector_store=vector_store,
+                    dependency_cleanups=dependency_cleanups,
+                )
+            except PydanticValidationError as exc:
+                return _err("invalid_args", f"invalid {req.kind} payload: {exc}")
+        try:
+            out = write_canonical(
+                conn,
+                workspace_id=req.workspace_id,
+                kind=req.kind,
+                payload=req.payload,
+                agent_id=req.agent_id,
+                source_episode_id=req.source_episode_id,
+                settings=settings,
+                embedding_provider=embedding_provider,
+                vector_store=vector_store,
+            )
+        except PydanticValidationError as exc:
+            return _err("invalid_args", f"invalid {req.kind} payload: {exc}")
+        except MemoryServiceError as exc:
+            return _err(exc.error_code, str(exc))
+        if out is None:
+            return _err("unsupported_kind", f"writer does not support kind={req.kind}")
+        return _ok(out)
+    finally:
+        for cleanup in reversed(dependency_cleanups):
+            with contextlib.suppress(Exception):
+                cleanup()
 
 
 @router.post("/edit", response_model=Envelope)
 def edit_endpoint(req: EditRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_writable(req.workspace_id, settings)
+    ensure_workspace_matches_db(conn, req.workspace_id, settings)
     out = edit(
         conn,
         workspace_id=req.workspace_id,
@@ -220,6 +431,7 @@ def edit_endpoint(req: EditRequest, conn: DbDep, settings: SettingsDep) -> Envel
 @router.post("/pin", response_model=Envelope)
 def pin_endpoint(req: PinRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_writable(req.workspace_id, settings)
+    ensure_workspace_matches_db(conn, req.workspace_id, settings)
     out = pin(
         conn,
         workspace_id=req.workspace_id,
@@ -236,6 +448,7 @@ def pin_endpoint(req: PinRequest, conn: DbDep, settings: SettingsDep) -> Envelop
 @router.post("/archive", response_model=Envelope)
 def archive_endpoint(req: ArchiveRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_writable(req.workspace_id, settings)
+    ensure_workspace_matches_db(conn, req.workspace_id, settings)
     out = archive(
         conn,
         workspace_id=req.workspace_id,

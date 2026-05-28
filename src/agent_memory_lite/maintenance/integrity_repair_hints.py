@@ -13,14 +13,29 @@ def collect_repair_hints(checks: dict[str, IntegrityCheck]) -> list[str]:  # noq
         hints.append("Run scripts/memory_audit.py --repair-fts --backup-first.")
     vector_status = checks["vector"].status
     if vector_status == "degraded":
-        hints.append("Run scripts/memory_audit.py --repair-vectors --backup-first.")
+        if checks["vector"].details.get("extra"):
+            hints.append(
+                "Run scripts/memory_audit.py --rebuild-vectors-force --backup-first "
+                "to drop stale vector ids and rebuild the chunk vector namespace."
+            )
+        elif checks["vector"].details.get("stale_embedding_hashes"):
+            hints.append(
+                "Run scripts/memory_audit.py --repair-vectors --backup-first to re-embed stale chunk text."
+            )
+        else:
+            hints.append("Run scripts/memory_audit.py --repair-vectors --backup-first.")
     elif vector_status == "warning":
         metadata_status = checks["vector"].details.get("metadata_status")
         if metadata_status == "warning":
             hints.append(
                 "Run scripts/memory_audit.py --repair-vectors --backup-first to stamp vector metadata."
             )
-        else:
+        if checks["vector"].details.get("missing_embedding_hashes"):
+            hints.append(
+                "Run scripts/memory_audit.py --repair-vectors --backup-first "
+                "to re-embed chunks that predate embedding_text_sha256 metadata."
+            )
+        elif checks["vector"].details.get("missing_embedding_ids"):
             hints.append("Run scripts/memory_audit.py --repair-embedding-refs --backup-first.")
     if checks["workspace_pollution"].status == "degraded":
         hints.append(
@@ -32,6 +47,20 @@ def collect_repair_hints(checks: dict[str, IntegrityCheck]) -> list[str]:  # noq
         hints.append("Inspect open maintenance_events before trusting retrieval.")
     if checks["capability_links"].status == "degraded":
         hints.append("Inspect dangling capability_links before trusting role/skill guidance.")
+    if checks["code_memory_freshness"].status == "degraded":
+        hints.append(
+            "Run scripts/bulk_index_codebase.py --project <project_root> --workspace "
+            "<workspace_id> --db-path <project_root>/.agent_memory/memory.db --force "
+            "--backup-first to refresh missing or stale code-memory digests, then rerun "
+            "scripts/memory_audit.py and repair vectors if it reports drift."
+        )
+    elif checks["code_memory_freshness"].status == "warning":
+        hints.append(
+            "Run scripts/bulk_index_codebase.py --project <project_root> --workspace "
+            "<workspace_id> --db-path <project_root>/.agent_memory/memory.db --force "
+            "--backup-first with pruning enabled to remove orphaned code-memory rows, "
+            "then rerun scripts/memory_audit.py and repair vectors if it reports drift."
+        )
     if checks["candidate_hygiene"].status == "warning":
         hints.append("Review or reject stale candidates; do not leave extractor output untriaged.")
     if checks["research_hygiene"].status == "warning":
@@ -56,8 +85,18 @@ def collect_counts(checks: dict[str, IntegrityCheck]) -> dict[str, object]:
         "chunks_fts": checks["fts"].details.get("chunks_fts", 0),
         "vectors": checks["vector"].details.get("vectors"),
         "missing_embedding_ids": checks["vector"].details.get("missing_embedding_ids"),
+        "missing_embedding_hashes": checks["vector"].details.get("missing_embedding_hashes"),
+        "stale_embedding_hashes": checks["vector"].details.get("stale_embedding_hashes"),
         "open_maintenance_events": checks["maintenance_events"].details.get("open_events"),
         "capability_links": checks["capability_links"].details.get("links"),
+        "code_memory_source_files": checks["code_memory_freshness"].details.get("source_files"),
+        "code_memory_missing_digests": checks["code_memory_freshness"].details.get(
+            "missing_digests"
+        ),
+        "code_memory_stale_digests": checks["code_memory_freshness"].details.get("stale_digests"),
+        "code_memory_orphaned_digests": checks["code_memory_freshness"].details.get(
+            "orphaned_digests"
+        ),
         "new_candidates": checks["candidate_hygiene"].details.get("new_candidates"),
         "stale_candidates": checks["candidate_hygiene"].details.get("stale_new"),
         "undisciplined_theories": checks["research_hygiene"].details.get(

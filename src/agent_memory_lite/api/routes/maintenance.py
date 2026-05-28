@@ -25,6 +25,7 @@ from agent_memory_lite.api.schemas.maintenance import (
     MaintenanceEventResponse,
     ResolveMaintenanceEventRequest,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.models.enums import MaintenanceEventStatus
 from agent_memory_lite.models.maintenance import MaintenanceEvent
 from agent_memory_lite.repositories.maintenance_repo import (
@@ -84,7 +85,9 @@ def resolve_maintenance_event_route(
     settings: SettingsDep,
 ) -> MaintenanceEventResponse:
     # Round-5 audit: resolve WRITES status + resolved_at + audit.
-    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
+    workspace_id = body.workspace_id or settings.workspace_id
+    ensure_workspace_writable(workspace_id, settings)
+    ensure_workspace_matches_db(conn, workspace_id, settings)
     if body.status not in {MaintenanceEventStatus.RESOLVED, MaintenanceEventStatus.IGNORED}:
         raise ValidationError("maintenance event can only be resolved or ignored")
     event = resolve_maintenance_event(
@@ -107,7 +110,9 @@ def claim_maintenance_event_route(
     """v3.4 #6 — operator claims an event for triage. Does not touch
     substrate ``status`` because the underlying drift is still real."""
     # Round-5 audit: claim WRITES assigned_to / claimed_at / audit.
-    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
+    workspace_id = body.workspace_id or settings.workspace_id
+    ensure_workspace_writable(workspace_id, settings)
+    ensure_workspace_matches_db(conn, workspace_id, settings)
     event = claim_maintenance_event(
         conn,
         event_id=body.event_id,
@@ -130,7 +135,9 @@ def dismiss_maintenance_event_route(
     drift may still be real; this is purely an operator-queue decision
     so the same finding does not block the queue forever."""
     # Round-5 audit: dismiss WRITES dismissed_at / audit.
-    ensure_workspace_writable(body.workspace_id or settings.workspace_id, settings)
+    workspace_id = body.workspace_id or settings.workspace_id
+    ensure_workspace_writable(workspace_id, settings)
+    ensure_workspace_matches_db(conn, workspace_id, settings)
     event = dismiss_maintenance_event(
         conn,
         event_id=body.event_id,

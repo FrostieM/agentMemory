@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writable
 from agent_memory_lite.api.schemas.compact import CompactRequest, CompactResponse
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.compaction.invalidate_stale import archive_stale_facts
 from agent_memory_lite.compaction.summarize_old import summarize_old_episodes
 
@@ -15,6 +16,7 @@ router = APIRouter()
 @router.post("/memory/compact", response_model=CompactResponse)
 def compact_route(body: CompactRequest, conn: DbDep, settings: SettingsDep) -> CompactResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     # 1.2.5: pass settings so reflective compaction (v1.8) actually
     # runs. Pre-1.2.5 settings was None at this call site, which
     # silently disabled lesson candidate emission even when the

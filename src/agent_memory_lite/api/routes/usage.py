@@ -9,6 +9,7 @@ from agent_memory_lite.api.schemas.usage import (
     RecordUsageFeedbackRequest,
     RecordUsageFeedbackResponse,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.usage_feedback import record_usage_feedback
 
 router = APIRouter()
@@ -21,6 +22,7 @@ def record_usage_feedback_route(
     settings: SettingsDep,
 ) -> RecordUsageFeedbackResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     feedback = record_usage_feedback(
         conn,
         workspace_id=body.workspace_id,

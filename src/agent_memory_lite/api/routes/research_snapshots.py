@@ -16,6 +16,7 @@ from agent_memory_lite.api.schemas.research import (
     RegisterSnapshotRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.research_writer import register_snapshot
 from agent_memory_lite.models.research import MemorySnapshotIn
 
@@ -30,6 +31,7 @@ def register_snapshot_route(
     settings: SettingsDep,
 ) -> MemorySnapshotResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/register_snapshot",

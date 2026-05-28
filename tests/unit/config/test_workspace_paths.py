@@ -1,10 +1,10 @@
 """Unit tests for config.workspace_paths.
 
-Covers ``connection_matches_workspace`` -- the shared predicate behind
-the API write guard and the sentinel scheduler's pre-pass guard. The
-resolver itself (``resolve_workspace_paths``) and the raising API
-wrapper (``ensure_workspace_matches_db``) keep their coverage in
-``tests/unit/api/test_workspace_routing.py``.
+Covers ``connection_matches_workspace`` -- the soft sentinel predicate
+that skips when it cannot compare paths. The strict API write wrapper
+(``ensure_workspace_matches_db``) is covered in
+``tests/unit/api/test_workspace_routing.py`` because write paths must
+reject unregistered workspaces instead of using this soft predicate.
 """
 
 from __future__ import annotations

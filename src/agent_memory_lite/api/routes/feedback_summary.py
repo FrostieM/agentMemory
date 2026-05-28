@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_writable
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.feedback_signal import (
     feedback_per_source_summary,
     feedback_signal_summary,
@@ -68,6 +69,7 @@ def feedback_summary_route(
         # Recompute mutates feedback_ewma columns + writes audit rows. Treat
         # as a write so cross-workspace strict isolation is honoured.
         ensure_workspace_writable(workspace_id, settings)
+        ensure_workspace_matches_db(conn, workspace_id, settings)
         if settings.feedback_ewma_enabled:
             targets = (
                 [source_type]

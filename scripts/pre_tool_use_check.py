@@ -21,7 +21,7 @@ Configure in ``~/.claude/settings.json``:
     {
       "hooks": {
         "PreToolUse": [{
-          "matcher": "Read|Edit|Write|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*",
+          "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|NotebookRead|Grep|Glob|Bash|mcp__agent-memory-lite__memory_.*",
           "hooks": [{
             "type": "command",
             "command": "<venv-python> <repo>/scripts/pre_tool_use_check.py"

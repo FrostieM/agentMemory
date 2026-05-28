@@ -103,11 +103,18 @@ def _load_model(model_name: str) -> Any:
     except ImportError:
         logger.info("rerank_dep_missing", extra={"model": model_name})
         return None
-    # Accepted local-only exception (see config/local_only_guard.py): an
-    # uncached CrossEncoder model is fetched once from huggingface.co --
-    # a one-time bootstrap, not runtime exfiltration.
+    # Local-only contract (config/local_only_guard.py): a cached model MUST
+    # load with zero network traffic. CrossEncoder WITHOUT local_files_only
+    # pings huggingface.co on every load to verify the snapshot revision;
+    # that call has no app-level timeout, so a slow / blocked HF network
+    # stalls the synchronous search path for minutes before the soft-fail.
+    # Load cache-only first; fall back to a networked fetch ONLY when the
+    # model is genuinely absent (one-time bootstrap, like `ollama pull`).
     try:
-        model = CrossEncoder(model_name)
+        try:
+            model = CrossEncoder(model_name, local_files_only=True)
+        except Exception:
+            model = CrossEncoder(model_name)
     except Exception as exc:  # model load may fail many ways
         logger.warning(
             "rerank_model_load_failed",

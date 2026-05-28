@@ -9,6 +9,45 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.9.0 - 2026-05-28
+
+### Added
+
+- Code-memory freshness checks (`maintenance/code_memory_freshness.py`) and
+  shared source-scan helpers (`cognition/codebase_scan.py`) so the audit
+  surfaces stale or missing code digests.
+- Memory-hygiene checks for duplicate decisions, low-signal insights, windowed
+  duplicate episodes, and orphaned or closed-task plan steps
+  (`maintenance/hygiene_duplicate_checks.py`).
+- Low-signal insight filters (`utils/insight_filters.py`): regex/length
+  heuristics that suppress auto-consolidation noise (file-indexed placeholders,
+  tiny recurring-theme clusters), used by both the brief and hygiene.
+- `MEMORY_LLM_EXTRACT_TIMEOUT_SEC` (default 10s) bounds the inline Ollama
+  extractor on the synchronous episode-write path ("abort after T").
+- `Glob` and `NotebookRead` added to the PreToolUse hook matcher so the
+  impact-check-before-read discipline covers every read-side tool.
+
+### Changed
+
+- The embedding provider and the cross-encoder reranker now load models
+  cache-only (`local_files_only=True`) with a one-time networked bootstrap
+  fallback. A cached model loads with zero network traffic, honoring the
+  local-only ("no cloud calls") contract.
+- The PreToolUse hook matcher is sourced from a single canonical
+  `HOOK_MATCHERS` tuple shared by `setup_agent.py`, `install_memory_hooks.py`,
+  and the setup doctor, so the install and drift-detection paths cannot
+  diverge.
+
+### Fixed
+
+- A hung `memory_write`: the embedding model load made an unbounded
+  huggingface.co network call (no app-level timeout) on the synchronous write
+  path; cache-only loading removes it, and the inline LLM extractor is now
+  capped (see `MEMORY_LLM_EXTRACT_TIMEOUT_SEC`).
+- Stripped a UTF-8 BOM from `migrations/0001_init.sql`.
+- Corrected a stale matcher-token order in the `pre_tool_use_check.py`
+  docstring.
+
 ## 3.8.0 - 2026-05-27
 
 ### Changed

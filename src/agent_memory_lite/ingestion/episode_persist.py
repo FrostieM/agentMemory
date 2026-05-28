@@ -18,7 +18,11 @@ from agent_memory_lite.models.chunks import Chunk, ChunkIn
 from agent_memory_lite.models.enums import ChunkKind
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
 from agent_memory_lite.repositories.audit_repo import insert_audit
-from agent_memory_lite.repositories.chunks_repo import insert_chunk
+from agent_memory_lite.repositories.chunks_repo import (
+    EMBEDDING_TEXT_SHA256_KEY,
+    chunk_text_sha256,
+    insert_chunk,
+)
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.vector_store.base import VectorRow, VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
@@ -95,6 +99,7 @@ def embed_and_upsert(
                         "kind": chunk.kind.value,
                         "episode_id": chunk.episode_id,
                         "path": None,
+                        EMBEDDING_TEXT_SHA256_KEY: chunk_text_sha256(text),
                     },
                 )
             ],

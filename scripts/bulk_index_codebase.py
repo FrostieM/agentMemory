@@ -36,10 +36,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import shutil
 import sqlite3
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Force UTF-8 stdout so summary glyphs survive Windows cp1251.
@@ -58,48 +60,19 @@ from agent_memory_lite.cognition.code_indexer import (  # noqa: E402
     refresh_digest_edge_counts,
     resolve_all_pending_edges,
 )
+from agent_memory_lite.cognition.codebase_scan import (  # noqa: E402
+    DEFAULT_CODE_EXTENSIONS,
+    DEFAULT_CODE_SKIP_DIRS,
+    iter_source_files,
+    stored_path,
+)
 from agent_memory_lite.cognition.digest_worker import (  # noqa: E402
     compute_digest,
     upsert_digest,
 )
 
-# File extensions we consider source code worth digesting. Aligned with
-# the digest_worker._detect_language mapping — anything that returns a
-# language is indexable.
-DEFAULT_EXTENSIONS = frozenset(
-    {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".md", ".yml", ".yaml", ".toml", ".ps1", ".sh"}
-)
-
-# Directories we never descend into.
-DEFAULT_SKIP_DIRS = frozenset(
-    {
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".git",
-        ".hg",
-        ".svn",
-        "node_modules",
-        ".agent_memory",
-        "dist",
-        "build",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".mypy_cache",
-        "htmlcov",
-        ".tox",
-        ".idea",
-        ".vscode",
-        ".claude",
-        # Transient / generated artifacts that shouldn't enter the
-        # workspace's code graph — Playwright screenshot dumps include
-        # bundled Chrome extension cache scripts that dominate the
-        # caller-count ranking with thousands of synthetic edges.
-        "tmp-ui-shots",
-        "tmp",
-        "coverage",
-    }
-)
+DEFAULT_EXTENSIONS = DEFAULT_CODE_EXTENSIONS
+DEFAULT_SKIP_DIRS = DEFAULT_CODE_SKIP_DIRS
 
 
 # ============================================================
@@ -127,6 +100,7 @@ class IndexReport:
     pruned_files: int = 0
     pruned_chunks: int = 0
     pruned_edges: int = 0
+    backups: dict[str, str] = field(default_factory=dict)
     languages: Counter[str] = field(default_factory=Counter)
     error_details: list[str] = field(default_factory=list)
 
@@ -148,6 +122,7 @@ class IndexReport:
             "pruned_files": self.pruned_files,
             "pruned_chunks": self.pruned_chunks,
             "pruned_edges": self.pruned_edges,
+            "backups": dict(self.backups),
             "languages": dict(self.languages),
             "error_details": list(self.error_details)[:20],
         }
@@ -158,29 +133,6 @@ class IndexReport:
 # ============================================================
 
 
-def iter_source_files(
-    project_root: Path,
-    *,
-    extensions: frozenset[str] = DEFAULT_EXTENSIONS,
-    skip_dirs: frozenset[str] = DEFAULT_SKIP_DIRS,
-) -> list[Path]:
-    """Walk ``project_root`` and return every file with an indexable extension."""
-    files: list[Path] = []
-    for path in project_root.rglob("*"):
-        if not path.is_file():
-            continue
-        # Skip any path containing a skip-dir segment.
-        try:
-            rel_parts = path.relative_to(project_root).parts
-        except ValueError:
-            continue
-        if any(part in skip_dirs for part in rel_parts):
-            continue
-        if path.suffix.lower() in extensions:
-            files.append(path)
-    return sorted(files)
-
-
 def _existing_sha(conn: sqlite3.Connection, *, workspace_id: str, file_path: str) -> str | None:
     row = conn.execute(
         "SELECT file_sha1 FROM code_digests WHERE workspace_id = ? AND file_path = ?",
@@ -189,10 +141,23 @@ def _existing_sha(conn: sqlite3.Connection, *, workspace_id: str, file_path: str
     return row[0] if row else None
 
 
-def _stored_path(project_root: Path, file_path: Path, *, relative_paths: bool) -> str:
-    if relative_paths:
-        return str(file_path.relative_to(project_root)).replace("\\", "/")
-    return str(file_path)
+def _is_code_index_file_metadata(raw: object) -> bool:
+    """True for files rows owned by the code-memory indexer.
+
+    Legacy code-index rows were written with empty metadata. File-ingestion rows
+    carry trust_level metadata and must not be pruned by a source-code walk.
+    """
+    if not isinstance(raw, str | bytes | bytearray):
+        raw = "{}"
+    try:
+        metadata = json.loads(raw or "{}")
+    except ValueError:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if metadata.get("managed_by") == "code_memory_indexer":
+        return True
+    return "trust_level" not in metadata
 
 
 def _prune_stale_code_memory(
@@ -204,6 +169,7 @@ def _prune_stale_code_memory(
 ) -> tuple[int, int, int, int]:
     """Delete code-memory rows for paths outside the current project walk."""
     conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_code_paths")
     conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_file_ids")
     conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_chunk_ids")
     conn.execute("CREATE TEMP TABLE _bulk_expected_code_paths (path TEXT PRIMARY KEY)")
@@ -211,37 +177,50 @@ def _prune_stale_code_memory(
         "INSERT INTO _bulk_expected_code_paths (path) VALUES (?)",
         [(path,) for path in sorted(expected_paths)],
     )
-    pruned_digests = int(
-        conn.execute(
-            """
-            SELECT COUNT(*) FROM code_digests
-            WHERE workspace_id = ?
-              AND file_path NOT IN (SELECT path FROM _bulk_expected_code_paths)
-            """,
-            (workspace_id,),
-        ).fetchone()[0]
-        or 0
-    )
     conn.execute(
         """
-        DELETE FROM code_digests
+        CREATE TEMP TABLE _bulk_stale_code_paths AS
+        SELECT file_path AS path FROM code_digests
         WHERE workspace_id = ?
           AND file_path NOT IN (SELECT path FROM _bulk_expected_code_paths)
         """,
         (workspace_id,),
     )
-    if not prune_files:
-        conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
-        return pruned_digests, 0, 0, 0
-
+    pruned_digests = int(
+        conn.execute("SELECT COUNT(*) FROM _bulk_stale_code_paths").fetchone()[0] or 0
+    )
     conn.execute(
         """
-        CREATE TEMP TABLE _bulk_stale_file_ids AS
-        SELECT id FROM files
+        DELETE FROM code_digests
         WHERE workspace_id = ?
-          AND path NOT IN (SELECT path FROM _bulk_expected_code_paths)
+          AND file_path IN (SELECT path FROM _bulk_stale_code_paths)
         """,
         (workspace_id,),
+    )
+    if not prune_files:
+        conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+        conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_code_paths")
+        return pruned_digests, 0, 0, 0
+
+    conn.execute("CREATE TEMP TABLE _bulk_stale_file_ids (id TEXT PRIMARY KEY)")
+    stale_file_rows = conn.execute(
+        """
+        SELECT id, metadata_json
+        FROM files
+        WHERE workspace_id = ?
+          AND path IN (SELECT path FROM _bulk_stale_code_paths)
+        """,
+        (workspace_id,),
+    ).fetchall()
+    conn.executemany(
+        "INSERT OR IGNORE INTO _bulk_stale_file_ids (id) VALUES (?)",
+        [
+            (str(row["id"] if isinstance(row, sqlite3.Row) else row[0]),)
+            for row in stale_file_rows
+            if _is_code_index_file_metadata(
+                row["metadata_json"] if isinstance(row, sqlite3.Row) else row[1]
+            )
+        ],
     )
     conn.execute(
         """
@@ -302,6 +281,7 @@ def _prune_stale_code_memory(
         (workspace_id,),
     )
     conn.execute("DROP TABLE IF EXISTS temp._bulk_expected_code_paths")
+    conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_code_paths")
     conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_file_ids")
     conn.execute("DROP TABLE IF EXISTS temp._bulk_stale_chunk_ids")
     return pruned_digests, pruned_files, pruned_chunks, pruned_edges
@@ -343,7 +323,7 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
     conn = sqlite3.connect(db_path)
     try:
         expected_paths = {
-            _stored_path(project_root, file_path, relative_paths=relative_paths)
+            stored_path(project_root, file_path, relative_paths=relative_paths)
             for file_path in files
         }
         if prune_stale:
@@ -371,19 +351,19 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
             if digest_preview.language is None:
                 report.skipped_unindexable += 1
                 continue
-            stored_path = _stored_path(project_root, file_path, relative_paths=relative_paths)
+            stored_file_path = stored_path(project_root, file_path, relative_paths=relative_paths)
             if with_edges:
                 result = index_file(
                     conn,
                     workspace_id=workspace_id,
-                    rel_path=stored_path,
+                    rel_path=stored_file_path,
                     content=content,
                     language=digest_preview.language,
                     force=force,
                 )
                 if result.error:
                     report.errors += 1
-                    report.error_details.append(f"index {stored_path}: {result.error}")
+                    report.error_details.append(f"index {stored_file_path}: {result.error}")
                     continue
                 if result.skipped_unchanged:
                     report.skipped_unchanged += 1
@@ -396,18 +376,20 @@ def bulk_index(  # noqa: PLR0912, PLR0915 — linear walk with explicit branches
                 continue
             # with_edges=False: digest-only legacy path
             if not force:
-                existing = _existing_sha(conn, workspace_id=workspace_id, file_path=stored_path)
+                existing = _existing_sha(
+                    conn, workspace_id=workspace_id, file_path=stored_file_path
+                )
                 if existing == digest_preview.file_sha1:
                     report.skipped_unchanged += 1
                     continue
             try:
-                portable = compute_digest(stored_path, content)
+                portable = compute_digest(stored_file_path, content)
                 upsert_digest(conn, workspace_id=workspace_id, result=portable)
                 report.indexed += 1
                 report.languages[portable.language or "unknown"] += 1
             except sqlite3.Error as exc:
                 report.errors += 1
-                report.error_details.append(f"upsert {stored_path}: {exc}")
+                report.error_details.append(f"upsert {stored_file_path}: {exc}")
         # Cross-file resolver: stitch up edges whose targets appeared in
         # files indexed AFTER the source.  Then refresh digest counts so
         # impact_check verdicts reflect the final graph.
@@ -455,6 +437,11 @@ def render_human(report: IndexReport) -> str:
         f"  pruned chunks     = {report.pruned_chunks}",
         f"  pruned edges      = {report.pruned_edges}",
     ]
+    if report.backups:
+        lines.append("")
+        lines.append("  backups:")
+        for name, path in sorted(report.backups.items()):
+            lines.append(f"    {name:12} = {path}")
     if report.languages:
         lines.append("")
         lines.append("  by language:")
@@ -466,6 +453,28 @@ def render_human(report: IndexReport) -> str:
         for detail in report.error_details[:5]:
             lines.append(f"    - {detail}")
     return "\n".join(lines)
+
+
+def _backup_before_bulk_index(db_path: Path) -> dict[str, str]:
+    stamp = datetime.now(UTC).isoformat().replace(":", "").replace("-", "").replace("+", "Z")
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backups: dict[str, str] = {}
+    if db_path.exists():
+        target = backup_dir / f"memory_before_bulk_code_index_{stamp}.db"
+        shutil.copy2(db_path, target)
+        backups["db"] = str(target)
+    vector_path = db_path.parent / "vectors.lance"
+    if vector_path.exists():
+        target = backup_dir / f"vectors_before_bulk_code_index_{stamp}.lance"
+        if vector_path.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(vector_path, target)
+        else:
+            shutil.copy2(vector_path, target)
+        backups["vectors"] = str(target)
+    return backups
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -504,6 +513,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Keep code-memory rows for files outside the current project walk.",
     )
+    parser.add_argument(
+        "--backup-first",
+        action="store_true",
+        help="Copy memory.db and vectors.lance before mutating code-memory rows.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human render.")
     args = parser.parse_args(argv)
 
@@ -513,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     db_path = args.db_path.resolve()
     extensions = frozenset(ext if ext.startswith(".") else f".{ext}" for ext in args.extensions)
+    backups = _backup_before_bulk_index(db_path) if args.backup_first else {}
 
     report = bulk_index(
         project_root,
@@ -524,6 +539,7 @@ def main(argv: list[str] | None = None) -> int:
         with_edges=not args.no_edges,
         prune_stale=not args.no_prune_stale,
     )
+    report.backups.update(backups)
 
     if args.json:
         sys.stdout.write(json.dumps(report.to_dict(), indent=2) + "\n")

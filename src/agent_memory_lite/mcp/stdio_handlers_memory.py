@@ -34,6 +34,7 @@ from agent_memory_lite.cognition.lint import lint as run_lint
 from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
+from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.storage.reader import get_object, plan_for_task, search
 from agent_memory_lite.storage.writer import archive, edit, pin
 
@@ -59,6 +60,18 @@ def _parse_fields(raw: Any) -> list[str] | None:
     if isinstance(raw, str):
         return [f.strip() for f in raw.split(",") if f.strip()]
     return None
+
+
+def _validate_episode_payload(
+    *,
+    workspace_id: str,
+    body: dict[str, Any],
+    source_episode_id: Any,
+) -> None:
+    payload = {**body, "workspace_id": workspace_id}
+    if source_episode_id is not None:
+        payload["source_episode_id"] = source_episode_id
+    EpisodeIn(**payload)
 
 
 # ============================================================
@@ -146,7 +159,16 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
     conn = _runtime.db_for(workspace_id)
     agent_id = str(payload.get("agent_id") or "mcp")
     source_episode_id = payload.get("source_episode_id")
+    embedding_provider = vector_store = None
     try:
+        if kind == "episode":
+            _validate_episode_payload(
+                workspace_id=workspace_id,
+                body=body,
+                source_episode_id=source_episode_id,
+            )
+            embedding_provider = _runtime.provider()
+            vector_store = _runtime.store_for(workspace_id)
         out = write_canonical(
             conn,
             workspace_id=workspace_id,
@@ -155,6 +177,8 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
             agent_id=agent_id,
             source_episode_id=source_episode_id,
             settings=_runtime.settings,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
         )
     except ValidationError as exc:
         return _err("invalid_args", f"invalid {kind} payload: {exc}")

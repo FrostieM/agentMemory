@@ -210,6 +210,24 @@ def test_bulk_index_prunes_stale_digest_file_chunks_and_edges(project: Path, db_
            VALUES ('edge_stale', 'ws', 'chk_stale', 'old.use', 'old.target',
                    'chk_stale', 'calls', 'python', '2026-01-01T00:00:00Z')"""
     )
+    conn.execute(
+        """INSERT INTO files (id, workspace_id, path, language, content_hash,
+                              size_bytes, last_indexed_at, metadata_json, is_archived)
+           VALUES ('file_ingested_doc', 'ws', 'docs/uploaded.md', 'markdown', 'doc-hash', 10,
+                   '2026-01-01T00:00:00Z', ?, 0)""",
+        (json.dumps({"trust_level": "untrusted_doc"}),),
+    )
+    conn.execute(
+        """INSERT INTO chunks (id, workspace_id, file_id, kind, text, gist,
+                               line_start, line_end, symbols_json, importance,
+                               confidence, is_archived, created_at)
+           VALUES ('chk_ingested_doc', 'ws', 'file_ingested_doc', 'doc', 'doc', 'doc',
+                   1, 1, '[]', 0.5, 0.5, 0, '2026-01-01T00:00:00Z')"""
+    )
+    conn.execute(
+        """INSERT INTO chunks_fts (chunk_id, workspace_id, path, symbols, text, summary)
+           VALUES ('chk_ingested_doc', 'ws', 'docs/uploaded.md', '', 'doc', '')"""
+    )
     conn.commit()
     conn.close()
 
@@ -229,6 +247,18 @@ def test_bulk_index_prunes_stale_digest_file_chunks_and_edges(project: Path, db_
     )
     assert conn.execute("SELECT COUNT(*) FROM files WHERE path='src/deleted.py'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM chunks WHERE id='chk_stale'").fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) FROM files WHERE id='file_ingested_doc'").fetchone()[0] == 1
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM chunks WHERE id='chk_ingested_doc'").fetchone()[0] == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM chunks_fts WHERE chunk_id='chk_ingested_doc'"
+        ).fetchone()[0]
+        == 1
+    )
     assert (
         conn.execute("SELECT COUNT(*) FROM chunks_fts WHERE chunk_id='chk_stale'").fetchone()[0]
         == 0
@@ -371,3 +401,26 @@ def test_main_force_flag(project: Path, db_path: Path, capsys: pytest.CaptureFix
     payload = json.loads(capsys.readouterr().out)
     assert payload["indexed"] == 3  # forced re-index
     assert payload["skipped_unchanged"] == 0
+
+
+def test_main_backup_first_records_db_backup(
+    project: Path, db_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    rc = bulk.main(
+        [
+            "--project",
+            str(project),
+            "--workspace",
+            "ws",
+            "--db-path",
+            str(db_path),
+            "--backup-first",
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    backup_path = Path(payload["backups"]["db"])
+    assert backup_path.exists()
+    assert backup_path.name.startswith("memory_before_bulk_code_index_")

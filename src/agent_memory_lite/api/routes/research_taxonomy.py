@@ -22,6 +22,7 @@ from agent_memory_lite.api.schemas.research import (
     UpsertConceptRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.research_writer import upsert_domain_concept
 from agent_memory_lite.models.research import DomainConceptIn
 
@@ -36,6 +37,7 @@ def upsert_concept_route(
     settings: SettingsDep,
 ) -> ConceptResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/upsert_concept",

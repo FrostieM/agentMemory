@@ -11,6 +11,7 @@ is opened.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -148,12 +149,35 @@ def _allowed_vector_paths(settings: Settings) -> set[Path]:
         registry = WorkspaceRegistry(settings.workspaces_file)
         for entry in registry.list():
             try:
-                allowed.add(Path(entry.vector_path).resolve())
+                if entry.vector_path:
+                    allowed.add(Path(entry.vector_path).resolve())
             except (OSError, ValueError):
                 continue
     except Exception:
         pass
     return allowed
+
+
+def _registered_vector_path_for_db_path(settings: Settings, db_path: Path) -> Path | None:
+    """Return the registered vector path that belongs to an explicit DB override."""
+    if db_path == settings.db_path.resolve():
+        return settings.vector_db_path.resolve()
+    try:
+        from agent_memory_lite.config.workspace_registry import (  # noqa: PLC0415
+            WorkspaceRegistry,
+        )
+
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        for entry in registry.list():
+            try:
+                if Path(entry.db_path).resolve() == db_path:
+                    vector_path = entry.vector_path or str(settings.vector_db_path)
+                    return Path(vector_path).resolve()
+            except (OSError, ValueError):
+                continue
+    except Exception:
+        return None
+    return None
 
 
 def _resolve_db_path(request: Request, settings: Settings) -> Path:
@@ -204,23 +228,79 @@ def _build_request_scoped_store(settings: Settings, override: str) -> VectorStor
     return LanceDBStore(override)
 
 
-def get_vector_store_dep(request: Request, settings: SettingsDep) -> VectorStore:
+def _validated_vector_override(request: Request, settings: Settings, override: str) -> Path:
+    db_override = _header_or_query(request, "x-memory-db-path", "db_path")
+    # v3.5 sector-4 audit-followup: same allow-list as DB header.
+    try:
+        candidate = Path(override).resolve()
+    except (OSError, ValueError) as exc:
+        raise ValidationError(f"X-Memory-Vector-Path is not a valid path: {exc}") from None
+    if candidate not in _allowed_vector_paths(settings):
+        raise ValidationError(
+            f"X-Memory-Vector-Path {override!r} is not in the workspace registry."
+        )
+    if db_override:
+        try:
+            db_candidate = Path(db_override).resolve()
+        except (OSError, ValueError) as exc:
+            raise ValidationError(f"X-Memory-DB-Path is not a valid path: {exc}") from None
+        registered = _registered_vector_path_for_db_path(settings, db_candidate)
+        if registered is not None and candidate != registered:
+            raise ValidationError(
+                "X-Memory-Vector-Path does not match the vector path registered "
+                "for X-Memory-DB-Path."
+            )
+    else:
+        anchor_vector_path = settings.vector_db_path.resolve()
+        if candidate != anchor_vector_path:
+            raise ValidationError(
+                "X-Memory-Vector-Path does not match the active database. "
+                "Pass the matching X-Memory-DB-Path header with a registered "
+                "workspace vector path, or omit the vector override."
+            )
+    return candidate
+
+
+def resolve_vector_store_for_request(
+    request: Request,
+    settings: Settings,
+) -> tuple[VectorStore, bool]:
+    """Resolve a vector store for a request.
+
+    The boolean marks stores opened specifically for this request. Callers that
+    bypass FastAPI's dependency generator must close owned stores after use.
+    """
     override = _header_or_query(request, "x-memory-vector-path", "vector_path")
     if override:
-        # v3.5 sector-4 audit-followup: same allow-list as DB header.
+        candidate = _validated_vector_override(request, settings, override)
+        return _build_request_scoped_store(settings, str(candidate)), True
+    db_override = _header_or_query(request, "x-memory-db-path", "db_path")
+    if db_override:
         try:
-            candidate = Path(override).resolve()
+            db_candidate = Path(db_override).resolve()
         except (OSError, ValueError) as exc:
-            raise ValidationError(f"X-Memory-Vector-Path is not a valid path: {exc}") from None
-        if candidate not in _allowed_vector_paths(settings):
-            raise ValidationError(
-                f"X-Memory-Vector-Path {override!r} is not in the workspace registry."
-            )
-        return _build_request_scoped_store(settings, str(candidate))
+            raise ValidationError(f"X-Memory-DB-Path is not a valid path: {exc}") from None
+        derived = _registered_vector_path_for_db_path(settings, db_candidate)
+        if derived is not None:
+            if derived not in _allowed_vector_paths(settings):
+                raise ValidationError(
+                    f"X-Memory-Vector-Path {str(derived)!r} is not in the workspace registry."
+                )
+            return _build_request_scoped_store(settings, str(derived)), True
     global _vector_store_singleton  # noqa: PLW0603
     if _vector_store_singleton is None:
         _vector_store_singleton = get_vector_store(settings)
-    return _vector_store_singleton
+    return _vector_store_singleton, False
+
+
+def get_vector_store_dep(request: Request, settings: SettingsDep) -> Iterator[VectorStore]:
+    store, owned = resolve_vector_store_for_request(request, settings)
+    try:
+        yield store
+    finally:
+        if owned:
+            with contextlib.suppress(Exception):
+                store.close()
 
 
 VectorStoreDep = Annotated[VectorStore, Depends(get_vector_store_dep)]

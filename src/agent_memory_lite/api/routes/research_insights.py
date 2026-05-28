@@ -12,6 +12,7 @@ from agent_memory_lite.api.schemas.research import (
     UpdateInsightRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.research_writer import distill_insight, update_insight
 from agent_memory_lite.models.research import (
     ResearchInsightIn,
@@ -28,6 +29,7 @@ def distill_insight_route(
     settings: SettingsDep,
 ) -> InsightResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/distill_insight",
@@ -71,6 +73,7 @@ def update_insight_route(
     settings: SettingsDep,
 ) -> InsightResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/update_insight",

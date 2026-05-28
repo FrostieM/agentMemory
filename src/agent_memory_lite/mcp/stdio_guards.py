@@ -21,6 +21,7 @@ import os
 import threading
 from typing import Any
 
+from agent_memory_lite.config.workspace_paths import workspace_db_path
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 
 _log = logging.getLogger(__name__)
@@ -109,6 +110,12 @@ def _ensure_workspace_writable(workspace_id: str) -> None:
             f"writes to workspace_id={workspace_id!r} are blocked by "
             f"MEMORY_STRICT_WORKSPACE_ISOLATION; expected "
             f"{_runtime.settings.workspace_id!r}. Reads remain allowed."
+        )
+    if workspace_db_path(workspace_id, _runtime.settings) is None:
+        raise ValueError(
+            f"workspace_id={workspace_id!r} is not registered and is not the "
+            f"anchor workspace {_runtime.settings.workspace_id!r}. Register the "
+            "workspace before writing."
         )
     # Hub-mode + cross-workspace: NOT blocked, but audited.
     if _runtime.settings.hub_mode and workspace_id != _runtime.settings.workspace_id:

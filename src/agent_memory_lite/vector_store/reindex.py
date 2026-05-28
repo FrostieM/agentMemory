@@ -37,7 +37,12 @@ from collections.abc import Callable, Iterator
 
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.batching import iter_batches
-from agent_memory_lite.repositories.chunks_repo import set_many_chunk_embedding_ids
+from agent_memory_lite.repositories.chunks_repo import (
+    EMBEDDING_STALE_REASON_KEY,
+    EMBEDDING_TEXT_SHA256_KEY,
+    chunk_text_sha256,
+    set_many_chunk_embedding_ids,
+)
 from agent_memory_lite.repositories.vector_metadata_repo import upsert_vector_index_metadata
 from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorRow, VectorStore
@@ -50,12 +55,40 @@ _CHECKPOINT_META_KEY = "chunk_rebuild_progress"
 ProgressCb = Callable[[int, int], None]
 
 
+def _metadata_dict(raw: object) -> dict[str, object]:
+    if not isinstance(raw, str | bytes | bytearray):
+        return {}
+    try:
+        metadata = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _chunk_needs_reembedding(
+    *,
+    chunk_id: str,
+    text: str,
+    metadata_json: object,
+    existing_ids: set[str],
+) -> bool:
+    if chunk_id not in existing_ids:
+        return True
+    metadata = _metadata_dict(metadata_json)
+    stored_hash = metadata.get(EMBEDDING_TEXT_SHA256_KEY)
+    return (
+        bool(metadata.get(EMBEDDING_STALE_REASON_KEY))
+        or stored_hash is None
+        or stored_hash != chunk_text_sha256(text)
+    )
+
+
 def _stream_chunks(
     conn: sqlite3.Connection, workspace_id: str
-) -> Iterator[tuple[str, str, str, str | None, str | None, str | None]]:
+) -> Iterator[tuple[str, str, str, str | None, str | None, str | None, object]]:
     rows = conn.execute(
         """
-        SELECT c.id, c.workspace_id, c.text, c.kind, c.episode_id, f.path
+        SELECT c.id, c.workspace_id, c.text, c.kind, c.episode_id, f.path, c.metadata_json
         FROM chunks c
         LEFT JOIN files f ON f.id = c.file_id
         WHERE c.workspace_id = ?
@@ -64,7 +97,7 @@ def _stream_chunks(
         (workspace_id,),
     )
     for row in rows:
-        yield (row[0], row[1], row[2], row[3], row[4], row[5])
+        yield (row[0], row[1], row[2], row[3], row[4], row[5], row[6])
 
 
 def _write_checkpoint(
@@ -126,14 +159,22 @@ def reindex_chunks(
         existing_ids = set(store.list_ids(NAMESPACE_CHUNKS, workspace_id=workspace_id))
 
     pending: list[tuple[str, str, str, dict[str, str | None]]] = []
-    for chunk_id, ws, text, kind, episode_id, path in _stream_chunks(conn, workspace_id):
-        if chunk_id in existing_ids:
+    for chunk_id, ws, text, kind, episode_id, path, metadata_json in _stream_chunks(
+        conn, workspace_id
+    ):
+        if not _chunk_needs_reembedding(
+            chunk_id=chunk_id,
+            text=text,
+            metadata_json=metadata_json,
+            existing_ids=existing_ids,
+        ):
             continue
         meta = {
             "chunk_id": chunk_id,
             "kind": kind,
             "episode_id": episode_id,
             "path": path,
+            EMBEDDING_TEXT_SHA256_KEY: chunk_text_sha256(text),
         }
         pending.append((chunk_id, ws, text, meta))
 
@@ -158,14 +199,19 @@ def reindex_chunks(
             for idx, item in enumerate(batch)
         ]
         store.upsert(NAMESPACE_CHUNKS, rows)
-        set_many_chunk_embedding_ids(conn, chunk_ids=[row.id for row in rows])
+        set_many_chunk_embedding_ids(
+            conn,
+            chunk_ids=[row.id for row in rows],
+            embedding_text_hashes={item[0]: chunk_text_sha256(item[2]) for item in batch},
+        )
         done += len(rows)
         _write_checkpoint(conn, workspace_id=workspace_id, done=done, total=total)
         if progress_callback is not None:
             progress_callback(done, total)
 
-    # Final row_count = pre-existing + newly added.
-    row_count = len(existing_ids) + done
+    # Re-embedded stale rows are already present in existing_ids. Count the
+    # store after upserts instead of estimating from "pre-existing + done".
+    row_count = store.count(NAMESPACE_CHUNKS, workspace_id=workspace_id)
     upsert_vector_index_metadata(
         conn,
         workspace_id=workspace_id,
@@ -197,17 +243,35 @@ def repair_chunk_embedding_refs(
     placeholders = ",".join("?" for _ in vector_ids)
     rows = conn.execute(
         f"""
-        SELECT id
+        SELECT id, text, metadata_json, embedding_id
         FROM chunks
         WHERE workspace_id = ?
           AND id IN ({placeholders})
-          AND (embedding_id IS NULL OR embedding_id != id)
         ORDER BY id
         """,
         (workspace_id, *vector_ids),
     ).fetchall()
-    chunk_ids = [str(row["id"]) for row in rows]
+    chunk_ids: list[str] = []
+    embedding_text_hashes: dict[str, str] = {}
+    for row in rows:
+        chunk_id = str(row["id"])
+        text_hash = chunk_text_sha256(str(row["text"]))
+        metadata = _metadata_dict(row["metadata_json"])
+        stored_hash = metadata.get(EMBEDDING_TEXT_SHA256_KEY)
+        if metadata.get(EMBEDDING_STALE_REASON_KEY) or (
+            stored_hash is not None and stored_hash != text_hash
+        ):
+            continue
+        if stored_hash is None:
+            continue
+        if row["embedding_id"] is None or row["embedding_id"] != chunk_id:
+            chunk_ids.append(chunk_id)
+            embedding_text_hashes[chunk_id] = text_hash
     if not chunk_ids:
         return 0
-    set_many_chunk_embedding_ids(conn, chunk_ids=chunk_ids)
+    set_many_chunk_embedding_ids(
+        conn,
+        chunk_ids=chunk_ids,
+        embedding_text_hashes=embedding_text_hashes,
+    )
     return len(chunk_ids)

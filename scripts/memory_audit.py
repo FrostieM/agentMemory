@@ -67,7 +67,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--repair-embedding-refs",
         action="store_true",
-        help="Backfill chunks.embedding_id from existing vector row ids without re-embedding.",
+        help=(
+            "Backfill chunks.embedding_id and embedding text hashes from existing vector row ids "
+            "without re-embedding."
+        ),
     )
     parser.add_argument(
         "--backup-first",
@@ -181,6 +184,7 @@ def _repair_plan(
                 "action": "repair_chunk_embedding_refs",
                 "workspace_id": payload.get("workspace_id"),
                 "missing_embedding_ids": details.get("missing_embedding_ids"),
+                "missing_embedding_hashes": details.get("missing_embedding_hashes"),
                 "expected_rows": details.get("chunks"),
                 "current_rows": details.get("vectors"),
             }

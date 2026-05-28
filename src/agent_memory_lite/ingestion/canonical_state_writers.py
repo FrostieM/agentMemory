@@ -5,11 +5,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.ingestion.task_state_writer import write_task_state
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.task_state import TaskStateIn
 from agent_memory_lite.storage.reader import get_object
+from agent_memory_lite.vector_store.base import VectorStore
 
 
 def write_episode_canonical(
@@ -17,8 +20,17 @@ def write_episode_canonical(
     *,
     workspace_id: str,
     payload: dict[str, Any],
+    settings: Settings | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
 ) -> dict[str, Any]:
-    result = ingest_episode(conn, EpisodeIn(**payload))
+    result = ingest_episode(
+        conn,
+        EpisodeIn(**payload),
+        embedding_provider=embedding_provider,
+        vector_store=vector_store,
+        auto_promote_settings=settings,
+    )
     out = get_object(
         conn, workspace_id=workspace_id, kind="episode", object_id=result.episode.id
     ) or {

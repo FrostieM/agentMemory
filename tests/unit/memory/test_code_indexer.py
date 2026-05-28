@@ -1,11 +1,11 @@
-"""Unit tests for v3 code_indexer — chunks + symbol_edges + digest integration.
+"""Unit tests for v3 code_indexer - chunks + symbol_edges + digest integration.
 
 Covers:
 
 * ``index_file`` happy path on a Python source string with calls + imports +
-  class extends → chunks row per top-level symbol, edges inserted,
+  class extends -> chunks row per top-level symbol, edges inserted,
   digest with edge counts.
-* Idempotency: re-indexing unchanged content → skipped_unchanged=True,
+* Idempotency: re-indexing unchanged content -> skipped_unchanged=True,
   no duplicate chunks / edges.
 * ``force=True`` re-indexes even unchanged content (drops + re-creates).
 * Modified content: chunks + edges from prior pass are dropped before
@@ -20,6 +20,8 @@ Covers:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -72,6 +74,15 @@ PY_HELPER = '''"""Helper module — defines compute_fee."""
 def compute_fee(amount: float) -> float:
     """Pure function — target of calls from caller.py."""
     return amount * 0.1
+'''
+
+
+PY_HELPER_CHANGED = '''"""Helper module - defines compute_fee."""
+
+
+def compute_fee(amount: float) -> float:
+    """Pure function - target of calls from caller.py."""
+    return amount * 0.2
 '''
 
 
@@ -198,6 +209,50 @@ def test_index_file_modified_content_replaces_chunks(conn: sqlite3.Connection) -
     assert ids_before.isdisjoint(ids_after)
 
 
+def test_index_file_repairs_legacy_file_id_without_fk_violations(
+    conn: sqlite3.Connection,
+) -> None:
+    legacy_hash = hashlib.sha1(
+        PY_HELPER.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()
+    conn.execute(
+        """INSERT INTO files (id, workspace_id, path, language, content_hash,
+                              size_bytes, last_indexed_at, metadata_json,
+                              is_archived)
+           VALUES ('legacy_file', 'ws', 'src/x.py', 'python', ?, 100,
+                   '2026-01-01T00:00:00Z', ?, 0)""",
+        (legacy_hash, '{"trust_level":"file_ingest"}'),
+    )
+    conn.execute(
+        """INSERT INTO chunks (id, workspace_id, file_id, kind, text, gist,
+                               line_start, line_end, symbols_json, importance,
+                               confidence, is_archived, created_at)
+           VALUES ('legacy_chunk', 'ws', 'legacy_file', 'symbol', 'old', 'old',
+                   1, 1, '[]', 0.5, 0.5, 0, '2026-01-01T00:00:00Z')"""
+    )
+
+    result = index_file(
+        conn,
+        workspace_id="ws",
+        rel_path="src/x.py",
+        content=PY_HELPER,
+        language="python",
+    )
+
+    assert result.error == ""
+    stable_id = _stable_file_id("ws", "src/x.py")
+    file_row = conn.execute(
+        "SELECT id, metadata_json FROM files WHERE workspace_id='ws'"
+    ).fetchone()
+    assert file_row["id"] == stable_id
+    assert json.loads(file_row["metadata_json"]) == {"managed_by": "code_memory_indexer"}
+    assert (
+        conn.execute("SELECT COUNT(*) FROM chunks WHERE file_id='legacy_file'").fetchone()[0] == 0
+    )
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 # ============================================================
 # Cross-file resolver + digest refresh
 # ============================================================
@@ -224,6 +279,68 @@ def test_cross_file_edges_resolved(conn: sqlite3.Connection) -> None:
         """
     ).fetchone()[0]
     assert n_calls >= 1
+
+
+def test_reindexing_callee_preserves_inbound_edges_as_pending(
+    conn: sqlite3.Connection,
+) -> None:
+    index_file(
+        conn, workspace_id="ws", rel_path="src/caller.py", content=PY_CALLER, language="python"
+    )
+    index_file(
+        conn, workspace_id="ws", rel_path="src/helpers.py", content=PY_HELPER, language="python"
+    )
+    resolve_all_pending_edges(conn, workspace_id="ws")
+    before = conn.execute(
+        """
+        SELECT COUNT(*) FROM symbol_edges
+        WHERE workspace_id='ws'
+          AND dst_qualified_name = 'compute_fee'
+          AND dst_chunk_id IS NOT NULL
+        """
+    ).fetchone()[0]
+    assert before >= 1
+    old_helper_chunk_ids = {
+        str(row[0])
+        for row in conn.execute(
+            """
+            SELECT id FROM chunks
+            WHERE workspace_id='ws'
+              AND file_id = ?
+            """,
+            (_stable_file_id("ws", "src/helpers.py"),),
+        ).fetchall()
+    }
+
+    result = index_file(
+        conn,
+        workspace_id="ws",
+        rel_path="src/helpers.py",
+        content=PY_HELPER_CHANGED,
+        language="python",
+    )
+
+    assert result.error == ""
+    resolve_all_pending_edges(conn, workspace_id="ws")
+    after = conn.execute(
+        """
+        SELECT COUNT(*) FROM symbol_edges
+        WHERE workspace_id='ws'
+          AND dst_qualified_name = 'compute_fee'
+          AND dst_chunk_id IS NOT NULL
+        """
+    ).fetchone()[0]
+    assert after >= 1
+    old_refs = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM symbol_edges
+        WHERE workspace_id='ws'
+          AND dst_chunk_id IN ({",".join("?" for _ in old_helper_chunk_ids)})
+        """,
+        tuple(sorted(old_helper_chunk_ids)),
+    ).fetchone()[0]
+    assert old_refs == 0
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_refresh_digest_edge_counts_updates_rows(conn: sqlite3.Connection) -> None:
@@ -270,6 +387,89 @@ def test_index_file_with_broken_sql_returns_error_result(
     )
     assert result.error.startswith("OperationalError:")
     assert result.digest_upserted is False
+
+
+def test_index_file_rolls_back_existing_rows_on_error(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_memory_lite.cognition import code_indexer  # noqa: PLC0415
+
+    content_hash = hashlib.sha1(
+        PY_HELPER.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()
+    conn.execute(
+        """INSERT INTO files (id, workspace_id, path, language, content_hash,
+                              size_bytes, last_indexed_at, is_archived)
+           VALUES ('legacy_file', 'ws', 'src/x.py', 'python', ?, 100,
+                   '2026-01-01T00:00:00Z', 0)""",
+        (content_hash,),
+    )
+    conn.execute(
+        """INSERT INTO chunks (id, workspace_id, file_id, kind, text, gist,
+                               line_start, line_end, symbols_json, importance,
+                               confidence, is_archived, created_at)
+           VALUES ('legacy_chunk', 'ws', 'legacy_file', 'symbol', 'old', 'old',
+                   1, 1, '[]', 0.5, 0.5, 0, '2026-01-01T00:00:00Z')"""
+    )
+
+    def boom(*_a: object, **_kw: object) -> None:
+        raise sqlite3.OperationalError("simulated")
+
+    monkeypatch.setattr(code_indexer, "_upsert_file_row", boom)
+
+    result = index_file(
+        conn,
+        workspace_id="ws",
+        rel_path="src/x.py",
+        content=PY_HELPER,
+        language="python",
+    )
+
+    assert result.error.startswith("OperationalError:")
+    assert conn.execute("SELECT COUNT(*) FROM chunks WHERE id='legacy_chunk'").fetchone()[0] == 1
+    file_row = conn.execute("SELECT id FROM files WHERE path='src/x.py'").fetchone()
+    assert file_row["id"] == "legacy_file"
+
+
+def test_index_file_rebuilds_when_digest_hash_is_stale(conn: sqlite3.Connection) -> None:
+    file_id = _stable_file_id("ws", "src/x.py")
+    content_hash = hashlib.sha1(
+        PY_HELPER.encode("utf-8", errors="replace"),
+        usedforsecurity=False,
+    ).hexdigest()
+    conn.execute(
+        """INSERT INTO files (id, workspace_id, path, language, content_hash,
+                              size_bytes, last_indexed_at, is_archived)
+           VALUES (?, 'ws', 'src/x.py', 'python', ?, 100,
+                   '2026-01-01T00:00:00Z', 0)""",
+        (file_id, content_hash),
+    )
+    conn.execute(
+        """INSERT INTO code_digests (id, workspace_id, file_path, file_sha1,
+                                     language, chunk_count, symbol_count,
+                                     inbound_edge_count, outbound_edge_count,
+                                     purpose_short, top_symbols_json,
+                                     last_indexed_at, updated_at)
+           VALUES ('dig_stale', 'ws', 'src/x.py', '0', 'python',
+                   0, 0, 0, 0, 'old', '[]',
+                   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"""
+    )
+
+    result = index_file(
+        conn,
+        workspace_id="ws",
+        rel_path="src/x.py",
+        content=PY_HELPER,
+        language="python",
+    )
+
+    assert result.skipped_unchanged is False
+    assert result.digest_upserted is True
+    digest_sha = conn.execute("SELECT file_sha1 FROM code_digests WHERE id='dig_stale'").fetchone()[
+        0
+    ]
+    assert digest_sha == content_hash
 
 
 def test_index_file_skips_oversized_extracted_edge(

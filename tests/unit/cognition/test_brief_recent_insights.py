@@ -49,13 +49,15 @@ def _seed_insight(
     status: str = "candidate",
     insight_type: str = "consolidation",
     outcome: float = 0.0,
+    updated_at: str | None = None,
 ) -> None:
+    timestamp = updated_at or iso_now()
     conn.execute(
         """INSERT INTO insights
            (id, workspace_id, insight_type, summary, gist, status, confidence,
             outcome_score, created_at, updated_at)
            VALUES (?, 'ws', ?, ?, ?, ?, 0.6, ?, ?, ?)""",
-        (id_, insight_type, summary, summary[:60], status, outcome, iso_now(), iso_now()),
+        (id_, insight_type, summary, summary[:60], status, outcome, timestamp, timestamp),
     )
     conn.commit()
 
@@ -82,6 +84,46 @@ def test_section_excludes_negative_outcome(conn: sqlite3.Connection) -> None:
     _seed_insight(conn, id_="ins_bad", summary="negative outcome", outcome=-0.5)
     brief = compose_brief(conn, workspace_id="ws")
     assert "## Recent insights" not in brief.body_md
+
+
+def test_section_excludes_low_signal_file_indexed_candidates(conn: sqlite3.Connection) -> None:
+    _seed_insight(conn, id_="ins_noise", summary="file_indexed migrations/0001_init.sql")
+    _seed_insight(conn, id_="ins_noise_plural", summary="tests/e2e files indexed")
+    _seed_insight(
+        conn,
+        id_="ins_noise_folder",
+        summary="tests/e2e folder contains integration tests",
+    )
+    _seed_insight(conn, id_="ins_noise_tests", summary="tests involving memory consolidation")
+    _seed_insight(
+        conn,
+        id_="ins_noise_theme",
+        summary="Recurring theme (2 episodes): accepted, across, acting, activation, addressing, aef2f3",
+    )
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "## Recent insights" not in brief.body_md
+
+
+def test_recent_insights_scan_past_low_signal_candidates(conn: sqlite3.Connection) -> None:
+    _seed_insight(
+        conn,
+        id_="ins_useful",
+        summary="Correction episodes improve hook adoption after restart",
+        updated_at="2026-05-27T00:00:00Z",
+    )
+    for idx in range(60):
+        _seed_insight(
+            conn,
+            id_=f"ins_noise_{idx}",
+            summary=f"file_indexed src/noise_{idx}.py",
+            updated_at=f"2026-05-27T00:01:{idx:02d}Z",
+        )
+
+    brief = compose_brief(conn, workspace_id="ws")
+
+    assert "## Recent insights" in brief.body_md
+    assert "ins_useful" in brief.body_md
+    assert "file_indexed" not in brief.body_md
 
 
 def test_surfacing_stamps_last_surfaced_at(conn: sqlite3.Connection) -> None:

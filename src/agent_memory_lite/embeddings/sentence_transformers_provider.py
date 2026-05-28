@@ -41,14 +41,22 @@ class SentenceTransformersProvider(EmbeddingProvider):
             raise EmbeddingProviderUnavailableError(
                 "sentence-transformers is not installed; install with `pip install -e .`"
             ) from exc
-        # Accepted local-only exception (see config/local_only_guard.py):
-        # if the model is not in the local HF cache this fetches it once
-        # from huggingface.co -- a one-time bootstrap, like `ollama pull`.
-        # Every later load is cache-served with zero network traffic. For
-        # a strictly air-gapped runtime, pre-pull the model and set
-        # HF_HUB_OFFLINE=1.
+        # Local-only contract (config/local_only_guard.py): a model that is
+        # already in the HF cache MUST load with zero network traffic.
+        # ``SentenceTransformer`` WITHOUT ``local_files_only`` pings
+        # huggingface.co on every load to verify the snapshot revision; that
+        # call has NO app-level timeout, so a slow or blocked HF network
+        # stalls the whole write path for minutes (observed as a hung
+        # memory_write). Load cache-only first. Fall back to a networked
+        # fetch ONLY when the model is genuinely absent -- the one-time
+        # bootstrap, like ``ollama pull``. For a strictly air-gapped runtime
+        # the cache-only path needs no extra env flag now.
         try:
-            model = SentenceTransformer(self._model_name)
+            try:
+                model = SentenceTransformer(self._model_name, local_files_only=True)
+            except Exception:
+                # Not cached yet -> one-time networked bootstrap fetch.
+                model = SentenceTransformer(self._model_name)
         except Exception as exc:
             raise EmbeddingProviderUnavailableError(
                 f"failed to load sentence-transformers model {self._model_name!r}: {exc}"

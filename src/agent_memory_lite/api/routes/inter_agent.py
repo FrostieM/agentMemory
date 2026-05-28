@@ -26,6 +26,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.inter_agent import (
     InterAgentBelief,
     export_workspace,
@@ -116,6 +117,7 @@ def import_beliefs_post(
     POST cannot pollute another project's workspace.
     """
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     foreign: list[InterAgentBelief] = [_dto_to_belief(b) for b in body.beliefs]
     n = import_beliefs(
         conn,

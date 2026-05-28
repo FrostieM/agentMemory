@@ -24,6 +24,7 @@ from agent_memory_lite.api.deps import (
     ensure_workspace_readable,
     ensure_workspace_writable,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.repositories.disputes_repo import (
     Dispute,
     get_dispute,
@@ -128,6 +129,7 @@ def propose_dispute_route(
     by strict-isolation."""
     _require_enabled()
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     try:
         dispute_id = insert_dispute(
             conn,
@@ -166,6 +168,7 @@ def resolve_dispute_route(
     if current is None:
         raise HTTPException(status_code=404, detail="dispute not found")
     ensure_workspace_writable(current.workspace_id, settings)
+    ensure_workspace_matches_db(conn, current.workspace_id, settings)
     flipped = resolve_dispute(
         conn,
         dispute_id=body.dispute_id,

@@ -17,6 +17,7 @@ import sqlite3
 from pathlib import Path
 
 from agent_memory_lite.fts.chunks_fts import rebuild_chunks_fts
+from agent_memory_lite.maintenance.code_memory_freshness import code_memory_freshness_check
 from agent_memory_lite.maintenance.integrity_db_checks import (
     sqlite_check,
     stray_db_check,
@@ -43,6 +44,15 @@ from agent_memory_lite.maintenance.integrity_vector import vector_check
 from agent_memory_lite.vector_store.base import VectorStore
 
 __all__ = ["IntegrityCheck", "IntegrityReport", "repair_fts", "run_integrity_audit"]
+
+
+def _project_root_from_db_path(db_path: Path | None) -> Path | None:
+    if db_path is None:
+        return None
+    resolved = db_path.expanduser().resolve()
+    if resolved.name == "memory.db" and resolved.parent.name == ".agent_memory":
+        return resolved.parent.parent
+    return None
 
 
 def run_integrity_audit(
@@ -79,6 +89,14 @@ def run_integrity_audit(
                 vector_store,
                 expected_provider_name=expected_provider_name,
                 expected_vector_backend=expected_vector_backend,
+            ),
+        ),
+        (
+            "code_memory_freshness",
+            lambda: code_memory_freshness_check(
+                conn,
+                workspace_id,
+                project_root=_project_root_from_db_path(db_path_obj),
             ),
         ),
         ("retrieval_roundtrip", lambda: roundtrip_check(conn, workspace_id)),

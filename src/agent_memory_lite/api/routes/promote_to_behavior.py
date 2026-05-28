@@ -15,6 +15,7 @@ from agent_memory_lite.api.schemas.promote_to_behavior import (
     PromoteCandidateToBehaviorRequest,
     PromoteCandidateToBehaviorResponse,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.correction_promotion import (
     CorrectionPromoteInput,
     CorrectionPromotionError,
@@ -41,6 +42,7 @@ def promote_candidate_to_behavior_route(
     conn: DbDep,
 ) -> PromoteCandidateToBehaviorResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     try:
         instruction = promote_correction_to_behavior(
             conn,

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
+from agent_memory_lite.repositories.chunks_repo import (
+    EMBEDDING_STALE_REASON_KEY,
+    EMBEDDING_TEXT_SHA256_KEY,
+)
 from agent_memory_lite.vector_store.reindex import reindex_chunks, repair_chunk_embedding_refs
 
 
@@ -32,11 +37,13 @@ def test_reindex_sets_chunk_embedding_references(
     )
 
     row = applied_conn.execute(
-        "SELECT embedding_id FROM chunks WHERE id = ?",
+        "SELECT embedding_id, metadata_json FROM chunks WHERE id = ?",
         (result.chunk.id,),
     ).fetchone()
     assert total == 1
     assert row["embedding_id"] == result.chunk.id
+    metadata = json.loads(row["metadata_json"])
+    assert isinstance(metadata.get(EMBEDDING_TEXT_SHA256_KEY), str)
 
 
 def test_repair_chunk_embedding_refs_uses_existing_vectors(
@@ -56,7 +63,10 @@ def test_repair_chunk_embedding_refs_uses_existing_vectors(
         vector_store=fake_vector_store,
     )
     assert result.chunk.embedding_id == result.chunk.id
-    applied_conn.execute("UPDATE chunks SET embedding_id = NULL WHERE id = ?", (result.chunk.id,))
+    applied_conn.execute(
+        "UPDATE chunks SET embedding_id = NULL WHERE id = ?",
+        (result.chunk.id,),
+    )
 
     repaired = repair_chunk_embedding_refs(
         applied_conn,
@@ -65,11 +75,174 @@ def test_repair_chunk_embedding_refs_uses_existing_vectors(
     )
 
     row = applied_conn.execute(
-        "SELECT embedding_id FROM chunks WHERE id = ?",
+        "SELECT embedding_id, metadata_json FROM chunks WHERE id = ?",
         (result.chunk.id,),
     ).fetchone()
     assert repaired == 1
     assert row["embedding_id"] == result.chunk.id
+    metadata = json.loads(row["metadata_json"])
+    assert isinstance(metadata.get(EMBEDDING_TEXT_SHA256_KEY), str)
+
+
+def test_repair_chunk_embedding_refs_does_not_stamp_missing_hash(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="missing hash must be reembedded, not stamped",
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    applied_conn.execute(
+        "UPDATE chunks SET embedding_id = NULL, metadata_json = '{}' WHERE id = ?",
+        (result.chunk.id,),
+    )
+
+    repaired = repair_chunk_embedding_refs(
+        applied_conn,
+        workspace_id="default",
+        store=fake_vector_store,
+    )
+    row = applied_conn.execute(
+        "SELECT embedding_id, metadata_json FROM chunks WHERE id = ?",
+        (result.chunk.id,),
+    ).fetchone()
+
+    assert repaired == 0
+    assert row["embedding_id"] is None
+    assert EMBEDDING_TEXT_SHA256_KEY not in json.loads(row["metadata_json"])
+
+
+def test_repair_chunk_embedding_refs_does_not_mask_stale_text_hash(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="stale embedding refs must require reindex",
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    metadata = json.loads(
+        applied_conn.execute(
+            "SELECT metadata_json FROM chunks WHERE id = ?",
+            (result.chunk.id,),
+        ).fetchone()["metadata_json"]
+    )
+    metadata[EMBEDDING_STALE_REASON_KEY] = "test_text_changed"
+    applied_conn.execute(
+        "UPDATE chunks SET text = ?, metadata_json = ? WHERE id = ?",
+        ("changed text should stay stale", json.dumps(metadata), result.chunk.id),
+    )
+
+    repaired = repair_chunk_embedding_refs(
+        applied_conn,
+        workspace_id="default",
+        store=fake_vector_store,
+    )
+    row = applied_conn.execute(
+        "SELECT metadata_json FROM chunks WHERE id = ?",
+        (result.chunk.id,),
+    ).fetchone()
+
+    assert repaired == 0
+    assert json.loads(row["metadata_json"])[EMBEDDING_STALE_REASON_KEY] == "test_text_changed"
+
+
+def test_resume_safe_rebuild_reembeds_missing_hash_existing_vector(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="missing hash existing vector should be reembedded",
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    applied_conn.execute(
+        "UPDATE chunks SET metadata_json = '{}' WHERE id = ?",
+        (result.chunk.id,),
+    )
+
+    done = reindex_chunks(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        resume=True,
+    )
+    row = applied_conn.execute(
+        "SELECT metadata_json FROM chunks WHERE id = ?",
+        (result.chunk.id,),
+    ).fetchone()
+
+    assert done == 1
+    assert isinstance(json.loads(row["metadata_json"]).get(EMBEDDING_TEXT_SHA256_KEY), str)
+
+
+def test_resume_safe_rebuild_reembeds_stale_existing_vector(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="stale existing vector should be reembedded",
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    metadata = json.loads(
+        applied_conn.execute(
+            "SELECT metadata_json FROM chunks WHERE id = ?",
+            (result.chunk.id,),
+        ).fetchone()["metadata_json"]
+    )
+    metadata[EMBEDDING_STALE_REASON_KEY] = "test_text_changed"
+    applied_conn.execute(
+        "UPDATE chunks SET text = ?, metadata_json = ? WHERE id = ?",
+        ("changed text should be reembedded", json.dumps(metadata), result.chunk.id),
+    )
+
+    done = reindex_chunks(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        resume=True,
+    )
+    row = applied_conn.execute(
+        "SELECT metadata_json FROM chunks WHERE id = ?",
+        (result.chunk.id,),
+    ).fetchone()
+    metadata_after = json.loads(row["metadata_json"])
+
+    assert done == 1
+    assert EMBEDDING_STALE_REASON_KEY not in metadata_after
+    assert isinstance(metadata_after.get(EMBEDDING_TEXT_SHA256_KEY), str)
 
 
 # ============================================================

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 
@@ -9,6 +10,9 @@ from agent_memory_lite.models.chunks import Chunk, ChunkIn
 from agent_memory_lite.models.enums import ChunkKind, coerce_enum
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
+
+EMBEDDING_TEXT_SHA256_KEY = "embedding_text_sha256"
+EMBEDDING_STALE_REASON_KEY = "embedding_stale_reason"
 
 
 def _row_label(row: sqlite3.Row) -> str | None:
@@ -104,6 +108,20 @@ def _safe_json_dict(raw: object) -> dict[str, object]:
     return data if isinstance(data, dict) else {}
 
 
+def chunk_text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _metadata_json_with_embedding_hash(raw: object, text_hash: str | None) -> str:
+    metadata = _safe_json_dict(raw)
+    if text_hash is None:
+        metadata.pop(EMBEDDING_TEXT_SHA256_KEY, None)
+    else:
+        metadata[EMBEDDING_TEXT_SHA256_KEY] = text_hash
+        metadata.pop(EMBEDDING_STALE_REASON_KEY, None)
+    return json.dumps(metadata, sort_keys=True)
+
+
 def insert_chunk(
     conn: sqlite3.Connection,
     chunk_in: ChunkIn,
@@ -195,7 +213,24 @@ def set_chunk_embedding_id(
     *,
     chunk_id: str,
     embedding_id: str | None,
+    embedding_text_hash: str | None = None,
 ) -> None:
+    if embedding_text_hash is not None or embedding_id is None:
+        row = conn.execute(
+            "SELECT metadata_json FROM chunks WHERE id = ?",
+            (chunk_id,),
+        ).fetchone()
+        if row is None:
+            return
+        conn.execute(
+            "UPDATE chunks SET embedding_id = ?, metadata_json = ? WHERE id = ?",
+            (
+                embedding_id,
+                _metadata_json_with_embedding_hash(row["metadata_json"], embedding_text_hash),
+                chunk_id,
+            ),
+        )
+        return
     conn.execute(
         "UPDATE chunks SET embedding_id = ? WHERE id = ?",
         (embedding_id, chunk_id),
@@ -206,8 +241,58 @@ def set_many_chunk_embedding_ids(
     conn: sqlite3.Connection,
     *,
     chunk_ids: list[str],
+    embedding_text_hashes: dict[str, str] | None = None,
 ) -> None:
+    if not chunk_ids:
+        return
+    if embedding_text_hashes:
+        rows = conn.execute(
+            f"""
+            SELECT id, metadata_json
+            FROM chunks
+            WHERE id IN ({",".join("?" for _ in chunk_ids)})
+            """,
+            chunk_ids,
+        ).fetchall()
+        conn.executemany(
+            "UPDATE chunks SET embedding_id = ?, metadata_json = ? WHERE id = ?",
+            [
+                (
+                    str(row["id"]),
+                    _metadata_json_with_embedding_hash(
+                        row["metadata_json"],
+                        embedding_text_hashes.get(str(row["id"])),
+                    ),
+                    str(row["id"]),
+                )
+                for row in rows
+            ],
+        )
+        return
     conn.executemany(
         "UPDATE chunks SET embedding_id = ? WHERE id = ?",
         [(chunk_id, chunk_id) for chunk_id in chunk_ids],
+    )
+
+
+def mark_chunk_embedding_stale(
+    conn: sqlite3.Connection,
+    *,
+    chunk_id: str,
+    previous_text: str | None = None,
+    reason: str = "chunk_text_changed",
+) -> None:
+    row = conn.execute(
+        "SELECT metadata_json FROM chunks WHERE id = ?",
+        (chunk_id,),
+    ).fetchone()
+    if row is None:
+        return
+    metadata = _safe_json_dict(row["metadata_json"])
+    if previous_text is not None and EMBEDDING_TEXT_SHA256_KEY not in metadata:
+        metadata[EMBEDDING_TEXT_SHA256_KEY] = chunk_text_sha256(previous_text)
+    metadata[EMBEDDING_STALE_REASON_KEY] = reason
+    conn.execute(
+        "UPDATE chunks SET metadata_json = ? WHERE id = ?",
+        (json.dumps(metadata, sort_keys=True), chunk_id),
     )

@@ -50,10 +50,24 @@ def test_prior_read_alone_does_not_authorize_read() -> None:
     assert out is not None
 
 
-def test_non_read_tool_passes() -> None:
-    """Edit / Write / NotebookEdit / Bash / Glob are handled by other rules."""
-    for name in ("Edit", "Write", "NotebookEdit", "Bash", "Glob"):
+def test_non_target_tool_passes() -> None:
+    """Edit / Write / NotebookEdit / MultiEdit / Bash are handled by other rules."""
+    for name in ("Edit", "Write", "NotebookEdit", "MultiEdit", "Bash"):
         assert detect_read_without_impact_check(name, {"file_path": "x"}, []) is None
+
+
+def test_glob_without_prior_impact_check_blocks() -> None:
+    out = detect_read_without_impact_check("Glob", {"pattern": "**/*.py"}, [])
+    assert out is not None
+    assert "Glob" in out
+    assert "memory_impact_check" in out
+
+
+def test_notebook_read_without_prior_impact_check_blocks() -> None:
+    out = detect_read_without_impact_check("NotebookRead", {"notebook_path": "nb.ipynb"}, [])
+    assert out is not None
+    assert "NotebookRead" in out
+    assert "nb.ipynb" in out
 
 
 def test_missing_target_reports_unknown() -> None:

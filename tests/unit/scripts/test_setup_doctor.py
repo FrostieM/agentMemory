@@ -50,7 +50,7 @@ def tmp_workspace(tmp_path: Path) -> dict:
             ],
             "PreToolUse": [
                 {
-                    "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Bash|mcp__agent-memory-lite__memory_.*",
+                    "matcher": "Read|Edit|Write|MultiEdit|NotebookEdit|NotebookRead|Grep|Glob|Bash|mcp__agent-memory-lite__memory_.*",
                     "hooks": [
                         {
                             "type": "command",

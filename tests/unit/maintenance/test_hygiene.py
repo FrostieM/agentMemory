@@ -18,6 +18,7 @@ from agent_memory_lite.models.enums import EpisodeSource
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.research import ExperimentIn
 from agent_memory_lite.models.theories import TheoryIn
+from agent_memory_lite.utils.time import iso_now
 
 
 def test_hygiene_reports_theory_and_capability_gaps(
@@ -204,3 +205,180 @@ def test_hygiene_suggests_capability_links_for_unlinked_decision(
     )
     assert all(item["target_id"] == decision.id for item in suggestions)
     assert all(item["matched_terms"] for item in suggestions)
+
+
+def test_hygiene_reports_duplicate_active_decisions(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    for body in ("Use the first path.", "Use the second path."):
+        write_decision(
+            applied_conn,
+            DecisionIn(
+                workspace_id="project-a",
+                title="Duplicate architecture decision",
+                decision_text=body,
+                rationale="Seeded duplicate for hygiene test.",
+                importance=0.5,
+            ),
+        )
+
+    report = run_hygiene_report(applied_conn, workspace_id="project-a")
+
+    duplicate = next(
+        finding for finding in report.findings if finding.kind == "duplicate_active_decision"
+    )
+    assert len(duplicate.details["duplicate_ids"]) == 2
+
+
+def test_hygiene_reports_low_signal_insights(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    now = iso_now()
+    for insight_id, summary, gist, status, tags_json in (
+        (
+            "insight_file_indexed_candidate",
+            "file_indexed src/example.py",
+            "",
+            "candidate",
+            "[]",
+        ),
+        (
+            "insight_files_indexed_new",
+            "tests/e2e files indexed",
+            "",
+            "new",
+            "[]",
+        ),
+        (
+            "insight_file_indexed_tagged",
+            "tests/e2e folder contains integration tests",
+            "",
+            "candidate",
+            '["e2e", "file_indexed", "tests"]',
+        ),
+        (
+            "insight_recurring_theme_noise",
+            "Recurring theme (2 episodes): accepted, across, acting, activation, addressing, aef2f3",
+            "",
+            "candidate",
+            '["accepted", "across", "acting", "activation", "addressing", "aef2f3"]',
+        ),
+    ):
+        applied_conn.execute(
+            """
+            INSERT INTO insights (
+                id, workspace_id, insight_type, summary, gist, proposed_action,
+                target_type, target_id, source_episode_ids_json, confidence, status,
+                tags_json, created_at, updated_at, outcome_score
+            ) VALUES (
+                ?, 'project-a', 'consolidation',
+                ?, ?,
+                NULL, 'chunk', 'chk_x', '[]',
+                0.55, ?, ?, ?, ?, 0.0
+            )
+            """,
+            (insight_id, summary, gist, status, tags_json, now, now),
+        )
+    applied_conn.execute(
+        """
+        INSERT INTO insights (
+            id, workspace_id, insight_type, summary, gist, proposed_action,
+            target_type, target_id, source_episode_ids_json, confidence, status,
+            tags_json, created_at, updated_at, outcome_score
+        ) VALUES (
+            'insight_file_indexed_rejected', 'project-a', 'consolidation',
+            'file_indexed rejected placeholder', '',
+            NULL, 'chunk', 'chk_x', '[]',
+            0.55, 'rejected', '[]', ?, ?, 0.0
+        )
+        """,
+        (now, now),
+    )
+
+    report = run_hygiene_report(applied_conn, workspace_id="project-a")
+
+    low_signal_ids = {
+        finding.target_id for finding in report.findings if finding.kind == "low_signal_insight"
+    }
+    assert low_signal_ids == {
+        "insight_file_indexed_candidate",
+        "insight_files_indexed_new",
+        "insight_file_indexed_tagged",
+        "insight_recurring_theme_noise",
+    }
+
+
+def test_hygiene_reports_open_plan_steps_without_open_task(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    now = iso_now()
+    for task_id, status in (("closed_task", "done"), ("open_task", "active")):
+        applied_conn.execute(
+            """
+            INSERT INTO tasks (
+                id, workspace_id, task_id, goal, goal_one_line, status,
+                next_action, updated_at
+            ) VALUES (?, 'project-a', ?, 'Goal', 'Goal one line', ?, 'Next', ?)
+            """,
+            (f"task_{task_id}", task_id, status, now),
+        )
+    for step_id, task_id, status in (
+        ("step_closed_task", "closed_task", "active"),
+        ("step_orphan_task", "missing_task", "pending"),
+        ("step_blocked_closed_task", "closed_task", "blocked"),
+        ("step_open_task", "open_task", "active"),
+    ):
+        applied_conn.execute(
+            """
+            INSERT INTO plan_steps (
+                id, workspace_id, task_id, rank, title, body, status,
+                valid_from, created_at, updated_at
+            ) VALUES (?, 'project-a', ?, 1.0, 'step title', '', ?, ?, ?, ?)
+            """,
+            (step_id, task_id, status, now, now, now),
+        )
+
+    report = run_hygiene_report(applied_conn, workspace_id="project-a")
+
+    stale_step_ids = {
+        finding.target_id for finding in report.findings if finding.kind == "stale_open_plan_step"
+    }
+    assert stale_step_ids == {
+        "step_closed_task",
+        "step_orphan_task",
+        "step_blocked_closed_task",
+    }
+
+
+def test_hygiene_reports_recent_near_duplicate_agent_episodes(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    raw_a = (
+        "Completed roadmap step with encoding repair, memory audit, quality gate, "
+        "mcp smoke, trust dashboard, and full pytest validation."
+    )
+    raw_b = (
+        "Roadmap step completed with encoding repair, memory audit, quality gate, "
+        "mcp smoke, trust dashboard, and full pytest validation plus handoff."
+    )
+    for episode_id, created_at, raw_text in (
+        ("ep_recent_dup_a", "2026-05-27T20:00:00+00:00", raw_a),
+        ("ep_recent_dup_b", "2026-05-27T20:00:05+00:00", raw_b),
+    ):
+        applied_conn.execute(
+            """
+            INSERT INTO episodes (
+                id, workspace_id, task_id, source_type, raw_text, gist,
+                summary, trust_level, importance, confidence, created_at,
+                metadata_json, label, is_archived
+            ) VALUES (
+                ?, 'project-a', 'roadmap', 'agent_action', ?, NULL,
+                NULL, 'agent_observed', 0.5, 1.0, ?, '{}', NULL, 0
+            )
+            """,
+            (episode_id, raw_text, created_at),
+        )
+
+    report = run_hygiene_report(applied_conn, workspace_id="project-a")
+
+    assert any(finding.kind == "recent_duplicate_episode" for finding in report.findings)

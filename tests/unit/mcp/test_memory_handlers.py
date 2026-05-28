@@ -17,9 +17,11 @@ from pathlib import Path
 
 import pytest
 
+from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.mcp import stdio_handlers_memory as v3
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
+from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
 
 @pytest.fixture
@@ -121,6 +123,89 @@ def test_get_unknown_kind_returns_controlled_error(db_conn: sqlite3.Connection) 
     assert env["error"]["code"] == "validation_failed"
 
 
+@pytest.mark.parametrize(
+    ("handler_name", "args"),
+    [
+        (
+            "_handle_v3_write",
+            {
+                "workspace_id": "rogue_unregistered",
+                "kind": "decision",
+                "payload": {"title": "Rogue", "decision_text": "must not persist"},
+            },
+        ),
+        (
+            "_handle_v3_write",
+            {
+                "workspace_id": "rogue_unregistered",
+                "kind": "episode",
+                "payload": {
+                    "source_type": "agent_action",
+                    "raw_text": "valid rogue episode must reject before vector deps",
+                },
+            },
+        ),
+        (
+            "_handle_v3_edit",
+            {
+                "workspace_id": "rogue_unregistered",
+                "kind": "decision",
+                "id": "dec_rogue",
+                "fields": {"status": "superseded"},
+            },
+        ),
+        (
+            "_handle_v3_pin",
+            {
+                "workspace_id": "rogue_unregistered",
+                "kind": "decision",
+                "id": "dec_rogue",
+                "pinned": True,
+            },
+        ),
+        (
+            "_handle_v3_archive",
+            {
+                "workspace_id": "rogue_unregistered",
+                "kind": "decision",
+                "id": "dec_rogue",
+                "reason": "must not persist",
+            },
+        ),
+    ],
+)
+def test_mutation_handlers_reject_unregistered_workspace_before_runtime_deps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    handler_name: str,
+    args: dict[str, object],
+) -> None:
+    relaxed = v3._runtime.settings.model_copy(
+        update={
+            "workspace_id": "anchor",
+            "workspaces_file": tmp_path / "workspaces.json",
+            "strict_workspace_isolation": False,
+            "forbid_default_workspace": False,
+            "hub_mode": True,
+        }
+    )
+    monkeypatch.setattr(v3._runtime, "settings", relaxed)
+
+    def fail_db_for(_workspace_id: str | None) -> sqlite3.Connection:
+        raise AssertionError("unregistered mutation must reject before db_for fallback")
+
+    def fail_dep(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("unregistered mutation must reject before runtime dependencies")
+
+    monkeypatch.setattr(v3._runtime, "db_for", fail_db_for)
+    monkeypatch.setattr(v3._runtime, "provider", fail_dep)
+    monkeypatch.setattr(v3._runtime, "store_for", fail_dep)
+
+    handler = getattr(v3, handler_name)
+    with pytest.raises(ValueError, match="is not registered"):
+        handler(args)
+
+
 # ============================================================
 # Read handlers
 # ============================================================
@@ -195,6 +280,82 @@ def test_write_returns_compact_projection(db_conn: sqlite3.Connection) -> None:
     assert env["data"]["kind"] == "decision"
     assert env["data"]["id"].startswith("dec_")
     assert "decision_text" not in env["data"]  # compact projection
+
+
+def test_write_non_episode_does_not_resolve_runtime_vector_deps(
+    db_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dep(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("non-episode writes must not resolve vector dependencies")
+
+    monkeypatch.setattr(v3._runtime, "provider", fail_dep)
+    monkeypatch.setattr(v3._runtime, "store_for", fail_dep)
+
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "decision",
+            "payload": {
+                "title": "MCP scalar write",
+                "decision_text": "Decision writes should not require embedding dependencies.",
+            },
+        }
+    )
+
+    assert env["ok"] is True, env
+    assert env["data"]["kind"] == "decision"
+    assert env["data"]["title"] == "MCP scalar write"
+
+
+def test_write_invalid_episode_rejects_before_runtime_vector_deps(
+    db_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_dep(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid episode payload must reject before vector dependencies")
+
+    monkeypatch.setattr(v3._runtime, "provider", fail_dep)
+    monkeypatch.setattr(v3._runtime, "store_for", fail_dep)
+
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "episode",
+            "payload": {"raw_text": "missing required source_type"},
+        }
+    )
+
+    assert env["ok"] is False, env
+    assert env["error"]["code"] == "invalid_args"
+
+
+def test_write_episode_embeds_via_runtime_vector_deps(
+    db_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    monkeypatch.setattr(v3._runtime, "provider", lambda: fake_embedding_provider)
+    monkeypatch.setattr(v3._runtime, "store_for", lambda workspace_id: fake_vector_store)
+
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "episode",
+            "payload": {
+                "source_type": "agent_action",
+                "raw_text": "canonical MCP episode should be embedded",
+            },
+        }
+    )
+
+    assert env["ok"] is True, env
+    assert env["data"]["embedded"] is True
+    chunk_id = env["data"]["chunk_id"]
+    assert fake_vector_store.count(NAMESPACE_CHUNKS, workspace_id="default") == 1
+    chunk = db_conn.execute("SELECT embedding_id FROM chunks WHERE id = ?", (chunk_id,)).fetchone()
+    assert chunk["embedding_id"] == chunk_id
 
 
 def test_write_unsupported_kind(db_conn: sqlite3.Connection) -> None:
@@ -404,6 +565,12 @@ def test_search_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Mon
     """
     anchor_path = tmp_path / "anchor.db"
     foreign_path = tmp_path / "foreign.db"
+    workspaces_file = tmp_path / "workspaces.json"
+    WorkspaceRegistry(workspaces_file).register(
+        workspace_id="foreign",
+        db_path=str(foreign_path),
+        vector_path=str(tmp_path / "foreign.lance"),
+    )
     anchor = sqlite3.connect(anchor_path)
     foreign = sqlite3.connect(foreign_path)
     for conn in (anchor, foreign):
@@ -416,6 +583,7 @@ def test_search_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Mon
     relaxed = v3._runtime.settings.model_copy(
         update={
             "workspace_id": "anchor",
+            "workspaces_file": workspaces_file,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
             "hub_mode": True,
@@ -461,6 +629,12 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     """memory_get(workspace_id='foreign', id=X) must hit the foreign DB."""
     anchor_path = tmp_path / "anchor.db"
     foreign_path = tmp_path / "foreign.db"
+    workspaces_file = tmp_path / "workspaces.json"
+    WorkspaceRegistry(workspaces_file).register(
+        workspace_id="foreign",
+        db_path=str(foreign_path),
+        vector_path=str(tmp_path / "foreign.lance"),
+    )
     anchor = sqlite3.connect(anchor_path)
     foreign = sqlite3.connect(foreign_path)
     for conn in (anchor, foreign):
@@ -473,6 +647,7 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     relaxed = v3._runtime.settings.model_copy(
         update={
             "workspace_id": "anchor",
+            "workspaces_file": workspaces_file,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
             "hub_mode": True,

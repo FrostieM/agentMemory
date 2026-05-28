@@ -13,6 +13,7 @@ import sqlite3
 from agent_memory_lite.cognition.brief_models import BriefSection
 from agent_memory_lite.cognition.brief_tokens import fit_to_budget
 from agent_memory_lite.storage.reader import get_object, list_kind
+from agent_memory_lite.utils.insight_filters import is_low_signal_insight
 
 
 def iso_now_for_brief() -> str:
@@ -82,10 +83,10 @@ def _build_recent_insights(
     """Surface top-N recent insight candidates (Phase 3).
 
     Reads ``status='candidate'`` insights with ``outcome_score >= 0``
-    ordered by ``updated_at DESC``. Stamps ``last_surfaced_at`` and
-    ``surface_count`` on the rows it surfaces -- the
-    ``promote_insight_to_behavior`` job uses ``surface_count >= 2`` as
-    the auto-promotion gate.
+    ordered by ``updated_at DESC``. Low-signal file-indexing placeholders
+    are skipped before surfacing. Stamps ``last_surfaced_at`` and
+    ``surface_count`` on the rows it surfaces -- the promotion job uses
+    ``surface_count >= 2`` as the auto-promotion gate.
     """
     try:
         from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
@@ -97,22 +98,26 @@ def _build_recent_insights(
     try:
         rows = conn.execute(
             """
-            SELECT id, insight_type, summary, gist, confidence
+            SELECT id, insight_type, summary, gist, tags_json, confidence
               FROM insights
              WHERE workspace_id = ? AND status = 'candidate'
                AND COALESCE(outcome_score, 0.0) >= 0
              ORDER BY updated_at DESC
-             LIMIT ?
             """,
-            (workspace_id, limit),
+            (workspace_id,),
         ).fetchall()
     except sqlite3.OperationalError:
         return BriefSection(name="recent_insights", budget=budget, lines=[])
-    if not rows:
+    useful_rows = [
+        row
+        for row in rows
+        if not is_low_signal_insight(row["summary"], row["gist"], row["tags_json"])
+    ][:limit]
+    if not useful_rows:
         return BriefSection(name="recent_insights", budget=budget, lines=[])
     lines = ["## Recent insights"]
     surfaced_ids: list[str] = []
-    for row in rows:
+    for row in useful_rows:
         text = (row["gist"] or row["summary"] or "?")[:120]
         kind = row["insight_type"] or "insight"
         confidence = float(row["confidence"] or 0.0)

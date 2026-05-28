@@ -33,7 +33,11 @@ from agent_memory_lite.models.enums import MaintenanceSeverity
 from agent_memory_lite.models.episodes import Episode, EpisodeIn
 from agent_memory_lite.models.maintenance import MaintenanceEventIn
 from agent_memory_lite.redaction import redact
-from agent_memory_lite.repositories.chunks_repo import get_chunk, set_chunk_embedding_id
+from agent_memory_lite.repositories.chunks_repo import (
+    chunk_text_sha256,
+    get_chunk,
+    set_chunk_embedding_id,
+)
 from agent_memory_lite.repositories.episodes_repo import get_episode
 from agent_memory_lite.repositories.vector_metadata_repo import upsert_vector_index_metadata
 from agent_memory_lite.vector_store.base import VectorStore
@@ -181,7 +185,12 @@ def ingest_episode(
     if embedding_provider is not None and vector_store is not None:
         embedded = embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
         if embedded:
-            set_chunk_embedding_id(conn, chunk_id=chunk.id, embedding_id=chunk.id)
+            set_chunk_embedding_id(
+                conn,
+                chunk_id=chunk.id,
+                embedding_id=chunk.id,
+                embedding_text_hash=chunk_text_sha256(redacted.text),
+            )
             upsert_vector_index_metadata(
                 conn,
                 workspace_id=chunk.workspace_id,

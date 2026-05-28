@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+
+import numpy as np
 
 from agent_memory_lite.ingestion.capability_link_writer import link_capability
 from agent_memory_lite.ingestion.capability_writer import upsert_agent_skill
@@ -18,7 +21,9 @@ from agent_memory_lite.models.enums import (
 )
 from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.models.theories import TheoryIn
+from agent_memory_lite.repositories.chunks_repo import EMBEDDING_TEXT_SHA256_KEY
 from agent_memory_lite.repositories.workspace_manifest_repo import ensure_workspace_manifest
+from agent_memory_lite.vector_store.base import VectorRow
 
 
 def _episode(text: str, *, workspace_id: str = "project-a") -> EpisodeIn:
@@ -82,6 +87,38 @@ def test_integrity_detects_vector_missing(
     assert "vector" in report.failures
 
 
+def test_integrity_recommends_force_rebuild_for_extra_vectors(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    ingest_episode(
+        applied_conn,
+        _episode("vector extra control token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    fake_vector_store.upsert(
+        "chunks",
+        [
+            VectorRow(
+                id="chk_extra",
+                workspace_id="project-a",
+                vector=np.zeros(fake_embedding_provider.dim, dtype=np.float32),
+            )
+        ],
+    )
+
+    report = run_integrity_audit(
+        applied_conn,
+        workspace_id="project-a",
+        vector_store=fake_vector_store,
+    )
+
+    assert report.checks["vector"].details["extra"] == 1
+    assert any("--rebuild-vectors-force --backup-first" in hint for hint in report.repair_hints)
+
+
 def test_integrity_warns_when_vector_reference_missing(
     applied_conn: sqlite3.Connection,
     fake_embedding_provider,
@@ -111,6 +148,62 @@ def test_integrity_warns_when_vector_reference_missing(
     assert report.checks["vector"].details["missing_embedding_ids"] == 1
 
 
+def test_integrity_warns_when_embedding_text_hash_missing(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        _episode("vector hash missing control token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    applied_conn.execute(
+        "UPDATE chunks SET metadata_json = '{}' WHERE id = ?",
+        (result.chunk.id,),
+    )
+
+    report = run_integrity_audit(
+        applied_conn,
+        workspace_id="project-a",
+        vector_store=fake_vector_store,
+    )
+
+    assert report.status == "warning"
+    assert report.checks["vector"].status == "warning"
+    assert report.checks["vector"].details["missing_embedding_hashes"] == 1
+    assert report.checks["vector"].details["stale_embedding_hashes"] == 0
+
+
+def test_integrity_detects_stale_embedding_text_hash(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        _episode("vector hash stale control token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    applied_conn.execute(
+        "UPDATE chunks SET text = ? WHERE id = ?",
+        ("vector hash changed after embedding", result.chunk.id),
+    )
+
+    report = run_integrity_audit(
+        applied_conn,
+        workspace_id="project-a",
+        vector_store=fake_vector_store,
+    )
+
+    assert report.status == "degraded"
+    assert report.checks["vector"].status == "degraded"
+    assert report.checks["vector"].details["stale_embedding_hashes"] == 1
+    assert result.chunk.id in report.checks["vector"].details["stale_embedding_hash_ids_sample"]
+
+
 def test_integrity_detects_stale_vector_metadata(
     applied_conn: sqlite3.Connection,
     fake_embedding_provider,
@@ -137,6 +230,28 @@ def test_integrity_detects_stale_vector_metadata(
         report.checks["vector"].details["metadata"]["mismatches"]["provider_name"]["actual"]
         == "fake:test-64"
     )
+
+
+def test_ingest_episode_records_embedding_text_hash(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    result = ingest_episode(
+        applied_conn,
+        _episode("vector hash persisted control token"),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+
+    row = applied_conn.execute(
+        "SELECT metadata_json FROM chunks WHERE id = ?",
+        (result.chunk.id,),
+    ).fetchone()
+    metadata = json.loads(row["metadata_json"])
+
+    assert isinstance(metadata.get(EMBEDDING_TEXT_SHA256_KEY), str)
+    assert len(metadata[EMBEDDING_TEXT_SHA256_KEY]) == 64
 
 
 def test_integrity_detects_default_workspace_pollution(

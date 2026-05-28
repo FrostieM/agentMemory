@@ -19,9 +19,10 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.config.workspace_paths import (
     ResolvedWorkspacePaths,
     _connection_db_path,
-    _expected_db_path,
+    _connections_match,
     connection_matches_workspace,
     resolve_workspace_paths,
+    workspace_db_path,
 )
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "connection_matches_workspace",
     "ensure_workspace_matches_db",
     "resolve_workspace_paths",
+    "workspace_db_path",
 ]
 
 
@@ -52,16 +54,23 @@ def ensure_workspace_matches_db(
     ``workspace_id`` (see ``connection_matches_workspace``) and raises
     before any row is written when they are different files.
 
-    No-op when the expected DB cannot be determined: an unregistered
-    workspace, or one the registry co-locates in the anchor DB, or an
-    in-memory connection with no physical file. Registry *integrity*
-    (a workspace pointed at the wrong DB) is ``memory_audit``'s domain,
-    not this routing guard's.
+    No-op only for an in-memory connection with no physical file.
+    Unregistered non-anchor workspaces are rejected: allowing them to
+    fall through would write arbitrary workspace_id rows into the anchor
+    or an explicitly routed DB.
     """
-    if connection_matches_workspace(conn, workspace_id, settings):
-        return
-    expected = _expected_db_path(workspace_id, settings)
     actual = _connection_db_path(conn)
+    if not actual:
+        return
+    expected = workspace_db_path(workspace_id, settings)
+    if expected is None:
+        raise ValidationError(
+            f"workspace_id={workspace_id!r} is not registered and is not the "
+            f"anchor workspace {settings.workspace_id!r}. Register the workspace "
+            "before writing to prevent cross-workspace pollution."
+        )
+    if _connections_match(actual, expected):
+        return
     raise ValidationError(
         f"workspace_id={workspace_id!r} routed to the wrong database: the "
         f"write reached {actual!r} but this workspace's registered DB is "

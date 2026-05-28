@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent_memory_lite.api.routes import memory as v3_routes
+from agent_memory_lite.config.settings import get_settings
 
 
 @pytest.fixture
@@ -44,8 +45,19 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     from agent_memory_lite.api import deps as real_deps  # noqa: PLC0415 — fixture-local
 
     app = FastAPI()
+    settings = get_settings().model_copy(
+        update={
+            "workspace_id": "default",
+            "db_path": db_path,
+            "vector_db_path": tmp_path / "vectors.lance",
+            "hub_mode": False,
+            "strict_workspace_isolation": False,
+            "forbid_default_workspace": False,
+        }
+    )
 
     # FastAPI handles generator-style dep correctly (closes on response done).
+    app.dependency_overrides[real_deps.get_settings_dep] = lambda: settings
     app.dependency_overrides[real_deps.get_db_dep] = _get_db_gen
     app.include_router(v3_routes.router)
     with TestClient(app) as c:

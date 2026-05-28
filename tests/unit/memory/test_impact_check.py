@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_memory_lite.cognition.codebase_scan import source_file_sha1
 from agent_memory_lite.cognition.impact_check import (
     ImpactReport,
     _compute_verdict,
@@ -113,6 +114,7 @@ def _seed_digest(
     file_path: str,
     inbound_edge_count: int = 0,
     indexed_minutes_ago: int = 0,
+    file_sha1: str | None = None,
     workspace_id: str = "ws",
 ) -> None:
     ts = _now_iso(-indexed_minutes_ago * 60)
@@ -128,7 +130,7 @@ def _seed_digest(
             digest_id,
             workspace_id,
             file_path,
-            "abc" * 13 + "a",
+            file_sha1 if file_sha1 is not None else ("abc" * 13 + "a"),
             inbound_edge_count,
             ts,
             ts,
@@ -315,6 +317,80 @@ def test_stale_digest_prepends_warning(conn: sqlite3.Connection) -> None:
     assert report.verdict == "low"
     assert report.advisory.startswith("[stale digest")
     assert report.digest["is_stale"] is True
+
+
+def test_old_digest_is_not_stale_when_file_sha_matches(
+    conn: sqlite3.Connection, tmp_path: Path
+) -> None:
+    project_root = tmp_path / "repo"
+    file_path = project_root / "src" / "fresh.py"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text("def fresh():\n    return 1\n", encoding="utf-8")
+    _seed_digest(
+        conn,
+        digest_id="d_fresh",
+        file_path="src/fresh.py",
+        indexed_minutes_ago=180,
+        file_sha1=source_file_sha1(file_path),
+    )
+
+    report = impact_check(
+        conn,
+        workspace_id="ws",
+        file_path="src/fresh.py",
+        project_root=project_root,
+    )
+
+    assert report.digest["is_stale"] is False
+    assert not report.advisory.startswith("[stale digest")
+
+
+def test_digest_is_stale_when_file_sha_differs(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    file_path = project_root / "src" / "changed.py"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text("def changed():\n    return 2\n", encoding="utf-8")
+    _seed_digest(
+        conn,
+        digest_id="d_changed",
+        file_path="src/changed.py",
+        file_sha1="0" * 40,
+    )
+
+    report = impact_check(
+        conn,
+        workspace_id="ws",
+        file_path="src/changed.py",
+        project_root=project_root,
+    )
+
+    assert report.digest["is_stale"] is True
+    assert report.digest["stale_reason"] == "sha_mismatch"
+    assert "file_sha1 differs" in report.advisory
+
+
+def test_digest_is_stale_when_file_sha_missing(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    project_root = tmp_path / "repo"
+    file_path = project_root / "src" / "missing_hash.py"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_text("def missing_hash():\n    return 3\n", encoding="utf-8")
+    _seed_digest(
+        conn,
+        digest_id="d_missing_hash",
+        file_path="src/missing_hash.py",
+        file_sha1="",
+    )
+
+    report = impact_check(
+        conn,
+        workspace_id="ws",
+        file_path="src/missing_hash.py",
+        project_root=project_root,
+    )
+
+    assert report.digest["is_stale"] is True
+    assert report.digest["stale_reason"] == "missing_file_sha1"
+    assert "file_sha1 missing" in report.advisory
 
 
 def test_callers_capped_at_limit(conn: sqlite3.Connection) -> None:

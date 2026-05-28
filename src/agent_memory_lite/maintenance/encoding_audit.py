@@ -9,6 +9,7 @@ from agent_memory_lite.maintenance.encoding_audit_models import (
     EncodingFinding,
 )
 from agent_memory_lite.maintenance.integrity import repair_fts
+from agent_memory_lite.repositories.chunks_repo import mark_chunk_embedding_stale
 from agent_memory_lite.utils.text_encoding import repair_common_mojibake
 
 # Re-export so callers can keep `from ...encoding_audit import EncodingFinding`.
@@ -115,6 +116,13 @@ def run_encoding_audit(  # noqa: PLR0912
                         (repaired, row["id"], workspace_id),
                     )
                     repaired_cells += 1
+                    if table == "chunks" and column == "text":
+                        mark_chunk_embedding_stale(
+                            conn,
+                            chunk_id=str(row["id"]),
+                            previous_text=value,
+                            reason="encoding_repair_changed_chunk_text",
+                        )
                     chunks_repaired = chunks_repaired or table == "chunks"
                 if len(findings) >= limit and not repair:
                     break

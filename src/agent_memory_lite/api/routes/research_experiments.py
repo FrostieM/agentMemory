@@ -16,6 +16,7 @@ from agent_memory_lite.api.schemas.research import (
     WriteExperimentRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.ingestion.research_writer import (
     add_experiment_result,
     write_experiment,
@@ -32,6 +33,7 @@ def write_experiment_route(
     settings: SettingsDep,
 ) -> ExperimentResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/write_experiment",
@@ -81,6 +83,7 @@ def add_experiment_result_route(
     settings: SettingsDep,
 ) -> ExperimentResultResponse:
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=body.workspace_id,
         endpoint="/memory/add_experiment_result",

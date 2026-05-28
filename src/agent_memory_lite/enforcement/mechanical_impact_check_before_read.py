@@ -24,7 +24,7 @@ from agent_memory_lite.enforcement.session_trail import has_called
 
 RULE_TAG = "mechanical:impact-check-before-read"
 
-_TARGET_TOOLS = frozenset({"Read", "Grep"})
+_TARGET_TOOLS = frozenset({"Read", "Grep", "Glob", "NotebookRead"})
 _PRIOR_TOOLS = ("memory_impact_check",)
 
 
@@ -49,6 +49,7 @@ def detect_read_without_impact_check(
         return None
     target = (
         tool_input.get("file_path")
+        or tool_input.get("notebook_path")
         or tool_input.get("path")
         or tool_input.get("pattern")
         or "(unknown)"

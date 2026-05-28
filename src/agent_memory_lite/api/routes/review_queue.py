@@ -24,6 +24,7 @@ from agent_memory_lite.api.schemas.review_queue import (
     ReviewQueueRequest,
     ReviewQueueResponse,
 )
+from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.maintenance.compact_trigger import check_compaction_threshold
 from agent_memory_lite.maintenance.review_queue import build_review_queue
 
@@ -68,6 +69,7 @@ def compact_trigger_route(
     # strict project chat must not insert events into a foreign
     # workspace. (The MCP twin _handle_compact_trigger guards the same.)
     ensure_workspace_writable(body.workspace_id, settings)
+    ensure_workspace_matches_db(conn, body.workspace_id, settings)
     result = check_compaction_threshold(
         conn,
         workspace_id=body.workspace_id,

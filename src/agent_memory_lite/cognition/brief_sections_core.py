@@ -8,6 +8,7 @@ compose_brief redistribute the freed budget to denser sections.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from agent_memory_lite.cognition.brief_models import BriefSection
@@ -18,6 +19,55 @@ from agent_memory_lite.storage.reader import count_kind, list_kind
 # abridged version so workspace overview + discipline reminder still fit
 # in the identity-section budget (~90 tokens at the default 500 budget).
 _SELF_MODEL_BRIEF_WORDS = 40
+_OPEN_TASK_STATUSES = ("active", "in_progress")
+
+
+def _blockers_count_from_json(value: object) -> int:
+    if not isinstance(value, str) or not value.strip():
+        return 0
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return 0
+    return len(parsed) if isinstance(parsed, list) else 0
+
+
+def _count_open_tasks(conn: sqlite3.Connection, workspace_id: str) -> int:
+    try:
+        return int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM tasks
+                WHERE workspace_id = ? AND status IN ('active', 'in_progress')
+                """,
+                (workspace_id,),
+            ).fetchone()[0]
+        )
+    except sqlite3.OperationalError:
+        return 0
+
+
+def _open_task_rows(
+    conn: sqlite3.Connection, workspace_id: str, *, limit: int
+) -> list[dict[str, object]]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM tasks
+            WHERE workspace_id = ? AND status IN ('active', 'in_progress')
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (workspace_id, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out: list[dict[str, object]] = []
+    for row in rows:
+        item = dict(row)
+        item["blockers_count"] = _blockers_count_from_json(item.get("blockers_json"))
+        out.append(item)
+    return out
 
 
 def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
@@ -66,11 +116,11 @@ def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) ->
         conn, workspace_id=workspace_id, kind="behavior", pinned_only=True
     )
     code_count = count_kind(conn, workspace_id=workspace_id, kind="code_digest")
-    open_tasks = count_kind(conn, workspace_id=workspace_id, kind="task", status="in_progress")
+    open_tasks = _count_open_tasks(conn, workspace_id)
     lines.append(
         f"Workspace overview: {pinned_decisions} pinned decisions, "
         f"{pinned_behaviors} pinned behaviors, {code_count} code digests, "
-        f"{open_tasks} in-progress tasks."
+        f"{open_tasks} open tasks."
     )
     # Discipline reminder — only fires when there are code digests to
     # leverage. Empty workspaces skip the line (it would be noise).
@@ -123,7 +173,7 @@ def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> Br
     sections (identity / behaviors / decisions / aging_decisions) get a
     proportional bonus + re-render with bigger caps.
     """
-    rows = list_kind(conn, workspace_id=workspace_id, kind="task", limit=3)
+    rows = _open_task_rows(conn, workspace_id, limit=3)
     if not rows:
         return BriefSection(name="state", budget=budget, lines=[])
     lines = ["## State"]
@@ -136,7 +186,10 @@ def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> Br
             f"- task {t.get('task_id', '?')} [{status}]: {goal} "
             f"→ next: {next_action} (blockers: {blockers})"
         )
-    return BriefSection(name="state", budget=budget, lines=fit_to_budget(lines, budget))
+    fitted = fit_to_budget(lines, budget)
+    if not any(line.startswith("- task ") for line in fitted):
+        return BriefSection(name="state", budget=budget, lines=[])
+    return BriefSection(name="state", budget=budget, lines=fitted)
 
 
 def _build_code_hubs(

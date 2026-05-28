@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_memory_lite.cognition.codebase_scan import source_file_sha1
+
 
 @dataclass(frozen=True, slots=True)
 class CallerEdge:
@@ -169,6 +171,17 @@ def _load_digest(
             top_symbols = json.loads(raw_syms)
     except (TypeError, ValueError):
         top_symbols = []
+    current_sha1 = _current_file_sha1(project_root, str(row[0])) if project_root else None
+    stored_sha1 = str(row[1] or "")
+    if current_sha1 is not None and stored_sha1:
+        is_stale = stored_sha1 != current_sha1
+        stale_reason = "sha_mismatch" if is_stale else ""
+    elif current_sha1 is not None:
+        is_stale = True
+        stale_reason = "missing_file_sha1"
+    else:
+        is_stale = _is_stale(row[11])
+        stale_reason = "last_indexed_at_old" if is_stale else ""
     digest: dict[str, Any] = {
         "file_path": row[0],
         "file_sha1": row[1],
@@ -182,11 +195,9 @@ def _load_digest(
         "top_symbols": top_symbols,
         "last_indexed_at": row[11] or "",
     }
-    # Staleness flag: if file_sha1 disagrees with the on-disk SHA the agent
-    # cannot compute (we don't read FS here), but `is_stale` says "trust
-    # this digest only if last_indexed_at is recent".  Threshold 2h matches
-    # the acceptance gate's `newest_age_minutes` target.
-    digest["is_stale"] = _is_stale(row[11])
+    digest["is_stale"] = is_stale
+    if stale_reason:
+        digest["stale_reason"] = stale_reason
     return digest
 
 
@@ -250,15 +261,32 @@ def _path_candidates(file_path: str, *, project_root: Path | None) -> list[str]:
 
 
 def _stored_path_exists(project_root: Path, stored_path: str) -> bool:
+    return _stored_path_to_fs(project_root, stored_path) is not None
+
+
+def _stored_path_to_fs(project_root: Path, stored_path: str) -> Path | None:
     path = Path(stored_path)
     if path.is_absolute():
-        return path.exists()
+        return path if path.exists() else None
     normalized = _norm_path(stored_path)
-    if (project_root / normalized).exists():
-        return True
+    direct = project_root / normalized
+    if direct.exists():
+        return direct
     if not normalized.startswith("src/"):
-        return (project_root / "src" / "agent_memory_lite" / normalized).exists()
-    return False
+        package_path = project_root / "src" / "agent_memory_lite" / normalized
+        if package_path.exists():
+            return package_path
+    return None
+
+
+def _current_file_sha1(project_root: Path, stored_path: str) -> str | None:
+    path = _stored_path_to_fs(project_root, stored_path)
+    if path is None:
+        return None
+    try:
+        return source_file_sha1(path)
+    except OSError:
+        return None
 
 
 def _is_stale(last_indexed_at: str | None, threshold_minutes: int = 120) -> bool:
@@ -415,9 +443,21 @@ def impact_check(
     )
     advisory = _ADVISORY_BY_VERDICT.get(verdict, "")
     if digest.get("is_stale"):
-        advisory = (
-            "[stale digest — last_indexed_at older than 2h; rerun PostToolUse hook] " + advisory
-        )
+        stale_reason = digest.get("stale_reason")
+        if stale_reason == "sha_mismatch":
+            advisory = (
+                "[stale digest — file_sha1 differs from on-disk content; "
+                "rerun PostToolUse hook] " + advisory
+            )
+        elif stale_reason == "missing_file_sha1":
+            advisory = (
+                "[stale digest - file_sha1 missing for on-disk content; "
+                "rerun PostToolUse hook] " + advisory
+            )
+        else:
+            advisory = (
+                "[stale digest — last_indexed_at older than 2h; rerun PostToolUse hook] " + advisory
+            )
     return ImpactReport(
         file_path=resolved_file_path,
         digest=digest,

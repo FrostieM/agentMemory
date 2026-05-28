@@ -13,6 +13,7 @@ import sqlite3
 from typing import Any
 
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.ingestion.canonical_domain_writers import (
     write_behavior_canonical,
     write_decision_canonical,
@@ -24,6 +25,7 @@ from agent_memory_lite.ingestion.canonical_state_writers import (
 )
 from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.storage.writer import write as storage_write
+from agent_memory_lite.vector_store.base import VectorStore
 
 
 def write_canonical(
@@ -35,6 +37,8 @@ def write_canonical(
     agent_id: str = "agent",
     source_episode_id: str | None = None,
     settings: Settings | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
 ) -> dict[str, Any] | None:
     """Write one v3 object and return the compact projection.
 
@@ -65,7 +69,14 @@ def write_canonical(
     elif kind == "behavior":
         result = write_behavior_canonical(conn, workspace_id=workspace_id, payload=body)
     elif kind == "episode":
-        result = write_episode_canonical(conn, workspace_id=workspace_id, payload=body)
+        result = write_episode_canonical(
+            conn,
+            workspace_id=workspace_id,
+            payload=body,
+            settings=settings,
+            embedding_provider=embedding_provider,
+            vector_store=vector_store,
+        )
     elif kind == "task":
         result = write_task_canonical(conn, workspace_id=workspace_id, payload=body)
     else:

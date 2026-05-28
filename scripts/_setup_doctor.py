@@ -26,6 +26,18 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Ensure the project's src/ is on sys.path so the canonical hook constants
+# can be imported even when this module is loaded from scripts/.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_ROOT = _REPO_ROOT / "src"
+for _path in (_SRC_ROOT, _REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
+from agent_memory_lite.bootstrap.claude_pre_tool_use_hook import (  # noqa: E402
+    HOOK_MATCHERS,
+)
+
 # Scripts the operator's hooks may legitimately reference. Anything outside
 # this allowlist is reported as deprecated/unknown — the operator should
 # either update the override or remove it so the global hook config wins.
@@ -65,18 +77,10 @@ _EXPECTED_PRETOOLUSE_RULES = frozenset(
         "pretooluse:no-magic-number-in-strategy",
     }
 )
-_REQUIRED_PRETOOLUSE_MATCHERS = frozenset(
-    {
-        "Read",
-        "Edit",
-        "Write",
-        "MultiEdit",
-        "NotebookEdit",
-        "Grep",
-        "Bash",
-        "mcp__agent-memory-lite__memory_.*",
-    }
-)
+# Drift guard: this set is derived from the canonical HOOK_MATCHERS tuple
+# in bootstrap.claude_pre_tool_use_hook so the doctor cannot fall behind
+# when new tools (e.g. Glob, NotebookRead) are added to the hook.
+_REQUIRED_PRETOOLUSE_MATCHERS = frozenset(HOOK_MATCHERS)
 
 
 @dataclass

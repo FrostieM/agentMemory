@@ -20,8 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_memory_lite.mcp import stdio_runtime
+from agent_memory_lite.mcp import stdio_guards, stdio_runtime
+from agent_memory_lite.mcp import stdio_handlers_memory as v3_handlers
 from agent_memory_lite.mcp.stdio_runtime import _Runtime, _runtime, reset_unresolved_warned
+from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
 
 
 def _seed_workspace_db(db_path: Path, *, workspace_id: str) -> None:
@@ -173,6 +175,158 @@ def test_db_for_caches_connection_per_path(
         conn_a = rt.db_for("beta")
         conn_b = rt.db_for("beta")
         assert conn_a is conn_b
+    finally:
+        rt.close()
+
+
+def test_store_for_routes_registered_workspace_vector_path(
+    two_workspace_registry: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_vector_store,
+) -> None:
+    registry_path, alpha_db, _ = two_workspace_registry
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    beta_vec = Path(registry["workspaces"][1]["vector_path"]).resolve()
+    rt = _make_runtime(registry_path, anchor_db=alpha_db)
+    built_paths: list[Path] = []
+
+    def fake_get_vector_store(settings):
+        built_paths.append(settings.vector_db_path)
+        return fake_vector_store
+
+    monkeypatch.setattr(stdio_runtime, "get_vector_store", fake_get_vector_store)
+
+    try:
+        store = rt.store_for("beta")
+        assert store is fake_vector_store
+        assert built_paths == [beta_vec]
+        assert rt.store_for("beta") is store
+        assert built_paths == [beta_vec]
+    finally:
+        rt.close()
+
+
+def test_runtime_close_closes_registered_workspace_vector_stores(
+    two_workspace_registry: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_vector_store,
+) -> None:
+    registry_path, alpha_db, _ = two_workspace_registry
+    rt = _make_runtime(registry_path, anchor_db=alpha_db)
+    closed: list[object] = []
+
+    class ClosableFakeStore(type(fake_vector_store)):
+        def close(self) -> None:
+            closed.append(self)
+
+    store = ClosableFakeStore()
+    monkeypatch.setattr(stdio_runtime, "get_vector_store", lambda _settings: store)
+
+    rt.store_for("beta")
+    rt.close()
+
+    assert closed == [store]
+    assert rt._stores_by_path == {}
+
+
+def test_mcp_write_episode_routes_db_and_vector_via_registry(
+    two_workspace_registry: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    registry_path, alpha_db, beta_db = two_workspace_registry
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    alpha_vec = Path(registry["workspaces"][0]["vector_path"]).resolve()
+    beta_vec = Path(registry["workspaces"][1]["vector_path"]).resolve()
+    rt = _make_runtime(registry_path, anchor_db=alpha_db)
+    alpha_store = fake_vector_store
+    beta_store = type(fake_vector_store)()
+    stores = {alpha_vec: alpha_store, beta_vec: beta_store}
+    built_paths: list[Path] = []
+
+    def fake_get_vector_store(settings):
+        path = settings.vector_db_path.resolve()
+        built_paths.append(path)
+        return stores[path]
+
+    monkeypatch.setattr(stdio_runtime, "get_vector_store", fake_get_vector_store)
+    monkeypatch.setattr(v3_handlers, "_runtime", rt)
+    monkeypatch.setattr(stdio_guards, "_runtime", rt)
+    monkeypatch.setattr(rt, "provider", lambda: fake_embedding_provider)
+    reset_unresolved_warned()
+    try:
+        env = v3_handlers._handle_v3_write(
+            {
+                "workspace_id": "beta",
+                "kind": "episode",
+                "payload": {
+                    "source_type": "agent_action",
+                    "raw_text": "MCP write must route DB and vectors through registry",
+                },
+            }
+        )
+        assert env["ok"] is True, env
+        assert env["data"]["embedded"] is True
+        assert built_paths == [beta_vec]
+        assert beta_store.count(NAMESPACE_CHUNKS, workspace_id="beta") == 1
+        assert alpha_store.count(NAMESPACE_CHUNKS, workspace_id="beta") == 0
+
+        beta_direct = sqlite3.connect(beta_db)
+        beta_direct.row_factory = sqlite3.Row
+        try:
+            chunk = beta_direct.execute(
+                "SELECT embedding_id FROM chunks WHERE id = ?",
+                (env["data"]["chunk_id"],),
+            ).fetchone()
+            assert chunk is not None
+            assert chunk["embedding_id"] == env["data"]["chunk_id"]
+        finally:
+            beta_direct.close()
+    finally:
+        rt.close()
+        reset_unresolved_warned()
+
+
+def test_mcp_store_for_anchor_db_uses_anchor_vector_even_if_registry_vector_differs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_vector_store,
+) -> None:
+    anchor_db = tmp_path / "anchor" / "memory.db"
+    foreign_vec = tmp_path / "foreign" / "vectors.lance"
+    _seed_workspace_db(anchor_db, workspace_id="alpha")
+    registry_path = tmp_path / "workspaces.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "workspaces": [
+                    {
+                        "id": "alias",
+                        "db_path": str(anchor_db),
+                        "vector_path": str(foreign_vec),
+                        "label": "alias-to-anchor-db",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rt = _make_runtime(registry_path, anchor_db=anchor_db)
+    anchor_store = fake_vector_store
+    built_paths: list[Path] = []
+
+    def fake_get_vector_store(settings):
+        built_paths.append(settings.vector_db_path.resolve())
+        return anchor_store
+
+    monkeypatch.setattr(stdio_runtime, "get_vector_store", fake_get_vector_store)
+
+    try:
+        store = rt.store_for("alias")
+        assert store is anchor_store
+        assert built_paths == [rt.settings.vector_db_path.resolve()]
     finally:
         rt.close()
 

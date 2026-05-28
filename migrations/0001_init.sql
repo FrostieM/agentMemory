@@ -1,4 +1,4 @@
-﻿-- agent-memory-lite v3 canonical initial schema.
+-- agent-memory-lite v3 canonical initial schema.
 -- Fresh databases start directly on the compact v3 surface.
 -- Legacy v1/v2 storage tables are intentionally absent. Databases that
 -- already marked 0001_init applied must match this canonical v3 baseline;

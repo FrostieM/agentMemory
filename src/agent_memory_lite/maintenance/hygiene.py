@@ -27,6 +27,12 @@ from agent_memory_lite.maintenance.hygiene_capability_links import (
 from agent_memory_lite.maintenance.hygiene_capability_maturity import (
     find_stale_capabilities,
 )
+from agent_memory_lite.maintenance.hygiene_duplicate_checks import (
+    find_duplicate_decision_gaps,
+    find_low_signal_insight_gaps,
+    find_orphan_or_closed_task_plan_step_gaps,
+    find_recent_duplicate_episode_gaps,
+)
 from agent_memory_lite.maintenance.hygiene_models import HygieneFinding, HygieneReport
 from agent_memory_lite.maintenance.hygiene_simple_checks import (
     find_decision_gaps,
@@ -71,6 +77,10 @@ def run_hygiene_report(
     )
     findings.extend(find_insight_gaps(conn, workspace_id=workspace_id))
     findings.extend(find_decision_gaps(conn, workspace_id=workspace_id))
+    findings.extend(find_duplicate_decision_gaps(conn, workspace_id=workspace_id))
+    findings.extend(find_low_signal_insight_gaps(conn, workspace_id=workspace_id))
+    findings.extend(find_recent_duplicate_episode_gaps(conn, workspace_id=workspace_id))
+    findings.extend(find_orphan_or_closed_task_plan_step_gaps(conn, workspace_id=workspace_id))
     findings.extend(
         find_unlinked_capability_targets(
             conn,

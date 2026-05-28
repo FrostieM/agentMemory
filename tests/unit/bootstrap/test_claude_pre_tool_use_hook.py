@@ -19,6 +19,33 @@ def _hs() -> Path:
     return Path("/repo/scripts/pre_tool_use_check.py")
 
 
+def test_hook_matchers_pins_expected_token_set() -> None:
+    """Guard against SILENT REMOVAL of a matcher token (audit M-3).
+
+    Every other test asserts against ``HOOK_MATCHERS`` itself, and
+    ``_setup_doctor`` derives its required set from the same tuple, so
+    deleting a token (e.g. ``Glob``) would shrink both in lockstep and the
+    doctor would never flag the resulting hook gap. This test pins the
+    expected set as an INDEPENDENT literal: any add/remove forces a
+    deliberate update here, which is the human review checkpoint.
+    """
+    assert set(HOOK_MATCHERS) == {
+        "Read",
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit",
+        "NotebookRead",
+        "Grep",
+        "Glob",
+        "Bash",
+        "mcp__agent-memory-lite__memory_.*",
+    }
+    # The four read-side tools MUST stay matched: they are exactly the
+    # tools the mechanical_impact_check_before_read detector enforces.
+    assert {"Read", "Grep", "Glob", "NotebookRead"} <= set(HOOK_MATCHERS)
+
+
 def test_fresh_install_creates_pretooluse_block() -> None:
     settings: dict = {}
     status = install_pre_tool_use_hook(settings, venv_python=_vp(), hook_script=_hs())
