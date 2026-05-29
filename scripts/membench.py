@@ -11,10 +11,11 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from agent_memory_lite.evals.retrieval_regression import compare_metrics
+
 DEFAULT_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_LIMIT = 10
 DEFAULT_MAX_QUERIES = 100
-_REGRESSION_THRESHOLD = 0.05
 
 
 @dataclass
@@ -148,18 +149,22 @@ def _format_text(report: BenchmarkReport) -> str:
 
 
 def _compare_baseline(report: BenchmarkReport, baseline_path: Path) -> tuple[dict[str, float], int]:
-    """Return (delta dict, exit_code). Exit 1 if MRR dropped by more than 5%."""
+    """Return (delta dict, exit_code). Exit 1 if MRR dropped by more than 5%.
+
+    Delegates the arithmetic + threshold to the shared
+    ``evals.retrieval_regression.compare_metrics`` so this internal gate and the
+    BEIR pipeline gate cannot drift apart."""
     try:
         prev = json.loads(baseline_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}, 0
-    deltas = {
-        "mrr": report.mrr - float(prev.get("mrr", 0.0)),
-        "recall_at_5": report.recall_at_5 - float(prev.get("recall_at_5", 0.0)),
-        "recall_at_10": report.recall_at_10 - float(prev.get("recall_at_10", 0.0)),
-    }
-    code = 1 if deltas["mrr"] < -_REGRESSION_THRESHOLD else 0
-    return deltas, code
+    result = compare_metrics(
+        report.to_dict(),
+        prev if isinstance(prev, dict) else {},
+        metrics=["mrr", "recall_at_5", "recall_at_10"],
+        primary="mrr",
+    )
+    return result.deltas, result.exit_code
 
 
 def main() -> int:

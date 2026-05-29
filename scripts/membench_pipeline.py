@@ -56,6 +56,8 @@ import urllib.request
 from collections.abc import Iterable
 from pathlib import Path
 
+from agent_memory_lite.evals.retrieval_regression import compare_metrics
+
 # Windows cp1251 stdout chokes on em-dash + right-arrow. Force UTF-8 so
 # the report renders the same on every terminal.
 with contextlib.suppress(AttributeError, ValueError):
@@ -455,6 +457,14 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--save", type=Path)
     parser.add_argument(
+        "--compare-baseline",
+        type=Path,
+        help="Compare NDCG@10/Recall@10/MAP@10 against a saved baseline JSON and "
+        "exit 1 if NDCG@10 drops by more than 5%%. The fixed BEIR corpus makes "
+        "this baseline stable across runs (unlike membench.py's mutable-decision "
+        "baseline), so it is the one suitable for a scheduled regression gate.",
+    )
+    parser.add_argument(
         "--embedder-baseline",
         type=float,
         default=0.6694,
@@ -480,7 +490,24 @@ def main() -> int:
         db_path=args.db_path,
         vector_path=args.vector_path,
     )
-    payload = {"task": args.task, "workspace_id": workspace_id, **scores}
+    payload: dict[str, object] = {"task": args.task, "workspace_id": workspace_id, **scores}
+    exit_code = 0
+    deltas: dict[str, float] = {}
+    if args.compare_baseline:
+        try:
+            prev = json.loads(args.compare_baseline.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            prev = None
+        if isinstance(prev, dict):
+            result = compare_metrics(
+                payload,
+                prev,
+                metrics=["ndcg_at_10", "recall_at_10", "map_at_10"],
+                primary="ndcg_at_10",
+            )
+            deltas = result.deltas
+            exit_code = result.exit_code
+            payload["baseline_diff"] = deltas
     if args.save:
         args.save.parent.mkdir(parents=True, exist_ok=True)
         args.save.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -488,7 +515,12 @@ def main() -> int:
         print(json.dumps(payload, indent=2))
     else:
         print(_format_summary(args.task, scores, args.embedder_baseline))
-    return 0
+        if deltas:
+            print("  vs baseline:")
+            for metric_name, metric_delta in deltas.items():
+                sign = "+" if metric_delta >= 0 else ""
+                print(f"    {metric_name:14s} {sign}{metric_delta:.4f}")
+    return exit_code
 
 
 if __name__ == "__main__":

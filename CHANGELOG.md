@@ -9,6 +9,23 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.19.0 - 2026-05-29
+
+### Added
+
+- Stable retrieval-regression gate on the full-stack BEIR bench (release plan
+  step 10.6). `scripts/membench_pipeline.py` gained `--compare-baseline`: it
+  diffs this run's NDCG@10 / Recall@10 / MAP@10 against a saved baseline and
+  exits 1 when NDCG@10 drops by more than 5%. Because the pipeline bench runs
+  over a FIXED BEIR corpus, its baseline is stable across runs and is the one
+  suitable for a scheduled gate — unlike `membench.py`'s internal bench, whose
+  baseline is only comparable within a stable decision set. The comparison
+  arithmetic + threshold now live in one pure, unit-tested helper
+  (`evals/retrieval_regression.compare_metrics`), and `membench.py`'s existing
+  `--compare-baseline` MRR gate was refactored onto it so the two gates cannot
+  drift apart. (Capturing the committed baseline and scheduling the run remain
+  operator infra: the bench needs the live HTTP service + the `mteb` extra.)
+
 ## 3.18.0 - 2026-05-29
 
 ### Added
