@@ -124,3 +124,37 @@ def _build_watch_outs(
         score = float(row["outcome_score"] or 0.0)
         lines.append(f"- {row['kind']}:{row['id']} (outcome={score:.1f}): {gist}")
     return BriefSection(name="watch_outs", budget=budget, lines=fit_to_budget(lines, budget))
+
+
+def _build_open_issues(
+    conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 5
+) -> BriefSection:
+    """Surface open issues (bugs / tech debt / risks / errors) by severity.
+
+    The issue store (plan step 9) is the durable debt/risk registry; the
+    brief floats the open, highest-severity items so the agent sees known
+    problems on session start. Failure-soft: a pre-issues-migration DB
+    (no ``issues`` table) renders an empty section, freeing its budget.
+    """
+    sql = """
+        SELECT id, category, severity, COALESCE(gist, title, '') AS gist
+          FROM issues
+         WHERE workspace_id = ? AND status IN ('open', 'in_progress')
+         ORDER BY CASE severity
+                    WHEN 'critical' THEN 0 WHEN 'major' THEN 1 ELSE 2
+                  END,
+                  created_at DESC
+         LIMIT ?
+    """
+    try:
+        rows = conn.execute(sql, (workspace_id, limit)).fetchall()
+    except sqlite3.OperationalError:
+        # Pre-0002 DB; the issues table does not exist yet.
+        return BriefSection(name="open_issues", budget=budget, lines=[])
+    if not rows:
+        return BriefSection(name="open_issues", budget=budget, lines=[])
+    lines = ["## Open issues (debt/risk)"]
+    for row in rows:
+        gist = (row["gist"] or "?")[:70]
+        lines.append(f"- [{row['severity']}] {row['category']}:{row['id']}: {gist}")
+    return BriefSection(name="open_issues", budget=budget, lines=fit_to_budget(lines, budget))

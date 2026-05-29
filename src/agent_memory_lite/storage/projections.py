@@ -241,6 +241,18 @@ def project_plan_step(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def project_issue(row: sqlite3.Row) -> dict[str, Any]:
+    """Token target: ~25. {id, category, severity, status, gist}."""
+    return {
+        "id": _row_get(row, "id"),
+        "kind": "issue",
+        "category": _row_get(row, "category", "bug"),
+        "severity": _row_get(row, "severity", "minor"),
+        "status": _row_get(row, "status", "open"),
+        "gist": _repair_text(_row_get(row, "gist") or _row_get(row, "title", "")),
+    }
+
+
 # ============================================================
 # Dispatch by kind
 # ============================================================
@@ -254,6 +266,7 @@ _PROJECTORS = {
     "concept": project_concept,
     "task": project_task,
     "insight": project_insight,
+    "issue": project_issue,
     "snapshot": project_snapshot,
     "code_digest": project_code_digest,
     "chunk": project_chunk,

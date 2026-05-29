@@ -9,6 +9,24 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.10.0 - 2026-05-28
+
+### Added
+
+- First-class `issue` memory kind — a durable bug / tech-debt / risk / error
+  registry (migration `0002_issues.sql`) wired through the storage write,
+  projection, reader, and MCP-tool surfaces. Searchable via `memory_search`
+  and surfaced as an "Open issues (debt/risk)" section in `memory_brief`,
+  ordered by severity.
+- Signature-based issue dedup (`ingestion/issue_writer.py`): re-observing an
+  open defect returns the existing row; a recurrence after close opens a new
+  one. Lifecycle transitions (open → in_progress → fixed / wontfix / accepted)
+  ride the versioned + audited generic edit path.
+- Auto-capture of hygiene findings (>= major) into the issue store
+  (`maintenance/issue_capture.py`), exposed as the opt-in
+  `memory_audit.py --capture-issues` flag (no-ops gracefully on a
+  pre-migration database).
+
 ## 3.9.0 - 2026-05-28
 
 ### Added

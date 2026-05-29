@@ -23,6 +23,7 @@ from agent_memory_lite.ingestion.canonical_state_writers import (
     write_episode_canonical,
     write_task_canonical,
 )
+from agent_memory_lite.ingestion.issue_writer import write_issue_canonical
 from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.storage.writer import write as storage_write
 from agent_memory_lite.vector_store.base import VectorStore
@@ -79,6 +80,8 @@ def write_canonical(
         )
     elif kind == "task":
         result = write_task_canonical(conn, workspace_id=workspace_id, payload=body)
+    elif kind == "issue":
+        result = write_issue_canonical(conn, workspace_id=workspace_id, payload=body)
     else:
         if kind == "skill":
             payload = {

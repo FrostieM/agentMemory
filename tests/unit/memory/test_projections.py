@@ -38,9 +38,9 @@ def _row(**kwargs) -> sqlite3.Row:
     return row
 
 
-def test_known_kinds_returns_twelve_kinds() -> None:
+def test_known_kinds_returns_thirteen_kinds() -> None:
     kinds = known_kinds()
-    assert len(kinds) == 12
+    assert len(kinds) == 13
     for expected in (
         "decision",
         "theory",
@@ -50,6 +50,7 @@ def test_known_kinds_returns_twelve_kinds() -> None:
         "concept",
         "task",
         "insight",
+        "issue",
         "snapshot",
         "code_digest",
         "chunk",

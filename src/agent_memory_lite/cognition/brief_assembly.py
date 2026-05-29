@@ -26,6 +26,7 @@ from agent_memory_lite.cognition.brief_sections_plan import _build_active_plan
 from agent_memory_lite.cognition.brief_sections_watch import (
     _build_aging_decisions,
     _build_blindspots,
+    _build_open_issues,
     _build_watch_outs,
 )
 from agent_memory_lite.cognition.brief_v3_1 import (
@@ -60,6 +61,7 @@ def _build_all_sections(
         _build_associates(conn, workspace_id, budgets["associates"]),
         _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
         _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
+        _build_open_issues(conn, workspace_id, budgets["open_issues"]),
         _build_aging_decisions(conn, workspace_id, budgets["aging_decisions"]),
         _build_blindspots(conn, workspace_id, budgets["blindspots"]),
         # v3.1 active-memory vectors — surface heuristic outputs so the

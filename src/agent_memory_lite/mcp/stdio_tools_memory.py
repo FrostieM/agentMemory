@@ -43,6 +43,7 @@ _KINDS = [
     "concept",
     "task",
     "insight",
+    "issue",
     "code_digest",
     "chunk",
     "plan_step",

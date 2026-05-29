@@ -82,9 +82,9 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
     conn = open_connection(db_path)
     try:
         applied = apply_migrations(conn, MIGRATION_DIR)
-        assert applied == ["0001_init"]
+        assert applied == ["0001_init", "0002_issues"]
         versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
-        assert [row[0] for row in versions] == ["0001_init"]
+        assert [row[0] for row in versions] == ["0001_init", "0002_issues"]
         tables = {
             row[0]
             for row in conn.execute(
@@ -212,7 +212,7 @@ def test_migration_module_cli_applies_root_migration(tmp_path: Path) -> None:
     conn = open_connection(db_path)
     try:
         versions = conn.execute("SELECT version FROM schema_migrations").fetchall()
-        assert [row[0] for row in versions] == ["0001_init"]
+        assert sorted(row[0] for row in versions) == ["0001_init", "0002_issues"]
         tables = {
             row[0]
             for row in conn.execute(

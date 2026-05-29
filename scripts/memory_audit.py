@@ -19,7 +19,10 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.factory import get_embedding_provider
+from agent_memory_lite.maintenance.hygiene import run_hygiene_report
+from agent_memory_lite.maintenance.hygiene_models import table_exists
 from agent_memory_lite.maintenance.integrity import repair_fts, run_integrity_audit
+from agent_memory_lite.maintenance.issue_capture import capture_findings_as_issues
 from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
 from agent_memory_lite.repositories.workspace_manifest_repo import (
     ensure_workspace_manifest,
@@ -86,6 +89,11 @@ def _parser() -> argparse.ArgumentParser:
         "--dry-run-repair",
         action="store_true",
         help="With repair flags, print the intended repair plan without mutating data.",
+    )
+    parser.add_argument(
+        "--capture-issues",
+        action="store_true",
+        help="Auto-capture hygiene findings (>= major) into the issue store, deduped.",
     )
     return parser
 
@@ -200,6 +208,31 @@ def _chunk_count(conn: sqlite3.Connection, *, workspace_id: str) -> int:
     return int(row[0]) if row is not None else 0
 
 
+def _maybe_capture_issues(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    payload: dict[str, Any],
+    *,
+    enabled: bool,
+) -> None:
+    """Auto-capture hygiene findings (>= major) into the issue store (step 9.4)."""
+    if not enabled:
+        return
+    if not table_exists(conn, "issues"):
+        # Pre-0002 DB: skip gracefully (don't discard the integrity report)
+        # instead of throwing. Run with --migrate first to enable capture.
+        payload["issues_captured"] = 0
+        payload["issues_capture_skipped"] = "issues table missing; rerun with --migrate"
+        return
+    hygiene = run_hygiene_report(conn, workspace_id=settings.workspace_id)
+    payload["issues_captured"] = capture_findings_as_issues(
+        conn,
+        workspace_id=settings.workspace_id,
+        findings=getattr(hygiene, "findings", []),
+        source="audit",
+    )
+
+
 def main() -> int:  # noqa: PLR0912
     args = _parser().parse_args()
     settings = _settings(args)
@@ -280,6 +313,7 @@ def main() -> int:  # noqa: PLR0912
             expected_vector_backend=settings.vector_backend,
         )
         payload = report.to_dict()
+        _maybe_capture_issues(conn, settings, payload, enabled=args.capture_issues)
         if backups:
             payload["backups"] = backups
         if repairing and args.dry_run_repair:
