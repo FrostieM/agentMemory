@@ -31,6 +31,7 @@ from agent_memory_lite.api.schemas.memory_status import (
     EnvironmentInfo,
     MemoryStatusResponse,
 )
+from agent_memory_lite.config.offline_bootstrap import hf_offline_active
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 
@@ -80,6 +81,8 @@ def build_environment(conn: sqlite3.Connection, settings: Settings) -> Environme
         llm_backend=str(getattr(settings, "llm_backend", "") or ""),
         llm_model=str(getattr(settings, "llm_model", "") or ""),
         http_base_url=f"http://127.0.0.1:{int(getattr(settings, 'api_port', 8765))}",
+        hf_auto_offline=bool(getattr(settings, "hf_auto_offline", False)),
+        hf_offline_active=hf_offline_active(),
     )
 
 

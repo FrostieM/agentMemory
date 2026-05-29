@@ -79,6 +79,10 @@ class EnvironmentInfo(BaseModel):
     llm_backend: str = ""
     llm_model: str = ""
     http_base_url: str = ""
+    # HF offline posture (config/offline_bootstrap) — lets an operator see
+    # whether the model hub is actually pinned offline without reading env.
+    hf_auto_offline: bool = False
+    hf_offline_active: bool = False
 
 
 class ActiveMemoryCounts(BaseModel):

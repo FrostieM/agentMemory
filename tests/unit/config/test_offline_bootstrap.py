@@ -181,6 +181,13 @@ def test_entrypoints_do_not_eagerly_import_hf() -> None:
     assert result.returncode == 0, f"eager HF import detected: {result.stdout.strip()}"
 
 
+def test_hf_offline_active_reports_env_truthiness() -> None:
+    assert ob.hf_offline_active(env={"HF_HUB_OFFLINE": "1"}) is True
+    assert ob.hf_offline_active(env={"TRANSFORMERS_OFFLINE": "true"}) is True
+    assert ob.hf_offline_active(env={}) is False
+    assert ob.hf_offline_active(env={"HF_HUB_OFFLINE": "0"}) is False
+
+
 # ---- gate helper + startup wiring ----------------------------------------
 
 

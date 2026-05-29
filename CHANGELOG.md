@@ -9,6 +9,16 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.15.0 - 2026-05-29
+
+### Added
+
+- `memory_status` environment block now reports HF offline posture:
+  `hf_auto_offline` (the setting) and `hf_offline_active` (computed live from
+  `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE`), via the single-source
+  `offline_bootstrap.hf_offline_active()` helper — so an operator can confirm
+  the model hub is actually pinned offline without reading the process env.
+
 ## 3.14.0 - 2026-05-29
 
 ### Added

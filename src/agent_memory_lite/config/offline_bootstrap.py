@@ -237,3 +237,14 @@ def maybe_configure_offline(settings: SupportsOfflineConfig) -> OfflineReport | 
     if not settings.hf_auto_offline:
         return None
     return configure_offline_env(settings.embedding_model)
+
+
+def hf_offline_active(env: Mapping[str, str] | None = None) -> bool:
+    """True iff HF offline mode is currently enforced in the environment.
+
+    Diagnostic helper (surfaced in ``memory_status``): reports whether
+    ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE`` is truthy right now, however it
+    got set (auto by :func:`configure_offline_env` or by the operator).
+    """
+    src = os.environ if env is None else env
+    return any(str(src.get(var, "")).strip().lower() in _TRUTHY for var in OFFLINE_ENV_VARS)
