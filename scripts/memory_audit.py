@@ -19,6 +19,7 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.factory import get_embedding_provider
+from agent_memory_lite.maintenance.backup_retention import DEFAULT_KEEP, prune_backups
 from agent_memory_lite.maintenance.hygiene import run_hygiene_report
 from agent_memory_lite.maintenance.hygiene_models import table_exists
 from agent_memory_lite.maintenance.integrity import repair_fts, run_integrity_audit
@@ -129,6 +130,20 @@ def _backup(settings: Settings) -> dict[str, str]:
         else:
             shutil.copy2(settings.vector_db_path, target)
         out["vectors"] = str(target)
+    if "db" in out:
+        prune_backups(
+            backup_dir,
+            prefix="memory_before_audit_repair_",
+            keep=DEFAULT_KEEP,
+            protect=Path(out["db"]),
+        )
+    if "vectors" in out:
+        prune_backups(
+            backup_dir,
+            prefix="vectors_before_audit_repair_",
+            keep=DEFAULT_KEEP,
+            protect=Path(out["vectors"]),
+        )
     return out
 
 

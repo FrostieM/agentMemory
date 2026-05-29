@@ -9,6 +9,24 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.12.0 - 2026-05-29
+
+### Changed
+
+- Backup retention for `.agent_memory/backups`: the operator scripts that
+  snapshot the DB (and, for `memory_audit` / `bulk_index_codebase`, the whole
+  `vectors.lance` store) before a risky operation now prune their own backup
+  family to the newest `DEFAULT_KEEP` (5) snapshots via the shared
+  `maintenance/backup_retention.prune_backups`, capping the previously
+  unbounded growth (observed ~20GB; issue `issue_201c0b47be474319`). Pruning is
+  prefix-scoped (only a script's own backup family is touched), **protects the
+  just-written snapshot** (a pre-repair backup is never deleted in the run that
+  created it), and is failure-soft. Going-forward only — existing backups are
+  not deleted (that needs explicit operator action). Sidecar `.bak-*` files
+  written beside the DB by `repair_dangling_source_refs` /
+  `repair_corrupted_theory_fields` are a separate, smaller vector not yet
+  capped.
+
 ## 3.11.0 - 2026-05-29
 
 ### Added

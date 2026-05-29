@@ -12,6 +12,7 @@ from typing import Any
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
+from agent_memory_lite.maintenance.backup_retention import DEFAULT_KEEP, prune_backups
 from agent_memory_lite.maintenance.encoding_audit import run_encoding_audit
 from agent_memory_lite.utils.time import iso_now
 
@@ -46,6 +47,9 @@ def _backup(db_path: Path) -> str | None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     target = backup_dir / f"memory_before_encoding_repair_{stamp}.db"
     shutil.copy2(db_path, target)
+    prune_backups(
+        backup_dir, prefix="memory_before_encoding_repair_", keep=DEFAULT_KEEP, protect=target
+    )
     return str(target)
 
 

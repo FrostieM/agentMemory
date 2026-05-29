@@ -70,6 +70,10 @@ from agent_memory_lite.cognition.digest_worker import (  # noqa: E402
     compute_digest,
     upsert_digest,
 )
+from agent_memory_lite.maintenance.backup_retention import (  # noqa: E402
+    DEFAULT_KEEP,
+    prune_backups,
+)
 
 DEFAULT_EXTENSIONS = DEFAULT_CODE_EXTENSIONS
 DEFAULT_SKIP_DIRS = DEFAULT_CODE_SKIP_DIRS
@@ -474,6 +478,20 @@ def _backup_before_bulk_index(db_path: Path) -> dict[str, str]:
         else:
             shutil.copy2(vector_path, target)
         backups["vectors"] = str(target)
+    if "db" in backups:
+        prune_backups(
+            backup_dir,
+            prefix="memory_before_bulk_code_index_",
+            keep=DEFAULT_KEEP,
+            protect=Path(backups["db"]),
+        )
+    if "vectors" in backups:
+        prune_backups(
+            backup_dir,
+            prefix="vectors_before_bulk_code_index_",
+            keep=DEFAULT_KEEP,
+            protect=Path(backups["vectors"]),
+        )
     return backups
 
 
