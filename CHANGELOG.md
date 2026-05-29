@@ -9,6 +9,15 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.20.1 - 2026-05-29
+
+### Changed
+
+- The `Plan` nav link is now present on every observatory page (index, recall,
+  reflexes, metrics, review, queue, browse), so the `/ui/plan` view added in
+  3.20.0 is reachable from anywhere in the dashboard, not just by URL. HTML-only
+  nav wiring; verified by the e2e UI route tests.
+
 ## 3.20.0 - 2026-05-29
 
 ### Added
