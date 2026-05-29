@@ -14,8 +14,38 @@ from collections.abc import Iterator
 import pytest
 
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.maintenance.brain_pass import BrainPassReport, run_brain_pass
+from agent_memory_lite.maintenance.brain_pass import (
+    BrainPassReport,
+    _step_repair_missing_vectors,
+    run_brain_pass,
+)
 from agent_memory_lite.utils.time import iso_now
+
+
+def _report() -> BrainPassReport:
+    now = iso_now()
+    return BrainPassReport(workspace_id="ws", started_at=now, finished_at=now)
+
+
+def test_repair_missing_vectors_step_disabled_is_noop(conn: sqlite3.Connection) -> None:
+    settings = Settings().model_copy(update={"vector_repair_enabled": False})
+    report = _report()
+    _step_repair_missing_vectors(conn, "ws", settings, report)
+    assert report.vectors_repaired == 0
+    assert report.errors == []
+
+
+def test_repair_missing_vectors_step_no_work_skips_provider(conn: sqlite3.Connection) -> None:
+    # Empty workspace -> the cheap EXISTS probe returns nothing, so the step
+    # returns before importing/loading the embedding provider or vector store
+    # (no error, no work). If it tried to load the model this would be slow or
+    # raise; staying at 0 with no error proves the lazy short-circuit.
+    settings = Settings()
+    assert settings.vector_repair_enabled is True
+    report = _report()
+    _step_repair_missing_vectors(conn, "ws", settings, report)
+    assert report.vectors_repaired == 0
+    assert report.errors == []
 
 
 @pytest.fixture

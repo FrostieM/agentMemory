@@ -87,6 +87,7 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "0002_issues",
             "0003_code_digests_indexed_at",
             "0004_skills_base_confidence",
+            "0005_chunks_missing_embedding_index",
         ]
         versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [row[0] for row in versions] == [
@@ -94,6 +95,7 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "0002_issues",
             "0003_code_digests_indexed_at",
             "0004_skills_base_confidence",
+            "0005_chunks_missing_embedding_index",
         ]
         tables = {
             row[0]
@@ -227,6 +229,7 @@ def test_migration_module_cli_applies_root_migration(tmp_path: Path) -> None:
             "0002_issues",
             "0003_code_digests_indexed_at",
             "0004_skills_base_confidence",
+            "0005_chunks_missing_embedding_index",
         ]
         tables = {
             row[0]

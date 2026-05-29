@@ -10,7 +10,88 @@ from agent_memory_lite.repositories.chunks_repo import (
     EMBEDDING_STALE_REASON_KEY,
     EMBEDDING_TEXT_SHA256_KEY,
 )
-from agent_memory_lite.vector_store.reindex import reindex_chunks, repair_chunk_embedding_refs
+from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
+from agent_memory_lite.vector_store.reindex import (
+    reindex_chunks,
+    repair_chunk_embedding_refs,
+    repair_missing_vectors,
+)
+
+
+def _ingest_unvectored(conn: sqlite3.Connection, text: str) -> str:
+    """Ingest an episode WITHOUT a provider/store so its chunk has no vector
+    (embedding_id stays NULL). Returns the chunk id."""
+    result = ingest_episode(
+        conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text=text,
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+    )
+    assert result.chunk.embedding_id is None
+    return result.chunk.id
+
+
+def test_repair_missing_vectors_embeds_unvectored_chunks(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    chunk_id = _ingest_unvectored(applied_conn, "missing vector should be repaired incrementally")
+
+    written = repair_missing_vectors(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        limit=16,
+    )
+
+    assert written == 1
+    row = applied_conn.execute(
+        "SELECT embedding_id FROM chunks WHERE id = ?", (chunk_id,)
+    ).fetchone()
+    assert row["embedding_id"] == chunk_id  # backfilled
+    stored = set(fake_vector_store.list_ids(NAMESPACE_CHUNKS, workspace_id="default"))
+    assert chunk_id in stored  # vector actually written
+
+
+def test_repair_missing_vectors_is_bounded_and_resumes(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+) -> None:
+    for i in range(3):
+        _ingest_unvectored(applied_conn, f"missing chunk number {i}")
+
+    first = repair_missing_vectors(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        limit=2,
+    )
+    assert first == 2  # bounded by limit
+
+    second = repair_missing_vectors(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        limit=2,
+    )
+    assert second == 1  # repairs the remainder
+
+    third = repair_missing_vectors(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        limit=2,
+    )
+    assert third == 0  # idempotent: nothing left with a NULL embedding_id
 
 
 def test_reindex_sets_chunk_embedding_references(

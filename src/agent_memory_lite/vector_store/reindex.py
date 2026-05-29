@@ -224,6 +224,81 @@ def reindex_chunks(
     return done
 
 
+def repair_missing_vectors(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    provider: EmbeddingProvider,
+    store: VectorStore,
+    limit: int = DEFAULT_BATCH_SIZE,
+) -> int:
+    """Embed a bounded batch of chunks that have no vector yet and upsert them.
+
+    The incremental, self-healing complement to a full ``reindex_chunks``: a
+    chunk whose embedding never landed (an interrupted write, or — once the
+    write path goes async — a not-yet-embedded chunk) is detected by
+    ``embedding_id IS NULL`` and repaired a batch at a time by the brain pass,
+    instead of needing an operator-run rebuild. Bounded (``limit`` embeds per
+    call), order-stable (oldest-missing first), and idempotent: a chunk that
+    already has a vector is filtered out, and re-running upserts the same
+    deterministic ``chunk_id`` row. Archived (soft-deleted) chunks are skipped
+    so repair never re-introduces a removed chunk into the search namespace.
+    Backed by the ``idx_chunks_missing_embedding`` partial index so the scan is
+    O(missing), not O(workspace). Returns the number of vectors written.
+    """
+    rows = conn.execute(
+        """
+        SELECT c.id, c.workspace_id, c.text, c.kind, c.episode_id, f.path
+        FROM chunks c
+        LEFT JOIN files f ON f.id = c.file_id
+        WHERE c.workspace_id = ?
+          AND c.embedding_id IS NULL
+          AND c.is_archived = 0
+        ORDER BY c.created_at
+        LIMIT ?
+        """,
+        (workspace_id, int(limit)),
+    ).fetchall()
+    if not rows:
+        return 0
+    store.open()
+    pending: list[tuple[str, str, str, dict[str, str | None]]] = [
+        (
+            str(row[0]),
+            str(row[1]),
+            str(row[2]),
+            {
+                "chunk_id": str(row[0]),
+                "kind": row[3],
+                "episode_id": row[4],
+                "path": row[5],
+                EMBEDDING_TEXT_SHA256_KEY: chunk_text_sha256(str(row[2])),
+            },
+        )
+        for row in rows
+    ]
+    written = 0
+    for batch in iter_batches(pending, DEFAULT_BATCH_SIZE):
+        vectors = provider.embed_batch([item[2] for item in batch], kind="doc")
+        vector_rows = [
+            VectorRow(
+                id=item[0],
+                workspace_id=item[1],
+                vector=vectors[idx],
+                metadata=item[3],
+            )
+            for idx, item in enumerate(batch)
+        ]
+        store.upsert(NAMESPACE_CHUNKS, vector_rows)
+        set_many_chunk_embedding_ids(
+            conn,
+            chunk_ids=[vector_row.id for vector_row in vector_rows],
+            embedding_text_hashes={item[0]: chunk_text_sha256(item[2]) for item in batch},
+        )
+        written += len(vector_rows)
+    return written
+
+
 def repair_chunk_embedding_refs(
     conn: sqlite3.Connection,
     *,

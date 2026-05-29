@@ -229,6 +229,14 @@ class Settings(BaseSettings):
     vector_prune_max_per_pass: int = Field(
         2000, ge=1, le=100000, validation_alias="MEMORY_VECTOR_PRUNE_MAX_PER_PASS"
     )
+    # Plan 7: the brain pass re-embeds a bounded batch of chunks whose vector
+    # never landed (embedding_id IS NULL) -- the self-healing complement to
+    # orphan-prune. The heavy provider/store are acquired only when a cheap
+    # EXISTS probe finds work, so steady state costs one query. Default ON.
+    vector_repair_enabled: bool = Field(True, validation_alias="MEMORY_VECTOR_REPAIR_ENABLED")
+    vector_repair_max_per_pass: int = Field(
+        64, ge=1, le=100000, validation_alias="MEMORY_VECTOR_REPAIR_MAX_PER_PASS"
+    )
     # Phase 5b -- distil a completed plan (every live step done/skipped,
     # >=1 done) into a `plan:<task_id>` playbook. Idempotent; the cap
     # bounds NEW playbooks per pass.

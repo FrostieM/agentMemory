@@ -9,6 +9,34 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.18.0 - 2026-05-29
+
+### Added
+
+- Incremental vector repair in the brain pass
+  (`maintenance/brain_pass._step_repair_missing_vectors` +
+  `vector_store.reindex.repair_missing_vectors`, release plan step 7): each
+  tick re-embeds a bounded batch of chunks whose vector never landed
+  (`embedding_id IS NULL`, non-archived) and backfills `embedding_id`, so a
+  missing vector self-heals without an operator-run full reindex — the
+  complement to orphan-vector prune. A new partial index (migration
+  `0005_chunks_missing_embedding_index`) keeps per-pass detection O(missing):
+  the heavy embedding provider + vector store are acquired only when a cheap,
+  index-backed EXISTS probe finds work, so the healthy steady state costs one
+  query and never loads the model. Bounded (`MEMORY_VECTOR_REPAIR_MAX_PER_PASS`,
+  default 64), idempotent, failure-soft, gated by `MEMORY_VECTOR_REPAIR_ENABLED`.
+
+### Changed
+
+- `scripts/memory_trust_dashboard.py` runs its ~11 independent component checks
+  concurrently (bounded by `--max-parallel`, default 4) instead of
+  sequentially, cutting wall-clock from the sum of all checks toward the
+  slowest single one. Each check is an isolated child process (SQLite WAL
+  tolerates the single smoke-test writer alongside the read-only audits);
+  results re-assemble in deterministic spec order, a child that cannot be
+  spawned degrades only itself instead of aborting the dashboard, and the
+  watchdog sentinel augmentation is unchanged.
+
 ## 3.17.0 - 2026-05-29
 
 ### Added

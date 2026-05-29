@@ -88,6 +88,9 @@ class BrainPassReport:
     vacuum_ran: bool = False
     # v3.6 Phase-2: orphan chunk-vectors deleted this pass (sleep cleaning).
     vectors_pruned: int = 0
+    # Plan 7: chunks whose vector was missing (embedding_id IS NULL) re-embedded
+    # this pass -- the self-healing complement to orphan-prune.
+    vectors_repaired: int = 0
     experiment_proposals: int = 0
     predictive_warnings: int = 0
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
@@ -146,6 +149,7 @@ class BrainPassReport:
             "wal_checkpoint_pages": self.wal_checkpoint_pages,
             "vacuum_ran": self.vacuum_ran,
             "vectors_pruned": self.vectors_pruned,
+            "vectors_repaired": self.vectors_repaired,
             "experiment_proposals": self.experiment_proposals,
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
@@ -366,6 +370,58 @@ def _step_prune_vectors(
             store.close()
     except Exception as exc:
         report.errors.append(f"prune_vectors:{exc}")
+
+
+def _step_repair_missing_vectors(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Plan 7: re-embed a bounded batch of chunks whose vector never landed
+    (``embedding_id IS NULL``), so a missing vector self-heals incrementally
+    instead of waiting for a full operator reindex. The inverse of
+    ``_step_prune_vectors`` (orphan vectors). Cost discipline: a cheap EXISTS
+    probe runs first, and the heavy embedding provider + vector store are
+    acquired ONLY when there is real work, so the steady state (no missing
+    vectors) costs one indexed query (idx_chunks_missing_embedding) and never
+    loads the model. Failure-soft."""
+    if not settings.vector_repair_enabled:
+        return
+    try:
+        probe = conn.execute(
+            # ORDER BY created_at steers SQLite onto the idx_chunks_missing_embedding
+            # partial index (which carries created_at) instead of the broader
+            # idx_chunks_archived, so an empty probe is O(1) not O(workspace).
+            "SELECT 1 FROM chunks WHERE workspace_id = ? "
+            "AND embedding_id IS NULL AND is_archived = 0 ORDER BY created_at LIMIT 1",
+            (workspace_id,),
+        ).fetchone()
+        if probe is None:
+            return
+        from agent_memory_lite.embeddings.factory import (  # noqa: PLC0415
+            get_embedding_provider,
+        )
+        from agent_memory_lite.vector_store.factory import (  # noqa: PLC0415
+            get_vector_store,
+        )
+        from agent_memory_lite.vector_store.reindex import (  # noqa: PLC0415
+            repair_missing_vectors,
+        )
+
+        store = get_vector_store(settings)
+        try:
+            report.vectors_repaired = repair_missing_vectors(
+                conn,
+                workspace_id=workspace_id,
+                provider=get_embedding_provider(settings),
+                store=store,
+                limit=settings.vector_repair_max_per_pass,
+            )
+        finally:
+            store.close()
+    except Exception as exc:
+        report.errors.append(f"vector_repair:{exc}")
 
 
 def _step_experiment_proposal(
@@ -743,6 +799,9 @@ def run_brain_pass(
     _step_causal(conn, workspace_id, settings, report)
     _step_db_hygiene(conn, workspace_id, report)
     _step_prune_vectors(conn, workspace_id, settings, report)
+    # Plan 7: re-embed missing vectors (inverse of prune). Lazy-loads the
+    # provider only when the cheap EXISTS probe finds work.
+    _step_repair_missing_vectors(conn, workspace_id, settings, report)
     _step_experiment_proposal(conn, workspace_id, report)
     # v3.4 #1: autonomous loop reads V1 candidates emitted by the
     # step above and promotes the confident ones to theories BEFORE

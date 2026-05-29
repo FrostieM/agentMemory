@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,6 +16,7 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
 
 DEFAULT_COMPONENT_TIMEOUT_SECONDS = 180.0
+DEFAULT_MAX_PARALLEL = 4
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -43,6 +45,16 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_COMPONENT_TIMEOUT_SECONDS,
         help="Maximum seconds to wait for each child check before marking it degraded.",
+    )
+    parser.add_argument(
+        "--max-parallel",
+        type=int,
+        default=DEFAULT_MAX_PARALLEL,
+        help=(
+            "Max component checks to run concurrently (each is an isolated child "
+            "process). 1 = sequential. Bounded to avoid fanning out many "
+            "model-loading children at once."
+        ),
     )
     return parser
 
@@ -151,107 +163,68 @@ def _base_args(settings: Settings) -> list[str]:
     ]
 
 
-def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
-    settings = _settings(args)
-    components: dict[str, dict[str, Any]] = {}
-    project_root = Path(args.project_root).resolve() if args.project_root else None
-    sentinel_discovery = discover_sentinel_file(
-        explicit_path=args.sentinels,
-        db_path=settings.db_path,
-        project_root=project_root,
-        require=args.require_sentinels,
-    )
-
-    audit_cmd = [
-        sys.executable,
-        _script("memory_audit.py"),
-        *_base_args(settings),
-        "--vector-path",
-        str(settings.vector_db_path),
-        "--json",
+def _component_specs(
+    args: argparse.Namespace,
+    settings: Settings,
+    sentinel_discovery: Any,
+    project_root: Path | None,
+) -> list[tuple[str, list[str], set[int]]]:
+    """Build the (name, cmd, ok_codes) spec for every dashboard component that
+    should run, honoring the --skip-* flags. Each component is an independent
+    child process, so the caller can run them concurrently."""
+    base = _base_args(settings)
+    specs: list[tuple[str, list[str], set[int]]] = [
+        (
+            "integrity",
+            [
+                sys.executable,
+                _script("memory_audit.py"),
+                *base,
+                "--vector-path",
+                str(settings.vector_db_path),
+                "--json",
+            ],
+            {0, 2},
+        ),
+        (
+            "workspace_doctor",
+            [sys.executable, _script("memory_workspace_doctor.py"), *base, "--json"],
+            {0, 2},
+        ),
+        ("hygiene", [sys.executable, _script("memory_hygiene.py"), *base, "--json"], {0, 2}),
+        (
+            "feedback",
+            [sys.executable, _script("memory_feedback_report.py"), *base, "--json"],
+            {0, 2},
+        ),
+        (
+            "encoding",
+            [sys.executable, _script("memory_encoding_audit.py"), *base, "--json"],
+            {0, 2},
+        ),
     ]
-    components["integrity"] = _run_json(
-        "memory_audit",
-        audit_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-
-    workspace_doctor_cmd = [
-        sys.executable,
-        _script("memory_workspace_doctor.py"),
-        *_base_args(settings),
-        "--json",
-    ]
-    components["workspace_doctor"] = _run_json(
-        "memory_workspace_doctor",
-        workspace_doctor_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-
-    hygiene_cmd = [
-        sys.executable,
-        _script("memory_hygiene.py"),
-        *_base_args(settings),
-        "--json",
-    ]
-    components["hygiene"] = _run_json(
-        "memory_hygiene",
-        hygiene_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-
-    feedback_cmd = [
-        sys.executable,
-        _script("memory_feedback_report.py"),
-        *_base_args(settings),
-        "--json",
-    ]
-    components["feedback"] = _run_json(
-        "memory_feedback_report",
-        feedback_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-
-    encoding_cmd = [
-        sys.executable,
-        _script("memory_encoding_audit.py"),
-        *_base_args(settings),
-        "--json",
-    ]
-    components["encoding"] = _run_json(
-        "memory_encoding_audit",
-        encoding_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-
     if not args.skip_mcp:
-        mcp_cmd = [
-            sys.executable,
-            _script("memory_mcp_smoke.py"),
-            "--workspace",
-            settings.workspace_id,
-            "--db-path",
-            str(settings.db_path),
-            "--vector-path",
-            str(settings.vector_db_path),
-            "--require-behavior",
-            "--require-capabilities",
-            "--max-seconds",
-            "8.0",
-            "--json",
-        ]
-        components["mcp_smoke"] = _run_json(
-            "memory_mcp_smoke",
-            mcp_cmd,
-            ok_codes={0, 2},
-            timeout_seconds=args.component_timeout_seconds,
+        specs.append(
+            (
+                "mcp_smoke",
+                [
+                    sys.executable,
+                    _script("memory_mcp_smoke.py"),
+                    "--workspace",
+                    settings.workspace_id,
+                    "--db-path",
+                    str(settings.db_path),
+                    "--vector-path",
+                    str(settings.vector_db_path),
+                    "--require-behavior",
+                    "--require-capabilities",
+                    "--max-seconds",
+                    "8.0",
+                    "--json",
+                ],
+                {0, 2},
+            )
         )
-
     watchdog_cmd = [
         sys.executable,
         _script("memory_watchdog.py"),
@@ -271,77 +244,56 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         watchdog_cmd.extend(["--sentinels", str(sentinel_discovery.path)])
     if args.require_sentinels:
         watchdog_cmd.append("--require-sentinels")
-    components["watchdog"] = _run_json(
-        "memory_watchdog",
-        watchdog_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
-    )
-    components["watchdog"]["sentinels_discovered"] = sentinel_discovery.to_dict()
-    if (
-        components["watchdog"].get("retrieval_eval", {}).get("status") == "unknown"
-        and sentinel_discovery.path is None
-    ):
-        components["watchdog"].setdefault("warnings", []).append(
-            "retrieval sentinel evals were not run; add .agent_memory/retrieval_sentinels.yaml"
-        )
-        components["watchdog"]["status"] = "warning"
-    if sentinel_discovery.warnings:
-        components["watchdog"].setdefault("failures", []).extend(sentinel_discovery.warnings)
-        components["watchdog"]["status"] = "degraded"
-
+    specs.append(("watchdog", watchdog_cmd, {0, 2}))
     if not args.skip_candidates:
-        candidate_cmd = [
-            sys.executable,
-            _script("memory_candidate_triage.py"),
-            "--workspace",
-            settings.workspace_id,
-            "--db-path",
-            str(settings.db_path),
-            "--json",
-        ]
-        components["candidate_triage"] = _run_json(
-            "memory_candidate_triage",
-            candidate_cmd,
-            ok_codes={0, 2},
-            timeout_seconds=args.component_timeout_seconds,
+        specs.append(
+            (
+                "candidate_triage",
+                [
+                    sys.executable,
+                    _script("memory_candidate_triage.py"),
+                    "--workspace",
+                    settings.workspace_id,
+                    "--db-path",
+                    str(settings.db_path),
+                    "--json",
+                ],
+                {0, 2},
+            )
         )
-
     if not args.skip_restore_check:
-        restore_cmd = [
-            sys.executable,
-            _script("memory_backup_restore_check.py"),
-            "--workspace",
-            settings.workspace_id,
-            "--db-path",
-            str(settings.db_path),
-            "--vector-path",
-            str(settings.vector_db_path),
-            "--audit-timeout-seconds",
-            str(args.component_timeout_seconds),
-            "--json",
-        ]
-        components["backup_restore"] = _run_json(
-            "memory_backup_restore_check",
-            restore_cmd,
-            ok_codes={0, 2},
-            timeout_seconds=args.component_timeout_seconds,
+        specs.append(
+            (
+                "backup_restore",
+                [
+                    sys.executable,
+                    _script("memory_backup_restore_check.py"),
+                    "--workspace",
+                    settings.workspace_id,
+                    "--db-path",
+                    str(settings.db_path),
+                    "--vector-path",
+                    str(settings.vector_db_path),
+                    "--audit-timeout-seconds",
+                    str(args.component_timeout_seconds),
+                    "--json",
+                ],
+                {0, 2},
+            )
         )
-
-    trend_cmd = [
-        sys.executable,
-        _script("memory_trend_report.py"),
-        "--db-path",
-        str(settings.db_path),
-        "--json",
-    ]
-    components["trend"] = _run_json(
-        "memory_trend_report",
-        trend_cmd,
-        ok_codes={0, 2},
-        timeout_seconds=args.component_timeout_seconds,
+    specs.append(
+        (
+            "trend",
+            [
+                sys.executable,
+                _script("memory_trend_report.py"),
+                "--db-path",
+                str(settings.db_path),
+                "--json",
+            ],
+            {0, 2},
+        )
     )
-
     if project_root is not None and not args.skip_contract:
         contract_cmd = [
             sys.executable,
@@ -359,12 +311,77 @@ def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:  # noqa: PLR0912
         }
         for project_name in sorted(item for item in allowed_project_names if item):
             contract_cmd.extend(["--allow-project-name", str(project_name)])
-        components["contract"] = _run_json(
-            "memory_contract_check",
-            contract_cmd,
-            ok_codes={0},
-            timeout_seconds=args.component_timeout_seconds,
+        specs.append(("contract", contract_cmd, {0}))
+    return specs
+
+
+def _augment_watchdog(component: dict[str, Any], sentinel_discovery: Any) -> None:
+    """Fold sentinel-discovery state into the watchdog component (unchanged from
+    the sequential version, hoisted out so it runs after the parallel collect)."""
+    component["sentinels_discovered"] = sentinel_discovery.to_dict()
+    if (
+        component.get("retrieval_eval", {}).get("status") == "unknown"
+        and sentinel_discovery.path is None
+    ):
+        component.setdefault("warnings", []).append(
+            "retrieval sentinel evals were not run; add .agent_memory/retrieval_sentinels.yaml"
         )
+        component["status"] = "warning"
+    if sentinel_discovery.warnings:
+        component.setdefault("failures", []).extend(sentinel_discovery.warnings)
+        component["status"] = "degraded"
+
+
+def run_dashboard(args: argparse.Namespace) -> dict[str, Any]:
+    settings = _settings(args)
+    project_root = Path(args.project_root).resolve() if args.project_root else None
+    sentinel_discovery = discover_sentinel_file(
+        explicit_path=args.sentinels,
+        db_path=settings.db_path,
+        project_root=project_root,
+        require=args.require_sentinels,
+    )
+    specs = _component_specs(args, settings, sentinel_discovery, project_root)
+
+    # Each component is an independent child process (SQLite WAL tolerates the
+    # single mcp_smoke writer alongside the read-only audits), so run them
+    # concurrently to keep wall-clock near the slowest single check instead of
+    # the sum of all checks. Bounded by --max-parallel so we never fan out many
+    # model-loading children at once.
+    max_workers = max(1, min(args.max_parallel, len(specs)))
+    results: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _run_json,
+                # The script basename (e.g. "memory_audit") is the operator-
+                # facing label in failure/timeout text; the component key is the
+                # output dict key. cmd[1] is always the _script(...) path.
+                Path(cmd[1]).stem,
+                cmd,
+                ok_codes=ok_codes,
+                timeout_seconds=args.component_timeout_seconds,
+            ): name
+            for name, cmd, ok_codes in specs
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                results[name] = future.result()
+            except Exception as exc:
+                # A child that could not even be spawned must not abort the
+                # whole dashboard -- mark it degraded like a non-JSON result.
+                results[name] = {
+                    "status": "degraded",
+                    "failures": [f"{name} failed to run: {exc}"],
+                    "exit_code": None,
+                }
+
+    # Re-assemble in deterministic spec order (as_completed yields by finish
+    # time, which would otherwise scramble the component order in plain output).
+    components: dict[str, dict[str, Any]] = {name: results[name] for name, _, _ in specs}
+    if "watchdog" in components:
+        _augment_watchdog(components["watchdog"], sentinel_discovery)
 
     status = _combine_status(components)
     failures: list[str] = []
