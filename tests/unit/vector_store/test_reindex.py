@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.ingestion import episode_pipeline
 from agent_memory_lite.ingestion.episode_pipeline import ingest_episode
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
@@ -92,6 +94,56 @@ def test_repair_missing_vectors_is_bounded_and_resumes(
         limit=2,
     )
     assert third == 0  # idempotent: nothing left with a NULL embedding_id
+
+
+def test_defer_embedding_skips_inline_embed_then_repair_heals(
+    applied_conn: sqlite3.Connection,
+    fake_embedding_provider,
+    fake_vector_store,
+    monkeypatch,
+) -> None:
+    """Plan 10.1: with MEMORY_DEFER_EMBEDDING on, the synchronous write persists
+    the chunk but skips the inline embed (embedding_id NULL, fast return); the
+    vector-repair step then embeds it asynchronously. Default-off path is
+    covered by test_repair_chunk_embedding_refs_uses_existing_vectors above."""
+    deferred = Settings().model_copy(update={"defer_embedding": True})
+    monkeypatch.setattr(episode_pipeline, "get_settings", lambda: deferred)
+
+    result = ingest_episode(
+        applied_conn,
+        EpisodeIn(
+            workspace_id="default",
+            source_type=EpisodeSource.AGENT_ACTION,
+            raw_text="deferred embedding should leave embedding_id null on write",
+            trust_level=TrustLevel.AGENT_OBSERVED,
+        ),
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+
+    # Persisted, but NOT embedded inline.
+    assert result.embedded is False
+    row = applied_conn.execute(
+        "SELECT embedding_id FROM chunks WHERE id = ?", (result.chunk.id,)
+    ).fetchone()
+    assert row["embedding_id"] is None
+    assert result.chunk.id not in set(
+        fake_vector_store.list_ids(NAMESPACE_CHUNKS, workspace_id="default")
+    )
+
+    # The async vector-repair step (plan 7) heals the deferred chunk.
+    written = repair_missing_vectors(
+        applied_conn,
+        workspace_id="default",
+        provider=fake_embedding_provider,
+        store=fake_vector_store,
+        limit=16,
+    )
+    assert written == 1
+    row2 = applied_conn.execute(
+        "SELECT embedding_id FROM chunks WHERE id = ?", (result.chunk.id,)
+    ).fetchone()
+    assert row2["embedding_id"] == result.chunk.id
 
 
 def test_reindex_sets_chunk_embedding_references(

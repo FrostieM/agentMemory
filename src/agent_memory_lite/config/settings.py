@@ -237,6 +237,15 @@ class Settings(BaseSettings):
     vector_repair_max_per_pass: int = Field(
         64, ge=1, le=100000, validation_alias="MEMORY_VECTOR_REPAIR_MAX_PER_PASS"
     )
+    # Plan 10.1: when on, the synchronous episode write persists the chunk and
+    # returns WITHOUT paying the embedding cost (embedding_id stays NULL); the
+    # brain-pass vector-repair step then embeds it asynchronously. Trades
+    # immediate search-after-write consistency for a fast write. Default OFF --
+    # opt-in, zero change to the default path.
+    # WARNING: only enable this together with vector_repair_enabled AND
+    # brain_pass_enabled (both default ON) -- otherwise deferred chunks are never
+    # embedded and stay invisible to vector search (FTS/BM25 still finds them).
+    defer_embedding: bool = Field(False, validation_alias="MEMORY_DEFER_EMBEDDING")
     # Phase 5b -- distil a completed plan (every live step done/skipped,
     # >=1 done) into a `plan:<task_id>` playbook. Idempotent; the cap
     # bounds NEW playbooks per pass.

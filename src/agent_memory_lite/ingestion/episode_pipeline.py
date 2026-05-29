@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.dimension_check import pin_or_check
 from agent_memory_lite.ingestion.episode_dedup import maybe_dedup
@@ -182,7 +182,17 @@ def ingest_episode(
     episode, chunk = persist(conn, episode_in, redacted.text, redacted.kinds_seen)
 
     embedded = False
-    if embedding_provider is not None and vector_store is not None:
+    # Plan 10.1: opt-in deferred embedding (MEMORY_DEFER_EMBEDDING). The chunk is
+    # already persisted above (SQLite is the source of record), so when deferral
+    # is on we skip the synchronous embed and return fast; the brain-pass
+    # vector-repair step (vector_repair_enabled) embeds the NULL-embedding_id
+    # chunk asynchronously. A deferred chunk is intentional, not a failure, so no
+    # vector_upsert_failed maintenance event is written for it.
+    if (
+        embedding_provider is not None
+        and vector_store is not None
+        and not get_settings().defer_embedding
+    ):
         embedded = embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
         if embedded:
             set_chunk_embedding_id(

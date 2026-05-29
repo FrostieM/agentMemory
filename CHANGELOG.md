@@ -9,6 +9,24 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.21.0 - 2026-05-29
+
+### Added
+
+- Opt-in deferred embedding on the synchronous write path (release plan step
+  10.1, `MEMORY_DEFER_EMBEDDING`, default OFF). When enabled, `ingest_episode`
+  persists the chunk (SQLite is the source of record) and returns WITHOUT
+  paying the embedding cost — `embedding_id` stays NULL and the brain-pass
+  vector-repair step (3.18.0) embeds it asynchronously, so a write no longer
+  blocks on the model load + embed. Trades immediate search-after-write vector
+  consistency for a fast write (FTS/BM25 still finds the chunk immediately).
+  Default OFF means the default write path is byte-for-byte unchanged
+  (confirmed: full suite green, and the gate is a single short-circuited
+  conjunct). Only enable alongside `vector_repair_enabled` + `brain_pass_enabled`
+  (both default ON), else deferred chunks are never embedded. This addresses the
+  heavy-embedding half of 10.1; deferring the (already opt-in + timeout-bounded)
+  inline LLM extraction is a separate smaller follow-up.
+
 ## 3.20.1 - 2026-05-29
 
 ### Changed
