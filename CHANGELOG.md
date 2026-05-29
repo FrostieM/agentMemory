@@ -9,6 +9,20 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.16.0 - 2026-05-29
+
+### Changed
+
+- `storage.reader.search` now gives a focused, explicit `kinds=[...]` query the
+  full `limit` budget *per requested kind* instead of `limit // len(kinds)`
+  (release task #120). A two-kind search (`kinds=['decision','behavior']`,
+  `limit=10`) previously capped each kind at 5, so a query whose strongest
+  matches were all decisions could return at most 5 of them and silently drop
+  the rest below the fold. A default wide search (`kinds=None`) keeps the
+  divided budget so no single kind crowds out the others; the overall result is
+  still bounded by `limit`. Pinned by
+  `tests/unit/storage/test_search_per_kind_budget.py`.
+
 ## 3.15.0 - 2026-05-29
 
 ### Added

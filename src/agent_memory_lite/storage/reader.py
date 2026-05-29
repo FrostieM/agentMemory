@@ -527,8 +527,11 @@ def search(
     """Multi-kind search. Returns compact projections sorted by relevance.
 
     By default searches across all known kinds. Pass ``kinds=['decision',
-    'behavior']`` to narrow scope. Per-kind limit divides ``limit`` so
-    a wide search returns balanced results, not all one kind.
+    'behavior']`` to narrow scope. A default wide search divides ``limit``
+    across all kinds so results stay balanced (not all one kind). An EXPLICIT
+    ``kinds`` list is a focused query, so each requested kind gets the full
+    ``limit`` budget (#120) -- a search narrowed to one/few kinds can then
+    return up to ``limit`` of them instead of being capped at ``limit // N``.
 
     ``rerank=True`` runs the optional cross-encoder reranker over the
     initial hit set. Requires the ``[rerank]`` extra; falls back to the
@@ -545,7 +548,10 @@ def search(
     selected = list(_KIND_TABLES.keys()) if kinds is None else validate_kinds(kinds)
     if not selected:
         return []
-    per_kind = max(2, limit // max(1, len(selected)))
+    # #120: an explicit kinds=[...] is a focused query -> full budget per
+    # requested kind, so the global top-`limit` is not distorted by a per-kind
+    # cap. Default wide search keeps the divided budget (balance + bounded scan).
+    per_kind = limit if kinds is not None else max(2, limit // max(1, len(selected)))
     hits: list[SearchHit] = []
     for kind in selected:
         if kind == "chunk":
