@@ -66,8 +66,8 @@ def upsert_playbook_row(
             id, workspace_id, name, subtype, summary, when_to_use_short,
             body_md, body_token_count, triggers_json, steps_json,
             success_criteria_json, required_skills_json, source_episode_id,
-            confidence, active, created_at, updated_at
-        ) VALUES (?, ?, ?, 'playbook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            confidence, base_confidence, active, created_at, updated_at
+        ) VALUES (?, ?, ?, 'playbook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, subtype, name) DO UPDATE SET
             summary = excluded.summary,
             when_to_use_short = excluded.when_to_use_short,
@@ -79,6 +79,7 @@ def upsert_playbook_row(
             required_skills_json = excluded.required_skills_json,
             source_episode_id = excluded.source_episode_id,
             confidence = excluded.confidence,
+            base_confidence = excluded.confidence,
             active = excluded.active,
             updated_at = excluded.updated_at
         """,
@@ -96,6 +97,7 @@ def upsert_playbook_row(
             json.dumps(required_skills, sort_keys=True),
             source_episode_id,
             confidence,
+            confidence,  # base_confidence: anchor the maturity curve at upsert (#121)
             1 if active else 0,
             created_at,
             updated_at,

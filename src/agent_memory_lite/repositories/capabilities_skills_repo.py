@@ -69,8 +69,8 @@ def upsert_skill_row(
             id, workspace_id, name, subtype, summary, when_to_use_short,
             body_md, body_token_count, when_to_use_json, inputs_json,
             outputs_json, tools_json, related_roles_json, source_episode_id,
-            confidence, active, created_at, updated_at
-        ) VALUES (?, ?, ?, 'skill', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            confidence, base_confidence, active, created_at, updated_at
+        ) VALUES (?, ?, ?, 'skill', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(workspace_id, subtype, name) DO UPDATE SET
             summary = excluded.summary,
             when_to_use_short = excluded.when_to_use_short,
@@ -83,6 +83,7 @@ def upsert_skill_row(
             related_roles_json = excluded.related_roles_json,
             source_episode_id = excluded.source_episode_id,
             confidence = excluded.confidence,
+            base_confidence = excluded.confidence,
             active = excluded.active,
             updated_at = excluded.updated_at
         """,
@@ -101,6 +102,7 @@ def upsert_skill_row(
             json.dumps(related_roles, sort_keys=True),
             source_episode_id,
             confidence,
+            confidence,  # base_confidence: anchor the maturity curve at upsert (#121)
             1 if active else 0,
             created_at,
             updated_at,

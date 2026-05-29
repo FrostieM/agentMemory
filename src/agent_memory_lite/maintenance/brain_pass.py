@@ -122,6 +122,10 @@ class BrainPassReport:
     # digests so impact_check staleness self-heals between full audits.
     digests_checked: int = 0
     digests_refreshed: int = 0
+    # Plan #121: capability maturity -> confidence recompute (rows scanned and
+    # rows whose stored confidence actually moved this pass).
+    capability_confidence_scanned: int = 0
+    capability_confidence_updated: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -161,6 +165,8 @@ class BrainPassReport:
             "plan_step_outcomes_fed": self.plan_step_outcomes_fed,
             "digests_checked": self.digests_checked,
             "digests_refreshed": self.digests_refreshed,
+            "capability_confidence_scanned": self.capability_confidence_scanned,
+            "capability_confidence_updated": self.capability_confidence_updated,
             "errors": list(self.errors),
         }
 
@@ -681,6 +687,38 @@ def _step_refresh_digests(
         report.errors.append(f"digest_refresh:{exc}")
 
 
+def _step_recompute_capability_confidence(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Plan #121: feed capability maturity counters into stored confidence.
+
+    Runs AFTER ``_step_feed_plan_outcomes`` so this pass's freshly-recorded
+    plan-step outcomes are already in the success/failure counters when the
+    curve is applied. It does not commit internally, so feed's stamp+bumps and
+    these confidence updates ride the single final commit atomically.
+    Idempotent + failure-soft; gated by the maturity master flag."""
+    if not settings.capability_maturity_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.capability_confidence import (  # noqa: PLC0415
+            recompute_capability_confidence,
+        )
+
+        stats = recompute_capability_confidence(
+            conn,
+            workspace_id=workspace_id,
+            half_life_days=float(settings.capability_decay_days),
+            limit=settings.capability_confidence_max_per_pass,
+        )
+        report.capability_confidence_scanned = stats.scanned
+        report.capability_confidence_updated = stats.updated
+    except Exception as exc:
+        report.errors.append(f"capability_confidence:{exc}")
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -717,11 +755,15 @@ def run_brain_pass(
     _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     _step_distill_plan_playbooks(conn, workspace_id, settings, report)
-    # Digest refresh commits internally (per upsert), so it runs BEFORE
-    # _step_feed_plan_outcomes, whose stamp+bumps must share the single final
-    # commit -- keeping that step the last writer before run_brain_pass commits.
+    # Digest refresh commits internally (per upsert), so it runs BEFORE the two
+    # steps below, whose writes must share the single final commit. Plan
+    # outcomes are fed first; the maturity->confidence recompute (#121) runs
+    # last so it sees this pass's freshly-bumped success/failure counters --
+    # neither commits internally, so feed's stamp+bumps and the confidence
+    # updates land together in run_brain_pass's final commit.
     _step_refresh_digests(conn, workspace_id, settings, report)
     _step_feed_plan_outcomes(conn, workspace_id, settings, report)
+    _step_recompute_capability_confidence(conn, workspace_id, settings, report)
     try:
         conn.commit()
     except sqlite3.Error as exc:

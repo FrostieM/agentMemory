@@ -82,12 +82,18 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
     conn = open_connection(db_path)
     try:
         applied = apply_migrations(conn, MIGRATION_DIR)
-        assert applied == ["0001_init", "0002_issues", "0003_code_digests_indexed_at"]
+        assert applied == [
+            "0001_init",
+            "0002_issues",
+            "0003_code_digests_indexed_at",
+            "0004_skills_base_confidence",
+        ]
         versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [row[0] for row in versions] == [
             "0001_init",
             "0002_issues",
             "0003_code_digests_indexed_at",
+            "0004_skills_base_confidence",
         ]
         tables = {
             row[0]
@@ -220,6 +226,7 @@ def test_migration_module_cli_applies_root_migration(tmp_path: Path) -> None:
             "0001_init",
             "0002_issues",
             "0003_code_digests_indexed_at",
+            "0004_skills_base_confidence",
         ]
         tables = {
             row[0]

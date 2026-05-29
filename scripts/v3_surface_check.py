@@ -292,13 +292,27 @@ def _check_migrations(root: Path) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     migration_dir = root / "migrations"
     sql_files = sorted(p.name for p in migration_dir.glob("*.sql"))
-    if sql_files != ["0001_init.sql"]:
+    # The v3 baseline is the squashed 0001_init.sql. Forward-only numbered
+    # migrations on top of it (0002_*, 0003_*, ...) are the SUPPORTED shape, not
+    # a defect -- so flag only a missing baseline or a filename that is not a
+    # NNNN_<slug>.sql forward migration (the runner enforces the same pattern).
+    if "0001_init.sql" not in sql_files:
         findings.append(
             {
-                "kind": "non_squashed_migration_set",
+                "kind": "missing_squashed_baseline",
                 "path": "migrations",
                 "line": 0,
-                "match": ", ".join(sql_files),
+                "match": ", ".join(sql_files) or "(no .sql files)",
+            }
+        )
+    nonconforming = [n for n in sql_files if not re.match(r"^\d{4}_[A-Za-z0-9_]+\.sql$", n)]
+    if nonconforming:
+        findings.append(
+            {
+                "kind": "nonconforming_migration_filename",
+                "path": "migrations",
+                "line": 0,
+                "match": ", ".join(nonconforming),
             }
         )
     init = migration_dir / "0001_init.sql"

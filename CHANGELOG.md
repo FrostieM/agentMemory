@@ -9,6 +9,34 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.17.0 - 2026-05-29
+
+### Added
+
+- Capability confidence now reflects observed maturity (release task #121). A
+  new brain-pass step (`maintenance/capability_confidence`) applies the
+  previously-unwired `capability.maturity.confidence_from_maturity` curve to
+  `skills.confidence`: a capability with a track record of success earns
+  confidence, one that keeps failing loses it, and an idle one decays back
+  toward its operator-supplied anchor. A new `base_confidence` column
+  (migration `0004_skills_base_confidence`) preserves that anchor — the
+  capability upsert path sets it at write time and re-anchors it when an
+  operator re-upserts with a new confidence. A capability with **no** recorded
+  success/failure outcomes stays exactly at its base: invocations alone are not
+  evidence about success, so confidence never drifts toward the neutral 0.5
+  prior. The step runs after plan-step outcomes are fed into the counters, is
+  bounded (`MEMORY_CAPABILITY_CONFIDENCE_MAX_PER_PASS`, default 500),
+  idempotent, failure-soft, and gated by `MEMORY_CAPABILITY_MATURITY_ENABLED`.
+
+### Fixed
+
+- `scripts/v3_surface_check.py` migration check accepted only a lone
+  `0001_init.sql` and had therefore been failing since the forward-only
+  migrations `0002`/`0003` landed. It now accepts the squashed baseline plus
+  any forward-only `NNNN_<slug>.sql` migrations, while still flagging a missing
+  baseline or a non-conforming filename — realigning the gate with the
+  project's forward-only migration rule.
+
 ## 3.16.0 - 2026-05-29
 
 ### Changed

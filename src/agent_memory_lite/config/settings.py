@@ -299,6 +299,13 @@ class Settings(BaseSettings):
     )
     capability_decay_days: int = Field(30, ge=1, validation_alias="MEMORY_CAPABILITY_DECAY_DAYS")
     capability_stale_days: int = Field(60, ge=1, validation_alias="MEMORY_CAPABILITY_STALE_DAYS")
+    # Plan #121: the brain pass recomputes skills.confidence from the maturity
+    # curve (base_confidence anchor + usage/success/failure counters + idle
+    # decay over capability_decay_days) so observed outcomes actually move the
+    # stored confidence. Bounded per pass; gated by capability_maturity_enabled.
+    capability_confidence_max_per_pass: int = Field(
+        500, ge=1, le=10000, validation_alias="MEMORY_CAPABILITY_CONFIDENCE_MAX_PER_PASS"
+    )
     behavior_apply_tracking_enabled: bool = Field(
         True, validation_alias="MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED"
     )
