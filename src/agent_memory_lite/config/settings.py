@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     # service (which keeps the model warm across requests). See
     # mcp/stdio_server._maybe_warm_embeddings.
     mcp_warm_embed: bool = Field(default=True, validation_alias="MEMORY_MCP_WARM_EMBED")
+    # Plan 10.5: the brain pass re-verifies a bounded, rotating batch of code
+    # digests each tick and recomputes the stale ones (file_sha1 drift), so an
+    # impact_check stale verdict self-heals without waiting for a full audit.
+    # max_per_pass bounds the per-tick file reads -- O(limit), not O(repo).
+    digest_refresh_enabled: bool = Field(
+        default=True, validation_alias="MEMORY_DIGEST_REFRESH_ENABLED"
+    )
+    digest_refresh_max_per_pass: int = Field(
+        default=50, ge=1, le=2000, validation_alias="MEMORY_DIGEST_REFRESH_MAX_PER_PASS"
+    )
 
     # 2.1.3 LLM narrative + 2.1.4 similar_signature soft edges.
     # fmt: off

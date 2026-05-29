@@ -9,6 +9,23 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.14.0 - 2026-05-29
+
+### Added
+
+- Durable code-digest refresh in the brain pass
+  (`maintenance/digest_refresh.refresh_stale_digests`): each tick re-verifies a
+  bounded, rotating batch (`MEMORY_DIGEST_REFRESH_MAX_PER_PASS`, default 50) of
+  the least-recently-checked `code_digests` and recomputes the ones whose
+  `file_sha1` drifted from the file on disk, so an `impact_check` stale verdict
+  self-heals without waiting for a full audit or relying on the 120s pre-commit
+  ingest ceiling. Bounded (O(limit)/pass, not an O(repo) tree walk), rotating
+  (bumps `last_indexed_at` on every digest checked), failure-soft, with bounded
+  retries on transient read / DB-lock errors. Gated by
+  `MEMORY_DIGEST_REFRESH_ENABLED` (default on); a workspace with no registered
+  project root is a no-op. Missing/orphan-digest detection stays with the
+  heavier audit scan.
+
 ## 3.13.0 - 2026-05-29
 
 ### Added

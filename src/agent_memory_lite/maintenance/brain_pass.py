@@ -31,6 +31,7 @@ import logging
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.utils.time import iso_now
@@ -117,6 +118,10 @@ class BrainPassReport:
     plan_playbooks_distilled: int = 0
     # Phase 5c: (plan step -> capability) outcomes fed into maturity this pass.
     plan_step_outcomes_fed: int = 0
+    # Plan 10.5: durable code-digest refresh -- bounded re-verify of existing
+    # digests so impact_check staleness self-heals between full audits.
+    digests_checked: int = 0
+    digests_refreshed: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -154,6 +159,8 @@ class BrainPassReport:
             "autonomous_held": self.autonomous_held,
             "plan_playbooks_distilled": self.plan_playbooks_distilled,
             "plan_step_outcomes_fed": self.plan_step_outcomes_fed,
+            "digests_checked": self.digests_checked,
+            "digests_refreshed": self.digests_refreshed,
             "errors": list(self.errors),
         }
 
@@ -639,6 +646,41 @@ def _step_feed_plan_outcomes(
         report.errors.append(f"plan_outcome_maturity:{exc}")
 
 
+def _step_refresh_digests(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Plan 10.5: re-verify a bounded, rotating batch of code digests and
+    recompute the stale ones, so an ``impact_check`` stale verdict self-heals
+    without waiting for a full audit. The project root (to read source files)
+    is resolved from the workspace registry; a workspace with no registered
+    root is a no-op. Failure-soft like every other step."""
+    if not settings.digest_refresh_enabled:
+        return
+    try:
+        from agent_memory_lite.config.workspace_registry import WorkspaceRegistry  # noqa: PLC0415
+        from agent_memory_lite.maintenance.digest_refresh import (  # noqa: PLC0415
+            refresh_stale_digests,
+        )
+
+        project_root: Path | None = None
+        entry = WorkspaceRegistry(settings.workspaces_file).get(workspace_id)
+        if entry is not None and entry.project_root:
+            project_root = Path(entry.project_root)
+        stats = refresh_stale_digests(
+            conn,
+            workspace_id=workspace_id,
+            project_root=project_root,
+            limit=settings.digest_refresh_max_per_pass,
+        )
+        report.digests_checked = stats.checked
+        report.digests_refreshed = stats.refreshed
+    except Exception as exc:
+        report.errors.append(f"digest_refresh:{exc}")
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -675,6 +717,10 @@ def run_brain_pass(
     _step_drift_sentinel(conn, workspace_id, report)
     _step_behavior_auto_archive(conn, workspace_id, settings, report)
     _step_distill_plan_playbooks(conn, workspace_id, settings, report)
+    # Digest refresh commits internally (per upsert), so it runs BEFORE
+    # _step_feed_plan_outcomes, whose stamp+bumps must share the single final
+    # commit -- keeping that step the last writer before run_brain_pass commits.
+    _step_refresh_digests(conn, workspace_id, settings, report)
     _step_feed_plan_outcomes(conn, workspace_id, settings, report)
     try:
         conn.commit()
