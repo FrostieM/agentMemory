@@ -46,6 +46,9 @@ _ASSETS: dict[str, str] = {
     # v3.4 #6: hygiene action queue (operator-side triage of
     # maintenance_events). Sister page to /ui/review.
     "queue.html": "text/html; charset=utf-8",
+    # Phase 6 (#110): read-only plan view over plan_steps for one task,
+    # backed by GET /memory/plan.
+    "plan.html": "text/html; charset=utf-8",
 }
 
 _NO_CACHE = {
@@ -109,6 +112,13 @@ def memory_ui_queue() -> FileResponse:
     candidates (knowledge-side); this one targets
     maintenance_events (substrate-side)."""
     return _serve_html("queue.html")
+
+
+@router.get("/ui/plan")
+def memory_ui_plan() -> FileResponse:
+    """Phase 6 (#110) plan view: current/blocked/done steps + progress for a
+    task, backed by GET /memory/plan?task_id=."""
+    return _serve_html("plan.html")
 
 
 @router.get("/ui/{asset_name}")

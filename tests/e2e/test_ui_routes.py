@@ -147,6 +147,33 @@ def test_ui_index_and_assets(app_factory) -> None:
     assert "graphZoomIn" not in index.text
 
 
+def test_ui_plan_page(app_factory) -> None:
+    """Phase 6 (#110): /ui/plan serves the read-only plan view.
+
+    Pins the public contract — the page renders, is backed by the existing
+    GET /memory/plan read route, escapes interpolated values (no XSS), and
+    exposes the Plan nav section — without locking down internal JS names.
+    """
+    app = app_factory()
+    with TestClient(app) as client:
+        page = client.get("/ui/plan")
+
+    assert page.status_code == 200
+    assert "Plan · agent-memory-lite" in page.text
+    # Controls + render targets.
+    assert 'id="task-input"' in page.text
+    assert 'id="plan-list"' in page.text
+    assert 'id="plan-progress"' in page.text
+    # Backed by the existing read route, not a new write surface.
+    assert "/memory/plan?" in page.text
+    # Routes cross-workspace reads through the shared header helper.
+    assert "AppHeader.dbHeaders" in page.text
+    # XSS-safe: every interpolated value goes through escape().
+    assert "function escape(" in page.text
+    # Nav advertises the Plan section (data-nav wired into NAV_BASES).
+    assert 'data-nav="plan"' in page.text
+
+
 def test_ui_state_returns_graph(
     app_factory, applied_conn, fake_embedding_provider, fake_vector_store
 ) -> None:

@@ -31,6 +31,7 @@
     reflexes: "/ui/reflexes",
     metrics: "/ui/metrics",
     queue: "/ui/queue",
+    plan: "/ui/plan",
   };
 
   // Workspace registry cache: id -> { db_path, vector_path, label }.

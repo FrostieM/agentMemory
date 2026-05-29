@@ -9,6 +9,22 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.20.0 - 2026-05-29
+
+### Added
+
+- Observatory plan view (`/ui/plan`, release plan Phase 6 / task #110): a
+  read-only page that renders one task's `plan_steps` — a progress bar
+  (done/total, percent, active/blocked counts) plus the rank-ordered steps
+  with status badges (active/blocked/pending/done/skipped) and sub-step
+  indentation. Backed by the existing `GET /memory/plan?task_id=` read route,
+  workspace-routed via the shared `AppHeader.dbHeaders` helper, deep-linkable
+  via `?task_id=`, and XSS-safe (every interpolated value escaped). Registered
+  in `ui_pages` + the nav-base map. Operator step reorder/drop actions and
+  adding the Plan link to every other page's nav strip are folded into the
+  broader UI-refresh step (10.7); live cross-page browser verification (10.8)
+  awaits a service deploy of this version.
+
 ## 3.19.0 - 2026-05-29
 
 ### Added
