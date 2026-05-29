@@ -10,6 +10,7 @@ provider exposed in `tests/conftest.py` to avoid downloading models.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -31,10 +32,28 @@ class SentenceTransformersProvider(EmbeddingProvider):
         self._batch_size = batch_size
         self._model: Any = None
         self._dim: int | None = None
+        # The provider is shared across MCP handler threads (asyncio.to_thread)
+        # and the startup warm-up thread, so the lazy load needs a lock: two
+        # threads racing the first call would otherwise both load the model.
+        self._load_lock = threading.Lock()
 
     def _load(self) -> Any:
         if self._model is not None:
             return self._model
+        with self._load_lock:
+            # Double-checked: another thread may have loaded while we waited.
+            if self._model is None:
+                model = self._build_model()
+                # Publish _dim before _model so a thread taking the lock-free
+                # fast path (sees _model set) also sees a populated _dim.
+                self._dim = int(model.get_sentence_embedding_dimension())
+                self._model = model
+        return self._model
+
+    def _build_model(self) -> Any:
+        # Invariant: never call self._load() / self.dim from here. _build_model
+        # runs while _load_lock is held and the lock is non-reentrant, so a
+        # self-call would deadlock.
         try:
             from sentence_transformers import SentenceTransformer  # noqa: PLC0415
         except ImportError as exc:
@@ -49,21 +68,18 @@ class SentenceTransformersProvider(EmbeddingProvider):
         # stalls the whole write path for minutes (observed as a hung
         # memory_write). Load cache-only first. Fall back to a networked
         # fetch ONLY when the model is genuinely absent -- the one-time
-        # bootstrap, like ``ollama pull``. For a strictly air-gapped runtime
-        # the cache-only path needs no extra env flag now.
+        # bootstrap, like ``ollama pull``. HF offline is also defaulted on
+        # once the model is cached (config/offline_bootstrap.py).
         try:
             try:
-                model = SentenceTransformer(self._model_name, local_files_only=True)
+                return SentenceTransformer(self._model_name, local_files_only=True)
             except Exception:
                 # Not cached yet -> one-time networked bootstrap fetch.
-                model = SentenceTransformer(self._model_name)
+                return SentenceTransformer(self._model_name)
         except Exception as exc:
             raise EmbeddingProviderUnavailableError(
                 f"failed to load sentence-transformers model {self._model_name!r}: {exc}"
             ) from exc
-        self._model = model
-        self._dim = int(model.get_sentence_embedding_dimension())
-        return self._model
 
     @property
     def name(self) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -14,6 +15,7 @@ from mcp.server.models import InitializationOptions
 
 from agent_memory_lite.config.local_only_guard import assert_local_only
 from agent_memory_lite.config.offline_bootstrap import maybe_configure_offline
+from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.mcp.stdio_guards import _workspace_from_args
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
@@ -24,6 +26,7 @@ from agent_memory_lite.version import __version__
 __all__ = [
     "_HANDLERS",
     "_TOOLS",
+    "_maybe_warm_embeddings",
     "_runtime",
     "_workspace_from_args",
     "main",
@@ -66,6 +69,25 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.
     return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
+def _warm_embeddings() -> None:
+    """Best-effort: load the embedding model now so the first tool call does not
+    pay the ~1.5s cold model-load. Runs in a daemon thread; failure-soft."""
+    try:
+        _runtime.provider().embed_batch(["warmup"])
+    except Exception as exc:  # warm-up must never crash the server
+        _log.debug("embed_warmup_failed", error=str(exc))
+
+
+def _maybe_warm_embeddings(settings: Settings) -> threading.Thread | None:
+    """Spawn the background embedding warm-up when enabled. Returns the thread
+    (so tests can join it) or None when disabled."""
+    if not settings.mcp_warm_embed:
+        return None
+    thread = threading.Thread(target=_warm_embeddings, name="amem-embed-warmup", daemon=True)
+    thread.start()
+    return thread
+
+
 async def _run() -> None:
     settings = _runtime.settings
     configure_logging(settings.log_level)
@@ -73,6 +95,9 @@ async def _run() -> None:
     # Default HF to offline once the embedding model is cached -- before the
     # first tool handler triggers a lazy embedding load in this MCP process.
     maybe_configure_offline(settings)
+    # Warm the embedding model off the critical path so the first tool call
+    # that needs an embedding does not pay the cold model-load.
+    _maybe_warm_embeddings(settings)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await _server.run(
             read_stream,

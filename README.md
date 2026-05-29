@@ -130,7 +130,9 @@ ollama pull qwen2.5:7b-instruct
   is cached, startup defaults `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` to `1`
   automatically (defense-in-depth over the per-load `local_files_only=True`).
   Opt out with `MEMORY_HF_AUTO_OFFLINE=false`, or force it with an explicit
-  `HF_HUB_OFFLINE` (which always wins) for a strictly air-gapped runtime.
+  `HF_HUB_OFFLINE` (which always wins) for a strictly air-gapped runtime. The
+  MCP server also warms this model at startup so the first `memory_write` does
+  not stall (`MEMORY_MCP_WARM_EMBED=false` to disable).
 - Windows / macOS / Linux.
 
 ---

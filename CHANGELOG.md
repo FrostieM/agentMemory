@@ -9,6 +9,23 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.13.0 - 2026-05-29
+
+### Added
+
+- The MCP stdio server warms the embedding model in a background daemon thread
+  at startup (`MEMORY_MCP_WARM_EMBED`, default on), so the first tool call that
+  needs an embedding no longer pays the ~1.5s cold model-load. Failure-soft,
+  and runs after the offline guard so the warm load stays cache-only.
+
+### Changed
+
+- `SentenceTransformersProvider._load` is now thread-safe (double-checked
+  locking with safe `_dim`-before-`_model` publication ordering): the provider
+  is a per-process singleton shared across the MCP handler threads
+  (`asyncio.to_thread`) and the new warm-up thread, and the prior
+  check-then-set could let two threads both load the model.
+
 ## 3.12.0 - 2026-05-29
 
 ### Changed

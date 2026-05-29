@@ -71,6 +71,10 @@ class _Runtime:
         # SQLite-level cross-thread is fine (open_connection sets
         # check_same_thread=False); this lock just guards the cache.
         self._open_lock = threading.Lock()
+        # Guards the lazy single-instance provider()/store() init: the MCP
+        # warm-up thread and a concurrent first handler must not each build one
+        # (two provider instances would each load their own model).
+        self._init_lock = threading.Lock()
 
     def _open(self, db_path: Path | str, *, workspace_id: str) -> sqlite3.Connection:
         key = str(Path(db_path))
@@ -118,12 +122,16 @@ class _Runtime:
 
     def provider(self) -> EmbeddingProvider:
         if self._provider is None:
-            self._provider = get_embedding_provider(self.settings)
+            with self._init_lock:
+                if self._provider is None:
+                    self._provider = get_embedding_provider(self.settings)
         return self._provider
 
     def store(self) -> VectorStore:
         if self._store is None:
-            self._store = get_vector_store(self.settings)
+            with self._init_lock:
+                if self._store is None:
+                    self._store = get_vector_store(self.settings)
         return self._store
 
     def store_for(self, workspace_id: str | None) -> VectorStore:

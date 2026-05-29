@@ -124,6 +124,12 @@ class Settings(BaseSettings):
     # An explicit operator-set HF_HUB_OFFLINE always wins. See
     # config/offline_bootstrap.py.
     hf_auto_offline: bool = Field(default=True, validation_alias="MEMORY_HF_AUTO_OFFLINE")
+    # When true (default), the MCP stdio server warms the embedding model in a
+    # background daemon thread at startup so the first tool call that needs an
+    # embedding does not pay the ~1.5s cold model-load. No-op for the HTTP
+    # service (which keeps the model warm across requests). See
+    # mcp/stdio_server._maybe_warm_embeddings.
+    mcp_warm_embed: bool = Field(default=True, validation_alias="MEMORY_MCP_WARM_EMBED")
 
     # 2.1.3 LLM narrative + 2.1.4 similar_signature soft edges.
     # fmt: off
