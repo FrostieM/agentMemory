@@ -112,6 +112,18 @@ class Settings(BaseSettings):
     llm_extract_timeout_sec: float = Field(
         10.0, gt=0.0, le=120.0, validation_alias="MEMORY_LLM_EXTRACT_TIMEOUT_SEC"
     )
+    # When true (default), startup flips HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE
+    # to "1" once the embedding model is confirmed in the local HF cache. This
+    # is DEFENSE-IN-DEPTH over the per-load local_files_only=True (the primary
+    # local-only control), keeping transitive huggingface_hub / transformers
+    # paths offline too. Scope: gated on the embedding model only (not the
+    # opt-in reranker, which uses a different model and is failure-soft), and
+    # only after that model is cached -- the one-time bootstrap download stays
+    # enabled until then. Independent of allow_remote_providers: an operator
+    # fronting a private HF mirror must opt out here or set HF_HUB_OFFLINE=0.
+    # An explicit operator-set HF_HUB_OFFLINE always wins. See
+    # config/offline_bootstrap.py.
+    hf_auto_offline: bool = Field(default=True, validation_alias="MEMORY_HF_AUTO_OFFLINE")
 
     # 2.1.3 LLM narrative + 2.1.4 similar_signature soft edges.
     # fmt: off

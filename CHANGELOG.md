@@ -9,6 +9,27 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.11.0 - 2026-05-29
+
+### Added
+
+- HuggingFace offline-by-default at startup (`config/offline_bootstrap.py`):
+  once the embedding model is confirmed in the local HF cache, the HTTP and MCP
+  entrypoints set `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` to `1` by default —
+  defense-in-depth over the per-load `local_files_only=True` (the primary
+  local-only control), covering transitive `huggingface_hub` / `transformers`
+  paths. The cache probe is an import-free filesystem check (so it cannot
+  freeze HF's offline constant before the env var is set) and requires a real
+  weight file, so a partial download is treated as "not cached" and the
+  one-time bootstrap window stays open. Gated by `MEMORY_HF_AUTO_OFFLINE`
+  (default on); an explicit operator-set `HF_HUB_OFFLINE` always wins; scoped
+  to the embedding model (the opt-in reranker is failure-soft).
+- Kind-registry drift-guard test (`tests/unit/storage/test_kind_registry_consistency.py`):
+  asserts every agent-facing memory kind is wired across the MCP tool enum,
+  writer `_KIND_META`, reader `_KIND_TABLES`, and projection `_PROJECTORS`, and
+  that writer/reader tables agree — failing fast on the "added to one map but
+  not another" class instead of shipping a half-wired kind.
+
 ## 3.10.0 - 2026-05-28
 
 ### Added

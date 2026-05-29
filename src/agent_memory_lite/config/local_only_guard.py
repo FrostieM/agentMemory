@@ -14,8 +14,18 @@ load is served from the local cache with zero network traffic. The guard
 audits CONFIGURED redirects (Settings URLs, ``HF_ENDPOINT`` /
 ``HF_HUB_ENDPOINT``, proxy env vars) so a redirect to a CLOUD host is
 still rejected; it intentionally does not block the library's built-in
-default. Operators who need a strictly air-gapped runtime pre-pull the
-model and set ``HF_HUB_OFFLINE=1``.
+default for the one-time bootstrap.
+
+As of v3.11.0 the bootstrap window is narrowed automatically: startup
+(``config/offline_bootstrap.configure_offline_env``, wired into the HTTP
+and MCP entrypoints) sets ``HF_HUB_OFFLINE`` / ``TRANSFORMERS_OFFLINE`` to
+``1`` by default once the embedding model is confirmed in the local HF
+cache -- defense-in-depth over the per-load ``local_files_only=True`` (the
+primary control), covering transitive ``huggingface_hub`` / ``transformers``
+paths. This is conditional (only after the embedding model is cached) and
+scoped to that model, not the opt-in reranker; until the model is cached the
+vars are left unset so the bootstrap download still works. An explicit
+operator-set ``HF_HUB_OFFLINE`` always wins.
 """
 
 from __future__ import annotations

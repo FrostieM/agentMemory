@@ -236,6 +236,11 @@ def settings_factory(
             "SENTRY_DSN",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
+            # create_app() -> _bootstrap() -> configure_offline_env() mutates the
+            # real os.environ on a cache hit; hand these to monkeypatch so they
+            # are reverted per-test instead of leaking across the session.
+            "HF_HUB_OFFLINE",
+            "TRANSFORMERS_OFFLINE",
         ):
             monkeypatch.delenv(env_var, raising=False)
         for env_var, value in defaults.items():

@@ -126,8 +126,11 @@ ollama pull qwen2.5:7b-instruct
 - **Ollama** for LLM-driven extraction — optional, skippable with
   `OLLAMA_PROBE_SKIP=true`.
 - First run downloads the sentence-transformers embedding model from
-  HuggingFace once (a one-time bootstrap, like `ollama pull`); pre-pull it and
-  set `HF_HUB_OFFLINE=1` for a strictly air-gapped runtime.
+  HuggingFace once (a one-time bootstrap, like `ollama pull`). Once that model
+  is cached, startup defaults `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` to `1`
+  automatically (defense-in-depth over the per-load `local_files_only=True`).
+  Opt out with `MEMORY_HF_AUTO_OFFLINE=false`, or force it with an explicit
+  `HF_HUB_OFFLINE` (which always wins) for a strictly air-gapped runtime.
 - Windows / macOS / Linux.
 
 ---

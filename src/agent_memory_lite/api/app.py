@@ -21,6 +21,7 @@ from agent_memory_lite.api.origin_guard_middleware import OriginGuardMiddleware
 from agent_memory_lite.api.security_middleware import SecurityMiddleware
 from agent_memory_lite.api.workspace_routing_middleware import WorkspaceRoutingMiddleware
 from agent_memory_lite.config.local_only_guard import assert_local_only
+from agent_memory_lite.config.offline_bootstrap import maybe_configure_offline
 from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.integrity_check import record_foreign_key_violations
@@ -32,6 +33,10 @@ from agent_memory_lite.version import __version__
 
 def _bootstrap(settings: Settings) -> None:
     assert_local_only(settings)
+    # Default HF to offline once the embedding model is cached -- before any
+    # request triggers the lazy model load. No-op when MEMORY_HF_AUTO_OFFLINE
+    # is false or the model is not yet cached (allows one-time bootstrap).
+    maybe_configure_offline(settings)
     conn = open_connection(settings.db_path)
     try:
         apply_migrations(conn)

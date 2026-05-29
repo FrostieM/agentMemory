@@ -13,6 +13,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from agent_memory_lite.config.local_only_guard import assert_local_only
+from agent_memory_lite.config.offline_bootstrap import maybe_configure_offline
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.mcp.stdio_guards import _workspace_from_args
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
@@ -69,6 +70,9 @@ async def _run() -> None:
     settings = _runtime.settings
     configure_logging(settings.log_level)
     assert_local_only(settings)
+    # Default HF to offline once the embedding model is cached -- before the
+    # first tool handler triggers a lazy embedding load in this MCP process.
+    maybe_configure_offline(settings)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await _server.run(
             read_stream,
