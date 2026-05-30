@@ -27,6 +27,7 @@ __all__ = [
     "_HANDLERS",
     "_TOOLS",
     "_maybe_warm_embeddings",
+    "_preimport_embedding_stack",
     "_runtime",
     "_workspace_from_args",
     "main",
@@ -70,19 +71,51 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.
 
 
 def _warm_embeddings() -> None:
-    """Best-effort: load the embedding model now so the first tool call does not
-    pay the ~1.5s cold model-load. Runs in a daemon thread; failure-soft."""
+    """Best-effort: build the embedding model now so the first tool call does
+    not pay the cold model-build. Runs in a daemon thread; failure-soft.
+
+    The heavy *import* of the sentence-transformers stack is forced onto the
+    main thread first (see ``_preimport_embedding_stack``), so this daemon
+    thread only triggers the model *build*, never the deadlock-prone import."""
     try:
         _runtime.provider().embed_batch(["warmup"])
     except Exception as exc:  # warm-up must never crash the server
         _log.debug("embed_warmup_failed", error=str(exc))
 
 
+def _preimport_embedding_stack(settings: Settings) -> None:
+    """Import the sentence-transformers stack on the CURRENT (main) thread.
+
+    ``import sentence_transformers`` transitively pulls ``scipy.stats`` and
+    ``sklearn`` -- a large native-extension tree. On Python 3.14, importing it
+    from the background warm-up *daemon* thread can wedge on the import lock and
+    never finish (observed via py-spy: the ``amem-embed-warmup`` thread idle
+    inside the scipy import). Because ``SentenceTransformersProvider._load``
+    holds ``_load_lock`` across ``_build_model``, a wedged warm-up holds that
+    lock forever and every embedding-dependent tool call (writes, rerank) hangs
+    until the MCP client times out -- the "first call hangs for minutes" bug.
+
+    Importing here -- on the main thread, before the warm-up thread or any
+    ``asyncio.to_thread`` handler can race it -- makes every later import a
+    cache hit. Failure-soft: a missing/broken stack must not stop the server
+    starting; the provider raises a clean error on first use instead.
+    """
+    if settings.embedding_backend != "sentence_transformers":
+        return
+    try:
+        import sentence_transformers  # noqa: F401, PLC0415
+    except Exception as exc:  # pragma: no cover - install/env breakage only
+        _log.debug("preimport_embedding_stack_failed", error=str(exc))
+
+
 def _maybe_warm_embeddings(settings: Settings) -> threading.Thread | None:
     """Spawn the background embedding warm-up when enabled. Returns the thread
-    (so tests can join it) or None when disabled."""
+    (so tests can join it) or None when disabled. The heavy embedding import is
+    forced onto this (main) thread first so the daemon thread cannot deadlock on
+    it -- see ``_preimport_embedding_stack``."""
     if not settings.mcp_warm_embed:
         return None
+    _preimport_embedding_stack(settings)
     thread = threading.Thread(target=_warm_embeddings, name="amem-embed-warmup", daemon=True)
     thread.start()
     return thread
