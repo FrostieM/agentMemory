@@ -54,6 +54,7 @@ from agent_memory_lite.models.episodes import EpisodeIn
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.storage.reader import (
     get_object,
+    list_plans,
     plan_for_task,
     search,
 )
@@ -251,6 +252,20 @@ def plan_endpoint(
     ensure_workspace_readable(workspace_id, settings)
     steps = plan_for_task(conn, workspace_id=workspace_id, task_id=task_id)
     return _ok(steps)
+
+
+@router.get("/plans", response_model=Envelope)
+def plans_endpoint(
+    conn: DbDep,
+    settings: SettingsDep,
+    workspace_id: str = Query(min_length=1),
+) -> Envelope:
+    """List the workspace's plans (tasks that own live steps) with per-status
+    step counts, in-progress first then most-recently-updated. Powers the plan
+    UI's picker so it auto-shows the current plan and paginates without a
+    task_id."""
+    ensure_workspace_readable(workspace_id, settings)
+    return _ok(list_plans(conn, workspace_id=workspace_id))
 
 
 # ============================================================

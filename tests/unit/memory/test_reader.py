@@ -7,6 +7,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from agent_memory_lite.repositories.plan_step_repo import insert_plan_step_row
 from agent_memory_lite.storage.reader import (
     _MAX_SEARCH_TOKENS,
     SearchHit,
@@ -14,6 +15,7 @@ from agent_memory_lite.storage.reader import (
     count_kind,
     get_object,
     list_kind,
+    list_plans,
     search,
     search_kind,
 )
@@ -313,3 +315,155 @@ def test_search_hit_carries_score_and_projection() -> None:
     hit = SearchHit(kind="decision", projection={"id": "x", "gist": "y"}, score=0.7)
     assert hit.score == 0.7
     assert hit.projection["id"] == "x"
+
+
+# ============================================================
+# list_plans -- workspace plan picker (tasks owning live steps)
+# ============================================================
+
+
+def _insert_task(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    status: str,
+    updated_at: str,
+    goal: str = "goal text",
+    goal_one_line: str | None = None,
+    workspace: str = "ws-test",
+) -> None:
+    conn.execute(
+        """INSERT INTO tasks (workspace_id, task_id, goal, goal_one_line, status, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (workspace, task_id, goal, goal_one_line, status, updated_at),
+    )
+    conn.commit()
+
+
+def _insert_step(
+    conn: sqlite3.Connection,
+    *,
+    step_id: str,
+    task_id: str,
+    status: str,
+    rank: float = 1.0,
+    workspace: str = "ws-test",
+    superseded: bool = False,
+) -> None:
+    insert_plan_step_row(
+        conn,
+        step_id=step_id,
+        workspace_id=workspace,
+        task_id=task_id,
+        title=f"step {step_id}",
+        body="",
+        status=status,
+        parent_step_id=None,
+        rank=rank,
+        supersedes_step_id=None,
+        source_episode_id=None,
+        valid_from="2026-05-21T00:00:00Z",
+        timestamp="2026-05-21T00:00:00Z",
+    )
+    if superseded:
+        # Mark the step as removed in a re-plan so it drops from the live view.
+        conn.execute(
+            "UPDATE plan_steps SET valid_to = ? WHERE id = ? AND workspace_id = ?",
+            ("2026-05-21T01:00:00Z", step_id, workspace),
+        )
+        conn.commit()
+
+
+def test_list_plans_empty_returns_empty(conn: sqlite3.Connection) -> None:
+    assert list_plans(conn, workspace_id="ws-test") == []
+
+
+def test_list_plans_excludes_tasks_without_live_steps(conn: sqlite3.Connection) -> None:
+    # Live step -> appears. No steps and only-superseded -> excluded (INNER JOIN
+    # on valid_to IS NULL).
+    _insert_task(conn, task_id="live", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="s_live", task_id="live", status="pending")
+    _insert_task(conn, task_id="no_steps", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_task(conn, task_id="only_dead", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="s_dead", task_id="only_dead", status="active", superseded=True)
+
+    plans = list_plans(conn, workspace_id="ws-test")
+    assert [p["task_id"] for p in plans] == ["live"]
+
+
+def test_list_plans_display_status_and_counts(conn: sqlite3.Connection) -> None:
+    # active present -> in_progress
+    _insert_task(conn, task_id="ip", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="ip1", task_id="ip", status="active", rank=1.0)
+    _insert_step(conn, step_id="ip2", task_id="ip", status="pending", rank=2.0)
+    # blocked present, no active -> blocked
+    _insert_task(conn, task_id="bl", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="bl1", task_id="bl", status="blocked", rank=1.0)
+    _insert_step(conn, step_id="bl2", task_id="bl", status="done", rank=2.0)
+    # all done/skipped -> done; a superseded 'active' step must NOT flip it
+    _insert_task(conn, task_id="dn", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="dn1", task_id="dn", status="done", rank=1.0)
+    _insert_step(conn, step_id="dn2", task_id="dn", status="done", rank=2.0)
+    _insert_step(conn, step_id="dn3", task_id="dn", status="skipped", rank=3.0)
+    _insert_step(conn, step_id="dn_dead", task_id="dn", status="active", rank=4.0, superseded=True)
+    # only pending -> pending
+    _insert_task(conn, task_id="pn", status="active", updated_at="2026-05-21T00:00:00Z")
+    _insert_step(conn, step_id="pn1", task_id="pn", status="pending", rank=1.0)
+
+    by_id = {p["task_id"]: p for p in list_plans(conn, workspace_id="ws-test")}
+    assert by_id["ip"]["status"] == "in_progress"
+    assert (by_id["ip"]["total"], by_id["ip"]["active"], by_id["ip"]["pending"]) == (2, 1, 1)
+    assert by_id["bl"]["status"] == "blocked"
+    assert (by_id["bl"]["total"], by_id["bl"]["blocked"], by_id["bl"]["done"]) == (2, 1, 1)
+    # superseded active step is excluded from counts -> active=0, stays "done"
+    assert by_id["dn"]["status"] == "done"
+    assert (
+        by_id["dn"]["total"],
+        by_id["dn"]["done"],
+        by_id["dn"]["skipped"],
+        by_id["dn"]["active"],
+    ) == (3, 2, 1, 0)
+    assert by_id["pn"]["status"] == "pending"
+    assert (by_id["pn"]["total"], by_id["pn"]["pending"]) == (1, 1)
+
+
+def test_list_plans_orders_in_progress_first_then_recent(conn: sqlite3.Connection) -> None:
+    # Primary sort: task.status in (active, in_progress) first. Secondary: updated_at DESC.
+    _insert_task(conn, task_id="a_done_old", status="done", updated_at="2026-05-03T00:00:00Z")
+    _insert_task(conn, task_id="b_active_old", status="active", updated_at="2026-05-01T00:00:00Z")
+    _insert_task(
+        conn, task_id="c_inprog_mid", status="in_progress", updated_at="2026-05-02T00:00:00Z"
+    )
+    _insert_task(conn, task_id="d_done_new", status="done", updated_at="2026-05-05T00:00:00Z")
+    for tid in ("a_done_old", "b_active_old", "c_inprog_mid", "d_done_new"):
+        _insert_step(conn, step_id=f"s_{tid}", task_id=tid, status="pending")
+
+    order = [p["task_id"] for p in list_plans(conn, workspace_id="ws-test")]
+    # group 0 (active/in_progress) by recency: c (05-02) then b (05-01);
+    # group 1 (rest) by recency: d (05-05) then a (05-03)
+    assert order == ["c_inprog_mid", "b_active_old", "d_done_new", "a_done_old"]
+
+
+def test_list_plans_goal_prefers_one_line(conn: sqlite3.Connection) -> None:
+    _insert_task(
+        conn,
+        task_id="g1",
+        status="active",
+        updated_at="2026-05-21T00:00:00Z",
+        goal="full goal",
+        goal_one_line="short goal",
+    )
+    _insert_step(conn, step_id="g1s", task_id="g1", status="pending")
+    _insert_task(
+        conn,
+        task_id="g2",
+        status="active",
+        updated_at="2026-05-21T00:00:00Z",
+        goal="only full goal",
+        goal_one_line=None,
+    )
+    _insert_step(conn, step_id="g2s", task_id="g2", status="pending")
+
+    by_id = {p["task_id"]: p for p in list_plans(conn, workspace_id="ws-test")}
+    assert by_id["g1"]["goal"] == "short goal"  # goal_one_line preferred
+    assert by_id["g2"]["goal"] == "only full goal"  # falls back to goal

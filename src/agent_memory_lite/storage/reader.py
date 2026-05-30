@@ -255,6 +255,77 @@ def plan_for_task(
     return out
 
 
+def list_plans(conn: sqlite3.Connection, *, workspace_id: str) -> list[dict[str, Any]]:
+    """List the workspace's plans (tasks that own live plan steps) with per-status
+    step counts, for the plan UI's picker.
+
+    Ordered in-progress tasks first, then most-recently-updated, so the UI can
+    auto-select the *current* plan (index 0) and paginate across the rest -- no
+    task_id input needed. ``status`` is a display status derived from the live
+    step counts (in_progress if any active, else blocked if any blocked, else
+    done if all done/skipped, else pending) so the picker glyphs stay consistent
+    without client-side logic. Only tasks with at least one live
+    (``valid_to IS NULL``) step appear. Capped at 200 plans.
+    """
+    rows = conn.execute(
+        """
+        SELECT t.task_id AS task_id,
+               COALESCE(t.goal_one_line, t.goal, t.task_id) AS goal,
+               t.status AS task_status,
+               t.updated_at AS updated_at,
+               COUNT(p.id) AS total,
+               SUM(CASE WHEN p.status = 'done' THEN 1 ELSE 0 END) AS done,
+               SUM(CASE WHEN p.status = 'active' THEN 1 ELSE 0 END) AS active,
+               SUM(CASE WHEN p.status = 'blocked' THEN 1 ELSE 0 END) AS blocked,
+               SUM(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+               SUM(CASE WHEN p.status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+        FROM tasks t
+        JOIN plan_steps p
+          ON p.workspace_id = t.workspace_id
+         AND p.task_id = t.task_id
+         AND p.valid_to IS NULL
+        WHERE t.workspace_id = ?
+        GROUP BY t.task_id
+        ORDER BY CASE WHEN t.status IN ('active', 'in_progress') THEN 0 ELSE 1 END,
+                 t.updated_at DESC
+        LIMIT 200
+        """,
+        (workspace_id,),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        total = int(row["total"] or 0)
+        done = int(row["done"] or 0)
+        active = int(row["active"] or 0)
+        blocked = int(row["blocked"] or 0)
+        pending = int(row["pending"] or 0)
+        skipped = int(row["skipped"] or 0)
+        if active > 0:
+            display = "in_progress"
+        elif blocked > 0:
+            display = "blocked"
+        elif total > 0 and (done + skipped) >= total:
+            display = "done"
+        else:
+            display = "pending"
+        out.append(
+            {
+                "task_id": str(row["task_id"]),
+                "goal": str(row["goal"] or row["task_id"]),
+                "status": display,
+                "task_status": str(row["task_status"] or ""),
+                "total": total,
+                "done": done,
+                "active": active,
+                "blocked": blocked,
+                "pending": pending,
+                "skipped": skipped,
+                "updated_at": row["updated_at"],
+            }
+        )
+    return out
+
+
 # ============================================================
 # memory_get — fetch by id with selective fields
 # ============================================================
