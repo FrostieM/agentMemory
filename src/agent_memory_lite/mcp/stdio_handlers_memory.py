@@ -27,11 +27,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from agent_memory_lite.api.errors import MemoryServiceError
-from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
-from agent_memory_lite.cognition.lint import lint as run_lint
-from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.models.episodes import EpisodeIn
@@ -150,6 +146,16 @@ def _handle_v3_plan(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
+    # Lazy imports: write_canonical drags in the ingestion stack and api.errors
+    # drags in FastAPI (~0.5s of cold module import) that NO read tool touches.
+    # Deferring them here keeps the common first MCP call (impact_check / brief /
+    # search, per the discipline rules) off that startup cost -- it is paid only
+    # on the first write. See the first-call-hang investigation.
+    from agent_memory_lite.api.errors import MemoryServiceError  # noqa: PLC0415
+    from agent_memory_lite.ingestion.canonical_writer import (  # noqa: PLC0415
+        write_canonical,
+    )
+
     payload = _with_workspace(args, intent="write")
     workspace_id = str(payload["workspace_id"])
     kind = str(payload.get("kind") or "")
@@ -258,6 +264,11 @@ def _handle_v3_archive(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_v3_brief(args: dict[str, Any]) -> dict[str, Any]:
+    # Lazy import: cognition.brief drags in the brief-assembly + embeddings.base
+    # stack (~0.17s of cold import) that only brief/invoke_skill need -- keep it
+    # off the cold startup so a first impact_check/search call doesn't pay it.
+    from agent_memory_lite.cognition.brief import compose_brief  # noqa: PLC0415
+
     payload = _with_workspace(args, intent="read")
     workspace_id = str(payload["workspace_id"])
     max_tokens = int(payload.get("max_tokens") or 500)
@@ -282,6 +293,10 @@ def _handle_v3_brief(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_v3_lint(args: dict[str, Any]) -> dict[str, Any]:
+    # Lazy import: cognition.lint pulls the enforcement/dispatch stack that only
+    # the lint tool needs -- keep it off the cold startup import.
+    from agent_memory_lite.cognition.lint import lint as run_lint  # noqa: PLC0415
+
     payload = _with_workspace(args, intent="read")
     workspace_id = str(payload["workspace_id"])
     tool_name = str(payload.get("tool_name") or "")
@@ -300,6 +315,8 @@ def _handle_v3_lint(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _handle_v3_invoke_skill(args: dict[str, Any]) -> dict[str, Any]:
+    from agent_memory_lite.cognition.brief import fetch_skill_body  # noqa: PLC0415
+
     payload = _with_workspace(args, intent="read")
     workspace_id = str(payload["workspace_id"])
     skill_id = str(payload.get("skill_id") or "")
