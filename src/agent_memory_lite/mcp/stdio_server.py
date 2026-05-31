@@ -27,7 +27,6 @@ __all__ = [
     "_HANDLERS",
     "_TOOLS",
     "_maybe_warm_embeddings",
-    "_preimport_embedding_stack",
     "_runtime",
     "_workspace_from_args",
     "main",
@@ -49,6 +48,11 @@ _call_tool_decorator = cast(_CallToolDecorator, _call_tool_factory())
 
 @_list_tools_decorator
 async def _list_tools() -> list[types.Tool]:
+    # Kick the embedding warm-up off here -- on the FIRST tools/list, i.e. once
+    # the stdio server is serving and the main thread is parked in the receive
+    # loop. Starting it at startup blocked or deadlocked the server (see
+    # _maybe_warm_embeddings); here it is instant and deadlock-free.
+    _maybe_warm_embeddings(_runtime.settings)
     return _TOOLS
 
 
@@ -70,52 +74,44 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.
     return [types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
 
 
-def _warm_embeddings() -> None:
-    """Best-effort: build the embedding model now so the first tool call does
-    not pay the cold model-build. Runs in a daemon thread; failure-soft.
+# Guards the one-shot warm-up spawn: repeated tools/list calls must not each
+# start a model-load thread.
+_warm_started = threading.Event()
 
-    The heavy *import* of the sentence-transformers stack is forced onto the
-    main thread first (see ``_preimport_embedding_stack``), so this daemon
-    thread only triggers the model *build*, never the deadlock-prone import."""
+
+def _warm_embeddings() -> None:
+    """Best-effort: load the embedding model in this daemon thread so the first
+    embedding-dependent tool call does not pay the cold model-load. Failure-soft.
+
+    Triggered from the first ``tools/list`` (see ``_maybe_warm_embeddings``), NOT
+    at startup. The model load imports the sentence-transformers stack
+    (scipy/sklearn); on Python 3.14 importing that from a background thread that
+    races the main thread's own startup imports deadlocks (observed via py-spy:
+    the ``amem-embed-warmup`` thread wedged inside the scipy import). By the time
+    tools/list runs, the main thread is parked in the stdio receive loop and no
+    longer imports, so this background import is deadlock-free."""
     try:
         _runtime.provider().embed_batch(["warmup"])
     except Exception as exc:  # warm-up must never crash the server
         _log.debug("embed_warmup_failed", error=str(exc))
 
 
-def _preimport_embedding_stack(settings: Settings) -> None:
-    """Import the sentence-transformers stack on the CURRENT (main) thread.
-
-    ``import sentence_transformers`` transitively pulls ``scipy.stats`` and
-    ``sklearn`` -- a large native-extension tree. On Python 3.14, importing it
-    from the background warm-up *daemon* thread can wedge on the import lock and
-    never finish (observed via py-spy: the ``amem-embed-warmup`` thread idle
-    inside the scipy import). Because ``SentenceTransformersProvider._load``
-    holds ``_load_lock`` across ``_build_model``, a wedged warm-up holds that
-    lock forever and every embedding-dependent tool call (writes, rerank) hangs
-    until the MCP client times out -- the "first call hangs for minutes" bug.
-
-    Importing here -- on the main thread, before the warm-up thread or any
-    ``asyncio.to_thread`` handler can race it -- makes every later import a
-    cache hit. Failure-soft: a missing/broken stack must not stop the server
-    starting; the provider raises a clean error on first use instead.
-    """
-    if settings.embedding_backend != "sentence_transformers":
-        return
-    try:
-        import sentence_transformers  # noqa: F401, PLC0415
-    except Exception as exc:  # pragma: no cover - install/env breakage only
-        _log.debug("preimport_embedding_stack_failed", error=str(exc))
-
-
 def _maybe_warm_embeddings(settings: Settings) -> threading.Thread | None:
-    """Spawn the background embedding warm-up when enabled. Returns the thread
-    (so tests can join it) or None when disabled. The heavy embedding import is
-    forced onto this (main) thread first so the daemon thread cannot deadlock on
-    it -- see ``_preimport_embedding_stack``."""
+    """Spawn the embedding warm-up daemon thread once, when enabled. Returns the
+    thread (so tests can join it), or None when disabled or already started.
+
+    Call this only after the server is serving (the main thread idle in the
+    receive loop) -- it is invoked from ``_list_tools``. Spawning it earlier, in
+    ``_run`` before ``_server.run``, raced server.run()'s imports and deadlocked
+    the scipy/sklearn import on Python 3.14 (the first-call hang); importing the
+    stack synchronously on the main thread instead blocked startup past the MCP
+    client timeout so tools never registered. Deferring to the first tools/list
+    fixes both: instant startup, deadlock-free background warm-up."""
     if not settings.mcp_warm_embed:
         return None
-    _preimport_embedding_stack(settings)
+    if _warm_started.is_set():
+        return None
+    _warm_started.set()
     thread = threading.Thread(target=_warm_embeddings, name="amem-embed-warmup", daemon=True)
     thread.start()
     return thread
@@ -128,9 +124,11 @@ async def _run() -> None:
     # Default HF to offline once the embedding model is cached -- before the
     # first tool handler triggers a lazy embedding load in this MCP process.
     maybe_configure_offline(settings)
-    # Warm the embedding model off the critical path so the first tool call
-    # that needs an embedding does not pay the cold model-load.
-    _maybe_warm_embeddings(settings)
+    # NOTE: the embedding warm-up is intentionally NOT started here. Starting it
+    # before _server.run() either deadlocks (background import racing
+    # server.run's imports on Python 3.14) or blocks startup past the client
+    # timeout (synchronous main-thread import). It is kicked off from the first
+    # tools/list instead -- see _maybe_warm_embeddings / _list_tools.
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await _server.run(
             read_stream,
