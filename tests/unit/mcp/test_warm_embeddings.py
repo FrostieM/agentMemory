@@ -1,12 +1,12 @@
 """MCP embedding warm-up.
 
-``_maybe_warm_embeddings`` spawns a background daemon thread that loads the
-embedding model. It is kicked off from the first ``tools/list`` (NOT at startup)
-so the heavy scipy/sklearn import runs while the main thread is idle in the stdio
-receive loop -- starting it earlier raced ``server.run()``'s imports and
-deadlocked on Python 3.14, and importing synchronously on the main thread blocked
-startup past the MCP client timeout. Gated by ``settings.mcp_warm_embed``,
-spawned at most once, and failure-soft (warm-up must never crash the server).
+``_warm_embeddings`` loads the embedding model SYNCHRONOUSLY on the main thread
+at startup, before the stdio server serves. The sentence-transformers import
+(scipy/sklearn) MUST run on the main thread -- in a daemon thread it deadlocks on
+Python 3.14 while the event loop is active (py-spy showed the warm-up thread
+wedged mid-import, hanging unrelated tool calls). Gated by
+``settings.mcp_warm_embed`` and failure-soft (warm-up must never crash the
+server).
 """
 
 from __future__ import annotations
@@ -24,41 +24,27 @@ class _FakeProvider:
         self.seen.append(list(texts))
 
 
-def test_maybe_warm_embeddings_disabled_returns_none(settings_factory) -> None:
-    settings = settings_factory(MEMORY_MCP_WARM_EMBED="false")
-    assert srv._maybe_warm_embeddings(settings) is None
-
-
-def test_maybe_warm_embeddings_enabled_warms_provider(settings_factory, monkeypatch) -> None:
+def test_warm_embeddings_disabled_is_noop(settings_factory, monkeypatch) -> None:
     fake = _FakeProvider()
     monkeypatch.setattr(srv._runtime, "provider", lambda: fake)
-    srv._warm_started.clear()  # allow this call to spawn (one-shot guard)
-    settings = settings_factory(MEMORY_MCP_WARM_EMBED="true")
+    settings = settings_factory(MEMORY_MCP_WARM_EMBED="false")
+    srv._warm_embeddings(settings)
+    assert fake.seen == []  # disabled -> provider never touched
 
-    thread = srv._maybe_warm_embeddings(settings)
-    assert thread is not None
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+
+def test_warm_embeddings_enabled_warms_provider(settings_factory, monkeypatch) -> None:
+    fake = _FakeProvider()
+    monkeypatch.setattr(srv._runtime, "provider", lambda: fake)
+    settings = settings_factory(MEMORY_MCP_WARM_EMBED="true")
+    srv._warm_embeddings(settings)
     assert fake.seen == [["warmup"]]  # warmed with a throwaway batch
 
 
-def test_maybe_warm_embeddings_spawns_at_most_once(settings_factory, monkeypatch) -> None:
-    fake = _FakeProvider()
-    monkeypatch.setattr(srv._runtime, "provider", lambda: fake)
-    srv._warm_started.clear()
-    settings = settings_factory(MEMORY_MCP_WARM_EMBED="true")
-
-    first = srv._maybe_warm_embeddings(settings)
-    second = srv._maybe_warm_embeddings(settings)
-    assert first is not None
-    assert second is None  # already started -> no duplicate warm-up thread
-    first.join(timeout=5)
-
-
-def test_warm_embeddings_is_failure_soft(monkeypatch) -> None:
+def test_warm_embeddings_is_failure_soft(settings_factory, monkeypatch) -> None:
     def _boom() -> Any:
         raise RuntimeError("provider unavailable")
 
     monkeypatch.setattr(srv._runtime, "provider", _boom)
+    settings = settings_factory(MEMORY_MCP_WARM_EMBED="true")
     # Must not raise -- a warm-up failure can never crash the MCP server.
-    srv._warm_embeddings()
+    srv._warm_embeddings(settings)
