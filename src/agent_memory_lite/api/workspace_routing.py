@@ -23,14 +23,17 @@ from agent_memory_lite.config.workspace_paths import (
     connection_matches_workspace,
     resolve_workspace_paths,
     workspace_db_path,
+    workspace_vector_path,
 )
 
 __all__ = [
     "ResolvedWorkspacePaths",
     "connection_matches_workspace",
+    "ensure_store_matches_workspace",
     "ensure_workspace_matches_db",
     "resolve_workspace_paths",
     "workspace_db_path",
+    "workspace_vector_path",
 ]
 
 
@@ -78,4 +81,40 @@ def ensure_workspace_matches_db(
         "workspace's own DB -- restart the HTTP service so it picks up "
         "WorkspaceRoutingMiddleware, or pass a correct X-Memory-DB-Path "
         "header. The write was rejected to prevent cross-workspace pollution."
+    )
+
+
+def ensure_store_matches_workspace(
+    store: object, workspace_id: str, settings: Settings
+) -> None:
+    """Reject an episode vector write whose store is not the workspace's .lance.
+
+    The LanceDB analogue of ``ensure_workspace_matches_db``. ``store_for`` routes
+    a vector store on a path SEPARATE from the SQL connection, so a routing bug
+    could embed episode vectors into another workspace's store while the SQL row
+    lands correctly (a half-leak the SQL guard cannot see). This backstop checks
+    the store's physical ``.lance`` directory against the registry's vector path
+    for ``workspace_id`` and raises before any vector is written when they
+    differ.
+
+    No-op when the store exposes no physical path (in-memory / test doubles).
+    Unregistered non-anchor workspaces are rejected -- the same fail-closed
+    stance as the SQL guard.
+    """
+    actual = getattr(store, "_db_path", None)
+    if actual is None:
+        return
+    expected = workspace_vector_path(workspace_id, settings)
+    if expected is None:
+        raise ValidationError(
+            f"workspace_id={workspace_id!r} is not registered and is not the "
+            f"anchor workspace {settings.workspace_id!r}; refusing to route its "
+            "episode vectors to prevent cross-workspace pollution."
+        )
+    if _connections_match(str(actual), expected):
+        return
+    raise ValidationError(
+        f"workspace_id={workspace_id!r} episode vectors routed to the wrong "
+        "vector store: the hub did not send them to the workspace's own .lance "
+        "directory. The write was rejected to prevent cross-workspace pollution."
     )

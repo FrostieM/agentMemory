@@ -18,6 +18,7 @@ from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.logging_setup import configure_logging, get_logger
 from agent_memory_lite.mcp.stdio_guards import _workspace_from_args
 from agent_memory_lite.mcp.stdio_handlers import _HANDLERS
+from agent_memory_lite.mcp.stdio_path_resolver import assert_anchor_consistent
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.mcp.stdio_tools import ALL_TOOLS
 from agent_memory_lite.version import __version__
@@ -93,6 +94,10 @@ async def _run() -> None:
     settings = _runtime.settings
     configure_logging(settings.log_level)
     assert_local_only(settings)
+    # Fail closed if the resolved anchor contradicts the registry (a mis-anchored
+    # MEMORY_DB_PATH / inherited .mcp.json env pointing the anchor id at another
+    # workspace's DB). Refusing to start beats routing writes to the wrong DB.
+    assert_anchor_consistent(settings)
     # Default HF to offline once the embedding model is cached -- before the
     # first tool handler triggers a lazy embedding load in this MCP process.
     maybe_configure_offline(settings)

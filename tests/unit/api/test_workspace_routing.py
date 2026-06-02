@@ -18,10 +18,12 @@ import pytest
 
 from agent_memory_lite.api.errors import ValidationError
 from agent_memory_lite.api.workspace_routing import (
+    ensure_store_matches_workspace,
     ensure_workspace_matches_db,
     resolve_workspace_paths,
 )
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
+from agent_memory_lite.vector_store.lancedb_store import LanceDBStore
 
 
 @dataclass
@@ -245,3 +247,77 @@ def test_matches_db_rejects_write_to_an_unrelated_third_db(tmp_path: Path) -> No
             ensure_workspace_matches_db(conn, "copyBot", settings)
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Vector-store backstop (audit F3): the LanceDB analogue of the SQL guard.
+# Episode vectors route on a path SEPARATE from the SQL conn, so they need
+# their own physical check or vectors can leak cross-workspace while the SQL
+# row is correct.
+# ---------------------------------------------------------------------------
+
+
+class _FakeStore:
+    """Stand-in for a vector store -- only the ``_db_path`` LanceDBStore exposes."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+
+
+def test_store_matches_allows_anchor_on_anchor_lance(tmp_path: Path) -> None:
+    """The anchor workspace embedding into its own .lance is always fine."""
+    settings = _settings(tmp_path)
+    store = _FakeStore(settings.vector_db_path)
+    ensure_store_matches_workspace(store, "anchor-ws", settings)  # must not raise
+
+
+def test_store_matches_allows_foreign_on_its_own_lance(tmp_path: Path) -> None:
+    """Correctly routed: copyBot vectors on copyBot's registered .lance pass."""
+    settings = _settings(tmp_path)
+    copybot_db = tmp_path / "copybot.db"
+    _register(settings, "copyBot", copybot_db)
+    store = _FakeStore(copybot_db.with_suffix(".lance"))
+    ensure_store_matches_workspace(store, "copyBot", settings)  # must not raise
+
+
+def test_store_matches_rejects_foreign_vectors_on_anchor_lance(tmp_path: Path) -> None:
+    """Vector-side 2026-05-21 analogue: copyBot episode vectors heading into the
+    anchor's .lance while copyBot has its own registered store -- rejected."""
+    settings = _settings(tmp_path)
+    _register(settings, "copyBot", tmp_path / "copybot.db")
+    store = _FakeStore(settings.vector_db_path)  # anchor .lance -- WRONG for copyBot
+    with pytest.raises(ValidationError, match="wrong vector store"):
+        ensure_store_matches_workspace(store, "copyBot", settings)
+
+
+def test_store_matches_rejects_unregistered_workspace(tmp_path: Path) -> None:
+    """An unregistered non-anchor workspace has no authoritative .lance -- the
+    guard fails closed rather than guess a store for it."""
+    settings = _settings(tmp_path)
+    store = _FakeStore(settings.vector_db_path)
+    with pytest.raises(ValidationError, match="is not registered"):
+        ensure_store_matches_workspace(store, "never-registered", settings)
+
+
+def test_store_matches_noop_for_store_without_path(tmp_path: Path) -> None:
+    """A store exposing no physical path (in-memory / test double) is skipped."""
+    settings = _settings(tmp_path)
+    _register(settings, "copyBot", tmp_path / "copybot.db")
+    ensure_store_matches_workspace(object(), "copyBot", settings)  # must not raise
+
+
+def test_store_matches_reads_real_lancedb_store_path_attribute(tmp_path: Path) -> None:
+    """Pin the attribute the guard reads against the REAL store class.
+
+    ``ensure_store_matches_workspace`` keys on ``LanceDBStore._db_path``. If that
+    attribute is ever renamed the guard would silently no-op (``getattr`` -> None)
+    AND the ``_FakeStore``-based tests above -- which hardcode the same name --
+    would keep passing, regressing the protection invisibly. Driving a real
+    ``LanceDBStore`` (constructed only, no ``.open()`` so no lancedb dependency)
+    through the guard fails loudly on such a rename.
+    """
+    settings = _settings(tmp_path)
+    _register(settings, "copyBot", tmp_path / "copybot.db")
+    store = LanceDBStore(settings.vector_db_path)  # anchor .lance -- WRONG for copyBot
+    with pytest.raises(ValidationError, match="wrong vector store"):
+        ensure_store_matches_workspace(store, "copyBot", settings)

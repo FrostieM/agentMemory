@@ -85,6 +85,30 @@ def workspace_db_path(workspace_id: str | None, settings: Settings) -> str | Non
     return entry.db_path
 
 
+def workspace_vector_path(workspace_id: str | None, settings: Settings) -> str | None:
+    """Return the authoritative LanceDB path for a writable workspace.
+
+    The vector-store mirror of ``workspace_db_path``: the anchor is
+    authoritative even when unregistered; a foreign workspace must be registered
+    (we key on ``db_path`` so the pair stays consistent with the SQL guard) and
+    its ``vector_path`` falls back to the anchor's only when the registry leaves
+    it blank. ``None`` for an unregistered, non-anchor workspace -- callers must
+    not guess a vector store for it.
+    """
+    if not workspace_id:
+        return None
+    if workspace_id == settings.workspace_id:
+        return str(settings.vector_db_path)
+    try:
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        entry = registry.get(workspace_id)
+    except Exception:
+        return None
+    if entry is None or not entry.db_path:
+        return None
+    return entry.vector_path or str(settings.vector_db_path)
+
+
 def _connection_db_path(conn: sqlite3.Connection) -> str:
     """Absolute file backing the connection's ``main`` schema.
 

@@ -116,7 +116,12 @@ class _Runtime:
             )
             return self.db()
         db_path, _ = resolved
-        if Path(db_path) == Path(self.settings.db_path):
+        # Resolve both sides (audit F3): store_for compares vector paths with
+        # .resolve(); db_for MUST use the SAME normalization or the two routers
+        # can disagree about whether a workspace is the anchor -- routing the SQL
+        # row to a foreign DB while the episode vectors go to the anchor store
+        # (or vice versa). Identical resolution keeps the pair consistent.
+        if Path(db_path).resolve() == Path(self.settings.db_path).resolve():
             return self.db()
         return self._open(Path(db_path), workspace_id=workspace_id)
 

@@ -145,13 +145,17 @@ def _handle_v3_plan(args: dict[str, Any]) -> dict[str, Any]:
 # ============================================================
 
 
-def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
+def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0911 - guard-clause dispatch: validation + SQL/vector routing backstops each reject early
     # Lazy imports: write_canonical drags in the ingestion stack and api.errors
     # drags in FastAPI (~0.5s of cold module import) that NO read tool touches.
     # Deferring them here keeps the common first MCP call (impact_check / brief /
     # search, per the discipline rules) off that startup cost -- it is paid only
     # on the first write. See the first-call-hang investigation.
     from agent_memory_lite.api.errors import MemoryServiceError  # noqa: PLC0415
+    from agent_memory_lite.api.workspace_routing import (  # noqa: PLC0415
+        ensure_store_matches_workspace,
+        ensure_workspace_matches_db,
+    )
     from agent_memory_lite.ingestion.canonical_writer import (  # noqa: PLC0415
         write_canonical,
     )
@@ -163,18 +167,41 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not isinstance(body, dict):
         return _err("invalid_args", "kind + payload object are required")
     conn = _runtime.db_for(workspace_id)
+    # Physical-file backstop (audit C1/F1): the routed conn MUST be this
+    # workspace's own DB -- enforced for the anchor AND foreign writes (matching
+    # the HTTP guard). db_for re-resolves even the anchor through the registry,
+    # so a stale/divergent anchor entry can misroute; never skip the check.
+    try:
+        ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
     agent_id = str(payload.get("agent_id") or "mcp")
     source_episode_id = payload.get("source_episode_id")
     embedding_provider = vector_store = None
-    try:
-        if kind == "episode":
+    if kind == "episode":
+        try:
             _validate_episode_payload(
                 workspace_id=workspace_id,
                 body=body,
                 source_episode_id=source_episode_id,
             )
-            embedding_provider = _runtime.provider()
-            vector_store = _runtime.store_for(workspace_id)
+        except ValidationError as exc:
+            return _err("invalid_args", f"invalid episode payload: {exc}")
+        # Vector-side physical backstop (audit C1/F3): episode vectors route on a
+        # path SEPARATE from the SQL conn, so verify the store is this
+        # workspace's own .lance BEFORE embedding -- the LanceDB mirror of the
+        # SQL ensure_workspace_matches_db run above. Checked before provider() so
+        # a misroute fails fast without paying to load the embedding model.
+        vector_store = _runtime.store_for(workspace_id)
+        try:
+            ensure_store_matches_workspace(vector_store, workspace_id, _runtime.settings)
+        except MemoryServiceError as exc:
+            return _err(
+                exc.error_code,
+                "write rejected: episode vectors routed to the wrong vector store",
+            )
+        embedding_provider = _runtime.provider()
+    try:
         out = write_canonical(
             conn,
             workspace_id=workspace_id,
@@ -203,8 +230,18 @@ def _handle_v3_edit(args: dict[str, Any]) -> dict[str, Any]:
     fields = payload.get("fields")
     if not kind or not object_id or not isinstance(fields, dict):
         return _err("invalid_args", "kind, id, and fields object are required")
+    from agent_memory_lite.api.errors import MemoryServiceError  # noqa: PLC0415
+    from agent_memory_lite.api.workspace_routing import (  # noqa: PLC0415
+        ensure_workspace_matches_db,
+    )
+
+    conn = _runtime.db_for(workspace_id)
+    try:
+        ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
     out = edit(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -225,8 +262,18 @@ def _handle_v3_pin(args: dict[str, Any]) -> dict[str, Any]:
         return _err("invalid_args", "kind and id are required")
     pinned_flag = payload.get("pinned")
     pinned = True if pinned_flag is None else bool(pinned_flag)
+    from agent_memory_lite.api.errors import MemoryServiceError  # noqa: PLC0415
+    from agent_memory_lite.api.workspace_routing import (  # noqa: PLC0415
+        ensure_workspace_matches_db,
+    )
+
+    conn = _runtime.db_for(workspace_id)
+    try:
+        ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
     out = pin(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,
@@ -245,8 +292,18 @@ def _handle_v3_archive(args: dict[str, Any]) -> dict[str, Any]:
     object_id = str(payload.get("id") or "")
     if not kind or not object_id:
         return _err("invalid_args", "kind and id are required")
+    from agent_memory_lite.api.errors import MemoryServiceError  # noqa: PLC0415
+    from agent_memory_lite.api.workspace_routing import (  # noqa: PLC0415
+        ensure_workspace_matches_db,
+    )
+
+    conn = _runtime.db_for(workspace_id)
+    try:
+        ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
+    except MemoryServiceError as exc:
+        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
     out = archive(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         kind=kind,
         object_id=object_id,

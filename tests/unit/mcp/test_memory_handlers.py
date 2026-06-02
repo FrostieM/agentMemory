@@ -11,6 +11,7 @@ here we focus on the handler bodies.
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -42,9 +43,14 @@ def db_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3
     # Patch the runtime db accessor used by every v3 handler.
     monkeypatch.setattr(v3._runtime, "db", lambda: conn)
     # Settings is a frozen pydantic model — replace the whole instance.
+    # db_path MUST point at this temp DB: the v3 write handlers run the
+    # physical-file backstop (ensure_workspace_matches_db) unconditionally, so
+    # the anchor's authoritative path (settings.db_path) has to match the conn
+    # SQLite actually opened, else every anchor write would be falsely rejected.
     relaxed = v3._runtime.settings.model_copy(
         update={
             "workspace_id": "default",
+            "db_path": db_path,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
             "hub_mode": True,
@@ -820,3 +826,89 @@ def test_plan_rank_ties_break_by_created_at(db_conn: sqlite3.Connection) -> None
     env = v3._handle_v3_plan({"workspace_id": "default", "task_id": "t1"})
     assert env["ok"] is True
     assert [s["title"] for s in env["data"]] == ["earlier", "later"]
+
+
+# ============================================================
+# Physical-file backstop (audit C1/F1/F2): every mutation handler rejects a
+# misrouted connection with a canonical, filesystem-path-free envelope.
+# ============================================================
+
+
+def _misroute_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point settings.db_path at a file the routed conn is NOT.
+
+    db_for still returns the db_conn fixture's temp conn, so the connection's
+    physical file no longer matches the anchor's authoritative db_path -- the
+    same shape as a stale registry / wrong X-Memory-DB-Path / pre-middleware
+    service that the 2026-05-21 leak exploited.
+    """
+    misrouted = v3._runtime.settings.model_copy(
+        update={"db_path": Path("Z:/nonexistent/wrong-workspace.db")}
+    )
+    monkeypatch.setattr(v3._runtime, "settings", misrouted)
+
+
+def test_write_backstop_rejects_misrouted_conn(
+    db_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An anchor write whose routed conn is not the anchor's authoritative DB
+    is rejected BEFORE any row is written.
+
+    Pins F1 (the old ``ws != anchor`` gate skipped the backstop for the anchor,
+    leaving exactly this misroute unguarded) and F2 (canonical envelope, no
+    absolute filesystem path leaked to the client).
+    """
+    _misroute_settings(monkeypatch)
+    env = v3._handle_v3_write(
+        {
+            "workspace_id": "default",
+            "kind": "decision",
+            "payload": {"title": "T", "decision_text": "should never be written"},
+        }
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    msg = env["error"]["message"]
+    assert "Z:" not in msg
+    assert "wrong-workspace.db" not in msg
+    # Nothing was persisted -- the backstop runs before write_canonical.
+    assert db_conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
+
+
+def test_edit_backstop_rejects_misrouted_conn(
+    db_conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """edit/pin/archive share the write backstop: a misrouted conn yields the
+    same canonical rejection (exercises the non-write handlers' try/except)."""
+    dec_id = _seed_decision(db_conn)  # seeded while db_path still matches the conn
+    _misroute_settings(monkeypatch)
+    env = v3._handle_v3_edit(
+        {
+            "workspace_id": "default",
+            "kind": "decision",
+            "id": dec_id,
+            "fields": {"title": "tampered"},
+        }
+    )
+    assert env["ok"] is False
+    assert env["error"]["code"] == "validation_failed"
+    assert "Z:" not in env["error"]["message"]
+
+
+def test_all_mutation_handlers_carry_db_backstop() -> None:
+    """Static invariant -- the MCP analogue of the HTTP guard-coverage test.
+
+    Every v3 mutation handler must run ``ensure_workspace_matches_db``; this
+    fails loudly if a future edit silently drops the backstop from one handler.
+    """
+    for fn in (
+        v3._handle_v3_write,
+        v3._handle_v3_edit,
+        v3._handle_v3_pin,
+        v3._handle_v3_archive,
+    ):
+        src = inspect.getsource(fn)
+        assert "ensure_workspace_matches_db" in src, f"{fn.__name__} lost the backstop"
+    # The write handler additionally carries the vector-store backstop, since the
+    # episode branch routes a LanceDB store on a path separate from the SQL conn.
+    assert "ensure_store_matches_workspace" in inspect.getsource(v3._handle_v3_write)
