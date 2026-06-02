@@ -56,6 +56,10 @@ logs/
 .claude/
 .codex/
 
+# Per-project Claude Code MCP server config (absolute venv path + machine-pinned
+# MEMORY_DB_PATH / MEMORY_WORKSPACE_ID; same non-portability as .claude/ above).
+.mcp.json
+
 # Per-developer analytic / triage reports (raw outputs from
 # memory_*_report.py / hygiene / dashboard scripts; not portable
 # across machines and frequently include per-machine paths).
