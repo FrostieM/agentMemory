@@ -129,8 +129,45 @@ class _Runtime:
         if self._provider is None:
             with self._init_lock:
                 if self._provider is None:
-                    self._provider = get_embedding_provider(self.settings)
+                    self._provider = self._build_provider()
         return self._provider
+
+    def _build_provider(self) -> EmbeddingProvider:
+        """Prefer the out-of-process HTTP embedder so this MCP process never
+        imports torch -- importing it before serving forces an 8-15s connect and
+        deferring it deadlocks Python 3.14's import lock (both measured; see
+        http_provider). Probe the HTTP service once; fall back to the in-process
+        provider when it is unreachable so a standalone MCP server still works."""
+        from agent_memory_lite.embeddings.base import (  # noqa: PLC0415
+            EmbeddingProviderUnavailableError,
+        )
+        from agent_memory_lite.embeddings.http_provider import (  # noqa: PLC0415
+            HttpEmbeddingProvider,
+        )
+
+        base_url = _memory_http_base_url(self.settings)
+        if base_url:
+            candidate = HttpEmbeddingProvider(
+                base_url=base_url,
+                model_name=self.settings.embedding_model,
+                batch_size=self.settings.embedding_batch_size,
+            )
+            try:
+                candidate.probe()
+            except EmbeddingProviderUnavailableError:
+                pass
+            else:
+                return candidate
+        return get_embedding_provider(self.settings)
+
+    def using_remote_embeddings(self) -> bool:
+        """True when provider() resolved to the out-of-process HTTP embedder, so
+        stdio_server._run can skip the in-process warm-up and connect instantly."""
+        from agent_memory_lite.embeddings.http_provider import (  # noqa: PLC0415
+            HttpEmbeddingProvider,
+        )
+
+        return isinstance(self.provider(), HttpEmbeddingProvider)
 
     def store(self) -> VectorStore:
         if self._store is None:

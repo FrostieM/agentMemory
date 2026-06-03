@@ -101,12 +101,15 @@ async def _run() -> None:
     # Default HF to offline once the embedding model is cached -- before the
     # first tool handler triggers a lazy embedding load in this MCP process.
     maybe_configure_offline(settings)
-    # Warm the embedding model SYNCHRONOUSLY on the main thread before serving.
-    # The sentence-transformers import must NOT run in a daemon thread -- on
-    # Python 3.14 it deadlocks while the event loop is active (see
-    # _warm_embeddings). The main thread, before any worker exists, is the only
-    # safe place; with the venv AV-excluded the import fits the connect timeout.
-    _warm_embeddings(settings)
+    # Embeddings: prefer the out-of-process HTTP service so this MCP process
+    # never imports torch -- then the handshake connects in <1s and frequent
+    # reconnects stay instant. using_remote_embeddings() probes the service once
+    # here, before serving. ONLY when it is unreachable do we warm the in-process
+    # model synchronously on the main thread before _server.run(): the torch
+    # import must finish before the event loop serves, because a daemon-thread or
+    # mid-serving import deadlocks on Python 3.14's import lock (both measured).
+    if not _runtime.using_remote_embeddings():
+        _warm_embeddings(settings)
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await _server.run(
             read_stream,

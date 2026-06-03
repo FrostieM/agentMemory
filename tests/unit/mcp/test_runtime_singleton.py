@@ -13,6 +13,18 @@ import time
 from typing import Any
 
 import agent_memory_lite.mcp.stdio_runtime as rt
+from agent_memory_lite.embeddings.base import EmbeddingProviderUnavailableError
+from agent_memory_lite.embeddings.http_provider import HttpEmbeddingProvider
+
+
+def _force_in_process_embeddings(monkeypatch) -> None:
+    """Make _build_provider's HTTP probe fail so the in-process factory path is
+    taken deterministically -- the test must not depend on a live HTTP service."""
+
+    def _no_http(_self: HttpEmbeddingProvider) -> None:
+        raise EmbeddingProviderUnavailableError("test: force in-process fallback")
+
+    monkeypatch.setattr(HttpEmbeddingProvider, "probe", _no_http)
 
 
 def test_provider_is_single_instance_under_concurrency(monkeypatch) -> None:
@@ -25,6 +37,7 @@ def test_provider_is_single_instance_under_concurrency(monkeypatch) -> None:
         return object()
 
     monkeypatch.setattr(rt, "get_embedding_provider", _factory)
+    _force_in_process_embeddings(monkeypatch)
 
     results: list[Any] = []
 
