@@ -420,3 +420,66 @@ def test_hook_never_crashes_on_corrupt_db(
     assert result.returncode == 0, (
         f"hook crashed: stdout={result.stdout!r} stderr={result.stderr!r}"
     )
+
+
+def test_loop_breaker_allows_retry_after_one_block(
+    fake_workspace: dict[str, str], tmp_path: Path
+) -> None:
+    """A mechanical rule blocks the FIRST attempt (exit 2), but the SAME
+    (tool, target) retried within the window is allowed (exit 0) -- so a hard
+    rule can never deadlock the agent when it cannot satisfy it (e.g. the memory
+    MCP server is down and memory_impact_check is unreachable)."""
+    _seed_rule(
+        fake_workspace["db_path"],
+        rule_id="beh_rbe",
+        name="read-before-edit",
+        applies_to=["enforcement:mechanical", "mechanical:read-before-edit"],
+    )
+    event = {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "src/strategy/x.py", "new_string": "ok = 1"},
+        "cwd": fake_workspace["project_root"],
+    }
+    env = {
+        "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
+        "MEMORY_PRETOOLUSE_LOOPBREAK_FILE": str(tmp_path / "lb.json"),
+    }
+    first = _run(event, env)
+    assert first.returncode == 2  # blocked: no prior memory_impact_check (the nudge)
+    second = _run(event, env)
+    assert second.returncode == 0  # retry allowed -- loop broken, no deadlock
+
+
+def test_loop_breaker_is_keyed_per_target(
+    fake_workspace: dict[str, str], tmp_path: Path
+) -> None:
+    """Blocking file A does not pre-allow a never-seen file B: the breaker is
+    keyed by (tool, target), so every distinct target still gets its one nudge."""
+    _seed_rule(
+        fake_workspace["db_path"],
+        rule_id="beh_rbe",
+        name="read-before-edit",
+        applies_to=["enforcement:mechanical", "mechanical:read-before-edit"],
+    )
+    env = {
+        "MEMORY_WORKSPACES_FILE": fake_workspace["registry_path"],
+        "MEMORY_PRETOOLUSE_LOOPBREAK_FILE": str(tmp_path / "lb.json"),
+    }
+    a = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/strategy/a.py", "new_string": "ok = 1"},
+            "cwd": fake_workspace["project_root"],
+        },
+        env,
+    )
+    assert a.returncode == 2
+    b = _run(
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/strategy/b.py", "new_string": "ok = 1"},
+            "cwd": fake_workspace["project_root"],
+        },
+        env,
+    )
+    assert b.returncode == 2  # distinct target -> still blocked on its first try
