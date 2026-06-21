@@ -121,6 +121,33 @@ def test_operator_written_behavior_surfaces(conn: sqlite3.Connection) -> None:
     assert "operator-rule" in "\n".join(section.lines)
 
 
+def test_rendered_behavior_is_credited_applied(conn: sqlite3.Connection) -> None:
+    """Building the section credits each rendered behavior's application_count
+    (unfreezes behaviors_fired_ratio) WITHOUT bumping updated_at -- so it cannot
+    bust the brief cache (whose fingerprint hashes MAX(behaviors.updated_at))."""
+    _seed_behavior(conn, id_="beh_x", name="rule-x", rule="do the thing", priority="system_bound")
+    _build_pinned_behaviors(conn, "ws", budget=400)
+    row = conn.execute(
+        "SELECT application_count, last_applied_at, updated_at FROM behaviors WHERE id = 'beh_x'"
+    ).fetchone()
+    assert row["application_count"] == 1
+    assert row["last_applied_at"] is not None
+    assert row["updated_at"] == "2026-05-20T00:00:00+00:00"  # unchanged -> cache-safe
+
+
+def test_only_budget_surviving_behaviors_are_credited(conn: sqlite3.Connection) -> None:
+    """A behavior trimmed by the token budget is NOT credited -- only the bullets
+    that actually reached the agent's envelope count as applied."""
+    long_rule = "r" * 100
+    _seed_behavior(conn, id_="beh_hi", name="hi", rule=long_rule, priority="system_bound")
+    _seed_behavior(conn, id_="beh_lo", name="lo", rule=long_rule, priority="user_preference")
+    _build_pinned_behaviors(conn, "ws", budget=8)  # header + ~1 bullet only
+    hi = conn.execute("SELECT application_count FROM behaviors WHERE id = 'beh_hi'").fetchone()[0]
+    lo = conn.execute("SELECT application_count FROM behaviors WHERE id = 'beh_lo'").fetchone()[0]
+    assert hi == 1  # higher-priority, rendered -> credited
+    assert lo == 0  # trimmed by budget -> not credited
+
+
 def test_archived_pinned_does_not_surface(conn: sqlite3.Connection) -> None:
     _seed_behavior(
         conn,

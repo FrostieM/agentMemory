@@ -83,6 +83,38 @@ def _collect_pinned_behaviors(
     return out
 
 
+def _credit_behaviors_applied(
+    conn: sqlite3.Connection, workspace_id: str, instruction_ids: list[str]
+) -> None:
+    """Record that these pinned behaviors were rendered into the envelope.
+
+    This is the ONLY caller of ``mark_behavior_instructions_applied`` -- the
+    write was lost in a refactor, freezing ``behaviors.application_count`` /
+    ``last_applied_at`` and so the ``behaviors_fired_ratio`` adoption KPI and the
+    behavior outcome-scoring evidence weight. Opt-in
+    (``MEMORY_BEHAVIOR_APPLY_TRACKING_ENABLED``, default on) and failure-soft:
+    telemetry must never break the safety-critical brief. The batched write does
+    NOT touch ``behaviors.updated_at`` (see ``behavior_apply``), so it cannot
+    invalidate the brief cache.
+    """
+    ids = [i for i in instruction_ids if i]
+    if not ids:
+        return
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        if not get_settings().behavior_apply_tracking_enabled:
+            return
+        from agent_memory_lite.capability.behavior_apply import (  # noqa: PLC0415
+            mark_behavior_instructions_applied,
+        )
+
+        mark_behavior_instructions_applied(conn, workspace_id=workspace_id, instruction_ids=ids)
+        conn.commit()
+    except Exception:  # pragma: no cover - telemetry is best-effort
+        pass
+
+
 def _build_pinned_behaviors(
     conn: sqlite3.Connection, workspace_id: str, budget: int
 ) -> BriefSection:
@@ -95,6 +127,7 @@ def _build_pinned_behaviors(
         )
     )
     lines = ["## Pinned behaviors"]
+    rendered_ids: list[str] = []
     seen: set[str] = set()
     for b in candidates:
         # SQL returns are typed as object; coerce to str at the boundary
@@ -111,4 +144,12 @@ def _build_pinned_behaviors(
         if applies:
             line += f" (applies_to: {applies})"
         lines.append(line)
-    return BriefSection(name="behaviors", budget=budget, lines=fit_to_budget(lines, budget))
+        rendered_ids.append(str(b.get("id") or ""))
+    fitted = fit_to_budget(lines, budget)
+    # Credit the behaviors whose bullet survived the budget as "applied" (rendered
+    # into the agent's envelope). fit_to_budget tail-trims, so the survivors are
+    # the leading ids; fitted[0] is the header. May credit up to 2x per brief when
+    # the redistribution pass rebuilds this section -- harmless: the KPI is
+    # count>0, unchanged by the multiplier.
+    _credit_behaviors_applied(conn, workspace_id, rendered_ids[: max(0, len(fitted) - 1)])
+    return BriefSection(name="behaviors", budget=budget, lines=fitted)

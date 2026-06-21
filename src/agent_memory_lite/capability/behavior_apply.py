@@ -25,7 +25,12 @@ def mark_behavior_instructions_applied(
 ) -> int:
     """Bump application_count + last_applied_at for a batch of instructions.
 
-    Returns the count of rows actually updated.
+    Deliberately does NOT touch ``updated_at``: application is telemetry, not a
+    content edit, and ``updated_at`` feeds the brief-cache fingerprint
+    (``_workspace_fingerprint`` hashes ``MAX(behaviors.updated_at)``). Crediting
+    is called once per envelope build, so bumping ``updated_at`` here would flip
+    the fingerprint on every build -> a cache-bust loop that re-credits every
+    request. Returns the count of rows actually updated.
     """
     if not instruction_ids:
         return 0
@@ -36,11 +41,10 @@ def mark_behavior_instructions_applied(
             f"""
             UPDATE behaviors
             SET application_count = application_count + 1,
-                last_applied_at = ?,
-                updated_at = ?
+                last_applied_at = ?
             WHERE workspace_id = ? AND id IN ({placeholders})
             """,
-            (now_iso, now_iso, workspace_id, *instruction_ids),
+            (now_iso, workspace_id, *instruction_ids),
         )
     except sqlite3.OperationalError:
         # Partial schema without application_count / last_applied_at.
