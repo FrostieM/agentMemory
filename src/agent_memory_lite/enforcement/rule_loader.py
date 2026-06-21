@@ -26,15 +26,38 @@ import json
 import sqlite3
 from dataclasses import dataclass
 
+from agent_memory_lite.enforcement.mechanical_decision_provenance import (
+    RULE_TAG as _DECISION_PROVENANCE_TAG,
+)
+from agent_memory_lite.enforcement.mechanical_impact_check_before_read import (
+    RULE_TAG as _IMPACT_CHECK_BEFORE_READ_TAG,
+)
+from agent_memory_lite.enforcement.mechanical_magic_number import (
+    RULE_TAG as _MAGIC_NUMBER_TAG,
+)
+from agent_memory_lite.enforcement.mechanical_read_before_edit import (
+    RULE_TAG as _READ_BEFORE_EDIT_TAG,
+)
+from agent_memory_lite.enforcement.mechanical_search_before_arch import (
+    RULE_TAG as _SEARCH_BEFORE_ARCH_TAG,
+)
+
 MECHANICAL_TAG = "enforcement:mechanical"
 SEMANTIC_TAG = "enforcement:semantic"
 OPT_OUT_TAG = "enforcement:none"
+# Derived from the detector modules' own RULE_TAG constants -- the exact tags the
+# mechanical dispatcher registers (mechanical_dispatch._DETECTOR_REGISTRY). Built
+# from those constants rather than re-typed string literals so the classifier can
+# never drift out of sync with the registry: a behavior tagged for a registered
+# detector is always routed mechanical, never misclassified to the LLM path.
+# A drift-guard test pins this set to the live registry keys.
 _KNOWN_MECHANICAL_TAGS = frozenset(
     {
-        "mechanical:no-magic-number",
-        "mechanical:decision-provenance",
-        "mechanical:read-before-edit",
-        "mechanical:search-before-arch",
+        _MAGIC_NUMBER_TAG,
+        _DECISION_PROVENANCE_TAG,
+        _READ_BEFORE_EDIT_TAG,
+        _IMPACT_CHECK_BEFORE_READ_TAG,
+        _SEARCH_BEFORE_ARCH_TAG,
     }
 )
 

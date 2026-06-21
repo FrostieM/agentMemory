@@ -8,7 +8,9 @@ from collections.abc import Iterator
 
 import pytest
 
+from agent_memory_lite.enforcement.mechanical_dispatch import _DETECTOR_REGISTRY
 from agent_memory_lite.enforcement.rule_loader import (
+    _KNOWN_MECHANICAL_TAGS,
     MECHANICAL_TAG,
     OPT_OUT_TAG,
     SEMANTIC_TAG,
@@ -112,6 +114,33 @@ def test_mechanical_detector_tag_routes_to_mechanical(conn: sqlite3.Connection) 
     )
     rules = load_enforcement_rules(conn, "ws")
     assert rules[0].level == "mechanical"
+
+
+def test_impact_check_before_read_tag_routes_to_mechanical(conn: sqlite3.Connection) -> None:
+    """Regression: a behavior tagged only with the impact-check-before-read
+    detector tag must route mechanical. The tag was registered in the
+    dispatcher but missing from the classifier's known set, so such rules
+    silently fell through to the slow LLM (semantic) path and the
+    read-before-impact-check invariant was never mechanically enforced.
+    """
+    _insert(
+        conn,
+        instruction_id="beh_ic",
+        name="impact-check-before-read",
+        applies_to=["mechanical:impact-check-before-read"],
+    )
+    rules = load_enforcement_rules(conn, "ws")
+    assert len(rules) == 1
+    assert rules[0].level == "mechanical"
+
+
+def test_known_mechanical_tags_match_dispatch_registry() -> None:
+    """Drift guard: the classifier's known-tag set must equal the dispatcher's
+    registered detector tags exactly. If they diverge, a rule is either routed
+    to a detector that does not exist or starved of one that does -- both silent.
+    Pin them so adding/removing a detector forces both sides to stay in sync.
+    """
+    assert frozenset(_DETECTOR_REGISTRY) == _KNOWN_MECHANICAL_TAGS
 
 
 def test_explicit_mechanical_tag_overrides_classification(conn: sqlite3.Connection) -> None:
