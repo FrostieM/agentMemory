@@ -144,6 +144,11 @@ def run_db_hygiene(conn: sqlite3.Connection, *, workspace_id: str) -> DbHygieneR
     try:
         if _vacuum_overdue(conn, workspace_id):
             conn.execute("VACUUM")
+            # Refresh query-planner stats on the same weekly cadence. sqlite_stat1
+            # was never generated before migration 0006; without fresh stats the
+            # planner mis-orders the impact_check joins (the most-called tool,
+            # ~142ms -> ~0.5ms with stats). Cheap next to the VACUUM just run.
+            conn.execute("ANALYZE")
             workspace_meta.set_value(conn, workspace_id, _LAST_VACUUM_KEY, iso_now())
             conn.commit()
             report.vacuum_ran = True

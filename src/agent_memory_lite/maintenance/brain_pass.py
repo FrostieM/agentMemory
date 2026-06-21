@@ -372,6 +372,60 @@ def _step_prune_vectors(
         report.errors.append(f"prune_vectors:{exc}")
 
 
+_LAST_VECTOR_COMPACT_KEY = "last_vector_compact_at"
+_VECTOR_COMPACT_INTERVAL_HOURS = 24.0
+
+
+def _step_compact_vectors(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Collapse LanceDB MVCC version history (the prune step just appended more).
+
+    Every upsert / delete / orphan-prune appends a manifest version that nothing
+    else removes -- measured 4282 versions / 340 MB for 7356 live rows.
+    ``store.compact()`` runs ``Table.optimize``, recovering ~96% of the on-disk
+    size. Heavier than the prune, so rate-limited to once per day via
+    workspace_meta and gated by the same ``vector_prune_enabled`` flag. The
+    default 1h compaction window is safe against a concurrent in-process writer.
+    Failure-soft like every other step."""
+    if not settings.vector_prune_enabled:
+        return
+    try:
+        from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+        from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+        from agent_memory_lite.utils.time import parse_iso  # noqa: PLC0415
+        from agent_memory_lite.vector_store.factory import (  # noqa: PLC0415
+            get_vector_store,
+        )
+
+        last = workspace_meta.get(conn, workspace_id, _LAST_VECTOR_COMPACT_KEY)
+        if last:
+            with contextlib.suppress(ValueError):
+                if datetime.now(UTC) - parse_iso(last) < timedelta(
+                    hours=_VECTOR_COMPACT_INTERVAL_HOURS
+                ):
+                    return
+        store = get_vector_store(settings)
+        try:
+            compact = getattr(store, "compact", None)
+            if callable(compact):
+                result = compact()  # default 1h window -- safe vs a concurrent writer
+                # Surface a permanently-broken compaction (every namespace -1)
+                # instead of silently re-stamping and retrying only once a day.
+                if result and all(v == -1 for v in result.values()):
+                    report.errors.append(f"compact_vectors:all {len(result)} namespaces failed")
+        finally:
+            store.close()
+        workspace_meta.set_value(conn, workspace_id, _LAST_VECTOR_COMPACT_KEY, iso_now())
+        conn.commit()
+    except Exception as exc:
+        report.errors.append(f"compact_vectors:{exc}")
+
+
 def _step_repair_missing_vectors(
     conn: sqlite3.Connection,
     workspace_id: str,
@@ -799,6 +853,7 @@ def run_brain_pass(
     _step_causal(conn, workspace_id, settings, report)
     _step_db_hygiene(conn, workspace_id, report)
     _step_prune_vectors(conn, workspace_id, settings, report)
+    _step_compact_vectors(conn, workspace_id, settings, report)
     # Plan 7: re-embed missing vectors (inverse of prune). Lazy-loads the
     # provider only when the cheap EXISTS probe finds work.
     _step_repair_missing_vectors(conn, workspace_id, settings, report)

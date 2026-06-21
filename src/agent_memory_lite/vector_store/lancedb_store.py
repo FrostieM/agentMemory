@@ -200,6 +200,31 @@ class LanceDBStore(VectorStore):
         ]
         table.add(records)
 
+    def compact(self, *, cleanup_older_than_seconds: float = 3600.0) -> dict[str, int]:
+        """Collapse LanceDB MVCC version history.
+
+        Every ``upsert``/``delete`` appends a manifest version that nothing else
+        prunes (measured: 4282 versions / 340 MB for 7356 live rows). LanceDB's
+        ``Table.optimize`` compacts data fragments AND drops superseded versions
+        older than the window. The default 1h window is safe against a concurrent
+        writer in the same process; an operator one-shot can pass 0 to reclaim
+        everything. Failure-soft per namespace -- one bad table never aborts the
+        rest. Returns ``{namespace: live_row_count}`` (-1 marks a failed table).
+        """
+        from datetime import timedelta  # noqa: PLC0415
+
+        self.open()
+        window = timedelta(seconds=max(0.0, cleanup_older_than_seconds))
+        result: dict[str, int] = {}
+        for namespace in sorted(self._table_names()):
+            try:
+                table = self._db.open_table(namespace)
+                table.optimize(cleanup_older_than=window, delete_unverified=False)
+                result[namespace] = int(table.count_rows())
+            except Exception:
+                result[namespace] = -1
+        return result
+
     def query(
         self,
         namespace: str,

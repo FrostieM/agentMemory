@@ -15,7 +15,9 @@ import pytest
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.maintenance.brain_pass import (
+    _LAST_VECTOR_COMPACT_KEY,
     BrainPassReport,
+    _step_compact_vectors,
     _step_repair_missing_vectors,
     run_brain_pass,
 )
@@ -46,6 +48,71 @@ def test_repair_missing_vectors_step_no_work_skips_provider(conn: sqlite3.Connec
     _step_repair_missing_vectors(conn, "ws", settings, report)
     assert report.vectors_repaired == 0
     assert report.errors == []
+
+
+class _FakeCompactStore:
+    def __init__(self) -> None:
+        self.compacted = 0
+
+    def compact(self, **_kw: object) -> dict[str, int]:
+        self.compacted += 1
+        return {"chunks": 5}
+
+    def close(self) -> None:
+        return None
+
+
+class _NoCompactStore:
+    def close(self) -> None:
+        return None
+
+
+def test_compact_vectors_disabled_is_noop(conn: sqlite3.Connection) -> None:
+    settings = Settings().model_copy(update={"vector_prune_enabled": False})
+    report = _report()
+    _step_compact_vectors(conn, "ws", settings, report)
+    assert report.errors == []
+
+
+def test_compact_vectors_runs_and_stamps(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+    from agent_memory_lite.vector_store import factory  # noqa: PLC0415
+
+    store = _FakeCompactStore()
+    monkeypatch.setattr(factory, "get_vector_store", lambda _settings: store)
+    report = _report()
+    _step_compact_vectors(conn, "ws", Settings(), report)
+    assert store.compacted == 1
+    assert report.errors == []
+    assert workspace_meta.get(conn, "ws", _LAST_VECTOR_COMPACT_KEY)  # stamped
+
+
+def test_compact_vectors_rate_limited_within_24h(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+
+    workspace_meta.set_value(conn, "ws", _LAST_VECTOR_COMPACT_KEY, iso_now())  # just ran
+    from agent_memory_lite.vector_store import factory  # noqa: PLC0415
+
+    store = _FakeCompactStore()
+    monkeypatch.setattr(factory, "get_vector_store", lambda _settings: store)
+    report = _report()
+    _step_compact_vectors(conn, "ws", Settings(), report)
+    assert store.compacted == 0  # skipped by the 24h gate -- store never opened
+
+
+def test_compact_vectors_noop_without_compact_method(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_memory_lite.vector_store import factory  # noqa: PLC0415
+
+    monkeypatch.setattr(factory, "get_vector_store", lambda _settings: _NoCompactStore())
+    report = _report()
+    _step_compact_vectors(conn, "ws", Settings(), report)
+    assert report.errors == []  # duck-typed no-op, never crashes
 
 
 @pytest.fixture
