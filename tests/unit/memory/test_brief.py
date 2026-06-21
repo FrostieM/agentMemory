@@ -15,7 +15,7 @@ from agent_memory_lite.cognition.brief import (
     fetch_skill_body,
     fit_to_budget,
 )
-from agent_memory_lite.cognition.brief_sections_core import _build_state
+from agent_memory_lite.cognition.brief_sections_core import _build_code_hubs, _build_state
 
 
 @pytest.fixture(autouse=True)
@@ -789,7 +789,11 @@ def test_fetch_skill_body_unknown_returns_none(conn: sqlite3.Connection) -> None
 
 
 def _seed_code_digest(
-    conn: sqlite3.Connection, *, file_path: str, workspace_id: str = "ws"
+    conn: sqlite3.Connection,
+    *,
+    file_path: str,
+    workspace_id: str = "ws",
+    inbound_edge_count: int = 0,
 ) -> None:
     import time  # noqa: PLC0415
 
@@ -800,8 +804,8 @@ def _seed_code_digest(
                                      inbound_edge_count, outbound_edge_count,
                                      purpose_short, top_symbols_json,
                                      last_indexed_at, updated_at)
-           VALUES (?, ?, ?, ?, 'python', 1, 1, 0, 0, 'p', '[]', ?, ?)""",
-        (f"digest_{file_path}", workspace_id, file_path, "h" * 40, ts, ts),
+           VALUES (?, ?, ?, ?, 'python', 1, 1, ?, 0, 'p', '[]', ?, ?)""",
+        (f"digest_{file_path}", workspace_id, file_path, "h" * 40, inbound_edge_count, ts, ts),
     )
     conn.commit()
 
@@ -828,6 +832,49 @@ def test_brief_identity_skips_discipline_line_when_no_digests(
     body = "\n".join(identity.lines)
     assert "DISCIPLINE" not in body
     assert "memory_impact_check" not in body
+
+
+def test_code_hubs_excludes_vendor_scripts_tests(conn: sqlite3.Connection) -> None:
+    """High-caller vendored / script / test files must NOT win the code-hubs
+    section -- only load-bearing SOURCE hubs. Fails pre-change: those noise files
+    have the highest inbound_edge_count and would otherwise top the ORDER BY.
+    """
+    _seed_code_digest(
+        conn, file_path="src/agent_memory_lite/ui/vendor/d3.v7.8.5.min.js", inbound_edge_count=1500
+    )
+    _seed_code_digest(conn, file_path="scripts/crash_test/seeds.py", inbound_edge_count=1100)
+    _seed_code_digest(conn, file_path="tests/unit/test_bar.py", inbound_edge_count=900)
+    _seed_code_digest(conn, file_path="src/agent_memory_lite/core.py", inbound_edge_count=50)
+
+    body = "\n".join(_build_code_hubs(conn, "ws", budget=400).lines)
+    assert "core.py" in body
+    assert "d3.v7.8.5.min.js" not in body
+    assert "scripts/crash_test/seeds.py" not in body
+    assert "tests/unit/test_bar.py" not in body
+
+
+def test_code_hubs_excludes_nested_tests_and_node_modules(conn: sqlite3.Connection) -> None:
+    """Exclusion is path-shaped, not just top-level: nested tests/ and any
+    node_modules/ are noise wherever they sit."""
+    _seed_code_digest(conn, file_path="src/pkg/tests/test_helpers.py", inbound_edge_count=800)
+    _seed_code_digest(conn, file_path="src/web/node_modules/lib/index.js", inbound_edge_count=700)
+    _seed_code_digest(conn, file_path="src/agent_memory_lite/real.py", inbound_edge_count=10)
+
+    body = "\n".join(_build_code_hubs(conn, "ws", budget=400).lines)
+    assert "real.py" in body
+    assert "tests/test_helpers.py" not in body
+    assert "node_modules" not in body
+
+
+def test_code_hubs_ranks_real_source_by_callers(conn: sqlite3.Connection) -> None:
+    """After the WHERE additions, the ranking path still works: among real source
+    files, the higher caller count comes first."""
+    _seed_code_digest(conn, file_path="src/agent_memory_lite/low.py", inbound_edge_count=30)
+    _seed_code_digest(conn, file_path="src/agent_memory_lite/high.py", inbound_edge_count=200)
+
+    lines = [ln for ln in _build_code_hubs(conn, "ws", budget=400).lines if ln.startswith("- ")]
+    assert lines[0].startswith("- src/agent_memory_lite/high.py")
+    assert any("low.py" in ln for ln in lines)
 
 
 # ============================================================

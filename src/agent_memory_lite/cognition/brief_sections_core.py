@@ -21,6 +21,23 @@ from agent_memory_lite.storage.reader import count_kind, list_kind
 _SELF_MODEL_BRIEF_WORDS = 40
 _OPEN_TASK_STATUSES = ("active", "in_progress")
 
+# Code-hub ranking is by caller count, which floats vendored libraries, minified
+# assets, test scaffolding, and operational scripts to the top -- none are the
+# load-bearing SOURCE hubs the section is meant to surface (the live workspace's
+# top hubs were a vendored d3.min.js at 1511 callers and crash_test/seeds.py at
+# 1140). Exclude them at read time only: the rows stay in code_digests for
+# impact_check; just the brief view is filtered. SQL LIKE patterns over the
+# POSIX-slash file_path column.
+_CODE_HUB_PATH_EXCLUDES = (
+    "%.min.js",
+    "%.min.css",
+    "%/vendor/%",
+    "%/node_modules/%",
+    "tests/%",
+    "%/tests/%",
+    "scripts/%",
+)
+
 
 def _blockers_count_from_json(value: object) -> int:
     if not isinstance(value, str) or not value.strip():
@@ -199,14 +216,16 @@ def _build_code_hubs(
     is empty. Saves ~10 tokens on workspaces that don't use code-memory
     (non-software projects); the freed budget is rerouted by
     ``_redistribute_and_rebuild`` into the dense priority sections."""
+    exclude_clause = " ".join("AND file_path NOT LIKE ?" for _ in _CODE_HUB_PATH_EXCLUDES)
     sql = (
         "SELECT * FROM code_digests WHERE workspace_id = ? "
+        f"{exclude_clause} "
         "ORDER BY COALESCE(NULLIF(pagerank, 0), inbound_edge_count) DESC, "
         "  inbound_edge_count DESC "
         "LIMIT ?"
     )
     try:
-        rows = conn.execute(sql, (workspace_id, limit)).fetchall()
+        rows = conn.execute(sql, (workspace_id, *_CODE_HUB_PATH_EXCLUDES, limit)).fetchall()
     except sqlite3.OperationalError:
         rows = []
     if not rows:
