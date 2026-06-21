@@ -168,12 +168,27 @@ def test_lessons_capped_at_limit(conn: sqlite3.Connection) -> None:
 
 
 def test_higher_confidence_lesson_ranks_first(conn: sqlite3.Connection) -> None:
+    # Both never-surfaced (last_surfaced_at NULL) -> confidence is the tiebreak.
     _seed_lesson(conn, id_="les_low", summary="lower confidence lesson", confidence=0.85)
     _seed_lesson(conn, id_="les_high", summary="higher confidence lesson", confidence=0.95)
     section = _build_lessons(conn, "ws", budget=400, limit=1)
     body = "\n".join(section.lines)
     assert "les_high" in body
     assert "les_low" not in body
+
+
+def test_least_recently_surfaced_lesson_rotates_in_first(conn: sqlite3.Connection) -> None:
+    """Rotation: a never-surfaced lesson outranks an already-surfaced HIGHER-conf
+    one, so every reviewed lesson cycles through the brief over sessions instead
+    of only the top-by-confidence surfacing forever (the prior adoption gap)."""
+    _seed_lesson(conn, id_="les_shown", summary="already surfaced, higher conf", confidence=0.95)
+    _seed_lesson(conn, id_="les_fresh", summary="never surfaced, lower conf", confidence=0.85)
+    conn.execute("UPDATE insights SET last_surfaced_at = ? WHERE id = 'les_shown'", (iso_now(),))
+    conn.commit()
+    section = _build_lessons(conn, "ws", budget=400, limit=1)
+    body = "\n".join(section.lines)
+    assert "les_fresh" in body  # never-surfaced rotates in despite lower confidence
+    assert "les_shown" not in body  # recently surfaced waits its turn
 
 
 def test_lone_header_suppressed_when_no_bullet_fits(conn: sqlite3.Connection) -> None:

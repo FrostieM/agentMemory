@@ -151,7 +151,12 @@ def _build_lessons(
     (0.85-0.95) never surface while raw 0.55 consolidation candidates do. Kept
     separate from recent_insights so surfacing a reviewed lesson does not inflate
     the candidate ``surface_count`` that gates auto-promotion. Tightly capped
-    (limit=2), low-signal-filtered, ordered by confidence. Failure-soft.
+    (limit=2) and low-signal-filtered. ROTATED by least-recently-surfaced
+    (``last_surfaced_at`` ascending, NULL/never-surfaced first; confidence as the
+    tiebreak), so every reviewed lesson cycles through the brief over successive
+    sessions instead of only the top-2 by confidence surfacing forever (the
+    section stamps last_surfaced_at, so the rotation is self-advancing).
+    Failure-soft.
     """
     try:
         rows = conn.execute(
@@ -161,7 +166,7 @@ def _build_lessons(
              WHERE workspace_id = ? AND insight_type = 'lesson'
                AND status IN ('accepted', 'new')
                AND COALESCE(outcome_score, 0.0) >= 0
-             ORDER BY confidence DESC, updated_at DESC
+             ORDER BY last_surfaced_at ASC, confidence DESC, updated_at DESC
             """,
             (workspace_id,),
         ).fetchall()
