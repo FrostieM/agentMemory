@@ -43,11 +43,25 @@ def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         c.close()
 
 
-def _seed_episode(conn: sqlite3.Connection, *, ep_id: str, text: str, ws: str = "ws") -> None:
+def _seed_episode(
+    conn: sqlite3.Connection,
+    *,
+    ep_id: str,
+    text: str,
+    ws: str = "ws",
+    created_at: str | None = None,
+) -> None:
+    # Default to a RECENT timestamp so the episode falls inside
+    # _EVIDENCE_WINDOW_DAYS (30) relative to *now*. A hardcoded date here is a
+    # time-bomb: once the clock passes seed_date + 30 days the corpus query
+    # silently drops these episodes and the evidence-count assertions break.
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    ts = created_at or (datetime.now(UTC) - timedelta(days=1)).isoformat()
     conn.execute(
         "INSERT INTO episodes (id, workspace_id, source_type, raw_text, created_at) "
-        "VALUES (?, ?, 'agent_action', ?, '2026-05-19T00:00:00+00:00')",
-        (ep_id, ws, text),
+        "VALUES (?, ?, 'agent_action', ?, ?)",
+        (ep_id, ws, text, ts),
     )
     conn.commit()
 
