@@ -10,14 +10,22 @@ thread that runs both the YAML retrieval-quality sentinels AND this
 brain pass.
 
 The pass is a sequence of independent, idempotent steps, each gated by
-its own settings flag -- a failure in one step never blocks the next:
-outcome-score recompute, Hebbian soft-edge distillation, insight
-promotion, reflex-rule distillation, self-model refresh, causal-link
-extraction, DB hygiene (WAL checkpoint + periodic VACUUM), orphan-vector
-prune (v3.7 "sleep cleaning"), experiment proposal, predictive-failure
-scan, DiD + Granger causality, predictive-LR training, drift sentinel,
-and dead-behavior auto-archive. ``MEMORY_BRAIN_PASS_ENABLED`` is the
-master switch for the whole path.
+its own settings flag -- a failure in one step never blocks the next.
+Grouped by purpose (the exact set evolves; see ``run_brain_pass`` for the
+authoritative order):
+  * learning -- outcome-score recompute, Hebbian soft-edge distillation,
+    insight promotion, reflex-rule distillation, self-model refresh,
+    causal extraction (primary + embedding + DiD + Granger), autonomous
+    candidate->theory promotion, predictive-failure scan + predictive-LR
+    training, experiment proposal;
+  * storage hygiene -- DB WAL checkpoint + periodic VACUUM/ANALYZE,
+    opt-in row retention, orphan-vector prune + LanceDB compaction +
+    missing-vector repair, aged sibling-backup reaping;
+  * plan learning -- playbook distillation, plan-outcome maturity,
+    capability-confidence recompute, code-digest refresh;
+  * observability -- drift sentinel, dead-behavior auto-archive.
+The per-step ``BrainPassReport`` carries the row counts.
+``MEMORY_BRAIN_PASS_ENABLED`` is the master switch for the whole path.
 
 The whole pass is wrapped so that any uncaught exception simply
 swallows + logs; the next overdue tick retries. Returns a small
