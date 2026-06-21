@@ -13,7 +13,14 @@ import os
 from pathlib import Path
 
 from agent_memory_lite.maintenance import backup_retention as br
-from agent_memory_lite.maintenance.backup_retention import prune_backups
+from agent_memory_lite.maintenance.backup_retention import (
+    prune_backups,
+    prune_backups_aged,
+    prune_sibling_db_backups,
+)
+
+_NOW = 1_000_000.0  # fixed clock for the age-gated tests
+_DAY = 86_400.0
 
 
 def _mk(path: Path, mtime: float, *, is_dir: bool = False) -> Path:
@@ -133,3 +140,74 @@ def test_failure_soft_skips_unremovable_entry(tmp_path: Path, monkeypatch) -> No
     names = sorted(p.name for p in deleted)
     assert names == [f"{pre}1.lance"]  # the failure did not abort the sweep
     assert (tmp_path / f"{pre}0.lance").exists()  # skipped, still present
+
+
+# ============================================================
+# Phase-4: age-gated prune + sibling DB-snapshot sweep
+# ============================================================
+
+
+def test_aged_keeps_young_beyond_floor(tmp_path: Path) -> None:
+    """The age gate keeps a file that is beyond the newest-N floor but younger
+    than max_age_days; only the aged-out extras are reaped."""
+    pre = "memory.db.bak-fkrepair-"
+    _mk(tmp_path / f"{pre}old0", mtime=_NOW - 5 * _DAY)
+    _mk(tmp_path / f"{pre}old1", mtime=_NOW - 4 * _DAY)
+    young = _mk(tmp_path / f"{pre}young", mtime=_NOW - 0.5 * _DAY)  # within 1 day
+    newest = _mk(tmp_path / f"{pre}newest", mtime=_NOW)
+    deleted = prune_backups_aged(tmp_path, prefix=pre, keep=1, max_age_days=1, now=_NOW)
+    assert newest.exists()  # keep-1 floor
+    assert young.exists()  # beyond floor but young -> kept by the age gate
+    assert {p.name for p in deleted} == {f"{pre}old0", f"{pre}old1"}
+
+
+def test_aged_keep_floor_wins_over_age(tmp_path: Path) -> None:
+    """keep-N is unconditional: 5 ancient files, keep=5 -> nothing deleted."""
+    pre = "memory.db.bak-fkrepair-"
+    for i in range(5):
+        _mk(tmp_path / f"{pre}{i}", mtime=_NOW - 999 * _DAY)
+    deleted = prune_backups_aged(tmp_path, prefix=pre, keep=5, max_age_days=14, now=_NOW)
+    assert deleted == []
+    assert len(list(tmp_path.iterdir())) == 5
+
+
+def test_sibling_sweep_reaps_aged_never_touches_live_db(tmp_path: Path) -> None:
+    """The sibling sweep reaps aged .bak-fkrepair-/.bak-theory-repair- snapshots
+    and NEVER touches the live DB, its -wal/-shm companions, or an unrelated db."""
+    # OLD mtimes on the live store: if the filename anchor ever regressed, the
+    # age gate would reap these -- so their survival proves the ANCHOR (dot-vs-dash
+    # at the family prefix), not the age check, is what protects the live DB.
+    db = _mk(tmp_path / "memory.db", mtime=_NOW - 999 * _DAY)
+    wal = _mk(tmp_path / "memory.db-wal", mtime=_NOW - 999 * _DAY)
+    shm = _mk(tmp_path / "memory.db-shm", mtime=_NOW - 999 * _DAY)
+    unrelated = _mk(tmp_path / "foo.db", mtime=_NOW - 999 * _DAY)
+    fk_old0 = _mk(tmp_path / "memory.db.bak-fkrepair-001", mtime=_NOW - 5 * _DAY)
+    fk_old1 = _mk(tmp_path / "memory.db.bak-fkrepair-002", mtime=_NOW - 4 * _DAY)
+    fk_new = _mk(tmp_path / "memory.db.bak-fkrepair-003", mtime=_NOW - 0.5 * _DAY)
+    th_only = _mk(tmp_path / "memory.db.bak-theory-repair-001", mtime=_NOW - 9 * _DAY)
+
+    deleted = prune_sibling_db_backups(db, keep=1, max_age_days=1, now=_NOW)
+
+    # live store + companions + unrelated file are inviolate
+    assert db.exists()
+    assert wal.exists()
+    assert shm.exists()
+    assert unrelated.exists()
+    # fkrepair: keep the newest (floor), reap the two aged
+    assert fk_new.exists()
+    assert {p.name for p in deleted} == {fk_old0.name, fk_old1.name}
+    # theory-repair has a single (newest) entry -> kept by the keep-1 floor
+    assert th_only.exists()
+
+
+def test_sibling_sweep_failure_soft(tmp_path: Path, monkeypatch) -> None:
+    db = _mk(tmp_path / "memory.db", mtime=_NOW)
+    bak = _mk(tmp_path / "memory.db.bak-fkrepair-001", mtime=_NOW - 99 * _DAY)
+
+    def _boom(self, *a, **k):
+        raise OSError("locked")
+
+    monkeypatch.setattr(Path, "unlink", _boom)
+    # keep=0 -> wants to delete the aged sibling, but unlink raises; must not escape.
+    assert prune_sibling_db_backups(db, keep=0, max_age_days=1, now=_NOW) == []
+    assert bak.exists()  # skipped, still present

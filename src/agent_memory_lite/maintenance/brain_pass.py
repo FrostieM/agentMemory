@@ -91,6 +91,14 @@ class BrainPassReport:
     # Plan 7: chunks whose vector was missing (embedding_id IS NULL) re-embedded
     # this pass -- the self-healing complement to orphan-prune.
     vectors_repaired: int = 0
+    # Phase-4 row retention (opt-in; default OFF): rows age-pruned this pass from
+    # the four unbounded tables.
+    audit_rows_pruned: int = 0
+    usage_feedback_pruned: int = 0
+    retention_causal_pruned: int = 0
+    file_episodes_pruned: int = 0
+    # Phase-4: aged sibling DB-snapshot backups reaped this pass.
+    backups_pruned: int = 0
     experiment_proposals: int = 0
     predictive_warnings: int = 0
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
@@ -150,6 +158,11 @@ class BrainPassReport:
             "vacuum_ran": self.vacuum_ran,
             "vectors_pruned": self.vectors_pruned,
             "vectors_repaired": self.vectors_repaired,
+            "audit_rows_pruned": self.audit_rows_pruned,
+            "usage_feedback_pruned": self.usage_feedback_pruned,
+            "retention_causal_pruned": self.retention_causal_pruned,
+            "file_episodes_pruned": self.file_episodes_pruned,
+            "backups_pruned": self.backups_pruned,
             "experiment_proposals": self.experiment_proposals,
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
@@ -424,6 +437,86 @@ def _step_compact_vectors(
         conn.commit()
     except Exception as exc:
         report.errors.append(f"compact_vectors:{exc}")
+
+
+def _step_retention(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    now_iso: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Phase-4: age-prune the four unbounded tables (audit_log,
+    memory_usage_feedback, re-derived causal_links, superseded file_indexed
+    episodes). The first data-DELETING brain step -- OPT-IN (default OFF); every
+    prune is self-guarded + bounded. Failure-soft."""
+    if not settings.retention_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.row_retention import prune_retention  # noqa: PLC0415
+
+        result = prune_retention(
+            conn,
+            workspace_id=workspace_id,
+            settings=settings,
+            now_iso=now_iso,
+            cap=settings.retention_max_per_table_per_pass,
+        )
+        report.audit_rows_pruned = result.audit_rows_pruned
+        report.usage_feedback_pruned = result.usage_feedback_pruned
+        report.retention_causal_pruned = result.causal_links_pruned
+        report.file_episodes_pruned = result.file_episodes_pruned
+        report.errors.extend(f"retention:{e}" for e in result.errors)
+    except Exception as exc:
+        report.errors.append(f"retention:{exc}")
+
+
+_LAST_BACKUP_PRUNE_KEY = "last_backup_prune_at"
+_BACKUP_PRUNE_INTERVAL_HOURS = 24.0
+
+
+def _step_prune_backups(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Phase-4: reap aged sibling DB-snapshot backups the repair scripts leave
+    next to the live DB with no retention (the multi-GB bloat source). Keep-N
+    floor + age gate, anchored to the live DB filename so the live store is never
+    touched. Rate-limited once/24h via workspace_meta. Failure-soft; structural
+    housekeeping, so a failure is WARNING-level (not in _CORE_STEP_PREFIXES)."""
+    if not settings.backup_retention_enabled:
+        return
+    try:
+        from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+        from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+        from agent_memory_lite.maintenance.backup_retention import (  # noqa: PLC0415
+            prune_sibling_db_backups,
+        )
+        from agent_memory_lite.utils.time import parse_iso  # noqa: PLC0415
+
+        last = workspace_meta.get(conn, workspace_id, _LAST_BACKUP_PRUNE_KEY)
+        if last:
+            with contextlib.suppress(ValueError):
+                if datetime.now(UTC) - parse_iso(last) < timedelta(
+                    hours=_BACKUP_PRUNE_INTERVAL_HOURS
+                ):
+                    return
+        # Stamp before the sweep so a persistently-failing prune is rate-limited
+        # to one WARNING per 24h instead of every tick (the sweep is cheap +
+        # idempotent, so deferring a transient failure for a day is harmless).
+        workspace_meta.set_value(conn, workspace_id, _LAST_BACKUP_PRUNE_KEY, iso_now())
+        conn.commit()
+        deleted = prune_sibling_db_backups(
+            settings.db_path,
+            keep=settings.backup_retention_keep,
+            max_age_days=settings.backup_retention_age_days,
+        )
+        report.backups_pruned = len(deleted)
+    except Exception as exc:
+        report.errors.append(f"prune_backups:{exc}")
 
 
 def _step_repair_missing_vectors(
@@ -969,8 +1062,13 @@ def run_brain_pass(
     _step_self_model(conn, workspace_id, settings, report)
     _step_causal(conn, workspace_id, settings, report)
     _step_db_hygiene(conn, workspace_id, report)
+    # Row retention runs right after db_hygiene (which owns the weekly VACUUM) and
+    # before the vector prune/compact, so audit_log is pruned before the episode
+    # guard re-evaluates and the freed SQLite pages are reclaimed by the next VACUUM.
+    _step_retention(conn, workspace_id, started, settings, report)
     _step_prune_vectors(conn, workspace_id, settings, report)
     _step_compact_vectors(conn, workspace_id, settings, report)
+    _step_prune_backups(conn, workspace_id, settings, report)
     # Plan 7: re-embed missing vectors (inverse of prune). Lazy-loads the
     # provider only when the cheap EXISTS probe finds work.
     _step_repair_missing_vectors(conn, workspace_id, settings, report)

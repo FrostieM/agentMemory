@@ -219,6 +219,38 @@ class Settings(BaseSettings):
     hebbian_log_retention_days: int = Field(
         14, ge=1, le=90, validation_alias="MEMORY_HEBBIAN_LOG_RETENTION_DAYS"
     )
+    # Phase-4 row retention: age-prune the four unbounded brain-pass tables
+    # (audit_log, memory_usage_feedback, the re-derived causal_links, and
+    # superseded file_indexed episodes). This is the first data-DELETING brain
+    # step, so it is OPT-IN (default OFF); every prune is self-guarded + bounded.
+    retention_enabled: bool = Field(False, validation_alias="MEMORY_RETENTION_ENABLED")
+    retention_audit_days: int = Field(
+        90, ge=7, le=365, validation_alias="MEMORY_RETENTION_AUDIT_DAYS"
+    )
+    retention_file_episode_days: int = Field(
+        30, ge=7, le=365, validation_alias="MEMORY_RETENTION_FILE_EPISODE_DAYS"
+    )
+    retention_usage_feedback_days: int = Field(
+        60, ge=7, le=365, validation_alias="MEMORY_RETENTION_USAGE_FEEDBACK_DAYS"
+    )
+    retention_causal_days: int = Field(
+        60, ge=7, le=365, validation_alias="MEMORY_RETENTION_CAUSAL_DAYS"
+    )
+    retention_max_per_table_per_pass: int = Field(
+        2000, ge=1, le=100000, validation_alias="MEMORY_RETENTION_MAX_PER_TABLE_PER_PASS"
+    )
+    # Phase-4: reap aged sibling DB snapshots (memory.db.bak-fkrepair-*,
+    # memory.db.bak-theory-repair-*) that the repair scripts write next to the
+    # live DB with NO retention -- ~130MB each, the source of the observed
+    # multi-GB bloat. Keep the newest N regardless of age; delete the rest once
+    # older than the age window. Default ON (non-destructive vs the live store).
+    backup_retention_enabled: bool = Field(True, validation_alias="MEMORY_BACKUP_RETENTION_ENABLED")
+    backup_retention_keep: int = Field(
+        5, ge=1, le=100, validation_alias="MEMORY_BACKUP_RETENTION_KEEP"
+    )
+    backup_retention_age_days: int = Field(
+        14, ge=1, le=365, validation_alias="MEMORY_BACKUP_RETENTION_AGE_DAYS"
+    )
     # v3.6 Phase-2: prune orphan chunk-vectors -- vectors whose chunk row
     # was deleted (SQLite/LanceDB split, interrupted compound write) and
     # left behind. The brain pass diffs vector ids vs chunk ids every

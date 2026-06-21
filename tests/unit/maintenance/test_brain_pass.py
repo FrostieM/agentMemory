@@ -19,6 +19,7 @@ from agent_memory_lite.maintenance.brain_pass import (
     _LAST_VECTOR_COMPACT_KEY,
     BrainPassReport,
     _step_compact_vectors,
+    _step_prune_backups,
     _step_repair_missing_vectors,
     run_brain_pass,
 )
@@ -455,3 +456,62 @@ def test_peripheral_step_failure_stays_warning(
     assert row["severity"] == "warning"
     details = json.loads(row["details_json"])
     assert details["core_failed"] == []
+
+
+# ============================================================
+# Phase-4: backup-prune step
+# ============================================================
+
+
+def _seed_aged_sibling(tmp_path: object) -> object:
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
+    db = tmp_path / "memory.db"
+    db.write_text("x", encoding="utf-8")
+    bak = tmp_path / "memory.db.bak-fkrepair-001"
+    bak.write_text("x", encoding="utf-8")
+    old = time.time() - 99 * 86400
+    os.utime(bak, (old, old))
+    return db, bak
+
+
+def test_prune_backups_disabled_is_noop(conn: sqlite3.Connection, tmp_path: object) -> None:
+    db, bak = _seed_aged_sibling(tmp_path)
+    settings = Settings().model_copy(update={"backup_retention_enabled": False, "db_path": db})
+    report = _report()
+    _step_prune_backups(conn, "ws", settings, report)
+    assert report.backups_pruned == 0
+    assert bak.exists()  # disabled -> untouched
+
+
+def test_prune_backups_reaps_aged_siblings_and_stamps(
+    conn: sqlite3.Connection, tmp_path: object
+) -> None:
+    from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+    from agent_memory_lite.maintenance.brain_pass import _LAST_BACKUP_PRUNE_KEY  # noqa: PLC0415
+
+    db, bak = _seed_aged_sibling(tmp_path)
+    settings = Settings().model_copy(
+        update={"db_path": db, "backup_retention_keep": 0, "backup_retention_age_days": 1}
+    )
+    report = _report()
+    _step_prune_backups(conn, "ws", settings, report)
+    assert report.backups_pruned == 1
+    assert not bak.exists()
+    assert workspace_meta.get(conn, "ws", _LAST_BACKUP_PRUNE_KEY)  # stamped
+
+
+def test_prune_backups_rate_limited_within_24h(conn: sqlite3.Connection, tmp_path: object) -> None:
+    from agent_memory_lite.config import workspace_meta  # noqa: PLC0415
+    from agent_memory_lite.maintenance.brain_pass import _LAST_BACKUP_PRUNE_KEY  # noqa: PLC0415
+
+    workspace_meta.set_value(conn, "ws", _LAST_BACKUP_PRUNE_KEY, iso_now())  # just ran
+    db, bak = _seed_aged_sibling(tmp_path)
+    settings = Settings().model_copy(
+        update={"db_path": db, "backup_retention_keep": 0, "backup_retention_age_days": 1}
+    )
+    report = _report()
+    _step_prune_backups(conn, "ws", settings, report)
+    assert report.backups_pruned == 0  # skipped by the 24h gate
+    assert bak.exists()
