@@ -138,3 +138,68 @@ def _build_recent_insights(
         except sqlite3.OperationalError:
             pass
     return BriefSection(name="recent_insights", budget=budget, lines=fit_to_budget(lines, budget))
+
+
+def _build_lessons(
+    conn: sqlite3.Connection, workspace_id: str, budget: int, limit: int = 2
+) -> BriefSection:
+    """Surface operator-reviewed ``lesson`` insights (Phase 3 adoption gap).
+
+    Promoted lessons land at ``status='new'`` then ``'accepted'`` -- they skip
+    the ``'candidate'`` status that ``_build_recent_insights`` filters on, so
+    without a dedicated section the highest-confidence reviewed lessons
+    (0.85-0.95) never surface while raw 0.55 consolidation candidates do. Kept
+    separate from recent_insights so surfacing a reviewed lesson does not inflate
+    the candidate ``surface_count`` that gates auto-promotion. Tightly capped
+    (limit=2), low-signal-filtered, ordered by confidence. Failure-soft.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, insight_type, summary, gist, tags_json, confidence
+              FROM insights
+             WHERE workspace_id = ? AND insight_type = 'lesson'
+               AND status IN ('accepted', 'new')
+               AND COALESCE(outcome_score, 0.0) >= 0
+             ORDER BY confidence DESC, updated_at DESC
+            """,
+            (workspace_id,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return BriefSection(name="lessons", budget=budget, lines=[])
+    useful_rows = [
+        row
+        for row in rows
+        if not is_low_signal_insight(row["summary"], row["gist"], row["tags_json"])
+    ][:limit]
+    if not useful_rows:
+        return BriefSection(name="lessons", budget=budget, lines=[])
+    lines = ["## Lessons learned"]
+    surfaced_ids: list[str] = []
+    for row in useful_rows:
+        text = (row["gist"] or row["summary"] or "?")[:120]
+        confidence = float(row["confidence"] or 0.0)
+        lines.append(f"- {row['id']} [lesson, conf={confidence:.2f}]: {text}")
+        surfaced_ids.append(row["id"])
+    # Best-effort stamp so the 0-surface metric reflects reality. These are
+    # already accepted, so surface_count no longer gates promotion for them.
+    if surfaced_ids:
+        now = iso_now_for_brief()
+        try:
+            placeholders = ", ".join("?" * len(surfaced_ids))
+            conn.execute(
+                f"UPDATE insights "
+                f"SET last_surfaced_at = ?, surface_count = surface_count + 1 "
+                f"WHERE workspace_id = ? AND id IN ({placeholders})",
+                (now, workspace_id, *surfaced_ids),
+            )
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    fitted = fit_to_budget(lines, budget)
+    # If only the header survived the budget (no bullet fit), render nothing -- a
+    # bare "## Lessons learned" is noise, and an empty section frees its budget to
+    # the priority recipients.
+    if len(fitted) <= 1:
+        return BriefSection(name="lessons", budget=budget, lines=[])
+    return BriefSection(name="lessons", budget=budget, lines=fitted)

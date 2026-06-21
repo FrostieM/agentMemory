@@ -20,6 +20,7 @@ from agent_memory_lite.cognition.brief_sections_core import (
 )
 from agent_memory_lite.cognition.brief_sections_organ import (
     _build_associates,
+    _build_lessons,
     _build_recent_insights,
 )
 from agent_memory_lite.cognition.brief_sections_plan import _build_active_plan
@@ -59,6 +60,7 @@ def _build_all_sections(
         _build_state(conn, workspace_id, budgets["state"]),
         _build_code_hubs(conn, workspace_id, budgets["code_hubs"]),
         _build_associates(conn, workspace_id, budgets["associates"]),
+        _build_lessons(conn, workspace_id, budgets["lessons"]),
         _build_recent_insights(conn, workspace_id, budgets["recent_insights"]),
         _build_watch_outs(conn, workspace_id, budgets["watch_outs"]),
         _build_open_issues(conn, workspace_id, budgets["open_issues"]),

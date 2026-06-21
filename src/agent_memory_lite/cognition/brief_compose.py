@@ -88,6 +88,16 @@ def compose_brief(
             cache_hit=True,
         )
     # Per-section budget allocation (target ratios — sum to 1.00).
+    # Per-section budget ratios. They sum to ~1.06, a DELIBERATE overshoot to
+    # fund "lessons": a real reviewed-lesson bullet costs ~28 tokens (a 120-char
+    # gist plus header), far more than any 0.03 tail slice, and trimming a
+    # populated section to fund it would truncate that section's only line (every
+    # tail section already renders content at the default budget). The
+    # priority-ordered hard cap below reclaims the overshoot from the
+    # LOWEST-priority tail sections only when a workspace is dense enough to
+    # exceed the budget; lessons sits high in priority_order, so a reviewed 0.90
+    # lesson is kept over a heuristic proposal. The brief still stays under the
+    # 500-token cap (test_brief_v3_1::test_brief_token_budget_still_under_500).
     weights = {
         "identity": 0.13,
         "behaviors": 0.20,
@@ -96,6 +106,7 @@ def compose_brief(
         "state": 0.05,
         "code_hubs": 0.06,
         "associates": 0.05,
+        "lessons": 0.06,
         "recent_insights": 0.03,
         "watch_outs": 0.05,
         "open_issues": 0.03,
@@ -127,6 +138,7 @@ def compose_brief(
             "state",
             "code_hubs",
             "associates",
+            "lessons",
             "recent_insights",
             "watch_outs",
             "open_issues",
