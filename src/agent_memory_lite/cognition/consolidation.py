@@ -270,16 +270,7 @@ def _persist_insight(
     draft: InsightDraft,
     insight_type: str = "consolidation",
 ) -> str:
-    """INSERT one insight row with status='candidate'.
-
-    Phase 3: after persisting, also record a small implicit-feedback
-    boost for every evidence episode (``source_type='episode'``,
-    ``usefulness=+0.4``). This marks the episodes as
-    "actually contributed to a recurring insight" so the next
-    consolidation run weights them slightly higher in cluster seeding.
-    Failures here never abort the insight write -- feedback is best-
-    effort telemetry.
-    """
+    """INSERT one insight row with status='candidate'."""
     insight_id = f"insight_{uuid.uuid4().hex[:16]}"
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     conn.execute(
@@ -303,60 +294,7 @@ def _persist_insight(
         ),
     )
     conn.commit()
-    _record_evidence_episode_feedback(
-        conn,
-        workspace_id=workspace_id,
-        insight_id=insight_id,
-        evidence_episode_ids=draft.evidence_episode_ids,
-        signal_tokens_csv=draft.signal_tokens_csv,
-    )
     return insight_id
-
-
-def _record_evidence_episode_feedback(
-    conn: sqlite3.Connection,
-    *,
-    workspace_id: str,
-    insight_id: str,
-    evidence_episode_ids: list[str],
-    signal_tokens_csv: str,
-) -> None:
-    """Best-effort implicit feedback boost on episodes that fed an insight.
-
-    Uses the Phase 1 ``usage_feedback`` whitelist (extended to include
-    ``episode`` in Phase 3). Wraps the call in try/except so a missing
-    table or stale schema cannot abort the consolidation pass. Gated on
-    MEMORY_CONSOLIDATION_FEEDBACK_ENABLED so the operator can opt out
-    cleanly (off-path = byte-equivalent to v3.0.0-base, no feedback rows
-    emitted, no episode boost).
-    """
-    try:
-        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
-        from agent_memory_lite.maintenance.usage_feedback import (  # noqa: PLC0415
-            record_usage_feedback,
-        )
-    except ImportError:
-        return
-    try:
-        if not get_settings().consolidation_feedback_enabled:
-            return
-    except Exception:  # pragma: no cover - defensive
-        return
-    for ep_id in evidence_episode_ids:
-        try:
-            record_usage_feedback(
-                conn,
-                workspace_id=workspace_id,
-                source_type="episode",
-                source_id=ep_id,
-                query=signal_tokens_csv or "consolidation",
-                usefulness=0.4,
-                notes=f"implicit_consolidation -> {insight_id}",
-                source="implicit_consolidation",
-            )
-        except (sqlite3.Error, ValueError):
-            # Failure-soft: one bad row never blocks the rest.
-            continue
 
 
 def _pinned_behavior_token_sets(

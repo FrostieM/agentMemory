@@ -77,27 +77,25 @@ def llm_pattern(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ============================================================
-# evidence-episode feedback boost
+# consolidation -> insight
 # ============================================================
 
 
-def test_consolidation_writes_implicit_feedback_for_each_episode(
+def test_consolidation_writes_no_episode_feedback(
     conn: sqlite3.Connection, llm_pattern: None
 ) -> None:
-    """4 episodes with shared tokens -> 1 cluster -> 1 insight -> 4 feedback rows."""
+    """The implicit_consolidation episode self-boost was removed: it was a
+    write-only feedback row no ranking path ever consumed. Consolidation must now
+    emit ZERO episode feedback (guards against re-introducing the dead write)."""
     for i in range(4):
         _seed_episode(conn, id_=f"ep_{i}", raw_text="kelly sizing failure divergence experiment")
     report = consolidate_workspace(conn, workspace_id="ws", window_hours=24)
     assert report.insights_written == 1
-    fb_rows = conn.execute(
-        "SELECT source_type, source_id, usefulness FROM memory_usage_feedback "
+    n_episode_fb = conn.execute(
+        "SELECT COUNT(*) FROM memory_usage_feedback "
         "WHERE workspace_id = 'ws' AND source_type = 'episode'"
-    ).fetchall()
-    # Each evidence episode gets one feedback row.
-    assert len(fb_rows) == 4
-    for row in fb_rows:
-        assert row["source_type"] == "episode"
-        assert row["usefulness"] == pytest.approx(0.4, abs=1e-3)
+    ).fetchone()[0]
+    assert n_episode_fb == 0
 
 
 def test_consolidation_emits_one_insight(conn: sqlite3.Connection, llm_pattern: None) -> None:
