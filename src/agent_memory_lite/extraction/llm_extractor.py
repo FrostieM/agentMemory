@@ -65,8 +65,7 @@ _PROMPT = """You extract durable memory candidates from the agent's recent
 event. Reply with ONLY a JSON array — no markdown fences, no prose, no
 explanation, no leading or trailing text. Each item must be a JSON object
 with keys:
-  kind: one of constraint, project_fact, decision, task_state, relationship,
-        rule, correction, bug, fix
+  kind: one of constraint, decision, relationship, rule, correction, bug, fix
   subject: short string
   predicate: short string
   object: optional string
