@@ -8,6 +8,7 @@ next; the pass returns a structured report for telemetry.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 
@@ -321,3 +322,136 @@ def test_second_pass_is_idempotent(conn: sqlite3.Connection) -> None:
     # Nothing new to distill / promote / extract.
     assert second.insights_promoted == 0
     assert second.causal_invalidated == 0
+
+
+# ============================================================
+# observability: learning-core failure escalates severity
+# ============================================================
+
+
+def _latest_step_failed_event(conn: sqlite3.Connection) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT severity, summary, details_json
+        FROM maintenance_events
+        WHERE kind = 'brain_pass_step_failed'
+        ORDER BY created_at DESC LIMIT 1
+        """
+    ).fetchone()
+
+
+def test_core_step_failure_escalates_event_to_error(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing learning-core step (outcome) must surface as ERROR severity
+    with the step named in core_failed -- the 2026-05-25 silent-core regression.
+    """
+    from agent_memory_lite.cognition import outcome_recompute  # noqa: PLC0415
+
+    def _boom(*_a: object, **_k: object) -> dict[str, int]:
+        raise RuntimeError("synthetic core failure")
+
+    monkeypatch.setattr(outcome_recompute, "refresh_workspace", _boom)
+    report = run_brain_pass(conn, workspace_id="ws", settings=Settings())
+
+    assert any(e.startswith("outcome:") for e in report.errors)
+    row = _latest_step_failed_event(conn)
+    assert row is not None
+    assert row["severity"] == "error"
+    details = json.loads(row["details_json"])
+    assert "outcome" in details["core_failed"]
+    assert details["fingerprint"].startswith("brain_pass_step_failed:")
+
+
+def test_repeated_identical_failure_coalesces_into_one_event(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A permanently-broken step must not insert a fresh row every tick. Two
+    passes with the same failure signature coalesce by fingerprint into ONE
+    event with seen_count bumped, not two rows.
+    """
+    from agent_memory_lite.cognition import outcome_recompute  # noqa: PLC0415
+
+    def _boom(*_a: object, **_k: object) -> dict[str, int]:
+        raise RuntimeError("synthetic core failure")
+
+    monkeypatch.setattr(outcome_recompute, "refresh_workspace", _boom)
+    run_brain_pass(conn, workspace_id="ws", settings=Settings())
+    run_brain_pass(conn, workspace_id="ws", settings=Settings())
+
+    rows = conn.execute(
+        "SELECT details_json FROM maintenance_events WHERE kind = 'brain_pass_step_failed'"
+    ).fetchall()
+    assert len(rows) == 1  # coalesced, not one-per-pass
+    details = json.loads(rows[0]["details_json"])
+    assert details["seen_count"] == 2
+    assert "outcome" in details["core_failed"]
+
+
+def test_recovered_failure_is_resolved_on_clean_tick(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient core blip must not leave a permanently-red ERROR. After the
+    step recovers, the next clean pass resolves the open event so /health clears.
+    """
+    from agent_memory_lite.cognition import outcome_recompute  # noqa: PLC0415
+
+    def _boom(*_a: object, **_k: object) -> dict[str, int]:
+        raise RuntimeError("synthetic core failure")
+
+    monkeypatch.setattr(outcome_recompute, "refresh_workspace", _boom)
+    run_brain_pass(conn, workspace_id="ws", settings=Settings())  # fails -> open ERROR
+
+    def _status() -> str | None:
+        row = conn.execute(
+            "SELECT status FROM maintenance_events WHERE kind = 'brain_pass_step_failed' "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+        return None if row is None else row["status"]
+
+    assert _status() == "open"
+
+    monkeypatch.undo()  # step recovers
+    run_brain_pass(conn, workspace_id="ws", settings=Settings())  # clean -> resolves
+    assert _status() == "resolved"
+
+
+def test_final_commit_failure_escalates_to_error(conn: sqlite3.Connection) -> None:
+    """A failed final commit discards the entire pass's writes -- the worst
+    outcome -- so it is treated as core and escalates to ERROR, even though it
+    is the transaction boundary rather than a knowledge-formation step.
+    """
+    from agent_memory_lite.maintenance.brain_pass import _record_pass_outcome  # noqa: PLC0415
+
+    report = _report()
+    report.errors.append("final_commit:disk I/O error")
+    _record_pass_outcome(conn, "ws", report)
+
+    row = _latest_step_failed_event(conn)
+    assert row is not None
+    assert row["severity"] == "error"
+    details = json.loads(row["details_json"])
+    assert "final_commit" in details["core_failed"]
+
+
+def test_peripheral_step_failure_stays_warning(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing peripheral step (db_hygiene) must NOT escalate: it is degraded
+    housekeeping, not a dead brain. Severity stays WARNING, core_failed empty.
+    """
+    from agent_memory_lite.maintenance import db_hygiene  # noqa: PLC0415
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise RuntimeError("synthetic hygiene failure")
+
+    monkeypatch.setattr(db_hygiene, "run_db_hygiene", _boom)
+    report = run_brain_pass(conn, workspace_id="ws", settings=Settings())
+
+    assert any(e.startswith("db_hygiene:") for e in report.errors)
+    assert not any(e.split(":", 1)[0] in {"outcome", "hebbian", "causal"} for e in report.errors)
+    row = _latest_step_failed_event(conn)
+    assert row is not None
+    assert row["severity"] == "warning"
+    details = json.loads(row["details_json"])
+    assert details["core_failed"] == []

@@ -311,8 +311,8 @@ def _step_causal(
     except Exception as exc:
         report.errors.append(f"causal:{exc}")
     # v3.1 Vector 4: derive embedding-based semantic causal links. Gated
-    # by its own env flag (default off); failure-soft on any provider /
-    # schema issue.
+    # by its own env flag (default on since 2026-05-20); failure-soft on any
+    # provider / schema issue.
     try:
         from agent_memory_lite.retrieval.causal_embedding import derive_workspace  # noqa: PLC0415
 
@@ -829,6 +829,123 @@ def _step_recompute_capability_confidence(
         report.errors.append(f"capability_confidence:{exc}")
 
 
+# The learning core: the steps that form or score the PRIMARY memory substrate,
+# plus final_commit (the transaction boundary -- its failure discards the entire
+# pass's writes, the worst outcome of all). Errors are tagged "<prefix>:<exc>", so
+# a failed step is identified by the substring before the first colon; when any of
+# these fail the pass escalates the maintenance_event from WARNING to ERROR (the
+# 2026-05-25 tuple-row incident downed outcome/hebbian/self_model/causal for two
+# passes and read no louder than a cosmetic digest-refresh hiccup on /health).
+#
+# Deliberately EXCLUDED -- their failure degrades a DERIVED or secondary signal,
+# not core formation, so they stay WARNING. The axis is WHAT the step produces,
+# not whether it is enabled (most excluded steps are on by default):
+#   * causal_embedding / causal_did / causal_granger -- extra causal-INFERENCE
+#     methods layered on the links the primary `causal` step already extracts;
+#   * predictive_failure / predictive_lr -- failure prediction, a derived analytic;
+#   * reflex_distill -- distills advisory enforcement reminders (reflex_rules), an
+#     enforcement-layer artifact, not scored memory knowledge;
+#   * the maintenance / structural steps (db_hygiene, prune_vectors,
+#     compact_vectors, vector_repair, digest_refresh, drift, behavior_auto_archive,
+#     plan_playbook_distill, plan_outcome_maturity, experiment_proposal,
+#     capability_confidence).
+_CORE_STEP_PREFIXES = frozenset(
+    {
+        "outcome",  # decision / insight outcome scoring
+        "hebbian",  # co-activation -> associative edges
+        "promote",  # insight -> behavior promotion
+        "self_model",  # identity narrative refresh
+        "causal",  # primary causal-link extraction
+        "autonomous",  # candidate -> theory promotion
+        "final_commit",  # transaction boundary: failure discards the whole pass
+    }
+)
+
+
+def _record_pass_outcome(
+    conn: sqlite3.Connection, workspace_id: str, report: BrainPassReport
+) -> None:
+    """Persist the pass outcome to maintenance_events (failure-soft).
+
+    The sentinel scheduler discards the BrainPassReport, so a permanently
+    failing step is otherwise invisible (only a log line). On failure we write
+    a ``brain_pass_step_failed`` event; a learning-core failure escalates to
+    ERROR (else WARNING). On a fully clean pass we resolve any prior open
+    event so a transient blip does not stay red on /health. All paths are
+    failure-soft -- observability must never abort the pass.
+    """
+    if not report.errors:
+        # Self-heal: the brain ran clean, so any prior tick's failure has
+        # cleared. Resolve open brain_pass_step_failed events for this workspace
+        # (mirrors drift_sentinel, which resolves findings when its metric
+        # clears) -- otherwise the coalesced ERROR row from a transient core blip
+        # would stay permanently red on /health and the escalation would lose its
+        # signal. A later recurrence re-inserts a fresh row (the dedup below only
+        # matches OPEN events).
+        try:
+            conn.execute(
+                "UPDATE maintenance_events SET status = 'resolved', resolved_at = ? "
+                "WHERE workspace_id = ? AND kind = 'brain_pass_step_failed' "
+                "AND status = 'open'",
+                (report.finished_at, workspace_id),
+            )
+            conn.commit()
+        except sqlite3.Error:  # pragma: no cover - observability is best-effort
+            pass
+        return
+
+    # A learning-core step failing is qualitatively worse than a peripheral one:
+    # the brain has stopped forming/scoring knowledge, not just skipped
+    # housekeeping. Identify failures by the "<prefix>:" error tag.
+    failed_steps = sorted({e.split(":", 1)[0] for e in report.errors})
+    core_failed = sorted(set(failed_steps) & _CORE_STEP_PREFIXES)
+    log = _log.error if core_failed else _log.warning
+    log(
+        "brain_pass partial failure workspace=%s core_failed=%s errors=%s",
+        workspace_id,
+        ",".join(core_failed) or "-",
+        ";".join(report.errors),
+    )
+    try:
+        from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+            write_maintenance_event,
+        )
+        from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+        from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
+
+        if core_failed:
+            severity = MaintenanceSeverity.ERROR
+            summary = (
+                f"learning-core step(s) failed this tick: {', '.join(core_failed)} "
+                f"({len(report.errors)} error(s) total)"
+            )
+        else:
+            severity = MaintenanceSeverity.WARNING
+            summary = f"{len(report.errors)} brain-pass step(s) failed this tick"
+        write_maintenance_event(
+            conn,
+            MaintenanceEventIn(
+                workspace_id=workspace_id,
+                kind="brain_pass_step_failed",
+                severity=severity,
+                summary=summary,
+                details={
+                    "errors": report.errors[:20],
+                    "core_failed": core_failed,
+                    # Coalesce identical failure signatures. A permanently broken
+                    # step otherwise inserts one (now ERROR-severity) row every
+                    # tick -- unbounded. write_maintenance_event dedups OPEN events
+                    # by this fingerprint, bumping seen_count instead of piling up
+                    # rows; a CHANGE in which steps fail yields a new fingerprint,
+                    # hence a new event.
+                    "fingerprint": "brain_pass_step_failed:" + ",".join(failed_steps),
+                },
+            ),
+        )
+    except Exception:  # pragma: no cover - observability is best-effort
+        pass
+
+
 def run_brain_pass(
     conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
 ) -> BrainPassReport:
@@ -883,35 +1000,5 @@ def run_brain_pass(
     except sqlite3.Error as exc:
         report.errors.append(f"final_commit:{exc}")
     report.finished_at = iso_now()
-    if report.errors:
-        _log.warning(
-            "brain_pass partial failure workspace=%s errors=%s",
-            workspace_id,
-            ";".join(report.errors),
-        )
-        # Round-2 audit (M1): the BrainPassReport is discarded by the
-        # sentinel scheduler — a permanently-failing step is otherwise
-        # invisible (only this log line). Persist a maintenance_event so
-        # /health and the hygiene report surface a brain step that is
-        # silently broken every tick. Failure-soft: observability
-        # writing must never abort the pass.
-        try:
-            from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
-                write_maintenance_event,
-            )
-            from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
-            from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
-
-            write_maintenance_event(
-                conn,
-                MaintenanceEventIn(
-                    workspace_id=workspace_id,
-                    kind="brain_pass_step_failed",
-                    severity=MaintenanceSeverity.WARNING,
-                    summary=f"{len(report.errors)} brain-pass step(s) failed this tick",
-                    details={"errors": report.errors[:20]},
-                ),
-            )
-        except Exception:  # pragma: no cover - observability is best-effort
-            pass
+    _record_pass_outcome(conn, workspace_id, report)
     return report

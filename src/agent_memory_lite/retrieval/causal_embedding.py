@@ -14,8 +14,8 @@ spreading activation already follows causal_links).
 
 # Contract
 
-* ``MEMORY_CAUSAL_EMBEDDING_ENABLED`` (default ``false``) — gates
-  the whole module. When off, ``derive_workspace`` returns 0.
+* ``MEMORY_CAUSAL_EMBEDDING_ENABLED`` (default ``true`` since 2026-05-20)
+  — gates the whole module. When off, ``derive_workspace`` returns 0.
 * Uses the live ``EmbeddingProvider`` from
   ``embeddings.factory.get_provider``. No new model dependency.
 * Failure-soft: any error (missing provider, embedding crash,
@@ -26,7 +26,7 @@ spreading activation already follows causal_links).
 
 # Settings
 
-* ``MEMORY_CAUSAL_EMBEDDING_ENABLED`` — default ``false``.
+* ``MEMORY_CAUSAL_EMBEDDING_ENABLED`` — default ``true`` (since 2026-05-20).
 * ``MEMORY_CAUSAL_EMBEDDING_THRESHOLD`` — default ``0.75`` cosine.
 * ``MEMORY_CAUSAL_EMBEDDING_WINDOW`` — default ``20`` decisions to
   scan (most recent first, by updated_at).
