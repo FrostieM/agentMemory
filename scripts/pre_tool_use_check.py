@@ -172,6 +172,79 @@ def _read_event() -> dict[str, Any] | None:
     return event if isinstance(event, dict) else None
 
 
+def _reflex_outcome(
+    conn: sqlite3.Connection,
+    *,
+    event: dict[str, Any],
+    workspace_id: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    trail: list[str],
+) -> tuple[bool, str]:
+    """Evaluate reflex rules for an otherwise-allowed tool call.
+
+    Returns ``(should_block, diagnostic)``. The PreToolUse enforcement hook
+    historically ran only ``dispatch.decide`` (mechanical + semantic), so
+    ``reflex_rules`` -- evaluated solely inside ``lint()`` / ``memory_lint`` --
+    never fired on a live tool call: their fire counts sat at 0 forever and an
+    operator-promoted ``block`` reflex silently did nothing. Evaluating them here
+    makes a ``block`` reflex actually enforce and lets ``advisory`` reflexes
+    record their fire (``advisory_count``) so the metric reflects reality.
+
+    Fully failure-soft: any error returns ``(False, "")`` so a reflex bug can
+    never break the hook or discard the ``decide()`` result. A pre-migration DB
+    without ``reflex_rules`` yields zero violations.
+    """
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+        from agent_memory_lite.enforcement.reflex_check import (  # noqa: PLC0415
+            check_reflexes,
+            has_block_violation,
+            record_fired,
+        )
+        from agent_memory_lite.utils.time import iso_now  # noqa: PLC0415
+    except ImportError:
+        return False, ""
+    try:
+        settings = get_settings()
+        if not settings.reflex_enabled:
+            return False, ""
+        violations = check_reflexes(
+            conn,
+            workspace_id=workspace_id,
+            tool_name=tool_name,
+            tool_payload=tool_input,
+            trail=trail,
+            block_override=settings.reflex_block_override,
+        )
+        if not violations:
+            return False, ""
+        is_block = has_block_violation(violations)
+        diag = (
+            "; ".join(f"[reflex] {v.advisory}" for v in violations if v.enforcement == "block")
+            if is_block
+            else ""
+        )
+        # Record fires, but skip the block_count bump when main()'s loop-breaker
+        # is about to turn THIS block into an allow (a same target+prerequisite
+        # retry within the TTL) -- so block_count counts calls actually blocked,
+        # not loop-broken retries. The key is prerequisite-aware, so a co-located
+        # block rule with a *different* unmet prerequisite is NOT suppressed here.
+        # Advisory fires always record (they never loop-break).
+        suppress_block = is_block and _loopbreak_should_allow(event, diag)
+        to_record = (
+            [v for v in violations if v.enforcement != "block"] if suppress_block else violations
+        )
+        if to_record:
+            with contextlib.suppress(sqlite3.Error):
+                record_fired(conn, violations=to_record, now_iso=iso_now())
+        return (is_block, diag)
+    except Exception:
+        # A reflex-layer bug must never block a tool call or drop decide()'s
+        # verdict -- degrade to "no reflex outcome" and let the call proceed.
+        return False, ""
+
+
 def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # noqa: PLR0911 - guard chain
     """Resolve workspace + run dispatch.decide.
 
@@ -205,6 +278,9 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # n
         conn = sqlite3.connect(db_path)
     except sqlite3.Error:
         return True, "", workspace_id, db_path
+    # check_reflexes / record_fired read reflex_rules rows by column name;
+    # sqlite3.Row also supports positional access, so decide() is unaffected.
+    conn.row_factory = sqlite3.Row
     try:
         decision = decide(
             conn,
@@ -215,6 +291,25 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # n
             ollama_base_url=os.environ.get("OLLAMA_BASE_URL"),
             ollama_model=os.environ.get("OLLAMA_MODEL"),
         )
+        allow_call, diagnostic = decision.allow, decision.diagnostic
+        if allow_call:
+            # Reflex layer. The hook historically ran decide() only, so
+            # reflex_rules never fired on a live tool call. Evaluate them here
+            # too -- but ONLY after decide() allowed, since a mechanical/semantic
+            # block already short-circuited and a reflex must not double-handle
+            # it. A block reflex lifts to block; an advisory reflex is recorded
+            # without blocking (failure-soft inside _reflex_outcome).
+            reflex_block, reflex_diag = _reflex_outcome(
+                conn,
+                event=event,
+                workspace_id=workspace_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                trail=trail,
+            )
+            if reflex_block:
+                allow_call = False
+                diagnostic = reflex_diag
     except Exception:
         # Any decision-path failure is fail-OPEN. The hook protects
         # against memory-mismatches, not safety boundaries; crashing on
@@ -225,7 +320,7 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # n
         return True, "", workspace_id, db_path
     finally:
         conn.close()
-    return decision.allow, decision.diagnostic, workspace_id, db_path
+    return allow_call, diagnostic, workspace_id, db_path
 
 
 # ----------------------------------------------------------------------------
@@ -240,6 +335,13 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # n
 # every IO failure is swallowed so the loop-breaker never breaks the hook.
 # ----------------------------------------------------------------------------
 _LOOPBREAK_TTL_S = 180.0
+# The MCP-tool prerequisites a block can demand. A block whose diagnostic names
+# one of these can deadlock when that MCP server is unreachable, so the
+# loop-breaker degrades it to a one-shot nudge. The set ALSO rule-scopes the
+# loop-break key (see _loopbreak_key): two distinct block rules on one target
+# carry different prerequisite tokens, so satisfying one rule's prerequisite
+# cannot consume a co-located rule's nudge.
+_LOOPBREAK_PREREQ_TOKENS = ("memory_impact_check", "memory_search", "memory_invoke_skill")
 
 
 def _loopbreak_path() -> Path:
@@ -249,15 +351,35 @@ def _loopbreak_path() -> Path:
     return Path(tempfile.gettempdir()) / "amem_pretooluse_loopbreak.json"
 
 
-def _loopbreak_key(event: dict[str, Any]) -> str:
+def _loopbreak_key(event: dict[str, Any], diagnostic: str = "") -> str:
     tool = str(event.get("tool_name") or "-")
-    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
-    target = str(ti.get("file_path") or ti.get("path") or ti.get("notebook_path") or "")
-    return f"{tool}|{target}"
+    raw_ti = event.get("tool_input")
+    ti = raw_ti if isinstance(raw_ti, dict) else {}
+    # Discriminate the target per tool. File-shaped tools key by path; command
+    # shaped tools (Bash) carry no path, so without folding the command in EVERY
+    # Bash call collapses to one key -- the first blocked deploy would then
+    # pre-allow every *other* deploy in the TTL. cwd scopes the marker per
+    # project so a block in one workspace cannot pre-allow a same-named target in
+    # another (the marker file is machine-wide by default). The unmet-prerequisite
+    # tokens rule-scope it: two distinct block rules on the same target carry
+    # different tokens, so satisfying one rule's prerequisite cannot consume a
+    # co-located rule's one-shot nudge, while a genuine deadlock retry carries the
+    # SAME tokens and is still broken. Bounded so a giant heredoc cannot bloat the
+    # marker file.
+    cwd = str(event.get("cwd") or "")
+    target = str(
+        ti.get("file_path")
+        or ti.get("path")
+        or ti.get("notebook_path")
+        or ti.get("command")
+        or ""
+    )[:300]
+    prereqs = "+".join(t for t in _LOOPBREAK_PREREQ_TOKENS if t in diagnostic)
+    return f"{tool}|{cwd}|{target}|{prereqs}"
 
 
 def _loopbreak_load() -> dict[str, float]:
-    """Recent (tool, target) blocks, stale entries (> TTL) pruned."""
+    """Recent blocks keyed by (tool, cwd, target, prerequisites); stale (> TTL) pruned."""
     try:
         data = json.loads(_loopbreak_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -272,15 +394,16 @@ def _loopbreak_load() -> dict[str, float]:
     }
 
 
-def _loopbreak_should_allow(event: dict[str, Any]) -> bool:
-    """True when this exact (tool, target) was already blocked within the TTL."""
-    return _loopbreak_key(event) in _loopbreak_load()
+def _loopbreak_should_allow(event: dict[str, Any], diagnostic: str = "") -> bool:
+    """True when this exact (tool, cwd, target, prerequisites) block was already
+    nudged within the TTL."""
+    return _loopbreak_key(event, diagnostic) in _loopbreak_load()
 
 
-def _loopbreak_record(event: dict[str, Any]) -> None:
-    """Mark a first block so the next retry of the same target is allowed."""
+def _loopbreak_record(event: dict[str, Any], diagnostic: str = "") -> None:
+    """Mark a first block so the next retry of the same key is allowed."""
     data = _loopbreak_load()
-    data[_loopbreak_key(event)] = time.time()
+    data[_loopbreak_key(event, diagnostic)] = time.time()
     try:
         _loopbreak_path().write_text(json.dumps(data), encoding="utf-8")
     except OSError:
@@ -311,19 +434,22 @@ def main() -> int:
         return 0
     tool_name = str(event.get("tool_name") or "-")
     allow_call, diagnostic, workspace_id, db_path = _decide_for_event(event)
-    if not allow_call and ("memory_impact_check" in diagnostic or "memory_search" in diagnostic):
+    if not allow_call and any(tok in diagnostic for tok in _LOOPBREAK_PREREQ_TOKENS):
         # ONLY the rules whose prerequisite is an MCP tool can deadlock when the
         # server is down: memory_impact_check (read-before-edit /
-        # impact-check-before-read) and memory_search (search-before-arch).
+        # impact-check-before-read), memory_search (search-before-arch), and
+        # memory_invoke_skill (a block reflex's playbook_fetch precondition).
         # Content rules (e.g. magic-number) are always satisfiable by fixing the
         # input, so they are never loop-broken. Block such a rule once (the
-        # nudge), then allow the same-target retry so an unreachable prerequisite
-        # can't deadlock the agent into an endless block/retry loop.
-        if _loopbreak_should_allow(event):
+        # nudge), then allow the same (target + unmet-prerequisite) retry so an
+        # unreachable prerequisite can't deadlock the agent into an endless
+        # block/retry loop. The prerequisite is part of the key, so a DIFFERENT
+        # co-located block rule still gets its own one-shot nudge.
+        if _loopbreak_should_allow(event, diagnostic):
             allow_call = True
             diagnostic = ""
         else:
-            _loopbreak_record(event)
+            _loopbreak_record(event, diagnostic)
     decision_label = "allow" if allow_call else "block"
     _debug_log(tool_name=tool_name, workspace_id=workspace_id, decision=decision_label)
     record_hook_event(
