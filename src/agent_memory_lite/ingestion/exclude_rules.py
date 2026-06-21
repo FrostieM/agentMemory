@@ -27,6 +27,8 @@ BUILTIN_DENYLIST: tuple[str, ...] = (
     ".hypothesis/",
     ".claude/",
     ".codex/",
+    "_audit_tmp/",  # agent audit scratch dir (any depth)
+    "_tmp_*",  # transient repro/probe scratch files + dirs (e.g. _tmp_repro_*.py)
     "*.min.js",
     "*.lock",
     "*.lance/",

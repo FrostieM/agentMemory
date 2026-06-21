@@ -54,3 +54,29 @@ def test_min_js_pattern_blocks() -> None:
     patterns = collect_patterns(Path("/tmp"))
     assert is_excluded("static/app.min.js", is_dir=False, patterns=patterns)
     assert "*.min.js" in BUILTIN_DENYLIST
+
+
+def test_builtin_denylist_blocks_audit_tmp_scratch() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    # root-level _audit_tmp file matches via the first-component dir rule
+    assert is_excluded("_audit_tmp/fuzz_symlink_cycle.py", is_dir=False, patterns=patterns)
+    # a nested _audit_tmp dir is dropped by the scanner's dir-level check
+    assert is_excluded("src/_audit_tmp", is_dir=True, patterns=patterns)
+
+
+def test_builtin_denylist_blocks_tmp_scratch_files() -> None:
+    patterns = collect_patterns(Path("/tmp"))
+    assert is_excluded("_tmp_repro_churn.py", is_dir=False, patterns=patterns)
+    assert is_excluded("_tmp_probe_brainfail.py", is_dir=False, patterns=patterns)
+    # basename glob catches them at any depth too
+    assert is_excluded("src/_tmp_repro_x.py", is_dir=False, patterns=patterns)
+
+
+def test_scratch_patterns_spare_legit_source() -> None:
+    """The scratch globs must NOT swallow ordinary source files/dirs."""
+    patterns = collect_patterns(Path("/tmp"))
+    assert not is_excluded("src/main.py", is_dir=False, patterns=patterns)
+    assert not is_excluded("tmp_data.py", is_dir=False, patterns=patterns)
+    assert not is_excluded("my_tmp_file.py", is_dir=False, patterns=patterns)
+    assert not is_excluded("src/template/helper.py", is_dir=False, patterns=patterns)
+    assert not is_excluded("contemplate/x.py", is_dir=False, patterns=patterns)
