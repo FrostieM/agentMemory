@@ -57,6 +57,26 @@ def _csv(json_str: str | None, limit: int = 5) -> str:
     return ", ".join(out)
 
 
+def _truncate(value: Any, limit: int = 120) -> Any:
+    """Trim a long string projection to ``limit`` chars on a word boundary.
+
+    Used only for chunk gists, which are the first ~200 chars of a raw code
+    chunk (``code_indexer`` stores ``text[:200]``), so the tail is low-signal
+    mid-body code, frequently cut mid-token. memory_search returns many chunks,
+    so trimming the display gist to ~120 chars cuts result tokens ~40% with no
+    information loss -- the full chunk text stays fetchable via
+    ``memory_get(kind="chunk", fields=["text"])``. Non-strings and already-short
+    values pass through unchanged (so a NULL gist still projects as None).
+    """
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    cut = value[:limit]
+    space = cut.rfind(" ")
+    if space >= limit // 2:  # break on a word boundary, but keep >= half the budget
+        cut = cut[:space]
+    return cut.rstrip() + "..."
+
+
 # ============================================================
 # Per-kind projections
 # ============================================================
@@ -221,7 +241,7 @@ def project_chunk(row: sqlite3.Row) -> dict[str, Any]:
         "id": _row_get(row, "id"),
         "kind": "chunk",
         "chunk_kind": _row_get(row, "kind", "doc"),
-        "gist": _row_get(row, "gist") or _row_get(row, "summary"),
+        "gist": _truncate(_row_get(row, "gist") or _row_get(row, "summary")),
         "qualified_name": _row_get(row, "qualified_name"),
         "symbol_kind": _row_get(row, "symbol_kind"),
         "line_start": _row_get(row, "line_start"),

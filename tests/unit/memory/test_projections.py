@@ -270,6 +270,42 @@ def test_project_chunk_returns_gist_not_text() -> None:
     assert "text" not in out
 
 
+def test_project_chunk_truncates_long_gist_on_word_boundary() -> None:
+    # 200-char gist with spaces -> trimmed to <=120 + "..." on a word boundary,
+    # not cut mid-word. Guards the token-saving truncation (fails pre-change,
+    # which returned the gist verbatim).
+    gist = "def calibrate(self, market: Market, window: int) -> float: " + ("alpha " * 40)
+    assert len(gist) > 120
+    out = project_chunk(_row(id="c", kind="code", gist=gist))
+    assert len(out["gist"]) <= 123  # 120 + "..."
+    assert out["gist"].endswith("...")
+    body = out["gist"][:-3]
+    assert not body.endswith(" ")  # trimmed at a boundary, no dangling space
+    assert body == gist[: len(body)]  # a true prefix -- no word split mid-token
+
+
+def test_project_chunk_short_gist_unchanged() -> None:
+    out = project_chunk(_row(id="c", kind="code", gist="short gist"))
+    assert out["gist"] == "short gist"  # <= limit -> verbatim, no ellipsis
+
+
+def test_project_chunk_gist_no_spaces_hard_caps() -> None:
+    # No space in the first half of the budget -> falls through to a hard cap at
+    # 120 chars + ellipsis (guards the `space >= limit // 2` branch).
+    gist = "x" * 200
+    out = project_chunk(_row(id="c", kind="code", gist=gist))
+    assert out["gist"] == ("x" * 120) + "..."
+
+
+def test_project_chunk_null_gist_falls_back_to_summary() -> None:
+    # _truncate must pass a short fallback summary through untouched, and a NULL
+    # gist+summary must still project as None (not crash on non-str).
+    out = project_chunk(_row(id="c", kind="code", gist=None, summary="fallback summary"))
+    assert out["gist"] == "fallback summary"
+    out2 = project_chunk(_row(id="c2", kind="code"))
+    assert out2["gist"] is None
+
+
 def test_project_dispatches_by_kind() -> None:
     row = _row(id="dec_y", title="T", gist="g")
     assert project("decision", row)["id"] == "dec_y"
