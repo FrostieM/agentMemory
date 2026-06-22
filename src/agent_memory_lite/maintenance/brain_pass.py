@@ -82,6 +82,9 @@ class BrainPassReport:
     workspace_id: str
     started_at: str
     finished_at: str
+    # feedback_ewma rows refreshed from memory_usage_feedback this pass (the
+    # input the outcome step reads). Recomputed before _step_outcome.
+    feedback_ewma_recomputed: int = 0
     outcome_updated: dict[str, int] = field(default_factory=dict)
     hebbian_edges_upserted: int = 0
     hebbian_edges_gated: int = 0
@@ -155,6 +158,7 @@ class BrainPassReport:
             "workspace_id": self.workspace_id,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "feedback_ewma_recomputed": self.feedback_ewma_recomputed,
             "outcome_updated": dict(self.outcome_updated),
             "hebbian_edges_upserted": self.hebbian_edges_upserted,
             "hebbian_edges_gated": self.hebbian_edges_gated,
@@ -200,6 +204,42 @@ class BrainPassReport:
         }
 
 
+def _step_feedback_ewma(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Recompute feedback_ewma from memory_usage_feedback for chunk/decision/theory
+    BEFORE the outcome step reads it. Previously the recompute ran ONLY via the
+    /feedback_summary HTTP route, so on a maintenance-driven deployment
+    feedback_ewma stayed 0 and decisions/theories could never earn a
+    feedback-driven outcome_score. Gated + failure-soft."""
+    if not settings.feedback_ewma_enabled:
+        return
+    try:
+        from agent_memory_lite.retrieval.feedback_aggregator import (  # noqa: PLC0415
+            SUPPORTED_SOURCE_TYPES,
+            recompute_workspace_ewma,
+        )
+
+        total = 0
+        for source_type in SUPPORTED_SOURCE_TYPES:
+            results = recompute_workspace_ewma(
+                conn,
+                workspace_id=workspace_id,
+                source_type=source_type,
+                half_life_days=settings.feedback_halflife_days,
+                exclude_self_loop=settings.feedback_exclude_self_loop,
+                max_per_day_per_source=settings.feedback_max_per_day_per_source,
+            )
+            total += len(results)
+        report.feedback_ewma_recomputed = total
+        conn.commit()
+    except Exception as exc:
+        report.errors.append(f"feedback_ewma:{exc}")
+
+
 def _step_outcome(
     conn: sqlite3.Connection,
     workspace_id: str,
@@ -214,7 +254,13 @@ def _step_outcome(
             refresh_workspace,
         )
 
-        report.outcome_updated = refresh_workspace(conn, workspace_id=workspace_id, now_iso=now_iso)
+        report.outcome_updated = refresh_workspace(
+            conn,
+            workspace_id=workspace_id,
+            now_iso=now_iso,
+            decision_feedback_cap=settings.feedback_max_per_day_per_source,
+            decision_exclude_self_loop=settings.feedback_exclude_self_loop,
+        )
         conn.commit()
     except Exception as exc:
         report.errors.append(f"outcome:{exc}")
@@ -1100,6 +1146,9 @@ def run_brain_pass(
         conn.row_factory = sqlite3.Row
     started = iso_now()
     report = BrainPassReport(workspace_id=workspace_id, started_at=started, finished_at=started)
+    # Refresh feedback_ewma from the usage-feedback log BEFORE the outcome step,
+    # which reads it -- otherwise outcome_score is recomputed from a stale (0) EWMA.
+    _step_feedback_ewma(conn, workspace_id, settings, report)
     _step_outcome(conn, workspace_id, started, settings, report)
     _step_hebbian(conn, workspace_id, started, settings, report)
     _step_promote_insights(conn, workspace_id, settings, report)

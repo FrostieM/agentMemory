@@ -174,25 +174,52 @@ def test_pass_runs_all_six_steps_with_default_settings(conn: sqlite3.Connection)
     assert report.self_model_refreshed is True
 
 
-def test_pass_with_seed_decision_refreshes_outcome(conn: sqlite3.Connection) -> None:
-    """A decision with feedback_ewma > 0 + non-zero usage should yield
-    a positive outcome_score after the pass."""
-    _seed_decision(
-        conn,
-        id="dec_pos",
-        feedback_ewma=0.8,
-        outcome_score=0.0,
+def _seed_decision_feedback(c: sqlite3.Connection, *, fb_id: str, source_id: str, usefulness: float) -> None:
+    c.execute(
+        "INSERT INTO memory_usage_feedback "
+        "(id, workspace_id, source_type, source_id, query, usefulness, notes, created_at, source) "
+        "VALUES (?, 'ws', 'decision', ?, '', ?, '', ?, 'agent_observed')",
+        (fb_id, source_id, usefulness, iso_now()),
     )
-    settings = Settings()
-    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
+    c.commit()
+
+
+def test_pass_decision_without_feedback_stays_zero(conn: sqlite3.Connection) -> None:
+    """A decision with feedback_ewma set but NO usage-feedback rows has evidence
+    count 0, so the EWMA term is correctly suppressed and it stays at 0. The
+    feedback-driven path is covered by the next test."""
+    _seed_decision(conn, id="dec_pos", feedback_ewma=0.8, outcome_score=0.0)
+    report = run_brain_pass(conn, workspace_id="ws", settings=Settings())
     assert "decision" in report.outcome_updated
-    # Decision should have a non-zero score now (even if low, because
-    # _decision_inputs uses usage_count=0 which suppresses the EWMA term;
-    # the row may still flip via the staleness path).
     row = conn.execute("SELECT outcome_score FROM decisions WHERE id = 'dec_pos'").fetchone()
     assert row is not None
-    # Either updated_count > 0 or the score actually changed.
-    assert report.outcome_updated.get("decision", 0) >= 0
+    assert row[0] == 0.0  # no feedback evidence -> stays 0
+
+
+def test_feedback_ewma_step_drives_decision_outcome(conn: sqlite3.Connection) -> None:
+    """End-to-end on the maintenance loop: a usage-feedback row -> _step_feedback_ewma
+    recomputes feedback_ewma -> _step_outcome turns it into a positive outcome_score."""
+    _seed_decision(conn, id="dec_loop", feedback_ewma=0.0, last_retrieved_at=iso_now())
+    _seed_decision_feedback(conn, fb_id="fb_loop", source_id="dec_loop", usefulness=0.9)
+    report = run_brain_pass(conn, workspace_id="ws", settings=Settings())
+    assert report.feedback_ewma_recomputed >= 1
+    ewma, score = conn.execute(
+        "SELECT feedback_ewma, outcome_score FROM decisions WHERE id = 'dec_loop'"
+    ).fetchone()
+    assert ewma > 0.0  # recomputed from the feedback row, not the seeded 0.0
+    assert score > 0.0  # outcome now reflects the feedback
+
+
+def test_feedback_ewma_step_gated_off_is_noop(conn: sqlite3.Connection) -> None:
+    """feedback_ewma_enabled=False -> the recompute step is a no-op; feedback_ewma
+    (and thus the feedback-driven outcome) stays 0."""
+    _seed_decision(conn, id="dec_off", feedback_ewma=0.0, last_retrieved_at=iso_now())
+    _seed_decision_feedback(conn, fb_id="fb_off", source_id="dec_off", usefulness=0.9)
+    settings = Settings().model_copy(update={"feedback_ewma_enabled": False})
+    report = run_brain_pass(conn, workspace_id="ws", settings=settings)
+    assert report.feedback_ewma_recomputed == 0
+    ewma = conn.execute("SELECT feedback_ewma FROM decisions WHERE id = 'dec_off'").fetchone()[0]
+    assert (ewma or 0.0) == 0.0
 
 
 def test_pass_normalizes_raw_sqlite_connection_row_factory() -> None:

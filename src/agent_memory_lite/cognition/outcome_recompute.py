@@ -96,7 +96,7 @@ def _age_days(now_iso: str, last_iso: str | None) -> float | None:
     return delta / 86400.0 if delta > 0 else 0.0
 
 
-def _decision_inputs(row: sqlite3.Row, now_iso: str) -> OutcomeInputs:
+def _decision_inputs(row: sqlite3.Row, now_iso: str, usage_count: int = 0) -> OutcomeInputs:
     status = (row["status"] or "").lower()
     return OutcomeInputs(
         feedback_ewma=float(row["feedback_ewma"] or 0.0),
@@ -111,7 +111,13 @@ def _decision_inputs(row: sqlite3.Row, now_iso: str) -> OutcomeInputs:
         # every winner's outcome by ~0.5.
         superseded=status == "superseded",
         rejected=False,
-        usage_count=0,  # decisions don't expose a direct usage counter
+        # Decisions have no usage column, so the evidence weight comes from the
+        # usage-feedback sample count -- capped + self-loop-filtered to the SAME
+        # basis the feedback_ewma is aggregated from (see _decision_feedback_counts).
+        # 0 -> evidence_weight(0)=0, which is why a decision with no feedback
+        # correctly stays at outcome 0; one WITH feedback earns a proportional,
+        # sub-linear weight.
+        usage_count=usage_count,
     )
 
 
@@ -206,22 +212,80 @@ def refresh_one(
     return score
 
 
+def _decision_feedback_counts(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    *,
+    cap: int,
+    exclude_self_loop: bool,
+) -> dict[str, int]:
+    """Per-decision usage-feedback evidence count, matched to the feedback_ewma
+    aggregator's basis.
+
+    Decisions carry no usage column, so this count is their evidence basis for the
+    outcome weight. To keep the evidence WEIGHT consistent with the EWMA MAGNITUDE
+    it scales, it mirrors ``feedback_aggregator``: self_loop optionally excluded
+    AND capped at ``cap`` rows per ``(source, day)`` bucket (the same
+    per-(source_id, source, day) cap ``_cap_per_day_per_source`` applies) -- so a
+    same-day feedback flood cannot inflate the weight past the EWMA's own basis.
+    Pre-migration-safe (no feedback table -> empty map -> usage_count=0, the prior
+    behaviour for a decision with no feedback).
+    """
+    self_loop_clause = "AND source != 'self_loop'" if exclude_self_loop else ""
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT source_id, SUM(MIN(daily, ?)) AS capped
+              FROM (
+                SELECT source_id, source, substr(created_at, 1, 10) AS day,
+                       COUNT(*) AS daily
+                  FROM memory_usage_feedback
+                 WHERE workspace_id = ? AND source_type = 'decision' {self_loop_clause}
+                 GROUP BY source_id, source, day
+              )
+             GROUP BY source_id
+            """,
+            (cap, workspace_id),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {str(r[0]): int(r[1] or 0) for r in rows}
+
+
 def refresh_workspace(
-    conn: sqlite3.Connection, *, workspace_id: str, now_iso: str, batch: int = 500
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    now_iso: str,
+    batch: int = 500,
+    decision_feedback_cap: int = 10,
+    decision_exclude_self_loop: bool = True,
 ) -> dict[str, int]:
     """Recompute outcome_score for every row in this workspace.
 
     Returns ``{kind: updated_count}``. Idempotent -- second pass writes
-    only when the computed score actually differs.
+    only when the computed score actually differs. ``decision_feedback_cap`` /
+    ``decision_exclude_self_loop`` default to the feedback-aggregator defaults so
+    the decision evidence count matches the feedback_ewma basis; the brain pass
+    passes the live settings.
     """
     updated: dict[str, int] = {}
+    decision_usage = _decision_feedback_counts(
+        conn, workspace_id, cap=decision_feedback_cap, exclude_self_loop=decision_exclude_self_loop
+    )
     for kind, (table, adapter) in _ADAPTERS.items():
         rows = conn.execute(
             f"SELECT * FROM {table} WHERE workspace_id = ? LIMIT ?", (workspace_id, batch)
         ).fetchall()
         n = 0
         for row in rows:
-            new_score = compute_outcome(adapter(row, now_iso))
+            if kind == "decision":
+                inputs = _decision_inputs(
+                    row, now_iso, usage_count=decision_usage.get(str(row["id"]), 0)
+                )
+            else:
+                inputs = adapter(row, now_iso)
+            new_score = compute_outcome(inputs)
             # v3.5 sector-5 audit-followup: distinguish NULL from 0.0.
             # Pre-fix, ``float(row["outcome_score"] or 0.0)`` coerced
             # NULL into 0.0; a freshly-computed 0.0 then matched and

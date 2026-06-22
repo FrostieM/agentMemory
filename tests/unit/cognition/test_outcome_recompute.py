@@ -260,3 +260,99 @@ def test_refresh_workspace_other_workspaces_untouched(conn: sqlite3.Connection) 
     b = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_b'").fetchone()[0]
     assert a != 0.0 or b == 0.0  # ws_a touched, ws_b NOT.
     assert b == 0.0  # ws_b never refreshed
+
+
+# ============================================================
+# decision evidence weight from usage-feedback samples
+# (closes the gap where decisions were pinned at outcome 0 because usage_count
+# was hardcoded 0 -> evidence_weight(0)=0 zeroed any feedback)
+# ============================================================
+
+
+def _seed_feedback(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    usefulness: float,
+    source: str = "agent_observed",
+    workspace_id: str = "ws",
+    source_type: str = "decision",
+    n: int = 1,
+) -> None:
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO memory_usage_feedback "
+            "(id, workspace_id, source_type, source_id, query, usefulness, notes, created_at, source) "
+            "VALUES (?, ?, ?, ?, '', ?, '', ?, ?)",
+            (f"fb_{source_id}_{source}_{i}", workspace_id, source_type, source_id, usefulness,
+             iso_now(), source),
+        )
+    conn.commit()
+
+
+def test_decision_with_feedback_earns_nonzero_outcome(conn: sqlite3.Connection) -> None:
+    """A decision with positive feedback_ewma AND >=1 usage-feedback sample now
+    earns a positive outcome_score -- before, usage_count=0 pinned it at 0."""
+    _seed_decision(conn, id="dec_fb", feedback_ewma=0.7, last_retrieved_at=iso_now())
+    _seed_feedback(conn, source_id="dec_fb", usefulness=0.7)
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())
+    score = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_fb'").fetchone()[0]
+    assert score > 0.0
+
+
+def test_decision_without_feedback_stays_zero(conn: sqlite3.Connection) -> None:
+    """No usage-feedback sample -> evidence_weight(0)=0 -> stays 0 even with a
+    non-zero feedback_ewma column. Confabulation guard: feedback with no evidence
+    cannot move the score."""
+    _seed_decision(conn, id="dec_nofb", feedback_ewma=0.7, last_retrieved_at=iso_now())
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())
+    score = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_nofb'").fetchone()[0]
+    assert score == 0.0
+
+
+def test_self_loop_feedback_is_not_evidence(conn: sqlite3.Connection) -> None:
+    """self_loop feedback is excluded from the evidence count (mirrors the EWMA
+    aggregator), so it cannot grant a decision evidence weight."""
+    _seed_decision(conn, id="dec_sl", feedback_ewma=0.7, last_retrieved_at=iso_now())
+    _seed_feedback(conn, source_id="dec_sl", usefulness=0.7, source="self_loop")
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())
+    score = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_sl'").fetchone()[0]
+    assert score == 0.0
+
+
+def test_more_feedback_samples_give_more_evidence_weight(conn: sqlite3.Connection) -> None:
+    """evidence_weight is monotonic in sample count, so more usage feedback ->
+    a stronger (still sub-linear) outcome for the same feedback_ewma."""
+    _seed_decision(conn, id="dec_one", feedback_ewma=0.7, last_retrieved_at=iso_now())
+    _seed_decision(conn, id="dec_many", feedback_ewma=0.7, last_retrieved_at=iso_now())
+    _seed_feedback(conn, source_id="dec_one", usefulness=0.7, n=1)
+    _seed_feedback(conn, source_id="dec_many", usefulness=0.7, n=5)
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())
+    one = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_one'").fetchone()[0]
+    many = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_many'").fetchone()[0]
+    assert 0.0 < one < many
+
+
+def test_negative_feedback_decision_scores_negative(conn: sqlite3.Connection) -> None:
+    """A decision with negative feedback now earns a NEGATIVE outcome_score, which
+    crosses the brief's outcome<0 filter and evicts it from 'Active decisions'."""
+    _seed_decision(conn, id="dec_neg", feedback_ewma=-0.8, last_retrieved_at=iso_now())
+    _seed_feedback(conn, source_id="dec_neg", usefulness=-0.8)
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())
+    score = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_neg'").fetchone()[0]
+    assert score < 0.0
+
+
+def test_decision_feedback_count_capped_per_day(conn: sqlite3.Connection) -> None:
+    """A same-day feedback flood is capped to the EWMA's per-(source, day) basis,
+    so the evidence weight cannot exceed what the (capped) feedback_ewma is built
+    from: 10 vs 30 same-day samples yield the SAME outcome."""
+    ts = iso_now()  # shared so the two rows have identical staleness (isolate the cap)
+    _seed_decision(conn, id="dec_cap", feedback_ewma=0.7, last_retrieved_at=ts)
+    _seed_decision(conn, id="dec_capx", feedback_ewma=0.7, last_retrieved_at=ts)
+    _seed_feedback(conn, source_id="dec_cap", usefulness=0.7, n=10)  # exactly the default cap
+    _seed_feedback(conn, source_id="dec_capx", usefulness=0.7, n=30)  # well over the cap
+    refresh_workspace(conn, workspace_id="ws", now_iso=iso_now())  # default cap = 10
+    a = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_cap'").fetchone()[0]
+    b = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_capx'").fetchone()[0]
+    assert a == b  # both capped to 10 samples -> identical evidence weight
