@@ -82,6 +82,30 @@ _EXPECTED_PRETOOLUSE_RULES = frozenset(
 # when new tools (e.g. Glob, NotebookRead) are added to the hook.
 _REQUIRED_PRETOOLUSE_MATCHERS = frozenset(HOOK_MATCHERS)
 
+# Finding codes that re-running the idempotent, marker-safe per-project install
+# (``setup_agent.py --project <root> --workspace <id> --yes``) repairs. Everything
+# NOT listed needs a human and is left alone -- notably missing_path / *_parse_error
+# / *_unreadable / unknown_hook_script / the .env manifest mismatch, AND
+# ``stale_agent_contract``: its critical variant is a legacy token in operator prose
+# OUTSIDE the marker block, which the marker-safe install deliberately preserves --
+# so re-running it could never converge. Its benign missing-section WARNING shares
+# the same code and is therefore left manual too (a conservative choice: don't
+# auto-touch a contract file flagged stale, the operator reviews it). By contrast
+# ``missing_agent_contract`` (the file is absent) IS fixable: the install creates it.
+_AUTOFIXABLE_CODES = frozenset(
+    {
+        "deprecated_hook_script",
+        "missing_required_hook",
+        "stale_pretooluse_matcher",
+        "no_project_settings",
+        "missing_codex_hooks",
+        "pending_migrations",
+        "missing_enforcement_rule",
+        "missing_agent_contract",
+        "mcp_workspace_mismatch",
+    }
+)
+
 
 @dataclass
 class Finding:
@@ -569,20 +593,106 @@ def exit_code_for(reports: list[WorkspaceReport]) -> int:
     return 0
 
 
-def main(*, as_json: bool = False) -> int:
+def _is_autofixable(finding: Finding) -> bool:
+    """A finding the per-project install can actually repair.
+
+    Must be an auto-fixable CODE AND must NOT originate from the operator's
+    ``settings.local.json`` override: ``configure_project`` rewrites only
+    ``<root>/.claude/settings.json`` (+ ``.codex``), so a hook/MCP finding whose
+    detail is prefixed ``local`` is the operator's own override and is left for
+    manual repair -- re-install can never converge it. Findings NOT produced by
+    the settings-file scan (pending migrations, missing rules/contract, ...) carry
+    no source prefix and stay fixable.
+    """
+    if finding.code not in _AUTOFIXABLE_CODES:
+        return False
+    return not finding.detail.startswith("local")
+
+
+def _autofix_targets(reports: list[WorkspaceReport]) -> list[WorkspaceReport]:
+    """Registry workspaces with at least one auto-fixable finding and an existing
+    project root (so the per-project install can actually run there)."""
+    out: list[WorkspaceReport] = []
+    for r in reports:
+        if not r.project_root or not Path(r.project_root).exists():
+            continue
+        if any(_is_autofixable(f) for f in r.findings):
+            out.append(r)
+    return out
+
+
+def run_fix(registry_path: Path, *, migrations_dir: Path, repo_root: Path) -> list[WorkspaceReport]:
+    """Re-run the idempotent per-project install for every workspace with
+    auto-fixable drift, then re-scan and return the AFTER reports.
+
+    The repair is ``setup_agent.py --project <root> --workspace <id> --yes`` as a
+    subprocess -- the canonical install path, which is marker-safe (only rewrites
+    the sections it owns) so custom operator content is preserved. It rewrites
+    ``.claude/settings.json`` (not ``settings.local.json``), so only
+    project-sourced findings converge; ``settings.local.json``-sourced and other
+    non-fixable findings are reported but never touched (see ``_is_autofixable``).
+    """
+    import subprocess  # noqa: PLC0415
+
+    # Progress goes to STDERR so ``--fix --json`` keeps stdout a single, clean
+    # JSON document (the render_json output) for ``| jq`` / json.loads consumers.
+    targets = _autofix_targets(run_all(registry_path, migrations_dir=migrations_dir))
+    if not targets:
+        print("--fix: no auto-fixable drift found.\n", file=sys.stderr)
+    setup_script = repo_root / "scripts" / "setup_agent.py"
+    for r in targets:
+        codes = sorted({f.code for f in r.findings if _is_autofixable(f)})
+        print(f"--fix: repairing {r.workspace_id!r} ({', '.join(codes)}) ...", file=sys.stderr)
+        # Pass the registry id explicitly: without --workspace the install
+        # recomputes workspace_id from project_root.name, which for an
+        # id != basename workspace would register a DUPLICATE row and never
+        # converge mcp_workspace_mismatch. When id == basename it is a no-op.
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(setup_script),
+                "--project",
+                r.project_root,
+                "--workspace",
+                r.workspace_id,
+                "--yes",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-3:]
+            print(
+                f"--fix: setup_agent FAILED for {r.workspace_id!r} (exit {proc.returncode})",
+                file=sys.stderr,
+            )
+            for line in tail:
+                print(f"        {line}", file=sys.stderr)
+    # Re-scan so the operator sees what the repair resolved and what remains.
+    return [
+        check_env_http_workspace(repo_root),
+        *run_all(registry_path, migrations_dir=migrations_dir),
+    ]
+
+
+def main(*, as_json: bool = False, fix: bool = False) -> int:
     registry_path = Path(
         os.environ.get("MEMORY_WORKSPACES_FILE")
         or (Path.home() / ".agent_memory" / "workspaces.json")
     )
     repo_root = Path(__file__).resolve().parents[1]
     migrations_dir = repo_root / "migrations"
-    reports = [
-        check_env_http_workspace(repo_root),
-        *run_all(registry_path, migrations_dir=migrations_dir),
-    ]
+    if fix:
+        reports = run_fix(registry_path, migrations_dir=migrations_dir, repo_root=repo_root)
+    else:
+        reports = [
+            check_env_http_workspace(repo_root),
+            *run_all(registry_path, migrations_dir=migrations_dir),
+        ]
     print((render_json if as_json else render_text)(reports))
     return exit_code_for(reports)
 
 
 if __name__ == "__main__":
-    sys.exit(main(as_json="--json" in sys.argv))
+    sys.exit(main(as_json="--json" in sys.argv, fix="--fix" in sys.argv))

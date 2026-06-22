@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -432,3 +433,147 @@ def test_env_check_absent_env_file_is_ok(tmp_path) -> None:
     repo.mkdir()
     report = _doctor.check_env_http_workspace(repo)
     assert report.status == "ok"
+
+
+# ============================================================
+# --fix: auto-repair the fixable drift via the idempotent per-project install
+# ============================================================
+
+
+def _report_with(ws: str, root: Path, *codes: str):
+    r = _doctor.WorkspaceReport(workspace_id=ws, project_root=str(root))
+    for c in codes:
+        r.findings.append(_doctor.Finding("warning", c, c))
+    return r
+
+
+def test_autofix_targets_picks_fixable_with_existing_root(tmp_path: Path) -> None:
+    fixable = _report_with("ws_fix", tmp_path, "missing_required_hook")
+    unfixable = _report_with("ws_manual", tmp_path, "missing_path")  # not in _AUTOFIXABLE_CODES
+    gone = _report_with("ws_gone", tmp_path / "absent", "deprecated_hook_script")  # root missing
+    targets = _doctor._autofix_targets([fixable, unfixable, gone])
+    assert [t.workspace_id for t in targets] == ["ws_fix"]
+
+
+def test_autofix_excludes_settings_local_sourced_finding(tmp_path: Path) -> None:
+    """A finding from the operator's settings.local.json override is NOT
+    auto-fixable: the install only rewrites settings.json. Same code from the
+    project settings.json IS fixable."""
+    local = _doctor.WorkspaceReport(workspace_id="ws_local", project_root=str(tmp_path))
+    local.findings.append(
+        _doctor.Finding("critical", "deprecated_hook_script", "local: PreToolUse uses 'x.py'")
+    )
+    assert _doctor._autofix_targets([local]) == []  # local override -> manual
+    proj = _doctor.WorkspaceReport(workspace_id="ws_proj", project_root=str(tmp_path))
+    proj.findings.append(
+        _doctor.Finding("critical", "deprecated_hook_script", "project: PreToolUse uses 'x.py'")
+    )
+    assert [t.workspace_id for t in _doctor._autofix_targets([proj])] == ["ws_proj"]
+
+
+def test_run_fix_invokes_setup_per_target(tmp_path: Path, monkeypatch) -> None:
+    target = _report_with("ws1", tmp_path, "deprecated_hook_script")
+    monkeypatch.setattr(_doctor, "run_all", lambda *a, **k: [target])
+    monkeypatch.setattr(
+        _doctor, "check_env_http_workspace", lambda root: _doctor.WorkspaceReport("env", str(root))
+    )
+    calls: list[list[str]] = []
+
+    class _P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: (calls.append(cmd), _P())[1])
+    after = _doctor.run_fix(tmp_path / "reg.json", migrations_dir=tmp_path, repo_root=tmp_path)
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[cmd.index("--project") + 1] == str(tmp_path)
+    assert cmd[cmd.index("--workspace") + 1] == "ws1"  # registry id, NOT directory basename
+    assert "--yes" in cmd
+    assert any(r.workspace_id == "ws1" for r in after)  # re-scan returned
+
+
+def test_run_fix_multi_target_maps_one_to_one(tmp_path: Path, monkeypatch) -> None:
+    a = tmp_path / "a"
+    a.mkdir()
+    b = tmp_path / "b"
+    b.mkdir()
+    targets = [
+        _report_with("ws_a", a, "missing_required_hook"),
+        _report_with("ws_b", b, "pending_migrations"),
+    ]
+    monkeypatch.setattr(_doctor, "run_all", lambda *ar, **k: targets)
+    monkeypatch.setattr(
+        _doctor, "check_env_http_workspace", lambda root: _doctor.WorkspaceReport("env", str(root))
+    )
+    calls: list[list[str]] = []
+
+    class _P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: (calls.append(cmd), _P())[1])
+    _doctor.run_fix(tmp_path / "reg.json", migrations_dir=tmp_path, repo_root=tmp_path)
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("--project") + 1] == str(a)
+    assert calls[0][calls[0].index("--workspace") + 1] == "ws_a"
+    assert calls[1][calls[1].index("--project") + 1] == str(b)
+    assert calls[1][calls[1].index("--workspace") + 1] == "ws_b"
+
+
+def test_run_fix_surfaces_nonzero_exit(tmp_path: Path, monkeypatch, capsys) -> None:
+    target = _report_with("ws1", tmp_path, "deprecated_hook_script")
+    monkeypatch.setattr(_doctor, "run_all", lambda *a, **k: [target])
+    monkeypatch.setattr(
+        _doctor, "check_env_http_workspace", lambda root: _doctor.WorkspaceReport("env", str(root))
+    )
+
+    class _P:
+        returncode = 1
+        stdout = ""
+        stderr = "boom: install failed"
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _P())
+    after = _doctor.run_fix(tmp_path / "reg.json", migrations_dir=tmp_path, repo_root=tmp_path)
+    err = capsys.readouterr().err  # progress + failures go to stderr
+    assert "FAILED" in err
+    assert "ws1" in err
+    assert "boom" in err  # stderr tail surfaced, not swallowed
+    assert any(r.workspace_id == "ws1" for r in after)  # re-scan still returned despite failure
+
+
+def test_fix_json_mode_keeps_stdout_pure_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    """--fix --json must emit a single parseable JSON doc on stdout; the human
+    progress lines go to stderr so `| jq` / json.loads never chokes."""
+    target = _report_with("ws1", tmp_path, "deprecated_hook_script")
+    monkeypatch.setattr(_doctor, "run_all", lambda *a, **k: [target])
+    monkeypatch.setattr(
+        _doctor, "check_env_http_workspace", lambda root: _doctor.WorkspaceReport("env", str(root))
+    )
+
+    class _P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _P())
+    monkeypatch.setenv("MEMORY_WORKSPACES_FILE", str(tmp_path / "reg.json"))
+    _doctor.main(as_json=True, fix=True)
+    captured = capsys.readouterr()
+    parsed = json.loads(captured.out)  # must NOT raise -- stdout is pure JSON
+    assert "workspaces" in parsed
+    assert "--fix:" in captured.err  # progress routed to stderr
+
+
+def test_run_fix_noop_when_nothing_fixable(tmp_path: Path, monkeypatch) -> None:
+    clean = _report_with("ws1", tmp_path, "unknown_hook_script")  # warning but NOT auto-fixable
+    monkeypatch.setattr(_doctor, "run_all", lambda *a, **k: [clean])
+    monkeypatch.setattr(
+        _doctor, "check_env_http_workspace", lambda root: _doctor.WorkspaceReport("env", str(root))
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    _doctor.run_fix(tmp_path / "reg.json", migrations_dir=tmp_path, repo_root=tmp_path)
+    assert calls == []  # no install subprocess when no fixable drift

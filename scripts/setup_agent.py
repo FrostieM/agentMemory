@@ -1144,14 +1144,28 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear CLI argparser; readable as
         action="store_true",
         help="With --doctor: emit machine-readable JSON instead of the text table.",
     )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "With --doctor: auto-repair the fixable drift -- re-run the idempotent, "
+            "marker-safe per-project install for every workspace with deprecated/"
+            "missing hooks, a stale PreToolUse matcher, a missing agent contract, "
+            "pending migrations, missing enforcement rules, or an MCP workspace "
+            "mismatch -- then re-scan. Only project (.claude/settings.json) "
+            "findings converge; unfixable findings (missing paths, parse errors, "
+            "a legacy token in custom contract prose, a settings.local.json "
+            "override, the .env manifest mismatch) are left for manual repair."
+        ),
+    )
     args = parser.parse_args()
 
-    if args.doctor:
+    if args.doctor or args.fix:
         # Late import keeps the doctor module out of the normal-mode boot path
         # so a stray import error in it can't break a working install run.
         from _setup_doctor import main as _doctor_main  # noqa: PLC0415
 
-        return _doctor_main(as_json=args.json)
+        return _doctor_main(as_json=args.json, fix=args.fix)
 
     if args.sync_repo:
         return sync_repo_contracts()

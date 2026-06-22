@@ -427,8 +427,10 @@ class Settings(BaseSettings):
     )
 
     # v1.8 reflective compaction; v1.9 hygiene recurrence + sentinel
-    # persistence; v2.3 trigger-on-traffic sentinel scheduler. See
-    # docs/OPERATIONS.md for the active env-flag map.
+    # persistence; v2.3 trigger-on-traffic sentinel scheduler. The
+    # authoritative env-flag list is the Field definitions in THIS module
+    # (each validation_alias is the MEMORY_* env var); docs/OPERATIONS.md
+    # documents the operator workflow, not every flag.
     reflective_compact_enabled: bool = Field(
         True, validation_alias="MEMORY_REFLECTIVE_COMPACT_ENABLED"
     )
