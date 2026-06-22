@@ -31,6 +31,27 @@ def test_initial_write_creates_row(applied_conn: sqlite3.Connection) -> None:
     assert state.id.startswith("task_")
 
 
+def test_write_canonical_canonicalizes_task_status(applied_conn: sqlite3.Connection) -> None:
+    """memory_write(kind='task') routes through write_canonical -> the task
+    business writer, NOT storage.writer, so status normalization must live at the
+    write_canonical choke point. A padded/mixed-case status would otherwise be
+    persisted verbatim and over-filtered by the brief's bare open-task filters
+    (status IN ('active','in_progress'))."""
+    from agent_memory_lite.ingestion.canonical_writer import write_canonical  # noqa: PLC0415
+
+    out = write_canonical(
+        applied_conn,
+        workspace_id="default",
+        kind="task",
+        payload={"task_id": "pad-task", "goal": "g", "status": "Active "},
+    )
+    assert out is not None
+    stored = applied_conn.execute(
+        "SELECT status FROM tasks WHERE task_id = 'pad-task'"
+    ).fetchone()
+    assert stored is not None and stored[0] == "active"
+
+
 def test_subsequent_write_updates_in_place(applied_conn: sqlite3.Connection) -> None:
     first = write_task_state(applied_conn, _state())
     second = write_task_state(

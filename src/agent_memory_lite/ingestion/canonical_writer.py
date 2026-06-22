@@ -46,6 +46,16 @@ def write_canonical(
     The caller-supplied ``workspace_id`` is authoritative; an embedded
     ``payload.workspace_id`` cannot retarget the write.
     """
+    # Canonicalize status (strip + lowercase) for EVERY kind at this single
+    # create-path choke point. Most kinds dispatch to a per-kind business writer
+    # (task/issue/plan_step persist status verbatim via a direct repo upsert,
+    # bypassing storage.writer); a padded/mixed-case status would then reach the
+    # brief's bare `status IN ('active','in_progress')` filters and over-filter a
+    # live row. Copy, never mutate the caller's payload. (memory_edit is
+    # canonicalized in storage.writer.edit; this mirrors that guarantee for the
+    # create path so the 15+ bare status read sites all hold.)
+    if isinstance(payload.get("status"), str):
+        payload = {**payload, "status": payload["status"].strip().lower()}
     body = {**payload, "workspace_id": workspace_id}
     if source_episode_id is not None:
         body["source_episode_id"] = source_episode_id

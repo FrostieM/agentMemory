@@ -286,6 +286,60 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
+def _numeric_columns(conn: sqlite3.Connection, table: str) -> dict[str, str]:
+    """Map ``{column: 'int'|'float'}`` for the numeric-affinity columns of
+    ``table`` (declared INTEGER / REAL / NUMERIC). Drives value validation so a
+    non-numeric value cannot be persisted into a numeric column -- SQLite's
+    loose affinity would otherwise store it as TEXT and durably crash every
+    later projection of that row (memory_brief / memory_search / memory_get)."""
+    out: dict[str, str] = {}
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    for row in rows:
+        decl = str(row[2] or "").upper()
+        if "INT" in decl:
+            out[str(row[1])] = "int"
+        elif any(tok in decl for tok in ("REAL", "FLOA", "DOUB", "NUMERIC")):
+            out[str(row[1])] = "float"
+    return out
+
+
+def _validate_numeric_fields(conn: sqlite3.Connection, table: str, fields: dict[str, Any]) -> None:
+    """Reject a write that would set a numeric-affinity column to a value SQLite
+    would store as non-numeric TEXT. Numbers, booleans, NULL, and numeric-looking
+    strings (which affinity coerces) all pass; only a genuinely non-numeric value
+    raises. Closes the durable read-side crash vector at the single write choke
+    point (the memory_edit path had no value validation at all)."""
+    numeric = _numeric_columns(conn, table)
+    for col, value in fields.items():
+        if col not in numeric or value is None or isinstance(value, (int, float)):
+            continue
+        try:
+            float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"non-numeric value for numeric column {col!r}: {value!r}"
+            ) from None
+
+
+def _normalize_status_field(fields: dict[str, Any]) -> None:
+    """Canonicalize a ``status`` value (strip + lowercase) in place.
+
+    ``status`` is an enum-backed token (all *Status enums are lowercase) and the
+    codebase compares it with bare equality / IN at 15+ read sites that ASSUME a
+    canonical value. The memory_edit path otherwise persists the agent's string
+    verbatim, so a padded/mixed-case status ('Active ', 'SUPERSEDED') would slip
+    through -- over-filtering a live row from allowlist surfaces, or leaking a
+    terminal one through denylist surfaces. Canonicalizing here at the single
+    write choke point makes every downstream comparison correct without
+    per-surface normalization. No-op for already-canonical values."""
+    raw = fields.get("status")
+    if isinstance(raw, str):
+        fields["status"] = raw.strip().lower()
+
+
 def _insert_or_replace(conn: sqlite3.Connection, *, table: str, columns: dict[str, Any]) -> None:
     # Round-2 audit (HIGH): ``columns`` keys originate from the
     # agent-supplied WriteRequest.payload and were interpolated
@@ -334,6 +388,8 @@ def write(
             actor=agent_id,
         )
     columns = _build_column_payload(conn, kind, payload, workspace_id, object_id)
+    _normalize_status_field(columns)
+    _validate_numeric_fields(conn, table, columns)
     _insert_or_replace(conn, table=table, columns=columns)
     _audit(
         conn,
@@ -380,6 +436,10 @@ def edit(
     fields = {k: v for k, v in fields.items() if k in _table_columns(conn, table)}
     if not fields:
         return None
+    # Canonicalize status + reject non-numeric values for numeric columns before
+    # they reach the row (the edit path has no Pydantic guard, unlike memory_write).
+    _normalize_status_field(fields)
+    _validate_numeric_fields(conn, table, fields)
     prior = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),
