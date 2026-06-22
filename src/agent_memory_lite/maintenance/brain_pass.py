@@ -107,6 +107,9 @@ class BrainPassReport:
     file_episodes_pruned: int = 0
     # Phase-4: aged sibling DB-snapshot backups reaped this pass.
     backups_pruned: int = 0
+    # Single-observation, stale CODE edges pruned from soft_edges this pass
+    # (the read-dead bloat in the #1 table). Memory edges are never touched.
+    soft_edges_pruned: int = 0
     experiment_proposals: int = 0
     predictive_warnings: int = 0
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
@@ -171,6 +174,7 @@ class BrainPassReport:
             "retention_causal_pruned": self.retention_causal_pruned,
             "file_episodes_pruned": self.file_episodes_pruned,
             "backups_pruned": self.backups_pruned,
+            "soft_edges_pruned": self.soft_edges_pruned,
             "experiment_proposals": self.experiment_proposals,
             "predictive_warnings": self.predictive_warnings,
             "predictive_warnings_available": self.predictive_warnings_available,
@@ -477,6 +481,39 @@ def _step_retention(
         report.errors.extend(f"retention:{e}" for e in result.errors)
     except Exception as exc:
         report.errors.append(f"retention:{exc}")
+
+
+def _step_soft_edge_prune(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    now_iso: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Prune single-observation, stale CODE edges from soft_edges -- the read-dead
+    bloat in the #1 table by row count. Default ON (non-destructive vs anything
+    read, like the backup reaper); the MEMORY edges (co_retrieved / co_mentioned)
+    that feed recall + the brief are NEVER touched. Bounded + failure-soft."""
+    if not settings.soft_edge_prune_enabled:
+        return
+    try:
+        from agent_memory_lite.maintenance.soft_edge_prune import (  # noqa: PLC0415
+            prune_soft_edges,
+        )
+
+        result = prune_soft_edges(
+            conn,
+            workspace_id=workspace_id,
+            max_observation_count=settings.soft_edge_prune_max_observation_count,
+            min_age_days=settings.soft_edge_prune_min_age_days,
+            cap=settings.soft_edge_prune_max_per_pass,
+            now_iso=now_iso,
+        )
+        report.soft_edges_pruned = result.pruned
+        if result.error:
+            report.errors.append(f"soft_edge_prune:{result.error}")
+    except Exception as exc:
+        report.errors.append(f"soft_edge_prune:{exc}")
 
 
 _LAST_BACKUP_PRUNE_KEY = "last_backup_prune_at"
@@ -1074,6 +1111,11 @@ def run_brain_pass(
     # before the vector prune/compact, so audit_log is pruned before the episode
     # guard re-evaluates and the freed SQLite pages are reclaimed by the next VACUUM.
     _step_retention(conn, workspace_id, started, settings, report)
+    # soft_edges code-edge prune runs right after row retention (both bound an
+    # unbounded table). db_hygiene already ran its weekly-gated VACUUM earlier
+    # this pass, so the SQLite pages freed here are reclaimed by the next pass's
+    # VACUUM (SQLite reuses them internally in the meantime).
+    _step_soft_edge_prune(conn, workspace_id, started, settings, report)
     _step_prune_vectors(conn, workspace_id, settings, report)
     _step_compact_vectors(conn, workspace_id, settings, report)
     _step_prune_backups(conn, workspace_id, settings, report)

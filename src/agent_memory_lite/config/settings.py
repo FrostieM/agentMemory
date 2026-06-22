@@ -251,6 +251,30 @@ class Settings(BaseSettings):
     backup_retention_age_days: int = Field(
         14, ge=1, le=365, validation_alias="MEMORY_BACKUP_RETENTION_AGE_DAYS"
     )
+    # Prune single-observation, stale CODE edges from soft_edges -- the #1 table
+    # by row count. soft_edges holds MEMORY edges (co_retrieved / co_mentioned,
+    # decision<->decision, walked by spreading_activation for memory_recall + the
+    # brief's associates) AND CODE edges (co_changed / similar_signature, bare
+    # code-symbol pairs written by ingestion). The code edges are read-dead:
+    # spread() seeds are always memory rows and the graph is bipartite,
+    # impact_check reads symbol_edges (not soft_edges), and list_soft_neighbors
+    # has no caller -- so a single-observation code edge is pure storage bloat
+    # (~66% of the table, growing ~O(N^2) with the indexed symbol count). Default
+    # ON (non-destructive vs anything read, like backup_retention); the memory
+    # edges are NEVER touched. Reinforced (observation_count >= 2) and recent
+    # code edges are kept.
+    soft_edge_prune_enabled: bool = Field(
+        True, validation_alias="MEMORY_SOFT_EDGE_PRUNE_ENABLED"
+    )
+    soft_edge_prune_max_observation_count: int = Field(
+        1, ge=1, le=10, validation_alias="MEMORY_SOFT_EDGE_PRUNE_MAX_OBSERVATION_COUNT"
+    )
+    soft_edge_prune_min_age_days: int = Field(
+        30, ge=1, le=365, validation_alias="MEMORY_SOFT_EDGE_PRUNE_MIN_AGE_DAYS"
+    )
+    soft_edge_prune_max_per_pass: int = Field(
+        5000, ge=1, le=100000, validation_alias="MEMORY_SOFT_EDGE_PRUNE_MAX_PER_PASS"
+    )
     # v3.6 Phase-2: prune orphan chunk-vectors -- vectors whose chunk row
     # was deleted (SQLite/LanceDB split, interrupted compound write) and
     # left behind. The brain pass diffs vector ids vs chunk ids every
