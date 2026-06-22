@@ -110,7 +110,12 @@ def _decision_inputs(row: sqlite3.Row, now_iso: str, usage_count: int = 0) -> Ou
         # supersedes_decision_id here would invert the semantic and drop
         # every winner's outcome by ~0.5.
         superseded=status == "superseded",
-        rejected=False,
+        # A rejected decision is a hard-negative, mirroring _theory_inputs and
+        # the module docstring ("archived / rejected / superseded yields a hard
+        # negative"). DecisionStatus.REJECTED is reachable via memory_edit, and
+        # without this a rejected decision's outcome would be driven only by
+        # feedback. Decisions have no 'weakened' status (theories do).
+        rejected=status == "rejected",
         # Decisions have no usage column, so the evidence weight comes from the
         # usage-feedback sample count -- capped + self-loop-filtered to the SAME
         # basis the feedback_ewma is aggregated from (see _decision_feedback_counts).

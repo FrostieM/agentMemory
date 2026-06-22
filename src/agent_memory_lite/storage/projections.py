@@ -39,6 +39,34 @@ def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
     return value if value is not None else default
 
 
+def _as_float(value: Any, default: float = 0.0) -> float:
+    """Coerce a stored column value to float, falling back to ``default`` on a
+    non-numeric value. A numeric column whitelisted by the writer can still hold
+    a poisoned TEXT value if it was written before value-validation existed (or
+    via a path that bypasses it); a bare ``float()`` over that row would raise
+    and durably crash EVERY projection of the kind (and thus memory_brief /
+    memory_search / memory_get). This keeps a single bad row from doing that."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    """Integer counterpart of :func:`_as_float` — see its docstring."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))  # tolerate '3.0'-style stored values
+        except (TypeError, ValueError):
+            return default
+
+
 def _repair_text(value: Any) -> Any:
     return repair_common_mojibake(value) if isinstance(value, str) else value
 
@@ -94,7 +122,7 @@ def project_decision(row: sqlite3.Row) -> dict[str, Any]:
         "pinned": bool(_row_get(row, "pinned", 0)),
         "valid_from": _row_get(row, "valid_from"),
         # Phase 1 outcome-loop: surfaced so brief / lint can sort by it.
-        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
+        "outcome_score": _as_float(_row_get(row, "outcome_score"), 0.0),
     }
 
 
@@ -106,9 +134,9 @@ def project_theory(row: sqlite3.Row) -> dict[str, Any]:
         "title": _row_get(row, "title", ""),
         "gist": _row_get(row, "gist") or _row_get(row, "claim", "")[:120],
         "status": _row_get(row, "status", "proposed"),
-        "evidence_count": int(_row_get(row, "evidence_count", 0)),
-        "confidence": float(_row_get(row, "confidence", 0.4)),
-        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
+        "evidence_count": _as_int(_row_get(row, "evidence_count"), 0),
+        "confidence": _as_float(_row_get(row, "confidence"), 0.4),
+        "outcome_score": _as_float(_row_get(row, "outcome_score"), 0.0),
     }
 
 
@@ -122,7 +150,14 @@ def project_behavior(row: sqlite3.Row) -> dict[str, Any]:
         "applies_to_csv": _csv(_row_get(row, "applies_to_json"), limit=4),
         "pinned": bool(_row_get(row, "pinned", 0)),
         "behavior_kind": _row_get(row, "kind", "operating_rule"),
-        "outcome_score": float(_row_get(row, "outcome_score", 0.0) or 0.0),
+        # active=0 is a behavior's terminal/dead state -- behaviors have no
+        # 'status' column. Surfaced so discredited-row filters can drop a
+        # deactivated rule: a deactivated behavior keeps its default 0.0
+        # outcome_score, so an outcome-only gate would miss it. Default 1
+        # (pre-migration safe -- a missing column reads as active, never
+        # wrongly discredited).
+        "active": bool(_row_get(row, "active", 1)),
+        "outcome_score": _as_float(_row_get(row, "outcome_score"), 0.0),
     }
 
 
@@ -137,8 +172,13 @@ def project_skill(row: sqlite3.Row) -> dict[str, Any]:
         "subtype": _row_get(row, "subtype", "skill"),
         "name": _row_get(row, "name", ""),
         "when_to_use_short": _row_get(row, "when_to_use_short"),
-        "body_token_count": int(_row_get(row, "body_token_count", 0)),
-        "usage_count": int(_row_get(row, "usage_count", 0)),
+        "body_token_count": _as_int(_row_get(row, "body_token_count"), 0),
+        "usage_count": _as_int(_row_get(row, "usage_count"), 0),
+        # active=0 is a skill's terminal/dead state (memory_archive soft-archives
+        # behaviors/skills/concepts to active=0; skills have no 'status' column).
+        # Surfaced so discredited-row filters drop an archived skill. Default 1,
+        # pre-migration safe -- see project_behavior.
+        "active": bool(_row_get(row, "active", 1)),
     }
 
 
@@ -151,6 +191,10 @@ def project_episode(row: sqlite3.Row) -> dict[str, Any]:
         "source_type": _row_get(row, "source_type", "agent_action"),
         "gist": _row_get(row, "gist"),
         "task_id": _row_get(row, "task_id"),
+        # is_archived=1 is an episode's terminal/dead state. Surfaced so
+        # discredited-row filters drop an archived episode reached as a brief
+        # associate. Default 0, pre-migration safe.
+        "is_archived": bool(_row_get(row, "is_archived", 0)),
     }
 
 
@@ -163,6 +207,11 @@ def project_concept(row: sqlite3.Row) -> dict[str, Any]:
         "definition_one_line": _row_get(row, "definition_one_line"),
         "concept_kind": _row_get(row, "kind", "term"),
         "aliases_csv": _csv(_row_get(row, "aliases_json"), limit=3),
+        # active=0 is a concept's terminal/dead state (memory_archive soft-
+        # archives behaviors/skills/concepts to active=0; concepts have no
+        # 'status' column). Surfaced so discredited-row filters drop an archived
+        # concept. Default 1, pre-migration safe -- see project_behavior.
+        "active": bool(_row_get(row, "active", 1)),
     }
 
 
@@ -207,7 +256,7 @@ def project_snapshot(row: sqlite3.Row) -> dict[str, Any]:
         "snapshot_key": _row_get(row, "snapshot_key", ""),
         "title": _row_get(row, "title", ""),
         "source_label": _row_get(row, "source_label"),
-        "total_rows": int(_row_get(row, "total_rows", 0) or 0),
+        "total_rows": _as_int(_row_get(row, "total_rows"), 0),
     }
 
 
@@ -229,9 +278,9 @@ def project_code_digest(row: sqlite3.Row) -> dict[str, Any]:
         "purpose_short": _row_get(row, "purpose_short"),
         "language": _row_get(row, "language"),
         "top_symbols_csv": top_symbols_csv,
-        "symbol_count": int(_row_get(row, "symbol_count", 0)),
-        "inbound_edge_count": int(_row_get(row, "inbound_edge_count", 0)),
-        "pagerank": float(_row_get(row, "pagerank", 0.0)),
+        "symbol_count": _as_int(_row_get(row, "symbol_count"), 0),
+        "inbound_edge_count": _as_int(_row_get(row, "inbound_edge_count"), 0),
+        "pagerank": _as_float(_row_get(row, "pagerank"), 0.0),
     }
 
 
@@ -245,6 +294,10 @@ def project_chunk(row: sqlite3.Row) -> dict[str, Any]:
         "qualified_name": _row_get(row, "qualified_name"),
         "symbol_kind": _row_get(row, "symbol_kind"),
         "line_start": _row_get(row, "line_start"),
+        # is_archived=1 is a chunk's terminal/dead state. Surfaced so
+        # discredited-row filters drop an archived chunk reached as a brief
+        # associate. Default 0, pre-migration safe.
+        "is_archived": bool(_row_get(row, "is_archived", 0)),
     }
 
 

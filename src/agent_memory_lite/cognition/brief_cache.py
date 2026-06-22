@@ -83,14 +83,29 @@ def _has_table(conn: sqlite3.Connection, name: str) -> bool:
         return False
 
 
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """True when ``table.column`` exists. Lets the fingerprint fold in an
+    optional column (e.g. ``outcome_score``, added by migration 0002)
+    without raising -- and bypassing the cache entirely -- on a
+    pre-migration DB that has the table but not the column."""
+    try:
+        return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+    except sqlite3.Error:
+        return False
+
+
 def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     """Hash the per-table mutation timestamps that affect the brief.
 
-    Reads ``MAX(updated_at)`` from decisions / behaviors / tasks /
-    code_digests / capability_links / plan_steps and ``MAX(created_at)``
-    from episodes for the workspace, then hashes the per-table maxima
-    together. A write to any of those tables moves that table's own
-    maximum, so the fingerprint flips → cache miss on next call.
+    Reads ``MAX(updated_at)`` from decisions / behaviors / theories /
+    tasks / code_digests / capability_links / plan_steps / insights /
+    concepts / skills / issues and ``MAX(created_at)`` from episodes for
+    the workspace, then hashes the per-table maxima together. A write to any of those tables moves that
+    table's own maximum, so the fingerprint flips → cache miss on next
+    call. It also folds in a per-table ``outcome_score`` aggregate for
+    decisions / behaviors / theories / insights, because outcome recompute
+    rewrites that column without touching ``updated_at`` (see the inline
+    note below).
 
     Per-table, not a single global ``MAX``: a global max hides a write
     to one table behind a higher timestamp in another -- including the
@@ -115,22 +130,54 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
     # absent on a partial-schema DB.
     # capability_links + plan_steps feed the brief's active-plan section
     # (Phase 3/4); the rest feed the other sections.
-    optional: list[str] = []
-    if _has_table(conn, "candidates"):
-        optional.append("candidates")
-    if _has_table(conn, "plan_steps"):
-        optional.append("plan_steps")
+    # Optional tables -- folded in only when present (several arrive in later
+    # migrations). Each feeds a brief surface: plan_steps/candidates -> active
+    # plan; insights -> recent_insights/lessons; concepts/skills -> associates
+    # (their active=0 terminal state); issues -> open_issues + associates. A
+    # status/active flip on any bumps updated_at (all six carry it), so the
+    # table's MAX(updated_at) invalidates the cached brief on a discredit.
+    # NOTE: episode/chunk also surface (associates) and have an is_archived
+    # terminal state, but those tables carry NO updated_at, so the fingerprint
+    # cannot detect an is_archived flip there. That residual is bounded: the
+    # compose-time _is_discredited filter drops them on every cache miss, and
+    # the cache self-heals on the next write to any tracked table.
+    optional: list[str] = [
+        t
+        for t in ("candidates", "plan_steps", "insights", "concepts", "skills", "issues")
+        if _has_table(conn, t)
+    ]
     # One scalar sub-query per table -- episodes keys on created_at, the
     # rest on updated_at; each binds the same workspace_id.
     subqueries = [
         "(SELECT MAX(updated_at) FROM decisions WHERE workspace_id = ?)",
         "(SELECT MAX(updated_at) FROM behaviors WHERE workspace_id = ?)",
+        # theories feed the brief as associates (_is_discredited) AND watch-outs;
+        # a status flip (rejected/weakened/superseded) bumps updated_at, so the
+        # table must be in the fingerprint or that flip serves a stale brief.
+        "(SELECT MAX(updated_at) FROM theories WHERE workspace_id = ?)",
         "(SELECT MAX(updated_at) FROM tasks WHERE workspace_id = ?)",
         "(SELECT MAX(updated_at) FROM code_digests WHERE workspace_id = ?)",
         "(SELECT MAX(created_at) FROM episodes WHERE workspace_id = ?)",
         "(SELECT MAX(updated_at) FROM capability_links WHERE workspace_id = ?)",
     ]
     subqueries += [f"(SELECT MAX(updated_at) FROM {t} WHERE workspace_id = ?)" for t in optional]
+    # Outcome-score sensitivity (round-2 audit). outcome_recompute.refresh_one /
+    # refresh_workspace write ``outcome_score`` WITHOUT advancing ``updated_at``,
+    # so an outcome-only discredit (the brain pass pins an archived/superseded
+    # row, or feedback drives one negative) does NOT move MAX(updated_at) -- and
+    # the brief's seed filter + _is_discredited neighbor filter gate on
+    # outcome_score, so a stale cached brief would keep surfacing a now-negative
+    # row as a positive associate. Fold a per-table outcome aggregate in so any
+    # score change flips the fingerprint. TOTAL() (never NULL) catches single-row
+    # changes; MIN/MAX make a multi-row sum-cancellation effectively impossible.
+    # decisions/behaviors/theories/insights all carry outcome_score and surface
+    # on outcome-gated brief sections; _has_column keeps each pre-migration-safe.
+    for tbl in ("decisions", "behaviors", "theories", "insights"):
+        if _has_column(conn, tbl, "outcome_score"):
+            subqueries.append(
+                f"(SELECT TOTAL(outcome_score) || '/' || IFNULL(MIN(outcome_score), '') "
+                f"|| '/' || IFNULL(MAX(outcome_score), '') FROM {tbl} WHERE workspace_id = ?)"
+            )
     params: list[str] = [workspace_id] * len(subqueries)
     try:
         row = conn.execute(f"SELECT {', '.join(subqueries)}", tuple(params)).fetchone()

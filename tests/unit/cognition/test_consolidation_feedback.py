@@ -39,14 +39,34 @@ def conn() -> Iterator[sqlite3.Connection]:
         c.close()
 
 
-def _seed_episode(conn: sqlite3.Connection, *, id_: str, raw_text: str) -> None:
+def _seed_episode(
+    conn: sqlite3.Connection, *, id_: str, raw_text: str, source_type: str = "agent_action"
+) -> None:
     conn.execute(
         """INSERT INTO episodes
            (id, workspace_id, source_type, raw_text, gist, created_at, is_archived)
-           VALUES (?, 'ws', 'agent_action', ?, ?, ?, 0)""",
-        (id_, raw_text, raw_text[:60], iso_now()),
+           VALUES (?, 'ws', ?, ?, ?, ?, 0)""",
+        (id_, source_type, raw_text, raw_text[:60], iso_now()),
     )
     conn.commit()
+
+
+def test_consolidation_excludes_file_indexed_episodes(conn: sqlite3.Connection) -> None:
+    """file_indexed (and other auto-ingest) episodes are 95%+ of a code-indexed
+    corpus; their module/path tokens make file-shaped 'insights' that are noise.
+    They must be excluded from the clustering input; genuine content is kept."""
+    from agent_memory_lite.cognition.consolidation import (  # noqa: PLC0415
+        _load_recent_episodes,
+    )
+
+    _seed_episode(conn, id_="ep_agent", raw_text="kelly sizing real decision",
+                  source_type="agent_action")
+    _seed_episode(conn, id_="ep_file", raw_text="src/foo/bar.py module indexed",
+                  source_type="file_indexed")
+    views = _load_recent_episodes(conn, workspace_id="ws", window_hours=24)
+    ids = {v.id for v in views}
+    assert "ep_agent" in ids  # genuine content kept
+    assert "ep_file" not in ids  # auto-ingest event excluded
 
 
 def _seed_pinned_behavior(conn: sqlite3.Connection, *, id_: str, rule: str) -> None:

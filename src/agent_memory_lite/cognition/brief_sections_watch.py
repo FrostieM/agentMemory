@@ -86,9 +86,15 @@ def _build_watch_outs(
     """Top-N rows with the lowest outcome_score across watched kinds.
 
     Surfaces failed approaches so the agent does not propose them again.
-    Phase 1 pools decisions, theories, and behaviors. v3.5: the
-    ``status != 'archived'`` filter keeps operator-dispositioned rows
-    from re-surfacing noise on every brief.
+    Phase 1 pools decisions, theories, and behaviors. Only GENUINELY-ACTIVE
+    negative-outcome rows belong here: a terminal/dispositioned row's negative
+    score is a status penalty (compute_outcome pins archived/superseded/rejected
+    decisions and archived/superseded/rejected/weakened theories negative), NOT
+    real failure feedback -- a superseded decision was refined, not failed, and
+    re-surfacing it as a "failed approach" is misleading noise (the agent should
+    be steered to its active successor instead). So each arm excludes its full
+    canonical terminal set, case-folded (matching lint._DEAD_DECISION_STATUSES
+    and _is_discredited._DEAD_STATUSES); behaviors gate on active = 1.
     """
     # Hand-stitched UNION rather than reader.list_kind because we want a
     # single cross-kind ORDER BY outcome_score ASC pass.
@@ -97,13 +103,13 @@ def _build_watch_outs(
                outcome_score, status
           FROM decisions
          WHERE workspace_id = ? AND outcome_score < 0
-           AND status != 'archived'
+           AND LOWER(TRIM(IFNULL(status, ''))) NOT IN ('archived', 'superseded', 'rejected')
         UNION ALL
         SELECT id, 'theory' AS kind, COALESCE(gist, title, claim, '') AS gist,
                outcome_score, status
           FROM theories
          WHERE workspace_id = ? AND outcome_score < 0
-           AND status != 'archived'
+           AND LOWER(TRIM(IFNULL(status, ''))) NOT IN ('archived', 'superseded', 'rejected', 'weakened')
         UNION ALL
         SELECT id, 'behavior' AS kind, COALESCE(rule_one_line, name, '') AS gist,
                outcome_score, NULL AS status

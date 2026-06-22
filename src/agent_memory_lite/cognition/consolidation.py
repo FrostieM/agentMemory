@@ -129,14 +129,31 @@ def _load_recent_episodes(
 ) -> list[EpisodeView]:
     """Pull episodes from the last ``window_hours`` for one workspace."""
     cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - window_hours * 3600))
+    # Exclude auto-ingest event episodes (file_indexed, ...). On a code-indexed
+    # workspace they are 95%+ of the corpus and their token surface (module /
+    # directory names) yields file-shaped "insights" that are pure noise. Reuse
+    # the blindspot scanner's exclusion list so the two filters stay in lockstep
+    # (no parallel env var). NULL-safe: a NULL source_type is genuine content.
+    from agent_memory_lite.maintenance.blindspot_filters import (  # noqa: PLC0415
+        excluded_source_types,
+    )
+
+    excluded = excluded_source_types()
+    src_clause = ""
+    params: list[object] = [workspace_id, cutoff]
+    if excluded:
+        placeholders = ", ".join("?" * len(excluded))
+        src_clause = f"AND (source_type IS NULL OR source_type NOT IN ({placeholders}))"
+        params.extend(excluded)
     rows = conn.execute(
-        """
+        f"""
         SELECT id, gist, raw_text, created_at
         FROM episodes
         WHERE workspace_id = ? AND created_at >= ? AND is_archived = 0
+          {src_clause}
         ORDER BY created_at ASC
         """,
-        (workspace_id, cutoff),
+        params,
     ).fetchall()
     views: list[EpisodeView] = []
     for row in rows:

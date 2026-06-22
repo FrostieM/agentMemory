@@ -201,6 +201,19 @@ def test_refresh_one_archived_returns_minus_one(conn: sqlite3.Connection) -> Non
     assert row[0] == -1.0
 
 
+def test_refresh_one_rejected_decision_scores_negative(conn: sqlite3.Connection) -> None:
+    """A rejected decision is pinned hard-negative -- mirrors _theory_inputs and
+    the module docstring ('archived / rejected / superseded yields a hard
+    negative'). Before the fix _decision_inputs hardcoded rejected=False, so a
+    rejected decision's outcome was driven only by feedback (stayed ~0)."""
+    _seed_decision(conn, id="dec_rej", status="rejected", feedback_ewma=0.3)
+    score = refresh_one(conn, kind="decision", object_id="dec_rej", now_iso=iso_now())
+    assert score is not None
+    assert score < 0.0, f"rejected decision should be pinned negative; got {score}"
+    row = conn.execute("SELECT outcome_score FROM decisions WHERE id='dec_rej'").fetchone()
+    assert row[0] < 0.0
+
+
 def test_new_decision_with_supersedes_pointer_is_not_treated_as_superseded(
     conn: sqlite3.Connection,
 ) -> None:

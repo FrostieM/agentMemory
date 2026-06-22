@@ -38,6 +38,24 @@ def _row(**kwargs) -> sqlite3.Row:
     return row
 
 
+def test_poisoned_numeric_value_projects_without_raising() -> None:
+    """A non-numeric value stored in a numeric column (poison from an
+    unvalidated legacy write) must NOT crash the projection: it falls back to
+    the default instead of raising ValueError and durably breaking
+    memory_brief / memory_search / memory_get for that kind."""
+    proj = project_decision(_row(id="dec_x", outcome_score="notanumber"))
+    assert proj["outcome_score"] == 0.0
+    tproj = project_theory(_row(id="th_x", confidence="bad", evidence_count="oops"))
+    assert tproj["confidence"] == 0.4
+    assert tproj["evidence_count"] == 0
+    cproj = project_code_digest(
+        _row(file_path="x.py", symbol_count="oops", inbound_edge_count="bad", pagerank="nope")
+    )
+    assert cproj["symbol_count"] == 0
+    assert cproj["inbound_edge_count"] == 0
+    assert cproj["pagerank"] == 0.0
+
+
 def test_known_kinds_returns_thirteen_kinds() -> None:
     kinds = known_kinds()
     assert len(kinds) == 13

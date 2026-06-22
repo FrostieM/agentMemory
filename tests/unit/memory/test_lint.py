@@ -44,13 +44,15 @@ def _seed_behavior(
     conn.commit()
 
 
-def _seed_decision_v3(conn: sqlite3.Connection, *, id_: str, title: str, gist: str) -> None:
+def _seed_decision_v3(
+    conn: sqlite3.Connection, *, id_: str, title: str, gist: str, status: str = "active"
+) -> None:
     conn.execute(
         """INSERT INTO decisions
            (id, workspace_id, title, decision_text, gist, status, valid_from,
             created_at, updated_at)
-           VALUES (?, 'ws', ?, 'body', ?, 'active', 'ts', 'ts', 'ts')""",
-        (id_, title, gist),
+           VALUES (?, 'ws', ?, 'body', ?, ?, 'ts', 'ts', 'ts')""",
+        (id_, title, gist, status),
     )
     conn.commit()
 
@@ -142,6 +144,61 @@ def test_lint_related_decisions_match_payload(conn: sqlite3.Connection) -> None:
     )
     ids = [d["id"] for d in result.related_decisions]
     assert "dec_1" in ids
+
+
+def test_lint_related_decisions_excludes_superseded(conn: sqlite3.Connection) -> None:
+    """A superseded decision (already replaced) must NOT surface as a live
+    related decision on the priming hook -- it can otherwise rank ahead of its
+    own active replacement. Mirrors the _prior_failures terminal-set guard."""
+    _seed_decision_v3(conn, id_="dec_live", title="Kelly sizing", gist="quarter-Kelly active")
+    _seed_decision_v3(
+        conn, id_="dec_old", title="Kelly sizing", gist="full-Kelly replaced", status="superseded"
+    )
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Edit",
+        tool_payload={"file_path": "src/strategy/kelly.py", "new_string": "kelly"},
+    )
+    ids = [d["id"] for d in result.related_decisions]
+    assert "dec_live" in ids  # active replacement surfaces
+    assert "dec_old" not in ids  # superseded predecessor filtered
+
+
+def test_lint_related_decisions_excludes_padded_superseded(conn: sqlite3.Connection) -> None:
+    """The related_decisions terminal guard is whitespace-stripped, symmetric
+    with the brief associates filter -- a padded superseded status (writable via
+    memory_edit) must not surface as a live related decision."""
+    _seed_decision_v3(conn, id_="dec_live", title="Kelly sizing", gist="active")
+    _seed_decision_v3(
+        conn, id_="dec_pad", title="Kelly sizing", gist="padded", status="  superseded  "
+    )
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Edit",
+        tool_payload={"file_path": "src/strategy/kelly.py", "new_string": "kelly"},
+    )
+    ids = [d["id"] for d in result.related_decisions]
+    assert "dec_live" in ids
+    assert "dec_pad" not in ids
+
+
+def test_lint_related_decisions_excludes_rejected(conn: sqlite3.Connection) -> None:
+    """A rejected decision is thrown-out, not live context."""
+    _seed_decision_v3(conn, id_="dec_ok", title="Kelly sizing", gist="active")
+    _seed_decision_v3(
+        conn, id_="dec_rej", title="Kelly sizing", gist="rejected", status="rejected"
+    )
+    result = lint(
+        conn,
+        workspace_id="ws",
+        tool_name="Edit",
+        tool_payload={"file_path": "src/strategy/kelly.py", "new_string": "kelly"},
+    )
+    ids = [d["id"] for d in result.related_decisions]
+    assert "dec_ok" in ids
+    assert "dec_rej" not in ids
 
 
 def test_lint_prior_failures_finds_rejected_theory(conn: sqlite3.Connection) -> None:

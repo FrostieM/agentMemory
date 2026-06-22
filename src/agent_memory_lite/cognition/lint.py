@@ -121,10 +121,27 @@ def _rule_to_advisory(rule: EnforcementRule) -> dict[str, Any]:
     }
 
 
+# Terminal/dead decision statuses must not surface as live "related decisions"
+# on the priming hook: a superseded decision has been replaced (and can rank
+# ahead of its own active replacement); a rejected one was thrown out. Mirrors
+# the _prior_failures terminal-set guard (the negative-signal sibling) and the
+# brief's status=='active' gate. 'archived' is already dropped by the read
+# path's archive filter; keeping it here makes the guard self-contained.
+_DEAD_DECISION_STATUSES = frozenset({"archived", "superseded", "rejected"})
+
+
 def _related_decisions(
     conn: sqlite3.Connection, workspace_id: str, query: str, limit: int = 3
 ) -> list[dict[str, Any]]:
-    """Top-N compact decision projections matching the payload query."""
+    """Top-N compact decision projections matching the payload query.
+
+    Excludes terminal-status decisions (archived/superseded/rejected): a
+    replaced or thrown-out decision is not a live, relevant decision, and
+    surfacing it on the PreToolUse hook -- potentially ahead of its own active
+    replacement -- misleads the agent's highest-trust priming surface. The
+    positive-signal sibling to _prior_failures' terminal guard. Over-fetch then
+    filter so dead rows do not crowd genuine active matches out of the limit.
+    """
     if not query:
         return []
     hits = search(
@@ -132,9 +149,16 @@ def _related_decisions(
         workspace_id=workspace_id,
         query=query,
         kinds=["decision"],
-        limit=limit,
+        limit=limit * 4,
     )
-    return [h.projection for h in hits]
+    out: list[dict[str, Any]] = []
+    for h in hits:
+        if str(h.projection.get("status") or "").strip().lower() in _DEAD_DECISION_STATUSES:
+            continue
+        out.append(h.projection)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _prior_failures(
@@ -156,7 +180,7 @@ def _prior_failures(
     # Rejected theories (status-driven, pre-Phase-1 path).
     rows = conn.execute(
         """SELECT id, title, claim, status, gist FROM theories
-           WHERE workspace_id = ? AND status IN ('rejected', 'weakened')
+           WHERE workspace_id = ? AND LOWER(TRIM(IFNULL(status, ''))) IN ('rejected', 'weakened')
            AND (LOWER(IFNULL(title, '')) LIKE ? OR LOWER(IFNULL(claim, '')) LIKE ?)
            LIMIT ?""",
         (workspace_id, lc, lc, limit),
@@ -176,8 +200,9 @@ def _prior_failures(
     # Phase 1: low-outcome decisions matching the payload.
     try:
         dec_rows = conn.execute(
-            """SELECT id, title, gist, outcome_score FROM decisions
+            """SELECT id, title, gist, outcome_score, status FROM decisions
                WHERE workspace_id = ? AND outcome_score < -0.3
+                 AND LOWER(TRIM(IFNULL(status, ''))) NOT IN ('archived', 'superseded', 'rejected')
                  AND (LOWER(IFNULL(title, '')) LIKE ? OR LOWER(IFNULL(gist, '')) LIKE ?)
                ORDER BY outcome_score ASC
                LIMIT ?""",
@@ -191,7 +216,18 @@ def _prior_failures(
                 "kind": "low_outcome_decision",
                 "id": row[0],
                 "title": row[1],
-                "status": "active",
+                # Real status, not a hardcoded "active": compute_outcome pins
+                # archived/superseded rows to a negative score, so without the
+                # WHERE guard above a *retired* decision would be surfaced as a
+                # live "we tried this and it failed" -- the headline the agent
+                # reads on the PreToolUse hook. The guard excludes the full
+                # canonical terminal set ('archived','superseded','rejected') --
+                # matching ingestion/conflict_detect -- case-folded AND
+                # whitespace-stripped (LOWER(TRIM(...)), symmetric with every
+                # other discredited-status surface) so a mixed-case or padded
+                # status cannot slip a retired row through. The real status
+                # label prevents double-mislabeling.
+                "status": row[4] or "active",
                 "gist": (row[2] or row[1] or "")[:120],
                 "outcome_score": float(row[3] or 0.0),
             }
@@ -201,8 +237,13 @@ def _prior_failures(
     # Phase 1: low-outcome behaviors matching the payload.
     try:
         beh_rows = conn.execute(
+            # active = 1 guard: a deactivated behavior is pinned to outcome -1.0
+            # by status, so without this it surfaces as a "known failure" -- e.g.
+            # a retired no-git-commit-without-permission rule would nudge the
+            # agent AWAY from the safe behaviour. The projection "status":"active"
+            # below is then guaranteed correct.
             """SELECT id, name, rule_one_line, outcome_score FROM behaviors
-               WHERE workspace_id = ? AND outcome_score < -0.3
+               WHERE workspace_id = ? AND outcome_score < -0.3 AND active = 1
                  AND (LOWER(IFNULL(name, '')) LIKE ? OR LOWER(IFNULL(rule_one_line, '')) LIKE ?)
                ORDER BY outcome_score ASC
                LIMIT ?""",
@@ -229,6 +270,7 @@ def _prior_failures(
             """SELECT id, summary, gist, insight_type, outcome_score FROM insights
                WHERE workspace_id = ?
                  AND insight_type IN ('contradiction', 'consolidation')
+                 AND LOWER(TRIM(IFNULL(status, ''))) NOT IN ('archived', 'rejected')
                  AND COALESCE(outcome_score, 0.0) < -0.3
                  AND (LOWER(IFNULL(summary, '')) LIKE ? OR LOWER(IFNULL(gist, '')) LIKE ?)
                ORDER BY outcome_score ASC
