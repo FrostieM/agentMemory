@@ -19,6 +19,7 @@ from pathlib import Path
 
 from agent_memory_lite.cognition.outcome_recompute import refresh_workspace
 from agent_memory_lite.config.settings import Settings
+from agent_memory_lite.db.pragmas import enable_foreign_keys
 from agent_memory_lite.utils.time import iso_now
 
 
@@ -61,6 +62,7 @@ def _load_registry(path: Path) -> list[dict[str, str]]:
 def _run_one(db_path: str, workspace_id: str, now_iso: str) -> dict[str, int]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    enable_foreign_keys(conn)
     try:
         out = refresh_workspace(conn, workspace_id=workspace_id, now_iso=now_iso)
         conn.commit()

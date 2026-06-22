@@ -376,7 +376,10 @@ def process_entry(entry: QueueEntry) -> str | None:
         return None
     result = compute_digest(digest_file_path, content)
     try:
+        from agent_memory_lite.db.pragmas import enable_foreign_keys  # noqa: PLC0415
+
         conn = sqlite3.connect(entry.db_path)
+        enable_foreign_keys(conn)
         try:
             return upsert_digest(conn, workspace_id=entry.workspace_id, result=result)
         finally:

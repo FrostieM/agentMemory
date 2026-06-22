@@ -24,3 +24,16 @@ def apply_pragmas(conn: sqlite3.Connection) -> None:
             conn.execute(f"PRAGMA {pragma} = {value}").fetchall()
         else:
             conn.execute(f"PRAGMA {pragma} = {value}")
+
+
+def enable_foreign_keys(conn: sqlite3.Connection) -> None:
+    """Turn on FK enforcement for a raw background connection that does NOT go
+    through ``open_connection`` (the maintenance write paths -- sentinel/brain
+    pass, hebbian distill, outcome refresh, digest upsert -- open their own
+    ``sqlite3.connect``). Must run before any DML: ``PRAGMA foreign_keys`` is
+    silently ignored inside an active transaction. Cheap and idempotent. The
+    live DBs already pass ``foreign_key_check``, so this only guards against a
+    *future* write creating a dangling reference -- it surfaces the bug at the
+    offending write instead of letting it corrupt silently.
+    """
+    conn.execute("PRAGMA foreign_keys = ON")

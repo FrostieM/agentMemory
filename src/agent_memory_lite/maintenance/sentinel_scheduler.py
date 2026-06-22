@@ -24,6 +24,7 @@ from pathlib import Path
 from agent_memory_lite.config import workspace_meta
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.config.workspace_paths import connection_matches_workspace
+from agent_memory_lite.db.pragmas import enable_foreign_keys
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.maintenance.retrieval_quality import (
     load_retrieval_quality_cases,
@@ -78,7 +79,7 @@ def maybe_run_sentinels(
 def _is_overdue(*, db_path: Path, workspace_id: str, threshold_hours: float) -> bool:
     """Read last_sentinel_run_at from workspace_meta. None or stale → overdue."""
     try:
-        conn = sqlite3.connect(db_path, timeout=2.0)
+        conn = sqlite3.connect(db_path, timeout=5.0)
     except sqlite3.OperationalError:
         return False
     try:
@@ -131,6 +132,7 @@ def _run_sentinel_pass(
     discovery = discover_sentinel_file(db_path=db_path)
     cases = load_retrieval_quality_cases(discovery.path) if discovery.path is not None else []
     conn = sqlite3.connect(db_path, timeout=10.0)
+    enable_foreign_keys(conn)  # brain_pass writes are FK-safe (differential-verified)
     try:
         # Cross-workspace guard: if this connection's physical DB is not
         # workspace_id's registered DB, abort before any write. A
@@ -192,12 +194,23 @@ def _maybe_run_brain_pass(
         if not getattr(settings, "brain_pass_enabled", True):
             return
         run_brain_pass(conn, workspace_id=workspace_id, settings=settings)
+        # FK-drift sentinel: the connection is now FK-enforced, but record any
+        # pre-existing dangling reference (e.g. from a legacy pre-FK-on write or
+        # a foreign path) as a maintenance event so the operator sees drift in
+        # /health instead of months later. Boot-time only previously (app.py);
+        # this extends it to every maintenance tick. Cheap + idempotent.
+        from agent_memory_lite.db.integrity_check import (  # noqa: PLC0415
+            record_foreign_key_violations,
+        )
+
+        record_foreign_key_violations(conn, workspace_id=workspace_id)
     except Exception:  # pragma: no cover - defensive
         _log.exception("brain_pass failed for workspace=%s", workspace_id)
 
 
 def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:
-    conn = sqlite3.connect(db_path, timeout=2.0)
+    conn = sqlite3.connect(db_path, timeout=5.0)
+    enable_foreign_keys(conn)
     try:
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
