@@ -219,6 +219,12 @@ def settings_factory(
             "MEMORY_WORKSPACE_ID": "default",
             "MEMORY_FORBID_DEFAULT_WORKSPACE": "false",
             "MEMORY_STRICT_WORKSPACE_ISOLATION": "false",
+            # Disable the traffic-triggered sentinel/brain-pass autorun by
+            # default: it spawns a background daemon thread that writes to the
+            # test DB and races later requests (non-deterministic). The dedicated
+            # test_sentinel_scheduler.py sets MEMORY_SENTINEL_AUTORUN_HOURS
+            # explicitly when it WANTS the autorun, overriding this default.
+            "MEMORY_SENTINEL_AUTORUN_HOURS": "0",
             "MEMORY_ENFORCE_WORKSPACE_MANIFEST": "true",
             "EMBEDDING_BACKEND": "sentence_transformers",
             "EMBEDDING_MODEL": "intfloat/multilingual-e5-small",

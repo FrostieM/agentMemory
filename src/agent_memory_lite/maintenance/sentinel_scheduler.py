@@ -144,6 +144,12 @@ def _run_sentinel_pass(
     discovery = discover_sentinel_file(db_path=db_path)
     cases = load_retrieval_quality_cases(discovery.path) if discovery.path is not None else []
     conn = sqlite3.connect(db_path, timeout=10.0)
+    # Row access is the app-wide convention; without it the retrieval-quality
+    # eval (run_case) and the brain-pass steps this connection also drives raise
+    # "TypeError: tuple indices must be integers or slices, not str" on the first
+    # row["col"] access -- which is exactly how this sentinel recorded 19/19
+    # 'failed' runs on the live DB before this line existed.
+    conn.row_factory = sqlite3.Row
     enable_foreign_keys(conn)  # brain_pass writes are FK-safe (differential-verified)
     try:
         # Cross-workspace guard: if this connection's physical DB is not
