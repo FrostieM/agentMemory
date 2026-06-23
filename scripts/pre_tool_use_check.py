@@ -368,11 +368,7 @@ def _loopbreak_key(event: dict[str, Any], diagnostic: str = "") -> str:
     # marker file.
     cwd = str(event.get("cwd") or "")
     target = str(
-        ti.get("file_path")
-        or ti.get("path")
-        or ti.get("notebook_path")
-        or ti.get("command")
-        or ""
+        ti.get("file_path") or ti.get("path") or ti.get("notebook_path") or ti.get("command") or ""
     )[:300]
     prereqs = "+".join(t for t in _LOOPBREAK_PREREQ_TOKENS if t in diagnostic)
     return f"{tool}|{cwd}|{target}|{prereqs}"
@@ -388,9 +384,7 @@ def _loopbreak_load() -> dict[str, float]:
         return {}
     now = time.time()
     return {
-        k: v
-        for k, v in data.items()
-        if isinstance(v, (int, float)) and now - v <= _LOOPBREAK_TTL_S
+        k: v for k, v in data.items() if isinstance(v, (int, float)) and now - v <= _LOOPBREAK_TTL_S
     }
 
 

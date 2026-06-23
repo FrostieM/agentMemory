@@ -33,7 +33,9 @@ def conn() -> Iterator[sqlite3.Connection]:
 
 def _decision(conn: sqlite3.Connection, title: str, text: str) -> str:
     out = write_canonical(
-        conn, workspace_id="ws", kind="decision",
+        conn,
+        workspace_id="ws",
+        kind="decision",
         payload={"title": title, "decision_text": text},
     )
     assert out is not None
@@ -57,18 +59,24 @@ def test_create_via_business_writer_is_fts_indexed(conn: sqlite3.Connection) -> 
     """decision routes through write_decision_canonical (bypasses storage.writer);
     write_canonical must still sync its FTS content."""
     did = _decision(conn, "Adopt quarter-Kelly sizing", "Cap position size for the bankroll")
-    hits = search_kind_fts(conn, workspace_id="ws", kind="decision", query="kelly bankroll", limit=5)
+    hits = search_kind_fts(
+        conn, workspace_id="ws", kind="decision", query="kelly bankroll", limit=5
+    )
     assert did in _ids(hits)
 
 
 def test_create_via_storage_writer_else_branch_is_fts_indexed(conn: sqlite3.Connection) -> None:
     """concept routes through the storage_write else-branch of write_canonical."""
     out = write_canonical(
-        conn, workspace_id="ws", kind="concept",
+        conn,
+        workspace_id="ws",
+        kind="concept",
         payload={"name": "Reciprocal Rank Fusion", "definition": "a rank aggregation method"},
     )
     assert out is not None
-    hits = search_kind_fts(conn, workspace_id="ws", kind="concept", query="reciprocal fusion", limit=5)
+    hits = search_kind_fts(
+        conn, workspace_id="ws", kind="concept", query="reciprocal fusion", limit=5
+    )
     assert out["id"] in _ids(hits)
 
 
@@ -76,7 +84,10 @@ def test_edit_resyncs_fts_content(conn: sqlite3.Connection) -> None:
     did = _decision(conn, "Widget plan", "about widgets")
     assert not search_kind_fts(conn, workspace_id="ws", kind="decision", query="sprocket", limit=5)
     edit(
-        conn, workspace_id="ws", kind="decision", object_id=did,
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id=did,
         fields={"decision_text": "now about sprocket assemblies"},
     )
     hits = search_kind_fts(conn, workspace_id="ws", kind="decision", query="sprocket", limit=5)
@@ -111,7 +122,11 @@ def test_search_falls_back_to_like_when_fts_misses(conn: sqlite3.Connection) -> 
     _decision(conn, "Calibration policy", "recalibrate the threshold each week")
     assert not search_kind_fts(conn, workspace_id="ws", kind="decision", query="calibrat", limit=5)
     hits = search(
-        conn, workspace_id="ws", query="calibrat", kinds=["decision"], limit=5,
+        conn,
+        workspace_id="ws",
+        query="calibrat",
+        kinds=["decision"],
+        limit=5,
         log_coactivations=False,
     )
     assert hits  # LIKE substring match still finds it
@@ -149,7 +164,9 @@ def test_auto_promoted_behavior_is_fts_indexed(conn: sqlite3.Connection) -> None
     row = conn.execute("SELECT * FROM insights WHERE id = 'ins1'").fetchone()
     bid = _insert_behavior_from_insight(conn, workspace_id="ws", insight_row=row)
     conn.commit()
-    hits = search_kind_fts(conn, workspace_id="ws", kind="behavior", query="kangaroo sprint", limit=5)
+    hits = search_kind_fts(
+        conn, workspace_id="ws", kind="behavior", query="kangaroo sprint", limit=5
+    )
     assert bid in _ids(hits)
 
 
@@ -159,12 +176,19 @@ def test_rollback_resyncs_fts(conn: sqlite3.Connection) -> None:
 
     did = _decision(conn, "zebra title", "use the zebra approach")
     edit(
-        conn, workspace_id="ws", kind="decision", object_id=did,
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id=did,
         fields={"title": "giraffe title", "decision_text": "use the giraffe approach"},
     )
-    assert did in _ids(search_kind_fts(conn, workspace_id="ws", kind="decision", query="giraffe", limit=5))
+    assert did in _ids(
+        search_kind_fts(conn, workspace_id="ws", kind="decision", query="giraffe", limit=5)
+    )
     rollback(conn, workspace_id="ws", kind="decision", object_id=did, to_version=1, why="test")
-    assert did in _ids(search_kind_fts(conn, workspace_id="ws", kind="decision", query="zebra", limit=5))
+    assert did in _ids(
+        search_kind_fts(conn, workspace_id="ws", kind="decision", query="zebra", limit=5)
+    )
     assert did not in _ids(
         search_kind_fts(conn, workspace_id="ws", kind="decision", query="giraffe", limit=5)
     )

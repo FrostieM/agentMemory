@@ -46,10 +46,9 @@ def test_write_canonical_canonicalizes_task_status(applied_conn: sqlite3.Connect
         payload={"task_id": "pad-task", "goal": "g", "status": "Active "},
     )
     assert out is not None
-    stored = applied_conn.execute(
-        "SELECT status FROM tasks WHERE task_id = 'pad-task'"
-    ).fetchone()
-    assert stored is not None and stored[0] == "active"
+    stored = applied_conn.execute("SELECT status FROM tasks WHERE task_id = 'pad-task'").fetchone()
+    assert stored is not None
+    assert stored[0] == "active"
 
 
 def test_subsequent_write_updates_in_place(applied_conn: sqlite3.Connection) -> None:

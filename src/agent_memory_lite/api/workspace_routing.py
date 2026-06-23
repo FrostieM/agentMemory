@@ -84,9 +84,7 @@ def ensure_workspace_matches_db(
     )
 
 
-def ensure_store_matches_workspace(
-    store: object, workspace_id: str, settings: Settings
-) -> None:
+def ensure_store_matches_workspace(store: object, workspace_id: str, settings: Settings) -> None:
     """Reject an episode vector write whose store is not the workspace's .lance.
 
     The LanceDB analogue of ``ensure_workspace_matches_db``. ``store_for`` routes

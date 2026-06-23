@@ -187,9 +187,7 @@ def test_lint_related_decisions_excludes_padded_superseded(conn: sqlite3.Connect
 def test_lint_related_decisions_excludes_rejected(conn: sqlite3.Connection) -> None:
     """A rejected decision is thrown-out, not live context."""
     _seed_decision_v3(conn, id_="dec_ok", title="Kelly sizing", gist="active")
-    _seed_decision_v3(
-        conn, id_="dec_rej", title="Kelly sizing", gist="rejected", status="rejected"
-    )
+    _seed_decision_v3(conn, id_="dec_rej", title="Kelly sizing", gist="rejected", status="rejected")
     result = lint(
         conn,
         workspace_id="ws",

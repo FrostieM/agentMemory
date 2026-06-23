@@ -115,8 +115,6 @@ def write_canonical(
     # so all 6 durable kinds sync here -- the decision/theory/behavior business
     # writers bypass storage.writer entirely, so this could not live there.
     if result is not None and kind in DURABLE_FTS_KINDS:
-        sync_durable_fts(
-            conn, kind=kind, object_id=str(result["id"]), workspace_id=workspace_id
-        )
+        sync_durable_fts(conn, kind=kind, object_id=str(result["id"]), workspace_id=workspace_id)
         conn.commit()
     return result

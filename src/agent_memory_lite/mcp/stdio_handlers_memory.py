@@ -174,7 +174,9 @@ def _handle_v3_write(args: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0911 -
     try:
         ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
     except MemoryServiceError as exc:
-        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
+        return _err(
+            exc.error_code, "write rejected: routed DB does not match the workspace's registered DB"
+        )
     agent_id = str(payload.get("agent_id") or "mcp")
     source_episode_id = payload.get("source_episode_id")
     embedding_provider = vector_store = None
@@ -239,7 +241,9 @@ def _handle_v3_edit(args: dict[str, Any]) -> dict[str, Any]:
     try:
         ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
     except MemoryServiceError as exc:
-        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
+        return _err(
+            exc.error_code, "write rejected: routed DB does not match the workspace's registered DB"
+        )
     out = edit(
         conn,
         workspace_id=workspace_id,
@@ -271,7 +275,9 @@ def _handle_v3_pin(args: dict[str, Any]) -> dict[str, Any]:
     try:
         ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
     except MemoryServiceError as exc:
-        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
+        return _err(
+            exc.error_code, "write rejected: routed DB does not match the workspace's registered DB"
+        )
     out = pin(
         conn,
         workspace_id=workspace_id,
@@ -301,7 +307,9 @@ def _handle_v3_archive(args: dict[str, Any]) -> dict[str, Any]:
     try:
         ensure_workspace_matches_db(conn, workspace_id, _runtime.settings)
     except MemoryServiceError as exc:
-        return _err(exc.error_code, "write rejected: routed DB does not match the workspace's registered DB")
+        return _err(
+            exc.error_code, "write rejected: routed DB does not match the workspace's registered DB"
+        )
     out = archive(
         conn,
         workspace_id=workspace_id,

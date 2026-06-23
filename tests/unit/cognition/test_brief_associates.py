@@ -110,8 +110,12 @@ def test_superseded_neighbor_filtered_from_associates(conn: sqlite3.Connection) 
     conn.commit()
     for dst in ("theory:th_good", "theory:th_dead"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -132,8 +136,12 @@ def test_rejected_neighbor_filtered_from_associates(conn: sqlite3.Connection) ->
     conn.commit()
     for dst in ("theory:th_good", "theory:th_rej"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -154,8 +162,12 @@ def test_weakened_theory_neighbor_filtered_from_associates(conn: sqlite3.Connect
     conn.commit()
     for dst in ("theory:th_good", "theory:th_weak"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -176,8 +188,12 @@ def test_deactivated_behavior_neighbor_filtered_from_associates(
     _seed_behavior(conn, id_="beh_off", active=0, outcome=0.0)  # deactivated, non-negative
     for dst in ("theory:th_good", "behavior:beh_off"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -214,8 +230,12 @@ def test_deactivated_concept_and_skill_neighbors_filtered_from_associates(
     conn.commit()
     for dst in ("theory:th_good", "concept:con_off", "skill:skl_off"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -287,8 +307,12 @@ def test_terminal_workitem_and_archived_episode_neighbors_filtered(
     conn.commit()
     for dst in ("theory:th_good", "task:task_done", "episode:ep_arch"):
         upsert_soft_edge(
-            conn, workspace_id="ws", src="decision:dec_seed", dst=dst,
-            kind="co_retrieved", weight_increment=2.0,
+            conn,
+            workspace_id="ws",
+            src="decision:dec_seed",
+            dst=dst,
+            kind="co_retrieved",
+            weight_increment=2.0,
         )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")
@@ -303,8 +327,12 @@ def test_negative_outcome_neighbor_filtered_from_associates(conn: sqlite3.Connec
     _seed_decision(conn, id_="dec_seed", outcome=0.6)
     _seed_theory(conn, id_="th_neg", outcome=-0.5)  # negative, not pinned
     upsert_soft_edge(
-        conn, workspace_id="ws", src="decision:dec_seed", dst="theory:th_neg",
-        kind="co_retrieved", weight_increment=2.0,
+        conn,
+        workspace_id="ws",
+        src="decision:dec_seed",
+        dst="theory:th_neg",
+        kind="co_retrieved",
+        weight_increment=2.0,
     )
     conn.commit()
     brief = compose_brief(conn, workspace_id="ws")

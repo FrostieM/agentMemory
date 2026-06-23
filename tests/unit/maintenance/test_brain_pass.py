@@ -174,7 +174,9 @@ def test_pass_runs_all_six_steps_with_default_settings(conn: sqlite3.Connection)
     assert report.self_model_refreshed is True
 
 
-def _seed_decision_feedback(c: sqlite3.Connection, *, fb_id: str, source_id: str, usefulness: float) -> None:
+def _seed_decision_feedback(
+    c: sqlite3.Connection, *, fb_id: str, source_id: str, usefulness: float
+) -> None:
     c.execute(
         "INSERT INTO memory_usage_feedback "
         "(id, workspace_id, source_type, source_id, query, usefulness, notes, created_at, source) "

@@ -527,9 +527,7 @@ def test_loop_breaker_allows_retry_after_one_block(
     assert second.returncode == 0  # retry allowed -- loop broken, no deadlock
 
 
-def test_loop_breaker_is_keyed_per_target(
-    fake_workspace: dict[str, str], tmp_path: Path
-) -> None:
+def test_loop_breaker_is_keyed_per_target(fake_workspace: dict[str, str], tmp_path: Path) -> None:
     """Blocking file A does not pre-allow a never-seen file B: the breaker is
     keyed by (tool, target), so every distinct target still gets its one nudge."""
     _seed_rule(

@@ -92,9 +92,7 @@ class HttpEmbeddingProvider(EmbeddingProvider):
         data = response.json()
         vectors = data.get("vectors") if isinstance(data, dict) else None
         if not isinstance(vectors, list) or not vectors:
-            raise EmbeddingProviderUnavailableError(
-                f"/embed response missing 'vectors': {data!r}"
-            )
+            raise EmbeddingProviderUnavailableError(f"/embed response missing 'vectors': {data!r}")
         return np.asarray(vectors, dtype=np.float32)
 
     def embed_batch(self, texts: list[str], *, kind: EmbeddingKind = "doc") -> np.ndarray:

@@ -36,8 +36,12 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from agent_memory_lite.utils.time import parse_iso
+
+if TYPE_CHECKING:
+    from agent_memory_lite.config.settings import Settings
 
 # Columns by which other tables reference episodes.id (used for catalog discovery).
 _EPISODE_REF_COLUMNS = ("source_episode_id", "evidence_episode_id", "episode_id")
@@ -134,7 +138,7 @@ def prune_retention(
     conn: sqlite3.Connection,
     *,
     workspace_id: str,
-    settings: object,
+    settings: Settings,
     now_iso: str,
     cap: int,
 ) -> RetentionReport:

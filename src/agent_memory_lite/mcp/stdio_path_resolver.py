@@ -52,9 +52,7 @@ def _registry_match_for_cwd(cwd: Path, entries: list[WorkspaceEntry]) -> Workspa
     # still matches its registered project_root (the cwd->own-project anchor is
     # the primitive that stops one chat mis-anchoring onto another's DB).
     resolved_roots = [
-        (entry, Path(entry.project_root).resolve())
-        for entry in entries
-        if entry.project_root
+        (entry, Path(entry.project_root).resolve()) for entry in entries if entry.project_root
     ]
     resolved_cwd = cwd.resolve()
     for parent in [resolved_cwd, *resolved_cwd.parents]:

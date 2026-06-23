@@ -19,8 +19,7 @@ from agent_memory_lite.db.pragmas import enable_foreign_keys
 def _fk_schema(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
     conn.execute(
-        "CREATE TABLE child (id INTEGER PRIMARY KEY, "
-        "parent_id INTEGER REFERENCES parent(id))"
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id))"
     )
 
 

@@ -59,10 +59,12 @@ def test_consolidation_excludes_file_indexed_episodes(conn: sqlite3.Connection) 
         _load_recent_episodes,
     )
 
-    _seed_episode(conn, id_="ep_agent", raw_text="kelly sizing real decision",
-                  source_type="agent_action")
-    _seed_episode(conn, id_="ep_file", raw_text="src/foo/bar.py module indexed",
-                  source_type="file_indexed")
+    _seed_episode(
+        conn, id_="ep_agent", raw_text="kelly sizing real decision", source_type="agent_action"
+    )
+    _seed_episode(
+        conn, id_="ep_file", raw_text="src/foo/bar.py module indexed", source_type="file_indexed"
+    )
     views = _load_recent_episodes(conn, workspace_id="ws", window_hours=24)
     ids = {v.id for v in views}
     assert "ep_agent" in ids  # genuine content kept

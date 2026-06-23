@@ -58,7 +58,7 @@ def test_empty_baseline_never_regresses_on_zero_report() -> None:
 
 
 def test_default_threshold_is_five_percent() -> None:
-    assert DEFAULT_REGRESSION_THRESHOLD == pytest.approx(0.05)
+    assert pytest.approx(0.05) == DEFAULT_REGRESSION_THRESHOLD
 
 
 def test_invalid_threshold_and_primary_raise() -> None:

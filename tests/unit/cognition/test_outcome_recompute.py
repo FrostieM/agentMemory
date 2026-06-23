@@ -297,8 +297,15 @@ def _seed_feedback(
             "INSERT INTO memory_usage_feedback "
             "(id, workspace_id, source_type, source_id, query, usefulness, notes, created_at, source) "
             "VALUES (?, ?, ?, ?, '', ?, '', ?, ?)",
-            (f"fb_{source_id}_{source}_{i}", workspace_id, source_type, source_id, usefulness,
-             iso_now(), source),
+            (
+                f"fb_{source_id}_{source}_{i}",
+                workspace_id,
+                source_type,
+                source_id,
+                usefulness,
+                iso_now(),
+                source,
+            ),
         )
     conn.commit()
 

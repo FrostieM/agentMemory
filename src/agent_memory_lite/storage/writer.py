@@ -319,9 +319,7 @@ def _validate_numeric_fields(conn: sqlite3.Connection, table: str, fields: dict[
         try:
             float(value)
         except (TypeError, ValueError):
-            raise ValueError(
-                f"non-numeric value for numeric column {col!r}: {value!r}"
-            ) from None
+            raise ValueError(f"non-numeric value for numeric column {col!r}: {value!r}") from None
 
 
 def _normalize_status_field(fields: dict[str, Any]) -> None:

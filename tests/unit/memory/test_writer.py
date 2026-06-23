@@ -70,12 +70,17 @@ def test_edit_rejects_non_numeric_value_for_numeric_column(conn: sqlite3.Connect
     is rejected (ValueError) rather than persisted as TEXT poison that would later
     crash every projection of the kind (memory_brief / memory_search / memory_get)."""
     write(
-        conn, workspace_id="ws", kind="decision",
+        conn,
+        workspace_id="ws",
+        kind="decision",
         payload={"id": "dec_v", "title": "T", "decision_text": "body"},
     )
     with pytest.raises(ValueError, match="non-numeric value for numeric column"):
         edit(
-            conn, workspace_id="ws", kind="decision", object_id="dec_v",
+            conn,
+            workspace_id="ws",
+            kind="decision",
+            object_id="dec_v",
             fields={"outcome_score": "notanumber"},
         )
     # Nothing was persisted -- the column never became TEXT poison.
@@ -89,19 +94,29 @@ def test_edit_accepts_number_and_numeric_string(conn: sqlite3.Connection) -> Non
     """A real number and a numeric-looking string both pass (SQLite affinity
     coerces the string); only genuinely non-numeric values are rejected."""
     write(
-        conn, workspace_id="ws", kind="decision",
+        conn,
+        workspace_id="ws",
+        kind="decision",
         payload={"id": "dec_ok", "title": "T", "decision_text": "body"},
     )
     out = edit(
-        conn, workspace_id="ws", kind="decision", object_id="dec_ok",
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id="dec_ok",
         fields={"outcome_score": -0.5},
     )
-    assert out is not None and out["outcome_score"] == -0.5
+    assert out is not None
+    assert out["outcome_score"] == -0.5
     out2 = edit(
-        conn, workspace_id="ws", kind="decision", object_id="dec_ok",
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id="dec_ok",
         fields={"outcome_score": "0.25"},
     )
-    assert out2 is not None and out2["outcome_score"] == 0.25
+    assert out2 is not None
+    assert out2["outcome_score"] == 0.25
 
 
 def test_edit_canonicalizes_padded_or_mixed_case_status(conn: sqlite3.Connection) -> None:
@@ -110,14 +125,20 @@ def test_edit_canonicalizes_padded_or_mixed_case_status(conn: sqlite3.Connection
     correct -- a padded/mixed-case status written via memory_edit can neither
     over-filter a live row nor leak a terminal one downstream."""
     write(
-        conn, workspace_id="ws", kind="decision",
+        conn,
+        workspace_id="ws",
+        kind="decision",
         payload={"id": "dec_s", "title": "T", "decision_text": "body"},
     )
     out = edit(
-        conn, workspace_id="ws", kind="decision", object_id="dec_s",
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id="dec_s",
         fields={"status": "  Superseded  "},
     )
-    assert out is not None and out["status"] == "superseded"
+    assert out is not None
+    assert out["status"] == "superseded"
     stored = conn.execute("SELECT status FROM decisions WHERE id = 'dec_s'").fetchone()[0]
     assert stored == "superseded"
 
@@ -125,10 +146,13 @@ def test_edit_canonicalizes_padded_or_mixed_case_status(conn: sqlite3.Connection
 def test_write_canonicalizes_status(conn: sqlite3.Connection) -> None:
     """The create path canonicalizes status too."""
     out = write(
-        conn, workspace_id="ws", kind="decision",
+        conn,
+        workspace_id="ws",
+        kind="decision",
         payload={"id": "dec_w", "title": "T", "decision_text": "body", "status": "ACTIVE "},
     )
-    assert out is not None and out["status"] == "active"
+    assert out is not None
+    assert out["status"] == "active"
 
 
 def test_write_preserves_supplied_id(conn: sqlite3.Connection) -> None:

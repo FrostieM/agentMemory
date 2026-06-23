@@ -263,9 +263,7 @@ class Settings(BaseSettings):
     # ON (non-destructive vs anything read, like backup_retention); the memory
     # edges are NEVER touched. Reinforced (observation_count >= 2) and recent
     # code edges are kept.
-    soft_edge_prune_enabled: bool = Field(
-        True, validation_alias="MEMORY_SOFT_EDGE_PRUNE_ENABLED"
-    )
+    soft_edge_prune_enabled: bool = Field(True, validation_alias="MEMORY_SOFT_EDGE_PRUNE_ENABLED")
     soft_edge_prune_max_observation_count: int = Field(
         1, ge=1, le=10, validation_alias="MEMORY_SOFT_EDGE_PRUNE_MAX_OBSERVATION_COUNT"
     )

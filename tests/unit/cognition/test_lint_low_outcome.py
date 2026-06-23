@@ -124,15 +124,17 @@ def _seed_insight(
 def test_archived_decision_does_not_surface_as_failure(conn: sqlite3.Connection) -> None:
     """compute_outcome pins archived to -1.0; without the status guard a RETIRED
     decision would be the headline 'prior failure' the agent reads on the hook."""
-    _seed_decision(conn, id_="dec_old", title="Adopt Kelly", gist="kelly", outcome=-1.0,
-                   status="archived")
+    _seed_decision(
+        conn, id_="dec_old", title="Adopt Kelly", gist="kelly", outcome=-1.0, status="archived"
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "dec_old" for f in failures)
 
 
 def test_superseded_decision_does_not_surface_as_failure(conn: sqlite3.Connection) -> None:
-    _seed_decision(conn, id_="dec_sup", title="Adopt Kelly", gist="kelly", outcome=-0.5,
-                   status="superseded")
+    _seed_decision(
+        conn, id_="dec_sup", title="Adopt Kelly", gist="kelly", outcome=-0.5, status="superseded"
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "dec_sup" for f in failures)
 
@@ -140,15 +142,22 @@ def test_superseded_decision_does_not_surface_as_failure(conn: sqlite3.Connectio
 def test_deactivated_behavior_does_not_surface_as_failure(conn: sqlite3.Connection) -> None:
     """A deactivated good rule (e.g. a retired safety behavior) must not be
     presented as a known failure that nudges the agent away from it."""
-    _seed_behavior(conn, id_="beh_off", name="kelly-cap", rule_one_line="Cap Kelly",
-                   outcome=-1.0, active=0)
+    _seed_behavior(
+        conn, id_="beh_off", name="kelly-cap", rule_one_line="Cap Kelly", outcome=-1.0, active=0
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "beh_off" for f in failures)
 
 
 def test_rejected_insight_does_not_surface_as_failure(conn: sqlite3.Connection) -> None:
-    _seed_insight(conn, id_="ins_rej", summary="kelly contradiction",
-                  insight_type="contradiction", outcome=-0.5, status="rejected")
+    _seed_insight(
+        conn,
+        id_="ins_rej",
+        summary="kelly contradiction",
+        insight_type="contradiction",
+        outcome=-0.5,
+        status="rejected",
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "ins_rej" for f in failures)
 
@@ -158,8 +167,9 @@ def test_rejected_decision_does_not_surface_as_failure(conn: sqlite3.Connection)
     set is archived/superseded/rejected. The same-function insight arm already
     excludes 'rejected' -- the decision arm must too, or a rejected decision
     leaks as a live 'prior failure' on the hook."""
-    _seed_decision(conn, id_="dec_rej", title="Adopt Kelly", gist="kelly", outcome=-0.9,
-                   status="rejected")
+    _seed_decision(
+        conn, id_="dec_rej", title="Adopt Kelly", gist="kelly", outcome=-0.9, status="rejected"
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "dec_rej" for f in failures)
 
@@ -168,10 +178,22 @@ def test_mixed_case_terminal_status_does_not_surface(conn: sqlite3.Connection) -
     """The status guards are case-folded. memory_edit does not normalize status,
     so a mixed-case terminal label ('Archived', 'REJECTED') must still be caught
     -- a BINARY-collation NOT IN would let it slip a retired row through."""
-    _seed_decision(conn, id_="dec_arch_mixed", title="Adopt Kelly", gist="kelly",
-                   outcome=-0.9, status="Archived")
-    _seed_insight(conn, id_="ins_rej_mixed", summary="kelly contradiction",
-                  insight_type="contradiction", outcome=-0.5, status="REJECTED")
+    _seed_decision(
+        conn,
+        id_="dec_arch_mixed",
+        title="Adopt Kelly",
+        gist="kelly",
+        outcome=-0.9,
+        status="Archived",
+    )
+    _seed_insight(
+        conn,
+        id_="ins_rej_mixed",
+        summary="kelly contradiction",
+        insight_type="contradiction",
+        outcome=-0.5,
+        status="REJECTED",
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "dec_arch_mixed" for f in failures)
     assert not any(f["id"] == "ins_rej_mixed" for f in failures)
@@ -181,8 +203,14 @@ def test_padded_terminal_status_does_not_surface(conn: sqlite3.Connection) -> No
     """Status guards are whitespace-stripped (LOWER(TRIM(...)), symmetric with
     _is_discredited): a padded terminal status must not slip a retired row
     through. Reachable because memory_edit does not normalize status values."""
-    _seed_decision(conn, id_="dec_pad", title="Adopt Kelly", gist="kelly",
-                   outcome=-0.9, status="  superseded  ")
+    _seed_decision(
+        conn,
+        id_="dec_pad",
+        title="Adopt Kelly",
+        gist="kelly",
+        outcome=-0.9,
+        status="  superseded  ",
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     assert not any(f["id"] == "dec_pad" for f in failures)
 
@@ -205,8 +233,9 @@ def test_padded_rejected_theory_still_surfaces(conn: sqlite3.Connection) -> None
 def test_active_low_outcome_decision_still_surfaces(conn: sqlite3.Connection) -> None:
     """Regression guard: the status filter must NOT over-filter -- a genuinely
     active low-outcome decision still surfaces (with its real status)."""
-    _seed_decision(conn, id_="dec_live", title="Adopt Kelly", gist="kelly", outcome=-0.6,
-                   status="active")
+    _seed_decision(
+        conn, id_="dec_live", title="Adopt Kelly", gist="kelly", outcome=-0.6, status="active"
+    )
     failures = _prior_failures(conn, "ws", "kelly")
     surfaced = next((f for f in failures if f["id"] == "dec_live"), None)
     assert surfaced is not None

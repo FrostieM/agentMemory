@@ -163,8 +163,11 @@ def test_superseded_negative_outcome_decision_not_in_watch_outs(
     outcome is purely the SUPERSEDED_PENALTY. It must NOT surface as a 'failed
     approach' watch-out (the agent should be steered to its active successor)."""
     _seed_decision(
-        conn, id="dec_super_old", gist="superseded predecessor",
-        outcome_score=-0.5, status="superseded",
+        conn,
+        id="dec_super_old",
+        gist="superseded predecessor",
+        outcome_score=-0.5,
+        status="superseded",
     )
     _seed_decision(conn, id="dec_real_concern", gist="active failing", outcome_score=-0.4)
     brief = compose_brief(conn, workspace_id="ws")
@@ -178,8 +181,11 @@ def test_padded_superseded_decision_not_in_watch_outs(conn: sqlite3.Connection) 
     (LOWER(TRIM(...))), symmetric with the associates filter -- a padded
     superseded status must not leak as a 'failed approach'."""
     _seed_decision(
-        conn, id="dec_pad_super", gist="padded superseded",
-        outcome_score=-0.5, status="  superseded  ",
+        conn,
+        id="dec_pad_super",
+        gist="padded superseded",
+        outcome_score=-0.5,
+        status="  superseded  ",
     )
     _seed_decision(conn, id="dec_real_concern", gist="active failing", outcome_score=-0.4)
     brief = compose_brief(conn, workspace_id="ws")

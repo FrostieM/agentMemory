@@ -81,8 +81,7 @@ def sync_durable_fts(
         if row is None:
             return
         conn.execute(
-            "INSERT INTO durable_fts (object_id, workspace_id, kind, content) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO durable_fts (object_id, workspace_id, kind, content) VALUES (?, ?, ?, ?)",
             (object_id, workspace_id, kind, _content_from_values(list(row))),
         )
     except sqlite3.Error:
@@ -116,8 +115,7 @@ def rebuild_durable_fts(conn: sqlite3.Connection, workspace_id: str | None = Non
         ws_clause = "" if workspace_id is None else " AND workspace_id = ?"
         params = () if workspace_id is None else (workspace_id,)
         rows = conn.execute(
-            f"SELECT id, workspace_id, {', '.join(cols)} FROM {table} "
-            f"WHERE 1 = 1{ws_clause}",
+            f"SELECT id, workspace_id, {', '.join(cols)} FROM {table} WHERE 1 = 1{ws_clause}",
             params,
         ).fetchall()
         for row in rows:
