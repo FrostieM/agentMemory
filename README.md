@@ -236,6 +236,18 @@ fresh chat and the agent wires everything itself.
 
 ## Status
 
+**v3.22.0** (2026-06-23). FTS5/BM25 relevance retrieval for the durable knowledge
+kinds (decisions / theories / behaviors / skills / concepts / insights) via a new
+`durable_fts` table (migration 0007) — `memory_search` now ranks the agent's
+curated memory by BM25 instead of LIKE token-overlap, with a LIKE fallback so no
+prior query regresses. Also in this line: discredited (terminal-status /
+deactivated) rows no longer surface as live signal in the session brief or the
+PreToolUse lint hook; write-path value hygiene (numeric-value validation + status
+canonicalization at the create/edit choke points); and the retrieval-quality
+sentinel restored (it had crashed on every run). This entry also reconciles a
+drifted version surface — `version.py` had lagged at 3.15.0 and this Status header
+at 3.8.x while the package advanced to 3.21.0.
+
 **v3.8.1** (2026-05-27). Patch release for post-release hook stability:
 project-resolved prompt briefs no longer emit false global-fallback notices,
 and post-edit code digest refreshes update canonical project-relative paths

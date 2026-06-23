@@ -3,10 +3,12 @@
 Rolling state for cross-session work. Pair-read with `AGENTS.md` and
 `CHANGELOG.md`.
 
-## Current State - v3-Only Refactor Release Package
+## Current State - v3.22.0
 
-The active goal is a 10/10 v3 project state. The implementation is now in
-release-readiness review for version `3.8.0`:
+The v3-only compact surface is the shipped, default project state. The latest
+release `3.22.0` adds FTS5/BM25 relevance retrieval for the durable knowledge
+kinds (`durable_fts`, migration 0007) and restores/hardens the brief, write, and
+retrieval-quality-sentinel paths (see `CHANGELOG.md`). Standing invariants:
 
 - v3 compact tools are the only active agent surface.
 - Root migrations are the only active migration chain.
@@ -20,7 +22,7 @@ release-readiness review for version `3.8.0`:
 
 ## Active Plan
 
-1. Keep final release checks green for the `3.8.0` package.
+1. Keep final release checks green for the `3.22.0` package.
 2. Do not commit, tag, push, or deploy until the operator explicitly asks.
 3. After source edits, restart already-open MCP stdio clients before trusting
    that they are running the new code.

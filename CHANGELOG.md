@@ -9,6 +9,49 @@ archaeology is required.
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
 
+## 3.22.0 - 2026-06-23
+
+### Added
+
+- FTS5/BM25 relevance retrieval for the durable knowledge kinds (decision /
+  theory / behavior / skill / concept / insight). A new app-managed `durable_fts`
+  virtual table (migration 0007), back-filled from existing rows, replaces the
+  interim LIKE token-overlap path in `storage.reader.search_kind` with
+  OR-tokenized BM25 ranking that down-weights generic tokens instead of surfacing
+  them as noise. Strictly additive — `memory_search` falls back to the LIKE floor
+  when FTS misses, so no prior query regresses. Sync is wired into the create/edit
+  choke points (`write_canonical`, `storage.writer.edit`) plus the consolidation
+  auto-promote and `rollback` paths, with a default-on `durable_fts_rebuild`
+  brain-pass step (`MEMORY_DURABLE_FTS_REBUILD_ENABLED`) as the
+  eventual-consistency backstop.
+
+### Fixed
+
+- Discredited rows no longer surface as live/positive signal in the session brief
+  or the PreToolUse lint hook. Terminal-status (archived/superseded/rejected/
+  weakened), deactivated (`active=0`), and `is_archived` rows are now filtered
+  across every reachable neighbour kind in the brief associates, watch-outs,
+  related-decisions, and prior-failures surfaces, and the brief-cache fingerprint
+  folds the outcome aggregate + every surfaced kind's `updated_at` so a discredit
+  invalidates the cache. Rejected decisions are scored hard-negative, consistent
+  with the module docstring.
+- `memory_edit` / `memory_write` now validate numeric column values (a non-numeric
+  `outcome_score` previously persisted as TEXT and crashed every projection of the
+  kind) and canonicalize `status` (strip + lowercase) at both the create choke
+  point (`write_canonical`) and the edit choke point, so the many bare `status`
+  read comparisons stay correct.
+- The retrieval-quality sentinel is restored. It opened its SQLite connection
+  without `row_factory`, so every run crashed with a `TypeError` over the first
+  retrieved row; and the runner's `passed`/`failed` status never matched the
+  `pass`/`fail` the trend query counts, so `/memory/sentinel_trends` always
+  reported zero. Both fixed; the sentinel + its brain-pass-on-read-traffic tick
+  now actually run.
+
+### Internal
+
+- Reconciled the drifted version surface: `version.py` was stale at 3.15.0 while
+  the package was 3.21.0, so `/health` had been mis-reporting the runtime version.
+
 ## 3.21.0 - 2026-05-29
 
 ### Added
