@@ -8,6 +8,12 @@ from agent_memory_lite.maintenance.retrieval_quality import (
     RetrievalQualityCase,
     run_retrieval_quality_evals,
 )
+from agent_memory_lite.maintenance.sentinel_persistence import (
+    SentinelResultIn,
+    record_sentinel_run,
+    sentinel_trends,
+)
+from agent_memory_lite.maintenance.sentinel_scheduler import _to_sentinel_status
 from agent_memory_lite.models.enums import EpisodeSource, TrustLevel
 from agent_memory_lite.models.episodes import EpisodeIn
 
@@ -123,6 +129,45 @@ def test_brief_budget_surfaces_relevant_decision_under_compact_surface(
 
     assert report.status == "ok"
     assert report.results[0].render_levels["decisions"] == "summary"
+
+
+def test_sentinel_status_translates_to_trend_vocabulary(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """Regression: the runner + RetrievalQualityReport emit 'passed'/'failed', but
+    record_sentinel_run's audit counts, the retrieval_sentinel_results rows, and
+    the sentinel_trends query all match 'pass'/'fail'. The scheduler must
+    translate at the boundary -- otherwise /memory/sentinel_trends silently
+    reports 0 passes / 0 failures forever."""
+    assert _to_sentinel_status("passed") == "pass"
+    assert _to_sentinel_status("failed") == "fail"
+    # End-to-end: a translated result is actually counted by the trend query.
+    record_sentinel_run(
+        applied_conn,
+        workspace_id="project-a",
+        results=[
+            SentinelResultIn(case_name="c_ok", status=_to_sentinel_status("passed")),
+            SentinelResultIn(case_name="c_bad", status=_to_sentinel_status("failed")),
+        ],
+    )
+    trends = {
+        t.case_name: t
+        for t in sentinel_trends(applied_conn, workspace_id="project-a", window_days=30)
+    }
+    assert trends["c_ok"].passes == 1 and trends["c_ok"].failures == 0
+    assert trends["c_bad"].passes == 0 and trends["c_bad"].failures == 1
+    # The raw runner vocabulary is NOT counted -- this is exactly the bug the
+    # translation fixes (a 'passed' row matches neither 'pass' nor 'fail').
+    record_sentinel_run(
+        applied_conn,
+        workspace_id="project-a",
+        results=[SentinelResultIn(case_name="c_raw", status="passed")],
+    )
+    raw = {
+        t.case_name: t
+        for t in sentinel_trends(applied_conn, workspace_id="project-a", window_days=30)
+    }
+    assert raw["c_raw"].runs == 1 and raw["c_raw"].passes == 0 and raw["c_raw"].failures == 0
 
 
 def test_retrieval_quality_checks_object_titles_and_render_level(

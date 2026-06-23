@@ -43,6 +43,18 @@ _LAST_RUN_KEY = "last_sentinel_run_at"
 _log = logging.getLogger(__name__)
 
 
+def _to_sentinel_status(rq_status: str) -> str:
+    """Translate a retrieval-quality result status into the persistence/trend
+    vocabulary. The runner and ``RetrievalQualityReport`` speak
+    ``passed``/``failed`` (retrieval_quality.py), but ``record_sentinel_run``'s
+    audit counts, the ``retrieval_sentinel_results`` rows, and the
+    ``sentinel_trends`` query all match ``pass``/``fail``. Without this
+    translation every recorded status was the wrong token, so the audit log
+    and ``/memory/sentinel_trends`` silently reported 0 passes / 0 failures
+    regardless of the real results."""
+    return {"passed": "pass", "failed": "fail"}.get(rq_status, rq_status)
+
+
 def maybe_run_sentinels(
     *,
     workspace_id: str,
@@ -164,7 +176,7 @@ def _run_sentinel_pass(
             results = [
                 SentinelResultIn(
                     case_name=r.name,
-                    status=r.status,
+                    status=_to_sentinel_status(r.status),
                     matched_count=len(r.matched_ids),
                     expected_count=len(r.expected_ids),
                     failures=r.failures,
