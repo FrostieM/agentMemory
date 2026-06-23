@@ -434,7 +434,7 @@ def get_object(
 
 
 # ============================================================
-# memory_search — hybrid BM25 over FTS5 + per-kind fallback
+# memory_search — per-kind FTS5 BM25 with LIKE token-overlap fallback
 # ============================================================
 
 
@@ -502,7 +502,9 @@ def search_kind(
     substring, so any multi-word query missed every row lacking that
     verbatim phrase — which silently defeated ``memory_search`` for
     decisions / theories / behaviors (chunks have their own FTS5 path).
-    A future plan adds FTS5 + rerank to these kinds.
+    Durable FTS5 (``search_kind_fts``, migration 0007) is now the primary
+    path for these kinds; this LIKE scan is the fallback when FTS5 returns
+    nothing or the DB predates 0007.
     """
     if kind not in _KIND_TABLES or kind not in _KIND_FTS_COLUMNS:
         return []

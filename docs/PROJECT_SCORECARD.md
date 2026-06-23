@@ -33,9 +33,9 @@ is unreleased and production DBs are mid-migration (#122).
 | Dimension | Score | Gap to 10/10 |
 |---|---|---|
 | Architecture & code structure | 9.0 | LLM extraction + embedding still on the synchronous write path (10.1). |
-| Reliability & robustness | 8.0 | Sync-write bounded but slow; a vector upsert can fail post-commit (row lands, not vector-searchable until reindex); prod DBs half-migrated (#122). |
+| Reliability & robustness | 8.0 | Sync-write bounded but slow; a vector upsert can fail post-commit (row lands, vector absent from the embedding store until reindex); prod DBs half-migrated (#122). |
 | Local-only / privacy / security | 9.0 | `ensure_workspace_matches_db` not yet on 100% of write routes (#115); loopback relax is intentional. |
-| Retrieval quality | 7.5 | No automated MRR-regression gate (10.6); committed-row-without-vector window; vector search is eventually-consistent. |
+| Retrieval quality | 7.5 | No automated MRR-regression gate (10.6); FTS5/LIKE-only read path (no vector arm in search); committed-row-without-vector window touches only vector-consuming paths (write-time dedup + brain-loop causal/Hebbian), not the FTS read path. |
 | Cognition (brain loops + discipline) | 9.0 | Some loops heuristic; LLM-consolidation opt-in; discipline read-check is once-per-session + fails open. |
 | Testing & quality gates | 8.5 | UI not live-verified (10.8); plan UI unbuilt (#110); no retrieval-regression gate. |
 | Operability & observability | 7.5 | Offline posture absent from `memory_status`; UI refresh pending (10.7); backup retention is manual-trigger, not a sweep. |
@@ -73,12 +73,14 @@ huggingface.co is a documented exception, and the `ensure_workspace_matches_db`
 physical-DB guard is **not yet applied uniformly to every write route** (#115) —
 so isolation is strong but not yet fully defense-in-depth.
 
-**Retrieval (7.5).** BM25/FTS5 + LanceDB vectors fused by RRF, with an opt-in
-cross-encoder reranker; MRR was tuned and a pipeline-level BEIR benchmark exists
+**Retrieval (7.5).** BM25/FTS5 over chunks + durable kinds with a LIKE
+token-overlap fallback, score-band sorted, plus an opt-in cross-encoder reranker
+(no live RRF fusion or vector arm in the v3 read path); MRR was tuned and a pipeline-level BEIR benchmark exists
 (well-hedged: not yet a gating, continuously-tracked signal). Gaps: no scheduled
 MRR-regression gate (10.6); and because vectors are written post-commit and
-failure-soft, a freshly-written row can be missing from vector search until a
-manual reindex.
+failure-soft, a freshly-written row can be absent from the embedding store —
+which feeds write-time episode dedup and the brain-loop causal / Hebbian passes,
+not the FTS-only search read path — until a manual reindex.
 
 **Cognition (9.0).** The background brain pass runs ~19 independent,
 failure-soft maintenance loops (outcome scoring, Hebbian co-retrieval

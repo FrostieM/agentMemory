@@ -4,7 +4,7 @@ Companion to ``membench.py`` (internal sanity) and
 ``membench_external.py`` (embedder vs published numbers). Where the
 external script runs ``sentence-transformers`` directly against BEIR,
 this one drives the WHOLE retrieval stack — ingestion + chunking +
-FTS5 + LanceDB + RRF + reranker + 7 brain loops — against the same
+FTS5 + LanceDB + cross-encoder reranker + 7 brain loops — against the same
 BEIR task so the operator sees whether our pipeline ADDS quality
 over the bare embedder or NOISE that should be tuned out.
 
@@ -24,7 +24,7 @@ How it differs from the embedder-only run:
 * This script: ingests the same 5k docs through
   ``/memory/ingest_episode`` (going through redaction, chunking,
   embedding, FTS5, audit), then queries each BEIR question via
-  ``/memory/search`` (RRF over BM25 + vector + graph, optional
+  ``/memory/search`` (per-kind FTS5 BM25 + LIKE fallback, optional
   cross-encoder rerank). Returns NDCG@10 / Recall@10 / MAP@10 over
   the same qrels. Comparable apples-to-apples.
 
@@ -394,7 +394,7 @@ def run_pipeline_benchmark(  # noqa: PLR0915 — linear ingest→search→score 
 def _format_summary(task: str, scores: dict[str, float], embedder_score: float) -> str:
     lines = [
         "",
-        f"membench_pipeline — BEIR {task} (full stack: ingest → FTS+vector+RRF → search)",
+        f"membench_pipeline — BEIR {task} (full stack: ingest → FTS5 + rerank → search)",
         "=" * 72,
         f"  queries evaluated: {int(scores['queries_evaluated'])}",
         f"  docs in slice    : {int(scores['docs_ingested'])}",

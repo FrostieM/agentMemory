@@ -57,10 +57,10 @@ tree-sitter = [
 ]
 rerank = [
     # 3.0.0 — optional cross-encoder reranker for v3 search.
-    # ``jina-reranker-v1-tiny-en`` (~33MB, CPU) re-orders the top-N RRF
+    # ``jina-reranker-v1-tiny-en`` (~33MB, CPU) re-orders the top-N search
     # hits by query-document semantic relevance. Opt-in: the v3
-    # search path falls back to RRF-only when this extra is not
-    # installed. ``memory-cli`` skips reranking by default; the
+    # search path falls back to the original score-sorted order when this
+    # extra is not installed. ``memory-cli`` skips reranking by default; the
     # HTTP service keeps the model warm in a process pool.
     "sentence-transformers>=3.0,<5.0",
     "torch>=2.0,<3.0",

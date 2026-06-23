@@ -54,16 +54,13 @@ actually needs. The same source-of-record rows feed `memory_brief`,
 
 ```mermaid
 flowchart LR
-    Q["memory_brief<br/>memory_search · memory_get"] --> NORM["normalize<br/>query"]
-    NORM --> FTS["FTS5<br/>BM25"]
-    NORM --> VEC["vector<br/>cosine"]
-    NORM --> GRAPH["graph<br/>walk"]
-    FTS --> RRF["RRF<br/>fuse"]
-    VEC --> RRF
-    RRF --> SCORE["score<br/>outcome · feedback · age"]
-    SCORE --> FILTER["filter<br/>bi-temporal · workspace"]
-    FILTER --> ENV["compact projections<br/>Envelope ok/data/error"]
-    GRAPH --> ENV
+    Q["memory_brief<br/>memory_search · memory_get"] --> NORM["normalize<br/>query → FTS / LIKE tokens"]
+    NORM --> FTS["per-kind FTS5 BM25<br/>chunks + durable kinds"]
+    NORM --> LIKE["LIKE token-overlap<br/>fallback + other kinds"]
+    FTS --> MERGE["merge + score-band sort<br/>workspace · archive"]
+    LIKE --> MERGE
+    MERGE --> RERANK["optional cross-encoder<br/>rerank · flag-gated"]
+    RERANK --> ENV["compact projections<br/>Envelope ok/data/error"]
     ENV --> AGENT["agent"]
 ```
 

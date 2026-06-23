@@ -5,7 +5,6 @@ A fresh adversarial agent audited the retrieval layer and found:
   #3 lancedb query() json.loads on metadata_json was unguarded
   #4 lancedb upsert() validated row.id but not row.workspace_id
   #5 lancedb reused a table across an embedding-dim change
-  #7 scoring._clamp let NaN through and scrambled the ranking sort
 
 This file locks each fix so a re-audit finds nothing.
 """
@@ -20,7 +19,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from agent_memory_lite.retrieval.scoring import _clamp
 from agent_memory_lite.vector_store.base import VectorRow, VectorStoreUnavailableError
 from agent_memory_lite.vector_store.lancedb_store import _safe_json_loads
 
@@ -148,42 +146,13 @@ def test_open_or_create_rejects_dim_mismatch(tmp_path: Path) -> None:
     store.close()
 
 
-# ---------- #7: NaN in scoring._clamp ----------
-
-
-def test_clamp_neutralizes_non_finite() -> None:
-    """NaN / inf must clamp to the floor — a non-finite score key makes
-    list.sort produce undefined order, scrambling the whole ranking.
-    Every non-finite input collapses to ``lo`` (not ``hi``): inf is not
-    a 'large valid score', it is corrupt data, so it sinks."""
-    assert _clamp(float("nan")) == 0.0
-    assert _clamp(float("inf")) == 0.0
-    assert _clamp(float("-inf")) == 0.0
-    assert _clamp(float("nan"), lo=-1.0, hi=1.0) == -1.0
-    # Finite values still clamp normally.
-    assert _clamp(0.5) == 0.5
-    assert _clamp(2.0) == 1.0
-    assert _clamp(-0.3) == 0.0
-
-
-def test_clamp_keeps_sort_well_ordered() -> None:
-    """Concrete regression: a list with one NaN-derived score must still
-    sort deterministically after the fix."""
-    scores = [_clamp(x) for x in (0.9, float("nan"), 0.5, float("inf"), 0.1)]
-    assert all(math.isfinite(s) for s in scores)
-    # Sorting must not raise and must be a total order.
-    ordered = sorted(scores, reverse=True)
-    assert ordered == sorted(ordered, reverse=True)
-
-
 # ---------- re-audit follow-up: recall._combined_score NaN ----------
 
 
 def test_combined_score_neutralizes_non_finite() -> None:
-    """Round-2 RE-AUDIT: the _clamp fix targeted scoring.py but missed
-    recall._combined_score, which used a raw inline max/min. A non-finite
-    outcome_score (a NaN in the DB column) survived and scrambled
-    recall's out.sort. Both inputs must now be neutralised."""
+    """Round-2 RE-AUDIT: recall._combined_score used a raw inline max/min,
+    so a non-finite outcome_score (a NaN in the DB column) survived and
+    scrambled recall's out.sort. Both inputs must now be neutralised."""
     from agent_memory_lite.retrieval.recall import _combined_score  # noqa: PLC0415
 
     # Every combination of a non-finite input must yield a finite score.

@@ -1,15 +1,13 @@
 """v3.5 sector-2 audit-followup: retrieval / vector-store regression locks.
 
-Five contracts:
+Four contracts:
 
-1. `collect_vector` tolerates EmbedProvider / VectorStore failures and
-   returns ``[]`` instead of propagating to a 500.
-2. LanceDB adapter rejects malicious workspace_id at the boundary
+1. LanceDB adapter rejects malicious workspace_id at the boundary
    before the value reaches the DataFusion where-clause.
-3. LanceDB adapter rejects malicious vector ids before interpolation.
-4. ``chunks_repo._row_to_chunk`` tolerates malformed JSON / NULL
+2. LanceDB adapter rejects malicious vector ids before interpolation.
+3. ``chunks_repo._row_to_chunk`` tolerates malformed JSON / NULL
    importance / NULL confidence.
-5. ``spreading_activation._neighbors_soft_edges`` returns ``[]`` on an
+4. ``spreading_activation._neighbors_soft_edges`` returns ``[]`` on an
    empty ``edge_kinds`` tuple instead of crashing on ``IN ()``.
 """
 
@@ -17,105 +15,9 @@ from __future__ import annotations
 
 import sqlite3
 
-import numpy as np
 import pytest
 
-from agent_memory_lite.models.retrieval import RetrievalCandidate
-from agent_memory_lite.retrieval.candidates_vector import collect_vector
-from agent_memory_lite.vector_store.base import VectorHit, VectorStoreUnavailableError
-
-
-class _BrokenProvider:
-    name = "broken"
-    dim = 4
-
-    def embed_batch(self, _texts, *, kind):
-        raise RuntimeError("simulated embedder OOM")
-
-
-class _BrokenStore:
-    backend = "broken"
-
-    def query(self, namespace, vector, *, workspace_id, k):
-        raise RuntimeError("simulated lancedb table corruption")
-
-
-class _OkProvider:
-    name = "ok"
-    dim = 4
-
-    def embed_batch(self, _texts, *, kind):
-        return [np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)]
-
-
-class _EmptyStore:
-    backend = "empty"
-
-    def query(self, namespace, vector, *, workspace_id, k):
-        return []
-
-
-def test_collect_vector_tolerates_embedder_failure(
-    applied_conn: sqlite3.Connection,
-) -> None:
-    """Embedder OOM / cold-start error must NOT 500 the route — the
-    function degrades to ``[]`` so retrieval falls back to FTS-only."""
-    result = collect_vector(
-        applied_conn,
-        store=_EmptyStore(),  # type: ignore[arg-type]
-        provider=_BrokenProvider(),  # type: ignore[arg-type]
-        workspace_id="ws",
-        query="anything",
-    )
-    assert result == []
-
-
-def test_collect_vector_tolerates_vector_store_failure(
-    applied_conn: sqlite3.Connection,
-) -> None:
-    """LanceDB corruption must degrade to ``[]`` — same fail-shape as
-    the v3.4 enum-drift incident that put copyBot at HTTP 500 for 2.5h."""
-    result = collect_vector(
-        applied_conn,
-        store=_BrokenStore(),  # type: ignore[arg-type]
-        provider=_OkProvider(),  # type: ignore[arg-type]
-        workspace_id="ws",
-        query="anything",
-    )
-    assert result == []
-
-
-def test_collect_vector_returns_candidates_on_happy_path() -> None:
-    """Sanity: with a working provider + store + chunks-row helper,
-    the function still returns candidates (covers the type check
-    after the audit-driven try/except wrap)."""
-
-    class _Store:
-        backend = "fake"
-
-        def query(self, namespace, vector, *, workspace_id, k):
-            return [VectorHit(id="chk_x", workspace_id="ws", score=0.9, metadata={"path": "p"})]
-
-    # Skip if no chunks table — this test runs on the unit-test in-memory
-    # DB; the inner ``get_chunk`` returns None and we exit cleanly.
-    # The point is that no exception leaks out of the try/except path.
-    from agent_memory_lite.db.connection import open_connection  # noqa: PLC0415
-    from agent_memory_lite.db.migrations import MIGRATION_DIR, apply_migrations  # noqa: PLC0415
-
-    conn = open_connection(":memory:")  # type: ignore[arg-type]
-    apply_migrations(conn, MIGRATION_DIR)
-    result = collect_vector(
-        conn,
-        store=_Store(),  # type: ignore[arg-type]
-        provider=_OkProvider(),  # type: ignore[arg-type]
-        workspace_id="ws",
-        query="anything",
-    )
-    # get_chunk returns None because nothing's seeded; the candidate
-    # list is empty BUT no exception escaped.
-    assert isinstance(result, list)
-    for c in result:
-        assert isinstance(c, RetrievalCandidate)
+from agent_memory_lite.vector_store.base import VectorStoreUnavailableError
 
 
 def test_lancedb_validate_workspace_id_rejects_quote() -> None:

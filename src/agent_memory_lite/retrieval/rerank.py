@@ -1,4 +1,4 @@
-"""Cross-encoder reranker — opt-in refinement after RRF fusion.
+"""Cross-encoder reranker — opt-in refinement of the search hit order.
 
 Re-orders the top-N hits from canonical search by query-document semantic
 relevance using ``jina-reranker-v1-tiny-en`` (~33 MB, CPU-friendly).
@@ -15,7 +15,7 @@ Design constraints:
   HTTP service keeps it warm thereafter. ``memory-cli`` skips
   reranking by default (sub-process cold start is a worst case).
 * **Failure-soft.** Any error during loading or scoring falls back
-  to the original RRF order — never raises.
+  to the original (score-sorted) hit order — never raises.
 * **No PyTorch import on import.** The reranker module is safe to
   import in environments without torch. We touch torch only inside
   ``_load_model``.

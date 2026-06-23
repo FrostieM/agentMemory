@@ -16,8 +16,8 @@ Caveats stated up front:
 
 * This measures the **embedding component** only — corpus + queries
   go through ``sentence-transformers`` directly. The retrieval
-  pipeline used by ``/memory/search`` (RRF + FTS + reranker + 7 brain
-  loops) is NOT exercised. A pipeline-level external benchmark would
+  pipeline used by ``/memory/search`` (FTS5 + LIKE fallback + optional
+  reranker + 7 brain loops) is NOT exercised. A pipeline-level external benchmark would
   require ingesting the BEIR corpus into our memory (5k+ documents,
   hours of CPU time) - out of scope for this MVP.
 * Defaults to BEIR ``SciFact`` because it is the smallest standard

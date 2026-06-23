@@ -1,7 +1,7 @@
 """A/B compare decision ranking: WITHOUT EWMA vs WITH EWMA.
 
-Pure SQL + python — no HTTP, no embedding. Replicates the scoring formula
-weights from retrieval/scoring.py so the comparison is exact.
+Pure SQL + python — no HTTP, no embedding. Replicates the decision
+ranking formula weights in python so the comparison is exact.
 
 Output: how many decisions changed top-K position, where high-EWMA items
 moved, and an overall correlation summary.

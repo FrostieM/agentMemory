@@ -59,8 +59,8 @@ Interaction with the opt-in reranker
 Auto-offline is gated on the *embedding* model only -- the model the service
 cannot run without. The cross-encoder reranker is opt-in, uses a *different*
 model (``retrieval/rerank.DEFAULT_MODEL``), and is failure-soft: if offline mode
-blocks its one-time bootstrap, ``rerank`` degrades to the original RRF order
-rather than raising (see ``retrieval/rerank._load_model``). So during the
+blocks its one-time bootstrap, ``rerank`` degrades to the original
+(score-sorted) hit order rather than raising (see ``retrieval/rerank._load_model``). So during the
 embedding-model bootstrap window (offline not yet enforced) a first reranked
 search may still fetch the reranker model; operators who want the reranker in a
 strictly offline deployment must pre-cache its model (like pre-pulling an Ollama

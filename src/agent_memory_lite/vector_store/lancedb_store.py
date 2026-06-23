@@ -165,8 +165,8 @@ class LanceDBStore(VectorStore):
         # The downstream ``similarity = 1.0 - distance`` line in ``query``
         # is correct ONLY for cosine; with L2 the absolute score was
         # wrong (ranking happened to stay monotonic for normalised
-        # vectors, but the scoring weight downstream multiplied wrong
-        # similarities into RRF).
+        # vectors, but any downstream consumer of ``query`` would read
+        # wrong absolute similarities).
         table = self._db.create_table(namespace, data=seed)
         table.delete("id = '__seed__'")
         return table
