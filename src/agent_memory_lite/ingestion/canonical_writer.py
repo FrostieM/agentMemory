@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.embeddings.base import EmbeddingProvider
+from agent_memory_lite.fts.durable_fts import DURABLE_FTS_KINDS, sync_durable_fts
 from agent_memory_lite.ingestion.canonical_domain_writers import (
     write_behavior_canonical,
     write_decision_canonical,
@@ -109,4 +110,13 @@ def write_canonical(
             agent_id=agent_id,
             source_episode_id=source_episode_id,
         )
+    # Keep the durable-kind FTS index (durable_fts) in step with the create.
+    # write_canonical is the single create choke point for the v3 agent surface,
+    # so all 6 durable kinds sync here -- the decision/theory/behavior business
+    # writers bypass storage.writer entirely, so this could not live there.
+    if result is not None and kind in DURABLE_FTS_KINDS:
+        sync_durable_fts(
+            conn, kind=kind, object_id=str(result["id"]), workspace_id=workspace_id
+        )
+        conn.commit()
     return result

@@ -32,6 +32,15 @@ class ChunkFtsHit:
     is_archived: bool = False
 
 
+def _clean_fts_tokens(query: str) -> list[str]:
+    """Strip FTS5 special chars, cap token count + total length (query-DoS
+    guard), and return the bare token list shared by the AND/OR builders."""
+    cleaned = _FTS_SPECIAL.sub(" ", query)
+    if len(cleaned) > _MAX_FTS_TOTAL_CHARS:
+        cleaned = cleaned[:_MAX_FTS_TOTAL_CHARS]
+    return [tok for tok in cleaned.split() if tok][:_MAX_FTS_TOKENS]
+
+
 def _sanitize(query: str) -> str:
     """Build an FTS5 MATCH expression that AND-joins tokens.
 
@@ -43,13 +52,27 @@ def _sanitize(query: str) -> str:
     multi-token queries narrow the result set, not widen it. AND is
     expressed as space-separated quoted phrases (FTS5 default).
     """
-    cleaned = _FTS_SPECIAL.sub(" ", query)
-    if len(cleaned) > _MAX_FTS_TOTAL_CHARS:
-        cleaned = cleaned[:_MAX_FTS_TOTAL_CHARS]
-    tokens = [tok for tok in cleaned.split() if tok][:_MAX_FTS_TOKENS]
+    tokens = _clean_fts_tokens(query)
     if not tokens:
         return ""
     return " ".join(f'"{tok}"' for tok in tokens)
+
+
+def _sanitize_or(query: str) -> str:
+    """OR-joined MATCH expression -- recall over precision, ranked by BM25.
+
+    The AND ``_sanitize`` is right for long chunk text (a multi-token query
+    should narrow). The durable knowledge kinds are SHORT curated rows
+    (a decision title + a sentence), so requiring every token present yields
+    mostly empty results. OR matches any token and lets BM25's idf do the
+    work: a row matching more — and rarer — query tokens ranks highest, while
+    a row matching only a common token (``approach``) is down-weighted instead
+    of dropped. That is precisely the ranking the durable FTS path wants.
+    """
+    tokens = _clean_fts_tokens(query)
+    if not tokens:
+        return ""
+    return " OR ".join(f'"{tok}"' for tok in tokens)
 
 
 def _mixed_language_anchor_query(query: str) -> str:

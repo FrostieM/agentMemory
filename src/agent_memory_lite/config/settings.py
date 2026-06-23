@@ -275,6 +275,13 @@ class Settings(BaseSettings):
     soft_edge_prune_max_per_pass: int = Field(
         5000, ge=1, le=100000, validation_alias="MEMORY_SOFT_EDGE_PRUNE_MAX_PER_PASS"
     )
+    # 0007 durable FTS: rebuild durable_fts each pass so the index self-heals if a
+    # writer ever mutates a durable row's text columns without calling
+    # sync_durable_fts (eventual consistency vs an unknown/future bypass). Cheap
+    # (a few hundred curated rows per workspace). Default ON.
+    durable_fts_rebuild_enabled: bool = Field(
+        True, validation_alias="MEMORY_DURABLE_FTS_REBUILD_ENABLED"
+    )
     # v3.6 Phase-2: prune orphan chunk-vectors -- vectors whose chunk row
     # was deleted (SQLite/LanceDB split, interrupted compound write) and
     # left behind. The brain pass diffs vector ids vs chunk ids every

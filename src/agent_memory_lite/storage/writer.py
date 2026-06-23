@@ -462,6 +462,16 @@ def edit(
         sql = f"UPDATE {table} SET {set_clauses} WHERE workspace_id = ? AND id = ?"
         params = [*fields.values(), workspace_id, object_id]
     conn.execute(sql, params)
+    # Re-index the durable-kind FTS content in the same transaction as the edit
+    # (an edit can change searchable columns). edit() is the single edit choke
+    # point for every kind, so this covers all of them.
+    from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
+        DURABLE_FTS_KINDS,
+        sync_durable_fts,
+    )
+
+    if kind in DURABLE_FTS_KINDS:
+        sync_durable_fts(conn, kind=kind, object_id=object_id, workspace_id=workspace_id)
     _audit(
         conn,
         workspace_id=workspace_id,
@@ -615,6 +625,15 @@ def rollback(
     snapshot["id"] = object_id
     snapshot["updated_at"] = _now_iso()
     _insert_or_replace(conn, table=table, columns=snapshot)
+    # rollback restores the FTS-indexed text columns; re-index so durable_fts
+    # matches the restored row (mirrors edit(); failure-soft + pre-0007-safe).
+    from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
+        DURABLE_FTS_KINDS,
+        sync_durable_fts,
+    )
+
+    if kind in DURABLE_FTS_KINDS:
+        sync_durable_fts(conn, kind=kind, object_id=object_id, workspace_id=workspace_id)
     _audit(
         conn,
         workspace_id=workspace_id,

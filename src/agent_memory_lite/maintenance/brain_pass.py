@@ -113,6 +113,9 @@ class BrainPassReport:
     # Single-observation, stale CODE edges pruned from soft_edges this pass
     # (the read-dead bloat in the #1 table). Memory edges are never touched.
     soft_edges_pruned: int = 0
+    # 0007 durable FTS: rows re-indexed into durable_fts this pass (self-heal vs
+    # any writer that mutated a durable row's text without syncing).
+    durable_fts_reindexed: int = 0
     experiment_proposals: int = 0
     predictive_warnings: int = 0
     # Vector5-audit-2 H4: explicit "schema missing" telemetry so a
@@ -560,6 +563,28 @@ def _step_soft_edge_prune(
             report.errors.append(f"soft_edge_prune:{result.error}")
     except Exception as exc:
         report.errors.append(f"soft_edge_prune:{exc}")
+
+
+def _step_durable_fts_rebuild(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    now_iso: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Rebuild this workspace's durable_fts (0007) so the BM25 search index stays
+    consistent with the durable rows even if some writer mutated a row's text
+    columns without calling sync_durable_fts. The two create/edit choke points
+    already sync inline; this is the eventual-consistency backstop for any other
+    path. Cheap (a few hundred curated rows) + failure-soft. Default ON."""
+    if not settings.durable_fts_rebuild_enabled:
+        return
+    try:
+        from agent_memory_lite.fts.durable_fts import rebuild_durable_fts  # noqa: PLC0415
+
+        report.durable_fts_reindexed = rebuild_durable_fts(conn, workspace_id=workspace_id)
+    except Exception as exc:
+        report.errors.append(f"durable_fts_rebuild:{exc}")
 
 
 _LAST_BACKUP_PRUNE_KEY = "last_backup_prune_at"
@@ -1165,6 +1190,7 @@ def run_brain_pass(
     # this pass, so the SQLite pages freed here are reclaimed by the next pass's
     # VACUUM (SQLite reuses them internally in the meantime).
     _step_soft_edge_prune(conn, workspace_id, started, settings, report)
+    _step_durable_fts_rebuild(conn, workspace_id, started, settings, report)
     _step_prune_vectors(conn, workspace_id, settings, report)
     _step_compact_vectors(conn, workspace_id, settings, report)
     _step_prune_backups(conn, workspace_id, settings, report)

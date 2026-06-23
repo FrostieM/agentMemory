@@ -146,6 +146,13 @@ def _insert_behavior_from_insight(
         "UPDATE insights SET status = 'promoted', updated_at = ? WHERE id = ?",
         (now, insight_row["id"]),
     )
+    # Index the new durable behavior for FTS search: this path INSERTs directly,
+    # bypassing write_canonical / storage.writer.edit, so it owns the sync. Without
+    # it the auto-promoted (pinned, highest-trust) behavior is invisible to
+    # memory_search whenever any other FTS-synced row matches the query.
+    from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+    sync_durable_fts(conn, kind="behavior", object_id=behavior_id, workspace_id=workspace_id)
     return behavior_id
 
 

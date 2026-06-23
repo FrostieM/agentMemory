@@ -16,6 +16,7 @@ or any agent runtime. It's pure SQL + dict transforms.
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -585,6 +586,63 @@ def search_chunks_fts(
     return hits
 
 
+def search_kind_fts(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    kind: str,
+    query: str,
+    limit: int = 10,
+) -> list[SearchHit]:
+    """BM25 relevance search over ``durable_fts`` for a durable knowledge kind.
+
+    Replaces the interim LIKE token-overlap path (``search_kind``) for the six
+    curated kinds (decision/theory/behavior/skill/concept/insight). MATCHes the
+    FTS content, then JOINs back to the source table so the live archive/status
+    filter (``_append_archive_filter``) and the compact projection still apply.
+    The bm25 ``rank`` (more negative = better) is squashed to a bounded (0, 1)
+    score so it sorts sensibly against the chunk-FTS band -- a strong durable
+    match outranks a chunk hit, a weak one ranks below it. The query is routed
+    through the same ``fts.query._sanitize`` as the chunk path (FTS operators
+    stripped, token/length capped) so a bare operator can't crash or skew it.
+    """
+    from agent_memory_lite.fts.durable_fts import DURABLE_FTS_KINDS  # noqa: PLC0415
+    from agent_memory_lite.fts.query import _sanitize_or  # noqa: PLC0415
+
+    if kind not in DURABLE_FTS_KINDS or kind not in _KIND_TABLES:
+        return []
+    safe = _sanitize_or(query)
+    if not safe:
+        return []
+    table, _ = _KIND_TABLES[kind]
+    # f.workspace_id/f.kind are qualified (workspace_id collides with the source
+    # table); the archive-filter columns (is_archived/status) exist only on the
+    # source table, so SQLite resolves the bare names to it unambiguously.
+    where = ["f.durable_fts MATCH ?", "f.workspace_id = ?", "f.kind = ?"]
+    params: list[Any] = [safe, workspace_id, kind]
+    _append_archive_filter(conn, table=table, kind=kind, where=where)
+    sql = (
+        f"SELECT t.*, f.rank AS _bm "
+        f"FROM durable_fts f JOIN {table} t ON t.id = f.object_id "
+        f"WHERE {' AND '.join(where)} ORDER BY f.rank LIMIT ?"
+    )
+    params.append(limit)
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []  # pre-0007 DB (no durable_fts) -- caller falls back to LIKE.
+    hits: list[SearchHit] = []
+    for row in rows:
+        projection = project(kind, row)
+        if projection is None:
+            continue
+        raw = row["_bm"]
+        bm = float(raw) if raw is not None else 0.0
+        score = 1.0 / (1.0 + math.exp(max(-30.0, min(30.0, bm))))
+        hits.append(SearchHit(kind=kind, projection=projection, score=score))
+    return hits
+
+
 def search(
     conn: sqlite3.Connection,
     *,
@@ -623,12 +681,27 @@ def search(
     # requested kind, so the global top-`limit` is not distorted by a per-kind
     # cap. Default wide search keeps the divided budget (balance + bounded scan).
     per_kind = limit if kinds is not None else max(2, limit // max(1, len(selected)))
+    from agent_memory_lite.fts.durable_fts import DURABLE_FTS_KINDS  # noqa: PLC0415
+
     hits: list[SearchHit] = []
     for kind in selected:
         if kind == "chunk":
             hits.extend(
                 search_chunks_fts(conn, workspace_id=workspace_id, query=query, limit=per_kind)
             )
+        elif kind in DURABLE_FTS_KINDS:
+            # FTS5/BM25 relevance for the durable knowledge kinds, with the LIKE
+            # token-overlap path as a strict floor: if FTS matches nothing (empty
+            # sanitized query, or a pre-0007 DB without durable_fts), fall back so
+            # this is purely additive -- a query that worked before still works.
+            kind_hits = search_kind_fts(
+                conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind
+            )
+            if not kind_hits:
+                kind_hits = search_kind(
+                    conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind
+                )
+            hits.extend(kind_hits)
         else:
             hits.extend(
                 search_kind(conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind)
