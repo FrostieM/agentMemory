@@ -61,12 +61,12 @@ tree-sitter = [
 ]
 rerank = [
     # 3.0.0 — optional cross-encoder reranker for v3 search.
-    # ``jina-reranker-v1-tiny-en`` (~33MB, CPU) re-orders the top-N search
-    # hits by query-document semantic relevance. Opt-in: the v3
-    # search path falls back to the original score-sorted order when this
-    # extra is not installed. ``memory-cli`` skips reranking by default; the
-    # HTTP service keeps the model warm in a process pool.
-    "sentence-transformers>=3.0,<5.0",
+    # ``cross-encoder/ms-marco-MiniLM-L6-v2`` (~90MB, CPU) re-orders the top-N
+    # search hits by query-document semantic relevance. Opt-in: the v3 search
+    # path falls back to the original score-sorted order when this extra is not
+    # installed. ``memory-cli`` skips reranking by default; the HTTP service
+    # keeps the model warm in a process pool.
+    "sentence-transformers>=3.0,<6.0",
     "torch>=2.0,<3.0",
 ]
 
@@ -156,13 +156,16 @@ markers = [
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:passlib.*",
-    # starlette >=1.0.1 TestClient does ``import httpx2 as httpx`` and, when
-    # httpx2 is absent, warns "Using httpx with starlette.testclient is
-    # deprecated; install httpx2 instead". The TestClient still works on the
-    # installed httpx; under ``error`` this dep deprecation otherwise fails
-    # COLLECTION of every TestClient-using test (CI installs the newest
-    # starlette while a pinned-older dev venv would not see it).
-    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    # Newer starlette TestClient does ``import httpx2 as httpx`` and, when httpx2
+    # is absent, raises StarletteDeprecationWarning "Using httpx with
+    # starlette.testclient is deprecated; install httpx2 instead". The TestClient
+    # still works on the installed httpx; under ``error`` this dep deprecation
+    # otherwise fails COLLECTION of every TestClient-using test. Match by MESSAGE
+    # (default ``Warning`` category) rather than the StarletteDeprecationWarning
+    # class: an older starlette lacks that class, and a ``category::path`` that
+    # cannot be imported makes pytest error at startup (regardless of whether the
+    # warning would ever fire).
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
     # sqlite3.Connection finalizer warnings: when a connection is
     # collected without an explicit close, the interpreter raises an
     # unraisable warning during __del__ and pytest attributes it to

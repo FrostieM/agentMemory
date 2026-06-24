@@ -1,7 +1,7 @@
 """Cross-encoder reranker — opt-in refinement of the search hit order.
 
 Re-orders the top-N hits from canonical search by query-document semantic
-relevance using ``jina-reranker-v1-tiny-en`` (~33 MB, CPU-friendly).
+relevance using ``cross-encoder/ms-marco-MiniLM-L6-v2`` (~90 MB, CPU-friendly).
 The model is *not* a required dep:
 
 * Install with ``pip install 'agent-memory-lite[rerank]'`` to enable.
@@ -35,7 +35,14 @@ from typing import Any, Protocol
 
 logger = logging.getLogger("agent_memory_lite.rerank")
 
-DEFAULT_MODEL = "jinaai/jina-reranker-v1-tiny-en"
+# Standard BERT cross-encoder reranker. NOTE: the prior default
+# ``jinaai/jina-reranker-v1-tiny-en`` stopped loading under transformers >=5 --
+# its config pins ``attn_implementation="torch"``, which 5.x rejects, so the
+# reranker silently degraded to a no-op (and an ``attn_implementation="eager"``
+# override loads a partly RANDOM-initialised model -- worse than the no-op).
+# ms-marco-MiniLM-L6-v2 is a plain-architecture cross-encoder that loads cleanly
+# on current transformers, CPU-only. Do NOT revert to the jina model.
+DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
 
 
 def auto_rerank_enabled() -> bool:
