@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import UTC, datetime
 from pathlib import Path
 
 from agent_memory_lite.config import workspace_meta
@@ -35,24 +34,31 @@ from agent_memory_lite.maintenance.sentinel_persistence import (
     SentinelResultIn,
     record_sentinel_run,
 )
+from agent_memory_lite.maintenance.sentinel_scheduler_brain import (
+    _maybe_run_brain_pass,
+    _stamp_last_run,
+)
+from agent_memory_lite.maintenance.sentinel_scheduler_status import (
+    _is_overdue,
+    _to_sentinel_status,
+)
 from agent_memory_lite.maintenance.sentinels import discover_sentinel_file
-from agent_memory_lite.utils.time import iso_now, parse_iso
+from agent_memory_lite.utils.time import iso_now
 from agent_memory_lite.vector_store.base import VectorStore
+
+# Re-exported for the original public import surface; ``_stamp_last_run`` is a
+# standalone helper not referenced inside this module.
+__all__ = [
+    "_is_overdue",
+    "_maybe_run_brain_pass",
+    "_run_sentinel_pass",
+    "_stamp_last_run",
+    "_to_sentinel_status",
+    "maybe_run_sentinels",
+]
 
 _LAST_RUN_KEY = "last_sentinel_run_at"
 _log = logging.getLogger(__name__)
-
-
-def _to_sentinel_status(rq_status: str) -> str:
-    """Translate a retrieval-quality result status into the persistence/trend
-    vocabulary. The runner and ``RetrievalQualityReport`` speak
-    ``passed``/``failed`` (retrieval_quality.py), but ``record_sentinel_run``'s
-    audit counts, the ``retrieval_sentinel_results`` rows, and the
-    ``sentinel_trends`` query all match ``pass``/``fail``. Without this
-    translation every recorded status was the wrong token, so the audit log
-    and ``/memory/sentinel_trends`` silently reported 0 passes / 0 failures
-    regardless of the real results."""
-    return {"passed": "pass", "failed": "fail"}.get(rq_status, rq_status)
 
 
 def maybe_run_sentinels(
@@ -86,26 +92,6 @@ def maybe_run_sentinels(
         name=f"sentinel-{workspace_id}",
     ).start()
     return True
-
-
-def _is_overdue(*, db_path: Path, workspace_id: str, threshold_hours: float) -> bool:
-    """Read last_sentinel_run_at from workspace_meta. None or stale → overdue."""
-    try:
-        conn = sqlite3.connect(db_path, timeout=5.0)
-    except sqlite3.OperationalError:
-        return False
-    try:
-        last_iso = workspace_meta.get(conn, workspace_id, _LAST_RUN_KEY)
-    finally:
-        conn.close()
-    if not last_iso:
-        return True
-    try:
-        last = parse_iso(last_iso)
-    except ValueError:
-        return True
-    elapsed_hours = (datetime.now(UTC) - last).total_seconds() / 3600.0
-    return elapsed_hours >= threshold_hours
 
 
 def _run_sentinel_pass_safe(
@@ -195,41 +181,6 @@ def _run_sentinel_pass(
         # every overdue tick regardless of YAML presence so newly-
         # bootstrapped workspaces still grow an brain.
         _maybe_run_brain_pass(conn, workspace_id=workspace_id, settings=settings)
-        workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _maybe_run_brain_pass(
-    conn: sqlite3.Connection, *, workspace_id: str, settings: Settings
-) -> None:
-    """Best-effort v3 brain maintenance. Never raises -- single bad
-    workspace cannot block the sentinel commit."""
-    try:
-        from agent_memory_lite.maintenance.brain_pass import run_brain_pass  # noqa: PLC0415
-
-        if not getattr(settings, "brain_pass_enabled", True):
-            return
-        run_brain_pass(conn, workspace_id=workspace_id, settings=settings)
-        # FK-drift sentinel: the connection is now FK-enforced, but record any
-        # pre-existing dangling reference (e.g. from a legacy pre-FK-on write or
-        # a foreign path) as a maintenance event so the operator sees drift in
-        # /health instead of months later. Boot-time only previously (app.py);
-        # this extends it to every maintenance tick. Cheap + idempotent.
-        from agent_memory_lite.db.integrity_check import (  # noqa: PLC0415
-            record_foreign_key_violations,
-        )
-
-        record_foreign_key_violations(conn, workspace_id=workspace_id)
-    except Exception:  # pragma: no cover - defensive
-        _log.exception("brain_pass failed for workspace=%s", workspace_id)
-
-
-def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    enable_foreign_keys(conn)
-    try:
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:

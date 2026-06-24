@@ -194,10 +194,7 @@ GRANDFATHERED: frozenset[str] = frozenset(
         # * retrieval/recall.py (154)
         "maintenance/brain_pass.py",
         "retrieval/causal_extractor.py",
-        "maintenance/hebbian_pass.py",
-        "enforcement/reflex_check.py",
         "retrieval/spreading_activation.py",
-        "maintenance/sentinel_scheduler.py",
         "retrieval/recall.py",
         # v3.7 follow-up: the grandfather baseline went stale across the
         # v3.1-v3.6 feature cycles -- 20 files crossed the 150-SLOC
@@ -214,12 +211,9 @@ GRANDFATHERED: frozenset[str] = frozenset(
         "vector_store/lancedb_store.py",
         "vector_store/reindex.py",
         "models/enums.py",
-        "repositories/maintenance_repo.py",
         "repositories/chunks_repo.py",
         "api/deps.py",
         "ingestion/episode_pipeline.py",
-        "ingestion/capability_writer.py",
-        "extraction/llm_extractor.py",
     }
 )
 

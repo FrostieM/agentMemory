@@ -25,18 +25,14 @@ violations. Settings flag off → zero violations.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from dataclasses import dataclass
 
-from agent_memory_lite.enforcement.session_trail import has_called
-
-# Precondition kind → tools that satisfy it.
-_PRECONDITION_TOOL_MAP: dict[str, tuple[str, ...]] = {
-    "impact_check_within_seconds": ("memory_impact_check",),
-    "memory_search_within_seconds": ("memory_search",),
-    "playbook_fetch": ("memory_invoke_skill",),
-}
+from agent_memory_lite.enforcement.reflex_check_payload_match import _payload_matches_pattern
+from agent_memory_lite.enforcement.reflex_check_preconditions import (
+    _advisory_text,
+    _precondition_satisfied,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,68 +63,6 @@ def _load_active_rules(
         ).fetchall()
     except sqlite3.OperationalError:
         return []
-
-
-_MAX_PATTERN_LEN = 256
-_MAX_CANDIDATE_LEN = 4096
-
-
-def _payload_matches_pattern(pattern: str, tool_payload: dict[str, object]) -> bool:
-    """Empty pattern matches anything; otherwise regex-search common string fields.
-
-    The payload shape varies wildly per tool, so we test the regex against
-    each candidate field independently rather than concatenating them
-    (which would break end-of-string anchors like ``\\.py$``).
-
-    ReDoS defense:
-    - patterns longer than ``_MAX_PATTERN_LEN`` are rejected outright
-      (typical reflex rule pattern is < 40 chars; 256 is generous)
-    - candidate strings are truncated to ``_MAX_CANDIDATE_LEN`` so an
-      attacker-controlled command line cannot blow up backtracking
-    - invalid regex silently fails (rule doesn't fire) rather than
-      raising into the PreToolUse hook
-    """
-    if not pattern:
-        return True
-    if len(pattern) > _MAX_PATTERN_LEN:
-        return False
-    candidates: list[str] = []
-    for key in ("file_path", "pattern", "command", "query", "path", "name"):
-        value = tool_payload.get(key)
-        if value is None:
-            continue
-        as_str = str(value).strip()
-        if as_str:
-            candidates.append(as_str[:_MAX_CANDIDATE_LEN])
-    if not candidates:
-        return False
-    try:
-        compiled = re.compile(pattern)
-    except re.error:
-        return False
-    return any(compiled.search(c) for c in candidates)
-
-
-def _precondition_satisfied(*, precondition_kind: str, trail: list[str]) -> bool:
-    """True if the trail contains evidence that the precondition was met."""
-    tools = _PRECONDITION_TOOL_MAP.get(precondition_kind)
-    if not tools:
-        # Unknown kind -- safest default is to skip the check entirely
-        # so a typo in operator-seeded rule doesn't lock the agent out.
-        return True
-    return has_called(trail, *tools)
-
-
-def _advisory_text(rule_name: str, precondition_kind: str, params: dict[str, object]) -> str:
-    """Human-readable failure message for the diagnostic line."""
-    window = params.get("window_seconds")
-    window_clause = f" within {window}s" if window else ""
-    fallback_tool = ", ".join(_PRECONDITION_TOOL_MAP.get(precondition_kind, ("(unknown)",)))
-    return (
-        f"reflex {rule_name!r}: precondition {precondition_kind!r}"
-        f"{window_clause} not satisfied. Call {fallback_tool} first, "
-        f"then retry this tool."
-    )
 
 
 def check_reflexes(

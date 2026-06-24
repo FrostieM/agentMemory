@@ -16,31 +16,26 @@ pydantic so malformed output is dropped silently.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import httpx
 
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.extraction.base import ExtractorUnavailableError
+from agent_memory_lite.extraction.llm_extractor_text import (
+    _PROMPT,
+    _scrub,
+    _strip_fences,
+)
 from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.candidates import MemoryCandidate, TemporalSpan
 from agent_memory_lite.models.enums import EpisodeSource, MemoryCandidateKind, TrustLevel
 from agent_memory_lite.models.episodes import Episode
-from agent_memory_lite.redaction import redact
 
-
-def _scrub(value: str | None) -> str | None:
-    """Round-2 audit: re-redact LLM-extractor output. The episode
-    raw_text is redacted upstream, but the Ollama model can echo a
-    secret from the prompt into ``subject`` / ``evidence`` / ``object``;
-    those fields flow into ``candidates`` rows + the audit log
-    without ever passing the redactor again. Scrub on the way out.
-    ``redact`` rejects None, so guard the optional field."""
-    if not value:
-        return value
-    return redact(value).text
-
+# Re-exported (defined here + imported from llm_extractor_text) so the original
+# module path keeps its public + internal surface importable by other modules
+# (compaction.lesson_proposal imports _strip_fences; tests import _scrub).
+__all__ = ["_PROMPT", "OllamaExtractor", "_scrub", "_strip_fences", "probe_ollama"]
 
 _log = get_logger("extraction.llm")
 _DEFAULT_TIMEOUT = 30.0
@@ -59,37 +54,6 @@ def probe_ollama(settings: Settings) -> None:
             "Install Ollama (https://ollama.com) and `ollama pull "
             f"{settings.llm_model}`, or set OLLAMA_PROBE_SKIP=true to bypass."
         ) from exc
-
-
-_PROMPT = """You extract durable memory candidates from the agent's recent
-event. Reply with ONLY a JSON array — no markdown fences, no prose, no
-explanation, no leading or trailing text. Each item must be a JSON object
-with keys:
-  kind: one of constraint, decision, relationship, rule, correction, bug, fix
-  subject: short string
-  predicate: short string
-  object: optional string
-  evidence: short quote from the event
-  confidence: float in [0, 1]
-  importance: float in [0, 1]
-If there is nothing durable to remember, reply with exactly: []
-
-Event:
-"""
-
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
-
-
-def _strip_fences(content: str) -> str:
-    match = _FENCE_RE.search(content)
-    if match:
-        return match.group(1).strip()
-    # Tolerate prose around the JSON: take from first '[' to last ']'.
-    start = content.find("[")
-    end = content.rfind("]")
-    if 0 <= start < end:
-        return content[start : end + 1]
-    return content.strip()
 
 
 class OllamaExtractor:

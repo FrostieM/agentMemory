@@ -5,43 +5,31 @@ from __future__ import annotations
 import sqlite3
 
 from agent_memory_lite.db.transactions import with_tx
+from agent_memory_lite.ingestion.capability_writer_playbook import upsert_agent_playbook
+from agent_memory_lite.ingestion.capability_writer_redaction import _redact, _redact_list
 from agent_memory_lite.models.capabilities import (
-    AgentPlaybook,
-    AgentPlaybookIn,
     AgentRole,
     AgentRoleIn,
     AgentSkill,
     AgentSkillIn,
 )
-from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.capabilities_repo import (
-    get_playbook_by_name,
     get_role_by_name,
     get_skill_by_name,
-    upsert_playbook_row,
     upsert_role_row,
     upsert_skill_row,
 )
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
-
-# v3.5 sector-3 audit-followup: every text field on a capability gets
-# the same redaction treatment as episode/decision/theory writers got
-# earlier. Capabilities ride every brief / envelope via role_activation,
-# so an operator pasting `purpose="Use Bearer eyJ... to deploy"` would
-# have leaked the token into every future agent context.
-def _redact(text: str | None) -> str | None:
-    if text is None:
-        return None
-    return redact(text).text
-
-
-def _redact_list(items: list[str] | None) -> list[str] | None:
-    if not items:
-        return items
-    return [redact(item).text for item in items]
+__all__ = [
+    "_redact",
+    "_redact_list",
+    "upsert_agent_playbook",
+    "upsert_agent_role",
+    "upsert_agent_skill",
+]
 
 
 def upsert_agent_role(conn: sqlite3.Connection, payload: AgentRoleIn) -> AgentRole:
@@ -124,50 +112,3 @@ def upsert_agent_skill(conn: sqlite3.Connection, payload: AgentSkillIn) -> Agent
     skill = get_skill_by_name(conn, workspace_id=payload.workspace_id, name=payload.name)
     assert skill is not None
     return skill
-
-
-def upsert_agent_playbook(
-    conn: sqlite3.Connection,
-    payload: AgentPlaybookIn,
-) -> AgentPlaybook:
-    playbook_id = new_id(IdKind.AGENT_PLAYBOOK)
-    timestamp = iso_now()
-    goal_safe = _redact(payload.goal) or ""
-    triggers_safe = _redact_list(payload.triggers) or []
-    steps_safe = _redact_list(payload.steps) or []
-    success_safe = _redact_list(payload.success_criteria) or []
-    with with_tx(conn):
-        upsert_playbook_row(
-            conn,
-            playbook_id=playbook_id,
-            workspace_id=payload.workspace_id,
-            name=payload.name,
-            goal=goal_safe,
-            triggers=triggers_safe,
-            steps=steps_safe,
-            success_criteria=success_safe,
-            required_skills=payload.required_skills,
-            source_episode_id=payload.source_episode_id,
-            confidence=payload.confidence,
-            active=payload.active,
-            created_at=timestamp,
-            updated_at=timestamp,
-        )
-        stored = get_playbook_by_name(
-            conn,
-            workspace_id=payload.workspace_id,
-            name=payload.name,
-        )
-        assert stored is not None
-        insert_audit(
-            conn,
-            workspace_id=payload.workspace_id,
-            action="upsert_agent_playbook",
-            target_type="agent_playbook",
-            target_id=stored.id,
-            source_episode_id=payload.source_episode_id,
-            after={"name": payload.name, "active": payload.active},
-        )
-    playbook = get_playbook_by_name(conn, workspace_id=payload.workspace_id, name=payload.name)
-    assert playbook is not None
-    return playbook
