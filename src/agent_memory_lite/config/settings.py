@@ -165,10 +165,6 @@ class Settings(BaseSettings):
     episode_dedup_window: int = Field(
         50, ge=1, le=500, validation_alias="MEMORY_EPISODE_DEDUP_WINDOW"
     )
-    confidence_decay_enabled: bool = Field(True, validation_alias="MEMORY_CONFIDENCE_DECAY_ENABLED")
-    confidence_decay_half_life_days: float = Field(
-        14.0, gt=0.0, validation_alias="MEMORY_CONFIDENCE_DECAY_HALF_LIFE_DAYS"
-    )
     conflict_detect_enabled: bool = Field(True, validation_alias="MEMORY_CONFLICT_DETECT_ENABLED")
     # fmt: off
     conflict_detect_threshold: float = Field(0.6, ge=0.0, le=1.0, validation_alias="MEMORY_CONFLICT_DETECT_THRESHOLD")
