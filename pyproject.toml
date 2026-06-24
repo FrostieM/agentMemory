@@ -152,6 +152,13 @@ markers = [
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:passlib.*",
+    # starlette >=1.0.1 TestClient does ``import httpx2 as httpx`` and, when
+    # httpx2 is absent, warns "Using httpx with starlette.testclient is
+    # deprecated; install httpx2 instead". The TestClient still works on the
+    # installed httpx; under ``error`` this dep deprecation otherwise fails
+    # COLLECTION of every TestClient-using test (CI installs the newest
+    # starlette while a pinned-older dev venv would not see it).
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
     # sqlite3.Connection finalizer warnings: when a connection is
     # collected without an explicit close, the interpreter raises an
     # unraisable warning during __del__ and pytest attributes it to
