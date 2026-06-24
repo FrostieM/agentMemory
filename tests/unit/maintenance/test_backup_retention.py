@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agent_memory_lite.maintenance import backup_retention as br
+from agent_memory_lite.maintenance import backup_retention_common as br_common
 from agent_memory_lite.maintenance.backup_retention import (
     prune_backups,
     prune_backups_aged,
@@ -127,14 +127,16 @@ def test_failure_soft_skips_unremovable_entry(tmp_path: Path, monkeypatch) -> No
     pre = "vectors_x_"
     for i in range(3):
         _mk(tmp_path / f"{pre}{i}.lance", mtime=1000.0 + i, is_dir=True)
-    real_rmtree = br.shutil.rmtree
+    # ``_delete_one`` (which calls ``shutil.rmtree``) lives in
+    # ``backup_retention_common``; patch shutil there, not on the facade.
+    real_rmtree = br_common.shutil.rmtree
 
     def _flaky_rmtree(path, *a, **k):
         if path.name.endswith("0.lance"):  # the oldest -> simulate a lock
             raise OSError("locked")
         return real_rmtree(path, *a, **k)
 
-    monkeypatch.setattr(br.shutil, "rmtree", _flaky_rmtree)
+    monkeypatch.setattr(br_common.shutil, "rmtree", _flaky_rmtree)
     # keep=1 -> wants to delete index 0 and 1; index 0 fails, 1 succeeds.
     deleted = prune_backups(tmp_path, prefix=pre, keep=1)
     names = sorted(p.name for p in deleted)

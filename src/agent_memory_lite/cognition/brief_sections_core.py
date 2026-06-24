@@ -8,18 +8,29 @@ compose_brief redistribute the freed budget to denser sections.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 from agent_memory_lite.cognition.brief_models import BriefSection
+from agent_memory_lite.cognition.brief_sections_core_state import (
+    _build_state,
+    _count_open_tasks,
+)
 from agent_memory_lite.cognition.brief_tokens import fit_to_budget
 from agent_memory_lite.storage.reader import count_kind, list_kind
+
+__all__ = [
+    "_SELF_MODEL_BRIEF_WORDS",
+    "_build_code_hubs",
+    "_build_identity",
+    "_build_state",
+    "_build_top_decisions",
+    "_count_open_tasks",
+]
 
 # Self-model narrative in the DB is 50-150 words; the brief renders an
 # abridged version so workspace overview + discipline reminder still fit
 # in the identity-section budget (~90 tokens at the default 500 budget).
 _SELF_MODEL_BRIEF_WORDS = 40
-_OPEN_TASK_STATUSES = ("active", "in_progress")
 
 # Code-hub ranking is by caller count, which floats vendored libraries, minified
 # assets, test scaffolding, and operational scripts to the top -- none are the
@@ -37,54 +48,6 @@ _CODE_HUB_PATH_EXCLUDES = (
     "%/tests/%",
     "scripts/%",
 )
-
-
-def _blockers_count_from_json(value: object) -> int:
-    if not isinstance(value, str) or not value.strip():
-        return 0
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return 0
-    return len(parsed) if isinstance(parsed, list) else 0
-
-
-def _count_open_tasks(conn: sqlite3.Connection, workspace_id: str) -> int:
-    try:
-        return int(
-            conn.execute(
-                """
-                SELECT COUNT(*) FROM tasks
-                WHERE workspace_id = ? AND status IN ('active', 'in_progress')
-                """,
-                (workspace_id,),
-            ).fetchone()[0]
-        )
-    except sqlite3.OperationalError:
-        return 0
-
-
-def _open_task_rows(
-    conn: sqlite3.Connection, workspace_id: str, *, limit: int
-) -> list[dict[str, object]]:
-    try:
-        rows = conn.execute(
-            """
-            SELECT * FROM tasks
-            WHERE workspace_id = ? AND status IN ('active', 'in_progress')
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (workspace_id, limit),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    out: list[dict[str, object]] = []
-    for row in rows:
-        item = dict(row)
-        item["blockers_count"] = _blockers_count_from_json(item.get("blockers_json"))
-        out.append(item)
-    return out
 
 
 def _build_identity(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
@@ -181,32 +144,6 @@ def _build_top_decisions(
         sup = f" supersedes {d['supersedes']}" if d.get("supersedes") else ""
         lines.append(f"- {d['id']}{marker}: {gist}{sup}")
     return BriefSection(name="decisions", budget=budget, lines=fit_to_budget(lines, budget))
-
-
-def _build_state(conn: sqlite3.Connection, workspace_id: str, budget: int) -> BriefSection:
-    """Workspace-aware (P2): emit nothing on a workspace with no active
-    tasks. The freed budget is reallocated by ``_redistribute_and_rebuild``
-    in ``compose_brief``: when this section returns empty, denser
-    sections (identity / behaviors / decisions / aging_decisions) get a
-    proportional bonus + re-render with bigger caps.
-    """
-    rows = _open_task_rows(conn, workspace_id, limit=3)
-    if not rows:
-        return BriefSection(name="state", budget=budget, lines=[])
-    lines = ["## State"]
-    for t in rows:
-        goal = t.get("goal_one_line") or "?"
-        status = t.get("status", "?")
-        next_action = t.get("next_action") or "(none)"
-        blockers = t.get("blockers_count", 0)
-        lines.append(
-            f"- task {t.get('task_id', '?')} [{status}]: {goal} "
-            f"→ next: {next_action} (blockers: {blockers})"
-        )
-    fitted = fit_to_budget(lines, budget)
-    if not any(line.startswith("- task ") for line in fitted):
-        return BriefSection(name="state", budget=budget, lines=[])
-    return BriefSection(name="state", budget=budget, lines=fitted)
 
 
 def _build_code_hubs(

@@ -12,13 +12,14 @@ import threading
 from pathlib import Path
 
 from agent_memory_lite.config.settings import get_settings
-from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.db.connection import close_connection, open_connection
 from agent_memory_lite.db.migrations import apply_migrations
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.embeddings.factory import get_embedding_provider
 from agent_memory_lite.mcp.stdio_env import _env_flag, _env_float, _memory_http_base_url
 from agent_memory_lite.mcp.stdio_path_resolver import resolve_paths_from_cwd
+from agent_memory_lite.mcp.stdio_runtime_provider import build_provider, is_remote_provider
+from agent_memory_lite.mcp.stdio_runtime_registry import _registry_paths_for
 from agent_memory_lite.mcp.stdio_unresolved_warn import (
     _unresolved_warned,
     reset_unresolved_warned,
@@ -133,41 +134,12 @@ class _Runtime:
         return self._provider
 
     def _build_provider(self) -> EmbeddingProvider:
-        """Prefer the out-of-process HTTP embedder so this MCP process never
-        imports torch -- importing it before serving forces an 8-15s connect and
-        deferring it deadlocks Python 3.14's import lock (both measured; see
-        http_provider). Probe the HTTP service once; fall back to the in-process
-        provider when it is unreachable so a standalone MCP server still works."""
-        from agent_memory_lite.embeddings.base import (  # noqa: PLC0415
-            EmbeddingProviderUnavailableError,
-        )
-        from agent_memory_lite.embeddings.http_provider import (  # noqa: PLC0415
-            HttpEmbeddingProvider,
-        )
-
-        base_url = _memory_http_base_url(self.settings)
-        if base_url:
-            candidate = HttpEmbeddingProvider(
-                base_url=base_url,
-                model_name=self.settings.embedding_model,
-                batch_size=self.settings.embedding_batch_size,
-            )
-            try:
-                candidate.probe()
-            except EmbeddingProviderUnavailableError:
-                pass
-            else:
-                return candidate
-        return get_embedding_provider(self.settings)
+        return build_provider(self.settings, get_embedding_provider)
 
     def using_remote_embeddings(self) -> bool:
         """True when provider() resolved to the out-of-process HTTP embedder, so
         stdio_server._run can skip the in-process warm-up and connect instantly."""
-        from agent_memory_lite.embeddings.http_provider import (  # noqa: PLC0415
-            HttpEmbeddingProvider,
-        )
-
-        return isinstance(self.provider(), HttpEmbeddingProvider)
+        return is_remote_provider(self.provider())
 
     def store(self) -> VectorStore:
         if self._store is None:
@@ -215,18 +187,6 @@ class _Runtime:
             with contextlib.suppress(Exception):
                 store.close()
         self._stores_by_path.clear()
-
-
-def _registry_paths_for(runtime: _Runtime, workspace_id: str) -> tuple[str, str] | None:
-    """Look up ``(db_path, vector_path)`` for ``workspace_id`` in the hub registry."""
-    try:
-        registry = WorkspaceRegistry(runtime.settings.workspaces_file)
-        entry = registry.get(workspace_id)
-    except Exception:
-        return None
-    if entry is None or not entry.db_path:
-        return None
-    return entry.db_path, entry.vector_path or str(runtime.settings.vector_db_path)
 
 
 _runtime = _Runtime()

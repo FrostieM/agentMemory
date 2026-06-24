@@ -73,8 +73,27 @@ import logging
 import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol
+from pathlib import Path  # noqa: F401  re-exported: tests patch ``ob.Path.home``
+
+# The import-free cache probe lives in a sibling module; re-exported here so the
+# original module path keeps exporting these symbols (callers / tests use
+# ``offline_bootstrap._model_in_hf_cache`` and friends).
+from agent_memory_lite.config.offline_bootstrap_cache_probe import (
+    _WEIGHT_SUFFIXES,  # noqa: F401  re-exported for callers/tests
+    _expand,  # noqa: F401  re-exported for callers/tests
+    _hf_cache_root,  # noqa: F401  re-exported for callers/tests
+    _model_in_hf_cache,
+)
+
+# The settings-driven gate lives in a sibling module; re-exported here so the
+# original module path keeps exporting these. The gate references this module
+# only via TYPE_CHECKING + a lazy call-time import, so there is no import cycle.
+from agent_memory_lite.config.offline_bootstrap_settings_gate import (
+    SupportsOfflineConfig as SupportsOfflineConfig,  # noqa: PLC0414  explicit re-export
+)
+from agent_memory_lite.config.offline_bootstrap_settings_gate import (
+    maybe_configure_offline as maybe_configure_offline,  # noqa: PLC0414  explicit re-export
+)
 
 _log = logging.getLogger("agent_memory_lite.offline_bootstrap")
 
@@ -84,12 +103,6 @@ _log = logging.getLogger("agent_memory_lite.offline_bootstrap")
 OFFLINE_ENV_VARS: tuple[str, ...] = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
 
 _TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on"})
-
-# Model-weight file extensions. A snapshot holding only config / tokenizer
-# files (an interrupted download) must NOT count as cached.
-_WEIGHT_SUFFIXES: frozenset[str] = frozenset(
-    {".safetensors", ".bin", ".onnx", ".gguf", ".pt", ".h5", ".ckpt"}
-)
 
 
 @dataclass(frozen=True)
@@ -101,63 +114,6 @@ class OfflineReport:
     offline_enabled: bool
     operator_override: bool
     reason: str
-
-
-def _expand(value: str) -> Path:
-    """Expand ``~`` and ``$VAR`` like huggingface_hub does for cache paths."""
-    return Path(os.path.expandvars(os.path.expanduser(value)))
-
-
-def _hf_cache_root(env: Mapping[str, str]) -> Path:
-    """Resolve the HF hub cache dir, mirroring huggingface_hub's precedence.
-
-    Deliberately does NOT import ``huggingface_hub`` (that would freeze its
-    ``HF_HUB_OFFLINE`` constant before :func:`configure_offline_env` sets the
-    env var). Precedence: ``HF_HUB_CACHE`` -> legacy ``HUGGINGFACE_HUB_CACHE``
-    -> ``HF_HOME/hub`` -> ``XDG_CACHE_HOME/huggingface/hub`` ->
-    ``~/.cache/huggingface/hub``.
-    """
-    explicit = env.get("HF_HUB_CACHE") or env.get("HUGGINGFACE_HUB_CACHE")
-    if explicit:
-        return _expand(explicit)
-    hf_home = env.get("HF_HOME")
-    if hf_home:
-        return _expand(hf_home) / "hub"
-    xdg = env.get("XDG_CACHE_HOME")
-    if xdg:
-        return _expand(xdg) / "huggingface" / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-
-def _model_in_hf_cache(model_name: str, *, env: Mapping[str, str] | None = None) -> bool:
-    """Return True iff ``model_name`` has weights on disk in the local HF cache.
-
-    Filesystem-only and conservative -- a snapshot revision must contain at
-    least one model-weight file (see ``_WEIGHT_SUFFIXES``) to count as cached.
-    Returns False -- never raises -- on ANY error (missing dirs, an
-    unresolvable home directory, permission faults), so an enforce-offline
-    decision is only ever made on a positive, on-disk weight hit.
-    """
-    if not model_name:
-        return False
-    src = os.environ if env is None else env
-    folder = "models--" + model_name.replace("/", "--")
-    try:
-        snapshots = _hf_cache_root(src) / folder / "snapshots"
-        if not snapshots.is_dir():
-            return False
-        for rev in snapshots.iterdir():
-            if not rev.is_dir():
-                continue
-            for path in rev.rglob("*"):
-                if path.is_file() and path.suffix.lower() in _WEIGHT_SUFFIXES:
-                    return True
-        return False
-    except Exception:
-        # A best-effort cache probe must never break startup -- Path.home()
-        # raises RuntimeError when the home dir is unresolvable (stripped
-        # containers), iterdir/rglob can raise OSError on odd mounts, etc.
-        return False
 
 
 def configure_offline_env(
@@ -212,31 +168,6 @@ def configure_offline_env(
         report.reason,
     )
     return report
-
-
-class SupportsOfflineConfig(Protocol):
-    """Minimal Settings shape needed to decide HF offline mode.
-
-    Read-only properties (not bare attributes) so a pydantic ``Settings`` whose
-    fields are read-only still satisfies the protocol structurally.
-    """
-
-    @property
-    def hf_auto_offline(self) -> bool: ...
-
-    @property
-    def embedding_model(self) -> str: ...
-
-
-def maybe_configure_offline(settings: SupportsOfflineConfig) -> OfflineReport | None:
-    """Gate + apply auto-offline from a startup path (HTTP ``_bootstrap`` / MCP ``_run``).
-
-    Single source for the ``hf_auto_offline`` gate, so the two entrypoints
-    cannot drift. Returns the :class:`OfflineReport` when enabled, else ``None``.
-    """
-    if not settings.hf_auto_offline:
-        return None
-    return configure_offline_env(settings.embedding_model)
 
 
 def hf_offline_active(env: Mapping[str, str] | None = None) -> bool:
