@@ -8,12 +8,13 @@ cycle and their findings were fixed, but a 3-consecutive-zero-new-findings
 streak across the whole system has **not** been certified. This document tracks
 where we stand and the remaining gaps.
 
-- **As of:** v3.14.0 — **local only**; origin/main is at 3.9.0, so the 3.10→3.14
-  line (6 commits) is committed locally and **not pushed/released**. Every score
-  below is for that unreleased local line; no external user can run it yet.
-- **Grounding (verified):** `pytest` collects 2643 tests (green this cycle);
-  `ruff`/`ruff format` clean; `mypy --strict` clean on 526 source files;
-  `scripts/crash_test` has 27 phases; migrations `0001`–`0003`; v3 surface/
+- **As of:** v3.22.0 — released and **pushed to origin/main with green CI** (the
+  full pipeline: install, ruff, mypy, check_sloc, v3-surface, tests, retrieval
+  evals, agent-contract checks). Every score below is for current `main`.
+- **Grounding (verified):** `pytest` collects 2812 tests (green this cycle);
+  `ruff`/`ruff format` clean; `mypy --strict` clean on 538 source files;
+  `scripts/crash_test` has 27 phases; the 150-SLOC ceiling
+  (`check_sloc.py --enforce`) is green; migrations `0001`–`0007`; v3 surface/
   contract checks pass.
 
 ## What the project is
@@ -27,8 +28,8 @@ HTTP surface and an MCP stdio surface (12 compact v3 tools), binds to
 ## Scorecard (per dimension)
 
 Scores are an internal read of the local line. A harsh external reviewer would
-likely land **~7.5** overall (see "Overall" below) — chiefly because the line
-is unreleased and production DBs are mid-migration (#122).
+likely land **~7.5** overall (see "Overall" below) — chiefly because production
+DBs are mid-migration (#122).
 
 | Dimension | Score | Gap to 10/10 |
 |---|---|---|
@@ -40,7 +41,7 @@ is unreleased and production DBs are mid-migration (#122).
 | Testing & quality gates | 8.5 | UI not live-verified (10.8); plan UI unbuilt (#110); no retrieval-regression gate. |
 | Operability & observability | 7.5 | Offline posture absent from `memory_status`; UI refresh pending (10.7); backup retention is manual-trigger, not a sweep. |
 | Performance & scale | 7.0 | Single-machine; sync-write latency; `vectors.lance` still copied into backups; LanceDB compaction TODO. |
-| Docs & developer experience | 8.0 | A few env vars under-documented; line unreleased. |
+| Docs & developer experience | 8.0 | A few env vars still under-documented. |
 | **Overall (internal)** | **~8.0** | Harsh-external floor ~7.5. See "Roadmap to 10/10". |
 
 ### Notes per dimension
@@ -96,7 +97,7 @@ call deterministically (hook exits non-zero). Caveats: the read-side check is
 once-per-session (any prior impact-check authorises subsequent reads), and the
 hook **fails open** if memory is unreachable (so it never bricks the agent).
 
-**Testing (8.5).** 2643 collected tests, paired tests for non-trivial behavior,
+**Testing (8.5).** 2812 collected tests, paired tests for non-trivial behavior,
 a 27-phase crash test, an eval suite, SLOC enforcement, and the multi-gate
 release check. This cycle's features were each mutation-tested by adversarial
 agents. Gaps: UI pages are not verified to render live (10.8), the plan UI is
@@ -140,7 +141,7 @@ Compared to mem0, Letta/MemGPT, Zep, LangMem, and plain vector-RAG:
 - **Smaller ecosystem & fewer integrations** than the larger projects.
 - **Benchmarks not gating** — MemBench/BEIR exist but aren't a continuous signal.
 - **No full entity knowledge graph** (has bi-temporal + causal links, not Zep's KG).
-- **Windows-centric dev surface; the line is unreleased.**
+- **Windows-centric dev surface.**
 
 ## Roadmap to 10/10 (prioritized)
 
@@ -157,7 +158,7 @@ Compared to mem0, Letta/MemGPT, Zep, LangMem, and plain vector-RAG:
    trust-dashboard performance.**
 7. Smaller: HF offline posture in `memory_status`; stop backing up the
    rebuildable `vectors.lance` + add LanceDB compaction; make retention a
-   continuous sweep; push/release the 3.10→3.14 line (needs operator approval).
+   continuous sweep.
 
 ## Bottom line
 
@@ -168,5 +169,5 @@ Reliability took a large step up this cycle — the **dominant hang class is
 closed**. It is **not** at 10/10: the headline gaps are the synchronous write
 path, the unfinished production migration (#122), partial write-route isolation
 (#115), no retrieval-regression gate, and unbuilt/unverified UI. Internal read
-~8.0; a harsh external reviewer scoring the unreleased line with a mid-migration
-prod would land ~7.5.
+~8.0; a harsh external reviewer scoring it against a mid-migration prod would
+land ~7.5.
