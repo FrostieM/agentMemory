@@ -15,6 +15,10 @@ keywords = ["memory", "rag", "agent", "sqlite", "lancedb", "local-first"]
 dependencies = [
     "fastapi>=0.110,<1.0",
     "uvicorn[standard]>=0.27,<1.0",
+    # starlette pinned <1.0: 1.x removed starlette.exceptions.StarletteDeprecationWarning, which the
+    # MCP introspection path imports → memory_status crashed with ImportError. 0.52.x keeps the symbol
+    # and satisfies mcp (>=0.27) + fastapi. Bump only after the upstream import is gone. (Maxim 2026-06-24)
+    "starlette>=0.46,<1.0",
     "pydantic>=2.6,<3.0",
     "pydantic-settings>=2.2,<3.0",
     "python-dotenv>=1.0,<2.0",
