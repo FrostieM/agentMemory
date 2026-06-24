@@ -23,54 +23,26 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
 from typing import Any
 
+from agent_memory_lite.repositories.disputes_repo_read import (
+    Dispute,
+    get_dispute,
+    list_disputes,
+)
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
+__all__ = [
+    "Dispute",
+    "get_dispute",
+    "insert_dispute",
+    "list_disputes",
+    "resolve_dispute",
+]
+
 _OPEN = "open"
 _TERMINAL = frozenset({"accepted", "rejected", "withdrawn"})
-
-
-@dataclass(frozen=True, slots=True)
-class Dispute:
-    """One row from ``memory_disputes`` — full read shape."""
-
-    id: str
-    workspace_id: str
-    target_kind: str
-    target_id: str
-    claimant_agent_id: str
-    claim_text: str
-    evidence: list[Any]
-    status: str
-    resolution: str
-    created_at: str
-    resolved_at: str
-
-
-def _row_to_dispute(row: sqlite3.Row) -> Dispute:
-    raw_ev = row["evidence_json"] or "[]"
-    try:
-        ev = json.loads(raw_ev)
-    except (ValueError, TypeError):
-        ev = []
-    if not isinstance(ev, list):
-        ev = []
-    return Dispute(
-        id=str(row["id"]),
-        workspace_id=str(row["workspace_id"]),
-        target_kind=str(row["target_kind"]),
-        target_id=str(row["target_id"]),
-        claimant_agent_id=str(row["claimant_agent_id"]),
-        claim_text=str(row["claim_text"]),
-        evidence=ev,
-        status=str(row["status"]),
-        resolution=str(row["resolution"] or ""),
-        created_at=str(row["created_at"]),
-        resolved_at=str(row["resolved_at"] or ""),
-    )
 
 
 def insert_dispute(
@@ -134,41 +106,3 @@ def resolve_dispute(
     )
     conn.commit()
     return cur.rowcount > 0
-
-
-def list_disputes(
-    conn: sqlite3.Connection,
-    *,
-    workspace_id: str,
-    status: str | None = None,
-    limit: int = 50,
-) -> list[Dispute]:
-    """Return disputes for the workspace, newest first. ``status`` is
-    an optional filter; pass None to get every state."""
-    try:
-        if status:
-            rows = conn.execute(
-                """SELECT * FROM memory_disputes
-                    WHERE workspace_id = ? AND status = ?
-                 ORDER BY created_at DESC LIMIT ?""",
-                (workspace_id, status, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT * FROM memory_disputes
-                    WHERE workspace_id = ?
-                 ORDER BY created_at DESC LIMIT ?""",
-                (workspace_id, limit),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    return [_row_to_dispute(r) for r in rows]
-
-
-def get_dispute(conn: sqlite3.Connection, *, dispute_id: str) -> Dispute | None:
-    """Read one dispute by id. Returns None on miss / missing table."""
-    try:
-        row = conn.execute("SELECT * FROM memory_disputes WHERE id = ?", (dispute_id,)).fetchone()
-    except sqlite3.OperationalError:
-        return None
-    return _row_to_dispute(row) if row else None

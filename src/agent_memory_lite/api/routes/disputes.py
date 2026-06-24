@@ -16,13 +16,21 @@ import os
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
 
 from agent_memory_lite.api.deps import (
     DbDep,
     SettingsDep,
     ensure_workspace_readable,
     ensure_workspace_writable,
+)
+from agent_memory_lite.api.routes.disputes_schemas import (
+    DisputeDTO,
+    ListDisputesResponse,
+    ProposeDisputeRequest,
+    ProposeDisputeResponse,
+    ResolveDisputeRequest,
+    ResolveDisputeResponse,
+    _to_dto,
 )
 from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
 from agent_memory_lite.repositories.disputes_repo import (
@@ -32,6 +40,20 @@ from agent_memory_lite.repositories.disputes_repo import (
     list_disputes,
     resolve_dispute,
 )
+
+__all__ = [
+    "Dispute",
+    "DisputeDTO",
+    "ListDisputesResponse",
+    "ProposeDisputeRequest",
+    "ProposeDisputeResponse",
+    "ResolveDisputeRequest",
+    "ResolveDisputeResponse",
+    "list_disputes_route",
+    "propose_dispute_route",
+    "resolve_dispute_route",
+    "router",
+]
 
 router = APIRouter()
 
@@ -46,79 +68,6 @@ def _disputes_enabled() -> bool:
 def _require_enabled() -> None:
     if not _disputes_enabled():
         raise HTTPException(status_code=503, detail="memory_disputes feature disabled")
-
-
-class DisputeDTO(BaseModel):
-    """Wire-side projection of a dispute row."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    workspace_id: str
-    target_kind: str
-    target_id: str
-    claimant_agent_id: str
-    claim_text: str
-    evidence: list[object] = Field(default_factory=list)
-    status: str
-    resolution: str = ""
-    created_at: str
-    resolved_at: str = ""
-
-
-def _to_dto(d: Dispute) -> DisputeDTO:
-    return DisputeDTO(
-        id=d.id,
-        workspace_id=d.workspace_id,
-        target_kind=d.target_kind,
-        target_id=d.target_id,
-        claimant_agent_id=d.claimant_agent_id,
-        claim_text=d.claim_text,
-        evidence=list(d.evidence),
-        status=d.status,
-        resolution=d.resolution,
-        created_at=d.created_at,
-        resolved_at=d.resolved_at,
-    )
-
-
-class ProposeDisputeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    workspace_id: str = Field(min_length=1)
-    target_kind: str = Field(min_length=1)
-    target_id: str = Field(min_length=1)
-    claimant_agent_id: str = Field(min_length=1)
-    claim_text: str = Field(min_length=1)
-    evidence: list[object] = Field(default_factory=list)
-
-
-class ProposeDisputeResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dispute: DisputeDTO
-
-
-class ResolveDisputeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dispute_id: str = Field(min_length=1)
-    status: str = Field(min_length=1)  # accepted | rejected | withdrawn
-    resolution: str = ""
-
-
-class ResolveDisputeResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    dispute: DisputeDTO
-    flipped: bool
-
-
-class ListDisputesResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    workspace_id: str
-    disputes: list[DisputeDTO]
 
 
 @router.post("/memory/propose_dispute", response_model=ProposeDisputeResponse)

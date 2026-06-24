@@ -28,7 +28,23 @@ from __future__ import annotations
 import sqlite3
 
 from agent_memory_lite.config.settings import Settings
+
+# Phase 1 (memory-as-brain) supersede + correction signals live in a sibling
+# module to keep this file small; re-exported here so the public import path
+# (record_implicit_supersede / record_implicit_correction) is unchanged.
+from agent_memory_lite.maintenance.implicit_feedback_supersede import (
+    record_implicit_correction,
+    record_implicit_supersede,
+)
 from agent_memory_lite.maintenance.usage_feedback import record_usage_feedback
+
+__all__ = [
+    "record_implicit_archive",
+    "record_implicit_correction",
+    "record_implicit_link",
+    "record_implicit_promote",
+    "record_implicit_supersede",
+]
 
 _SUPPORTED_SOURCE_TYPES = {"chunk", "decision", "theory", "insight", "capability"}
 
@@ -131,69 +147,3 @@ def _map_link_target_type(target_type: str) -> str | None:
         "experiment_result": None,
     }
     return mapping.get(target_type)
-
-
-# ============================================================
-# Phase 1 (memory-as-brain): supersede + correction implicit feedback.
-# A superseded decision and a corrected claim are both operator signals
-# that "this was wrong". They feed the outcome_score loop without the
-# agent having to call record_usage_feedback explicitly.
-# ============================================================
-
-
-def record_implicit_supersede(
-    conn: sqlite3.Connection,
-    *,
-    settings: Settings,
-    workspace_id: str,
-    source_type: str,
-    source_id: str,
-) -> bool:
-    """Superseded decision/theory -> -0.6 feedback on the OLD row."""
-    if not settings.implicit_feedback_enabled:
-        return False
-    if source_type not in _SUPPORTED_SOURCE_TYPES:
-        return False
-    record_usage_feedback(
-        conn,
-        workspace_id=workspace_id,
-        source_type=source_type,
-        source_id=source_id,
-        query="",
-        usefulness=-0.6,
-        notes="implicit: superseded",
-        source="implicit_supersede",
-    )
-    return True
-
-
-def record_implicit_correction(
-    conn: sqlite3.Connection,
-    *,
-    settings: Settings,
-    workspace_id: str,
-    source_type: str,
-    source_id: str,
-) -> bool:
-    """Operator-corrected claim -> -0.8 feedback on the corrected target.
-
-    The v1.10 correction loop already writes ``memory_candidate(kind=correction)``;
-    when the operator promotes that candidate to a behavior, the underlying
-    decision / theory the correction targeted should ALSO carry a negative
-    outcome signal so brief and lint drop it out of "Active".
-    """
-    if not settings.implicit_feedback_enabled:
-        return False
-    if source_type not in _SUPPORTED_SOURCE_TYPES:
-        return False
-    record_usage_feedback(
-        conn,
-        workspace_id=workspace_id,
-        source_type=source_type,
-        source_id=source_id,
-        query="",
-        usefulness=-0.8,
-        notes="implicit: correction",
-        source="implicit_correction",
-    )
-    return True
