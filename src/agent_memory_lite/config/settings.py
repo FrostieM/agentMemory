@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EmbeddingBackend = Literal["sentence_transformers", "ollama"]
@@ -469,6 +469,31 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+
+    @model_validator(mode="after")
+    def _validate_defer_embedding_dependencies(self) -> Settings:
+        """Fail loud at startup if deferred embedding is on without its healers.
+
+        Reliability audit 2026-06-25: ``MEMORY_DEFER_EMBEDDING`` returns the
+        episode write WITHOUT embedding the chunk, relying on the brain-pass
+        vector-repair step to embed it later. Before this guard the dependency
+        was only a code comment -- an operator who set DEFER_EMBEDDING while
+        disabling either loop got *silent permanent* vector-search invisibility
+        for every deferred episode. Now it is a startup error, not a surprise.
+
+        Guards the env/construction path (how the operator configures the
+        service). ``model_copy(update=...)`` deliberately skips validators, so a
+        test that forces the combo that way is not blocked -- intentional.
+        """
+        if self.defer_embedding and not (self.vector_repair_enabled and self.brain_pass_enabled):
+            raise ValueError(
+                "MEMORY_DEFER_EMBEDDING=1 requires MEMORY_VECTOR_REPAIR_ENABLED=1 and "
+                "MEMORY_BRAIN_PASS_ENABLED=1 (both default on): the brain-pass "
+                "vector-repair step is what embeds deferred chunks. Without it, "
+                "deferred episodes are never embedded and stay invisible to vector "
+                "search. Enable both loops, or turn off MEMORY_DEFER_EMBEDDING."
+            )
+        return self
 
     def url_fields(self) -> dict[str, str]:
         """Return non-empty URL settings, keyed by env-style name."""

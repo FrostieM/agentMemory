@@ -190,10 +190,42 @@ def test_emit_brief_wraps_in_agent_memory_block(capsys: pytest.CaptureFixture) -
     assert "# Identity" in out
 
 
-def test_emit_notice_format(capsys: pytest.CaptureFixture) -> None:
+def test_emit_notice_is_visible_not_stripped_comment(capsys: pytest.CaptureFixture) -> None:
+    """Reliability audit 2026-06-25: a degradation notice must be VISIBLE to the
+    agent. The old form buried the message in an HTML comment, which the harness
+    strips -- so a service-down agent saw an empty <agent-memory> envelope and
+    ran blind. The notice now uses a <hook_notice> block that survives."""
     v3hook._emit_notice("service down")
     out = capsys.readouterr().out
-    assert "<!-- memory brief hook notice: service down -->" in out
+    assert "<hook_notice" in out  # visible block, not a stripped comment
+    assert 'severity="warning"' in out
+    assert "service down" in out
+    assert "<!--" not in out  # regression guard: never bury it in a comment again
+
+
+def test_main_unreachable_service_emits_visible_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """End-to-end: when /memory/brief is unreachable, the agent must SEE a
+    visible degradation notice (not an empty stripped envelope), and the hook
+    must still exit 0 -- announce the failure, never brick the turn."""
+    monkeypatch.setattr(v3hook, "DEFAULT_WORKSPACE", "env-ws")
+    monkeypatch.setattr(v3hook, "DEFAULT_DEDUP_ENABLED", False)
+    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "x.db"))
+    monkeypatch.setattr(v3hook, "_fetch_brief", lambda **_: None)  # service unreachable
+
+    import io  # noqa: PLC0415
+
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"prompt": "do a thing"}'))
+    rc = v3hook.main()
+    assert rc == 0  # never bricks the turn
+    out = capsys.readouterr().out
+    assert "<hook_notice" in out  # the agent SEES the degradation
+    assert "unreachable" in out
+    assert "<!--" not in out  # not a stripped comment
+    # The notice must tell the AGENT it is working blind (per the global
+    # CLAUDE.md mandate), not just give the operator restart instructions.
+    assert "do not invent recalled context" in out
 
 
 # ============================================================

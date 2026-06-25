@@ -310,13 +310,30 @@ def _decide_for_event(event: dict[str, Any]) -> tuple[bool, str, str, str]:  # n
             if reflex_block:
                 allow_call = False
                 diagnostic = reflex_diag
-    except Exception:
-        # Any decision-path failure is fail-OPEN. The hook protects
-        # against memory-mismatches, not safety boundaries; crashing on
-        # ImportError/OSError/AttributeError would block the user's
-        # tool call with a stderr traceback that Claude Code may or
-        # may not handle gracefully. Better to allow the call and let
-        # the agent / operator notice memory is degraded.
+    except Exception as exc:
+        # Fail-OPEN but NOT silent (reliability audit 2026-06-25). The hook
+        # protects against memory-mismatches, not safety boundaries; crashing on
+        # ImportError/OSError/AttributeError would block the user's tool call
+        # with a stderr traceback Claude Code may or may not handle gracefully.
+        # So we still allow the call -- but the old code returned an allow
+        # indistinguishable from a clean one, so the failure was invisible. Now
+        # we RECORD a distinct ``degraded_enforce`` hook event so a degraded
+        # allow is distinguishable from a clean one in the hook audit log
+        # (post-hoc diagnosis: grep the log / a future memory_status surface).
+        # NOTE we deliberately do NOT print to stderr: a PreToolUse hook cannot
+        # surface a *live* notice on a fail-open allow -- exit 0 discards stderr
+        # and exit 2 would block the call -- so the persisted record is the only
+        # honest mechanism. (The brief hook, which can inject context, is where
+        # the agent gets a live "memory degraded" notice.)
+        with contextlib.suppress(Exception):
+            record_hook_event(
+                hook="PreToolUse",
+                event=event,
+                workspace_id=workspace_id,
+                status="degraded_enforce",
+                detail=f"enforce_failed:{type(exc).__name__}",
+                db_path=db_path,
+            )
         return True, "", workspace_id, db_path
     finally:
         conn.close()

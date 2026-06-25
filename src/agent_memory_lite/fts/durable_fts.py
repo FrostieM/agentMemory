@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.db.transactions import with_tx
+from agent_memory_lite.logging_setup import get_logger
+
+_log = get_logger("fts.durable_fts")
+
 # kind -> source table (the 6 durable knowledge kinds only).
 _KIND_TABLE: dict[str, str] = {
     "decision": "decisions",
@@ -61,32 +66,53 @@ def _table_has_durable_fts(conn: sqlite3.Connection) -> bool:
 
 def sync_durable_fts(
     conn: sqlite3.Connection, *, kind: str, object_id: str, workspace_id: str
-) -> None:
+) -> bool:
     """Re-index one durable row's FTS content (delete old + insert fresh).
 
     No-op for non-durable kinds or a pre-0007 DB. Reads the kind's free-text
     columns positionally so it does not depend on the connection's row_factory.
-    Best-effort: a sync failure must never break the write it follows.
+
+    Atomic + observable (reliability audit 2026-06-25). Connections are
+    autocommit, so the old code auto-committed the DELETE and the INSERT
+    *separately*: a failed INSERT left the row permanently de-indexed
+    (silently unsearchable). Now the DELETE+INSERT run inside one ``with_tx``
+    unit, so a failure rolls the DELETE back -- the row's prior FTS entry
+    survives. Still failure-soft for the caller (never raises into the durable
+    write), but no longer silent: the failure is logged and returned so the
+    create choke point can record extra context. The brain-pass rebuild
+    backstop then re-indexes the row on its next tick -- but only when
+    ``brain_pass_enabled`` is on (the default); if the operator disabled the
+    background path, a failed sync stays unsearchable until a manual
+    ``rebuild_durable_fts``. Returns True on success/no-op, False when the sync
+    was rolled back.
     """
     if kind not in DURABLE_FTS_KINDS or not _table_has_durable_fts(conn):
-        return
+        return True
     table = _KIND_TABLE[kind]
     cols = _FTS_COLUMNS[kind]
     try:
-        row = conn.execute(
-            f"SELECT {', '.join(cols)} FROM {table} WHERE id = ? AND workspace_id = ?",
-            (object_id, workspace_id),
-        ).fetchone()
-        conn.execute("DELETE FROM durable_fts WHERE object_id = ?", (object_id,))
-        if row is None:
-            return
-        conn.execute(
-            "INSERT INTO durable_fts (object_id, workspace_id, kind, content) VALUES (?, ?, ?, ?)",
-            (object_id, workspace_id, kind, _content_from_values(list(row))),
+        with with_tx(conn):
+            row = conn.execute(
+                f"SELECT {', '.join(cols)} FROM {table} WHERE id = ? AND workspace_id = ?",
+                (object_id, workspace_id),
+            ).fetchone()
+            conn.execute("DELETE FROM durable_fts WHERE object_id = ?", (object_id,))
+            if row is not None:
+                conn.execute(
+                    "INSERT INTO durable_fts (object_id, workspace_id, kind, content) "
+                    "VALUES (?, ?, ?, ?)",
+                    (object_id, workspace_id, kind, _content_from_values(list(row))),
+                )
+        return True
+    except sqlite3.Error as exc:
+        _log.warning(
+            "durable_fts_sync_failed",
+            kind=kind,
+            object_id=object_id,
+            workspace_id=workspace_id,
+            error=str(exc),
         )
-    except sqlite3.Error:
-        # Failure-soft: never break the durable write because FTS sync hiccuped.
-        return
+        return False
 
 
 def delete_durable_fts(conn: sqlite3.Connection, object_id: str) -> int:

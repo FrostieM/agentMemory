@@ -26,8 +26,33 @@ from agent_memory_lite.ingestion.canonical_state_writers import (
 )
 from agent_memory_lite.ingestion.issue_writer import write_issue_canonical
 from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.storage.writer import write as storage_write
 from agent_memory_lite.vector_store.base import VectorStore
+
+_log = get_logger("ingestion.canonical_writer")
+
+
+def _sync_durable_fts_and_log(
+    conn: sqlite3.Connection, *, kind: str, object_id: str, workspace_id: str
+) -> None:
+    """Sync a freshly-created durable row's FTS index and surface a failure.
+
+    Reliability audit 2026-06-25: a failed sync means the row committed but is
+    temporarily unsearchable (until the brain-pass rebuild backstop re-indexes
+    it -- when ``MEMORY_BRAIN_PASS_ENABLED`` is on, the default; otherwise it
+    stays unsearchable until a manual ``rebuild_durable_fts``). Log it instead
+    of letting the create look fully successful -- the audit's silent-loss path.
+    """
+    synced = sync_durable_fts(conn, kind=kind, object_id=object_id, workspace_id=workspace_id)
+    conn.commit()
+    if not synced:
+        _log.warning(
+            "durable_fts_sync_skipped_on_create",
+            kind=kind,
+            object_id=object_id,
+            workspace_id=workspace_id,
+        )
 
 
 def write_canonical(
@@ -115,6 +140,7 @@ def write_canonical(
     # so all 6 durable kinds sync here -- the decision/theory/behavior business
     # writers bypass storage.writer entirely, so this could not live there.
     if result is not None and kind in DURABLE_FTS_KINDS:
-        sync_durable_fts(conn, kind=kind, object_id=str(result["id"]), workspace_id=workspace_id)
-        conn.commit()
+        _sync_durable_fts_and_log(
+            conn, kind=kind, object_id=str(result["id"]), workspace_id=workspace_id
+        )
     return result
