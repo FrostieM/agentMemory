@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from agent_memory_lite.config.settings import Settings
 
 
@@ -40,6 +42,35 @@ def test_settings_reads_strict_workspace_isolation(settings_factory) -> None:
     )
     assert s.workspace_id == "project-a"
     assert s.strict_workspace_isolation is True
+
+
+def test_defer_embedding_without_vector_repair_raises(settings_factory) -> None:
+    """Reliability audit 2026-06-25: DEFER_EMBEDDING returns the write without
+    embedding the chunk, leaning on the brain-pass vector-repair loop to embed
+    it later. With that loop off, deferred episodes are *silently* invisible to
+    vector search forever -- so the model must reject the combo at startup."""
+    with pytest.raises(ValueError, match="MEMORY_DEFER_EMBEDDING"):
+        settings_factory(
+            MEMORY_DEFER_EMBEDDING="true",
+            MEMORY_VECTOR_REPAIR_ENABLED="false",
+        )
+
+
+def test_defer_embedding_without_brain_pass_raises(settings_factory) -> None:
+    with pytest.raises(ValueError, match="MEMORY_BRAIN_PASS_ENABLED"):
+        settings_factory(
+            MEMORY_DEFER_EMBEDDING="true",
+            MEMORY_BRAIN_PASS_ENABLED="false",
+        )
+
+
+def test_defer_embedding_with_both_loops_is_accepted(settings_factory) -> None:
+    s = settings_factory(
+        MEMORY_DEFER_EMBEDDING="true",
+        MEMORY_VECTOR_REPAIR_ENABLED="true",
+        MEMORY_BRAIN_PASS_ENABLED="true",
+    )
+    assert s.defer_embedding is True
 
 
 def test_settings_is_frozen() -> None:

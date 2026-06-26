@@ -42,6 +42,23 @@ def _decision(conn: sqlite3.Connection, title: str, text: str) -> str:
     return str(out["id"])
 
 
+class _FailDurableInsertConn(sqlite3.Connection):
+    """A connection that fails INSERTs into ``durable_fts`` on demand.
+
+    Lets a test drive the sync rollback path deterministically while every
+    other statement (seeding, SELECT, DELETE, SAVEPOINT/RELEASE) passes
+    through. Mirrors the production connection (autocommit) so ``with_tx``
+    opens a real BEGIN/COMMIT around the re-index.
+    """
+
+    fail_durable_insert = False
+
+    def execute(self, sql: str, parameters: object = (), /) -> sqlite3.Cursor:  # type: ignore[override]
+        if self.fail_durable_insert and isinstance(sql, str) and "INSERT INTO durable_fts" in sql:
+            raise sqlite3.OperationalError("forced durable_fts insert failure")
+        return super().execute(sql, parameters)
+
+
 def _ids(hits: list) -> list[str]:
     return [h.projection["id"] for h in hits]
 
@@ -192,6 +209,45 @@ def test_rollback_resyncs_fts(conn: sqlite3.Connection) -> None:
     assert did not in _ids(
         search_kind_fts(conn, workspace_id="ws", kind="decision", query="giraffe", limit=5)
     )
+
+
+def test_sync_failure_is_atomic_and_surfaced_not_silent() -> None:
+    """Reliability audit 2026-06-25: a durable_fts INSERT failure must NOT leave
+    the row de-indexed, and must NOT be swallowed silently.
+
+    Pre-fix: connections are autocommit, so sync auto-committed the DELETE then
+    the INSERT *separately* -- a failed INSERT permanently de-indexed the row
+    (silently unsearchable) and the caller never knew. Post-fix the DELETE +
+    INSERT run inside one ``with_tx`` unit: a failed INSERT rolls the DELETE
+    back (the prior entry survives) and ``sync_durable_fts`` returns ``False``
+    so the create choke point can record the gap (and the brain-pass backstop
+    re-indexes on its next tick).
+    """
+    from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+    c = sqlite3.connect(":memory:", factory=_FailDurableInsertConn, isolation_level=None)
+    assert isinstance(c, _FailDurableInsertConn)
+    c.row_factory = sqlite3.Row
+    apply_migrations(c)
+    try:
+        did = _decision(c, "kelly atomic case", "quarter kelly sizing")
+        # Baseline: the row is indexed.
+        assert did in _ids(
+            search_kind_fts(c, workspace_id="ws", kind="decision", query="kelly", limit=5)
+        )
+        # Force the re-index INSERT to fail mid-sync.
+        c.fail_durable_insert = True
+        ok = sync_durable_fts(c, kind="decision", object_id=did, workspace_id="ws")
+        c.fail_durable_insert = False
+        # 1) The failure is surfaced, not silently swallowed.
+        assert ok is False
+        # 2) The DELETE was rolled back by the savepoint -> the row is STILL
+        #    findable. Pre-fix this assertion failed (the row was de-indexed).
+        assert did in _ids(
+            search_kind_fts(c, workspace_id="ws", kind="decision", query="kelly", limit=5)
+        )
+    finally:
+        c.close()
 
 
 def test_brain_pass_rebuild_step_reindexes(conn: sqlite3.Connection) -> None:

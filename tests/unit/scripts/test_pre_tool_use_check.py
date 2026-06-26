@@ -838,3 +838,43 @@ def test_co_located_block_reflexes_each_get_own_nudge(
     second = _run({**target, "transcript_path": str(transcript)}, env)
     assert second.returncode == 2  # co-located impact-check reflex is NOT bypassed
     assert "memory_impact_check" in second.stderr
+
+
+def test_enforce_dispatch_failure_is_fail_open_but_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reliability audit 2026-06-25: when the enforcement dispatch (``decide()``)
+    raises -- e.g. the memory layer is degraded mid-call -- the hook must fail
+    OPEN (never brick the tool call) BUT record a distinct, observable
+    ``degraded_enforce`` event rather than an allow indistinguishable from a
+    clean one. Pre-fix the failure was swallowed and returned a silent allow."""
+    import scripts.pre_tool_use_check as hook  # noqa: PLC0415
+
+    db = tmp_path / "m.db"
+    db.write_bytes(b"")  # exists; an empty file is a valid empty SQLite db
+
+    monkeypatch.setattr(hook, "_resolve_workspace", lambda _cwd: ("ws", str(db)))
+
+    def boom(*_a: object, **_kw: object) -> object:
+        raise RuntimeError("ollama exploded mid-decide")
+
+    monkeypatch.setattr("agent_memory_lite.enforcement.dispatch.decide", boom)
+    monkeypatch.setattr(
+        "agent_memory_lite.enforcement.session_trail.read_prior_tool_calls",
+        lambda _path: [],
+    )
+
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(hook, "record_hook_event", lambda **kw: recorded.append(kw))
+
+    allow, diagnostic, ws, _db = hook._decide_for_event(
+        {"tool_name": "Read", "tool_input": {"file_path": "x.py"}, "cwd": str(tmp_path)}
+    )
+
+    assert allow is True  # fail-open: the tool call is never bricked
+    assert diagnostic == ""
+    assert ws == "ws"
+    # The degradation is RECORDED (observable), not silently swallowed.
+    degraded = [e for e in recorded if e.get("status") == "degraded_enforce"]
+    assert degraded, f"expected a degraded_enforce event, got {recorded}"
+    assert "RuntimeError" in str(degraded[0].get("detail", ""))

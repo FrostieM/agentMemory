@@ -232,8 +232,21 @@ def _emit_brief(body_md: str) -> None:
 
 
 def _emit_notice(message: str) -> None:
+    """Emit a VISIBLE degradation notice the agent can actually read.
+
+    Reliability audit 2026-06-25: the prior form wrapped the message in an HTML
+    comment (``<!-- ... -->``) inside ``<agent-memory>``. A comment may be
+    stripped by the harness's markdown rendering, leaving the agent an empty
+    envelope -- so a service-down agent could run with ZERO memory and no signal
+    why. A ``<hook_notice>`` block (the same shape the global-fallback path below
+    already relies on to surface its message) reliably reaches the agent's
+    context regardless. Still exits 0 upstream: a degraded brief must announce
+    itself, never brick the turn.
+    """
     sys.stdout.write(
-        f"<agent-memory>\n<!-- memory brief hook notice: {message} -->\n</agent-memory>\n"
+        '<agent-memory>\n<hook_notice severity="warning" code="memory_degraded">\n'
+        f"  {message}\n"
+        "</hook_notice>\n</agent-memory>\n"
     )
 
 
@@ -474,7 +487,9 @@ def main() -> int:  # noqa: PLR0912, PLR0915 - linear hook flow with explicit ea
         )
         _emit_notice(
             f"agent-memory-lite memory brief unreachable at {DEFAULT_BASE}. "
-            "Run `python -m agent_memory_lite` to start the service."
+            "You are working WITHOUT persistent memory this turn: tell the user "
+            "you have no memory access, and do not invent recalled context. "
+            "Operator: run `python -m agent_memory_lite` to start the service."
         )
         return 0
 
