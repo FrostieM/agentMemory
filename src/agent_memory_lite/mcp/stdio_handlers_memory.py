@@ -437,6 +437,7 @@ def _handle_v3_status(args: dict[str, Any]) -> dict[str, Any]:
     from agent_memory_lite.api.routes.memory_status_queries import (  # noqa: PLC0415
         gather_adoption,
         gather_code_counts,
+        gather_degradation,
         gather_memory_counts,
         max_ts,
         recent_actions_7d,
@@ -461,6 +462,7 @@ def _handle_v3_status(args: dict[str, Any]) -> dict[str, Any]:
             workspace_id,
         ),
         "recent_actions_7d": recent_actions_7d(conn, workspace_id),
+        "degradation": gather_degradation(conn, workspace_id).model_dump(),
     }
     data["environment"] = (
         build_environment(conn, _runtime.settings).model_dump() if include_env else None

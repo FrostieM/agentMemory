@@ -178,6 +178,17 @@ def _workspace_fingerprint(conn: sqlite3.Connection, workspace_id: str) -> str:
                 f"(SELECT TOTAL(outcome_score) || '/' || IFNULL(MIN(outcome_score), '') "
                 f"|| '/' || IFNULL(MAX(outcome_score), '') FROM {tbl} WHERE workspace_id = ?)"
             )
+    # Degradation sensitivity (Batch A / M6/L4): fold in BOTH the total open
+    # count AND the ERROR/CRITICAL ('degraded') count, as "total/degraded".
+    # The banner triggers on ERROR/CRITICAL only, so total-count alone would
+    # miss a SAME-COUNT severity swap (a WARNING resolves as an ERROR opens) and
+    # serve a stale healthy-looking brief -- the very gap the banner closes.
+    if _has_table(conn, "maintenance_events"):
+        subqueries.append(
+            "(SELECT COUNT(*) || '/' || "
+            "IFNULL(SUM(CASE WHEN lower(severity) IN ('error', 'critical') THEN 1 ELSE 0 END), 0) "
+            "FROM maintenance_events WHERE workspace_id = ? AND status = 'open')"
+        )
     params: list[str] = [workspace_id] * len(subqueries)
     try:
         row = conn.execute(f"SELECT {', '.join(subqueries)}", tuple(params)).fetchone()

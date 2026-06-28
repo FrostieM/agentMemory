@@ -23,6 +23,7 @@ from agent_memory_lite.api.routes.active_memory_status import build_active_memor
 from agent_memory_lite.api.routes.memory_status_queries import (
     gather_adoption,
     gather_code_counts,
+    gather_degradation,
     gather_memory_counts,
     max_ts,
     recent_actions_7d,
@@ -117,6 +118,7 @@ def memory_status_route(
             workspace_id,
         ),
         recent_actions_7d=recent_actions_7d(conn, workspace_id),
+        degradation=gather_degradation(conn, workspace_id),
         environment=environment,
         active_memory=active_memory,
     )

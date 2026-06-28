@@ -113,6 +113,55 @@ def test_memory_status_environment_block_opt_in(client: TestClient) -> None:
     assert env["http_base_url"].startswith("http://127.0.0.1:")
 
 
+def test_open_degradation_visible_on_status_and_shallow_health(
+    client: TestClient, tmp_db_path
+) -> None:
+    """Batch A observability gate (M6/L4): an open ERROR maintenance_event must
+    be visible on the FAST surfaces -- GET /memory/status AND shallow /health
+    (no ?deep) -- in one read, instead of a degraded substrate reporting a flat
+    'ok'. Inject the event directly into the app's DB, then read both surfaces."""
+    import sqlite3  # noqa: PLC0415
+
+    from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+        write_maintenance_event,
+    )
+    from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+    from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
+
+    conn = sqlite3.connect(tmp_db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        write_maintenance_event(
+            conn,
+            MaintenanceEventIn(
+                workspace_id="default",
+                kind="vector_upsert_failed",
+                severity=MaintenanceSeverity.ERROR,
+                summary="vector upsert failed post-commit",
+                details={"fingerprint": "vuf-1"},
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # GET /memory/status -- always-present degradation block.
+    body = client.get("/memory/status", params={"workspace_id": "default"}).json()
+    deg = body["degradation"]
+    assert deg["open_maintenance_events"] >= 1
+    assert deg["degraded"] is True
+    assert any(
+        d["kind"] == "vector_upsert_failed" and d["severity"] == "error"
+        for d in deg["recent_degradations"]
+    )
+
+    # Shallow /health (no ?deep) -- no longer a flat ok.
+    h = client.get("/health").json()
+    assert h["open_maintenance_events"] >= 1
+    assert h["degraded"] is True
+    assert h["status"] == "degraded"
+
+
 def test_memory_status_active_memory_default_omitted(client: TestClient) -> None:
     """``active_memory`` is opt-in — default payload has it null."""
     r = client.get("/memory/status", params={"workspace_id": "default"})

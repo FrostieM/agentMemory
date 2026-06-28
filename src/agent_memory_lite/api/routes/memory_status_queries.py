@@ -15,7 +15,13 @@ from datetime import UTC, datetime, timedelta
 from agent_memory_lite.api.schemas.memory_status import (
     AdoptionRatios,
     CodeMemoryCounts,
+    DegradationItem,
+    DegradationSummary,
     MemoryCounts,
+)
+from agent_memory_lite.repositories.maintenance_degradation import (
+    _DEGRADED_SEVERITIES,
+    open_maintenance_degradations,
 )
 
 
@@ -139,3 +145,24 @@ def recent_actions_7d(conn: sqlite3.Connection, ws: str) -> dict[str, int]:
         (ws, cutoff),
     ).fetchall()
     return dict(Counter(r[0] for r in rows).most_common(8))
+
+
+def gather_degradation(conn: sqlite3.Connection, ws: str) -> DegradationSummary:
+    """One-read substrate-degradation summary from open maintenance_events.
+
+    Shared by GET /memory/status, the MCP memory_status handler, and shallow
+    /health so all three fast surfaces agree (M6/L4). Tolerant of a
+    pre-migration DB (no maintenance_events table -> empty, not 500)."""
+    if not table_exists(conn, "maintenance_events"):
+        return DegradationSummary()
+    rows = open_maintenance_degradations(conn, workspace_id=ws)
+    total = sum(n for _, _, n in rows)
+    degraded = any(sev.lower() in _DEGRADED_SEVERITIES for _, sev, _ in rows)
+    # ERROR/CRITICAL first, then by count desc -- the real degradation on top.
+    items = sorted(
+        (DegradationItem(kind=k, severity=sev, count=n) for k, sev, n in rows),
+        key=lambda it: (it.severity.lower() not in _DEGRADED_SEVERITIES, -it.count),
+    )
+    return DegradationSummary(
+        open_maintenance_events=total, degraded=degraded, recent_degradations=items
+    )

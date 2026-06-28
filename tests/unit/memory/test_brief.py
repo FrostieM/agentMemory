@@ -1120,3 +1120,84 @@ def test_fingerprint_isolated_per_workspace(conn: sqlite3.Connection) -> None:
     _seed_decision(conn, id="dec_b", workspace_id="ws_b", title="other-ws")
     fp_a_after = _workspace_fingerprint(conn, "ws_a")
     assert fp_a_after == fp_a_before
+
+
+def _open_event(conn: sqlite3.Connection, severity: object, kind: str, fp: str) -> str:
+    from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+        write_maintenance_event,
+    )
+    from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
+
+    event = write_maintenance_event(
+        conn,
+        MaintenanceEventIn(
+            workspace_id="ws",
+            kind=kind,
+            severity=severity,
+            summary=kind,
+            details={"fingerprint": fp},
+        ),
+    )
+    conn.commit()
+    return event.id
+
+
+def test_brief_shows_degradation_banner_when_substrate_degraded(
+    conn: sqlite3.Connection,
+) -> None:
+    """Batch A (M6/L4): the brief -- the session-start surface agents open by the
+    discipline rules -- must surface a degradation banner when the substrate has
+    open ERROR maintenance_events, instead of looking healthy. The brief
+    fingerprint folds in the open-event count, so the banner is a fresh render."""
+    from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+
+    clean = compose_brief(conn, workspace_id="ws")
+    assert "MEMORY SUBSTRATE DEGRADED" not in clean.body_md
+
+    _open_event(conn, MaintenanceSeverity.ERROR, "vector_upsert_failed", "v1")
+    degraded = compose_brief(conn, workspace_id="ws")
+    assert degraded.cache_hit is False  # fingerprint flipped -> re-rendered, not stale
+    assert "MEMORY SUBSTRATE DEGRADED" in degraded.body_md
+    assert "vector_upsert_failed" in degraded.body_md
+
+
+def test_brief_no_banner_for_warning_only(conn: sqlite3.Connection) -> None:
+    """A WARNING housekeeping event must NOT trigger the degraded banner."""
+    from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+
+    _open_event(conn, MaintenanceSeverity.WARNING, "drift_detected", "w1")
+    brief = compose_brief(conn, workspace_id="ws")
+    assert "MEMORY SUBSTRATE DEGRADED" not in brief.body_md
+
+
+def test_brief_fingerprint_flips_on_same_count_severity_swap(conn: sqlite3.Connection) -> None:
+    """Audit round 2: the banner triggers on ERROR/CRITICAL only, so the brief
+    fingerprint must reflect the DEGRADED count -- not just the total open count.
+    A WARNING resolving as an ERROR opens (total open stays 1) must STILL flip
+    the fingerprint, else the brief serves a stale healthy-looking cache while
+    the substrate is degraded -- the exact gap the banner closes."""
+    from agent_memory_lite.cognition.brief import _workspace_fingerprint  # noqa: PLC0415
+    from agent_memory_lite.models.enums import (  # noqa: PLC0415
+        MaintenanceEventStatus,
+        MaintenanceSeverity,
+    )
+    from agent_memory_lite.repositories.maintenance_repo import (  # noqa: PLC0415
+        resolve_maintenance_event,
+    )
+    from agent_memory_lite.utils.time import iso_now  # noqa: PLC0415
+
+    warning_id = _open_event(conn, MaintenanceSeverity.WARNING, "drift_detected", "w1")
+    fp_warning = _workspace_fingerprint(conn, "ws")
+    assert "MEMORY SUBSTRATE DEGRADED" not in compose_brief(conn, workspace_id="ws").body_md
+
+    # Resolve the WARNING and open an ERROR -> total open count stays 1, but the
+    # degraded (ERROR/CRITICAL) count goes 0 -> 1.
+    resolve_maintenance_event(
+        conn, event_id=warning_id, status=MaintenanceEventStatus.RESOLVED, resolved_at=iso_now()
+    )
+    conn.commit()
+    _open_event(conn, MaintenanceSeverity.ERROR, "vector_upsert_failed", "e1")
+
+    fp_error = _workspace_fingerprint(conn, "ws")
+    assert fp_error != fp_warning  # severity-aware fingerprint flipped at constant total
+    assert "MEMORY SUBSTRATE DEGRADED" in compose_brief(conn, workspace_id="ws").body_md

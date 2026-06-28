@@ -54,6 +54,15 @@ def _sync_durable_fts_and_log(
             object_id=object_id,
             workspace_id=workspace_id,
         )
+        # M6/L4: also surface it as a DB-backed ERROR maintenance_event so it is
+        # visible on memory_status / health, not only in the log. Failure-soft.
+        from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+            record_durable_fts_sync_failure,
+        )
+
+        record_durable_fts_sync_failure(
+            conn, kind=kind, object_id=object_id, workspace_id=workspace_id
+        )
 
 
 def write_canonical(

@@ -170,6 +170,26 @@ def test_rollback_observes_and_logs_failed_resync(
     assert "durable_fts_sync_skipped_on_rollback" in cap.events
 
 
+def test_create_sync_failure_records_degradation_event(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Batch A L4: a durable_fts sync that rolls back on a CREATE records a
+    DB-backed ERROR maintenance_event (durable_fts_sync_failed), so the failure
+    is VISIBLE on memory_status/health -- not only in the structlog stream."""
+    from agent_memory_lite.repositories.maintenance_degradation import (  # noqa: PLC0415
+        open_maintenance_degradations,
+    )
+
+    # canonical_writer imports sync_durable_fts at module top (unlike edit()'s
+    # local import), so patch the name bound IN canonical_writer.
+    monkeypatch.setattr(
+        "agent_memory_lite.ingestion.canonical_writer.sync_durable_fts", lambda *a, **k: False
+    )
+    _decision(conn, "kelly degradation case", "quarter kelly sizing")
+    rows = open_maintenance_degradations(conn, workspace_id="ws")
+    assert any(kind == "durable_fts_sync_failed" and sev == "error" for kind, sev, _ in rows)
+
+
 def test_or_semantics_and_bm25_ranking(conn: sqlite3.Connection) -> None:
     """OR matches a row with ANY query token; BM25 ranks a row matching more (and
     rarer) tokens above one matching only a single shared token."""

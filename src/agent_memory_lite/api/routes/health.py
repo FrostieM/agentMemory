@@ -15,6 +15,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
 from agent_memory_lite.api.deps import DbDep, SettingsDep, VectorStoreDep
+from agent_memory_lite.api.routes.memory_status_queries import gather_degradation
 from agent_memory_lite.maintenance.feedback_signal import feedback_signal_summary
 from agent_memory_lite.maintenance.integrity import run_integrity_audit
 from agent_memory_lite.repositories.vector_metadata_repo import provider_name_from_settings
@@ -66,6 +67,10 @@ class HealthResponse(BaseModel):
     llm_backend: str
     llm_model: str
     applied_migrations: list[str]
+    # Fast-path degradation signal (M6/L4): open maintenance_events surfaced even
+    # in shallow mode, so a degraded substrate no longer reports a flat "ok".
+    open_maintenance_events: int = 0
+    degraded: bool = False
     retrieval_integrity: RetrievalIntegritySummary
     feedback_signal: FeedbackSignalSummaryModel
     pending_review: PendingReviewModel
@@ -109,10 +114,15 @@ def health(
 ) -> HealthResponse:
     rows = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
     versions = [str(row[0]) for row in rows]
+    # Cheap open-maintenance_events read on BOTH paths so even shallow /health
+    # reports a degraded substrate instead of a flat "ok" (M6/L4).
+    degradation = gather_degradation(conn, settings.workspace_id)
     if not deep:
         return HealthResponse(
-            status="ok",
+            status="degraded" if degradation.degraded else "ok",
             **_base_response(settings, versions),
+            open_maintenance_events=degradation.open_maintenance_events,
+            degraded=degradation.degraded,
             retrieval_integrity=_SHALLOW_INTEGRITY_STUB,
             feedback_signal=_SHALLOW_FEEDBACK_STUB,
             pending_review=_SHALLOW_REVIEW_STUB,
@@ -133,8 +143,10 @@ def health(
     )
     review = load_pending_review(conn, workspace_id=settings.workspace_id)
     return HealthResponse(
-        status="degraded" if report.status == "degraded" else "ok",
+        status="degraded" if (report.status == "degraded" or degradation.degraded) else "ok",
         **_base_response(settings, versions),
+        open_maintenance_events=degradation.open_maintenance_events,
+        degraded=degradation.degraded,
         retrieval_integrity=RetrievalIntegritySummary(
             status=report.status,
             counts=report.counts,

@@ -548,6 +548,35 @@ def test_status_counts_reflect_writes(db_conn: sqlite3.Connection) -> None:
     assert env["data"]["memory"]["decisions_active"] >= 1
 
 
+def test_status_surfaces_open_degradation(db_conn: sqlite3.Connection) -> None:
+    """Batch A observability gate (M6/L4): the MCP memory_status data carries the
+    degradation block, so an open ERROR maintenance_event is visible to the agent
+    in one read -- the third fast surface alongside HTTP /memory/status + /health."""
+    from agent_memory_lite.ingestion.maintenance_writer import (  # noqa: PLC0415
+        write_maintenance_event,
+    )
+    from agent_memory_lite.models.enums import MaintenanceSeverity  # noqa: PLC0415
+    from agent_memory_lite.models.maintenance import MaintenanceEventIn  # noqa: PLC0415
+
+    write_maintenance_event(
+        db_conn,
+        MaintenanceEventIn(
+            workspace_id="default",
+            kind="durable_fts_sync_failed",
+            severity=MaintenanceSeverity.ERROR,
+            summary="sync failed",
+            details={"fingerprint": "dfs-1"},
+        ),
+    )
+    db_conn.commit()
+    env = v3._handle_v3_status({"workspace_id": "default", "include_environment": False})
+    assert env["ok"] is True
+    deg = env["data"]["degradation"]
+    assert deg["open_maintenance_events"] >= 1
+    assert deg["degraded"] is True
+    assert any(d["kind"] == "durable_fts_sync_failed" for d in deg["recent_degradations"])
+
+
 # ============================================================
 # Registry routing — handlers must use db_for(workspace_id), not db()
 # ============================================================

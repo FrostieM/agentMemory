@@ -28,6 +28,7 @@ from agent_memory_lite.cognition.brief_sticky import (
     _sticky_followup_tokens,
 )
 from agent_memory_lite.cognition.brief_tokens import approx_tokens
+from agent_memory_lite.repositories.maintenance_degradation import degradation_banner
 
 DEFAULT_TOKEN_BUDGET = 500
 
@@ -161,6 +162,14 @@ def compose_brief(
         for section in sections:
             body_parts.extend(section.lines)
         body_md = "\n".join(body_parts)
+    # M6/L4: prepend a degradation banner OUTSIDE the section budget/trim system
+    # (so it is never trimmed) when the substrate has open ERROR/CRITICAL
+    # maintenance_events -- the brief is the session-start surface agents open by
+    # the discipline rules, and it was the one surface still hiding degradation.
+    # The fingerprint folds in the open-event count, so this is never stale.
+    banner = degradation_banner(conn, workspace_id=workspace_id)
+    if banner:
+        body_md = f"{banner}\n{body_md}" if body_md else banner
     result = Brief(
         body_md=body_md,
         token_count=approx_tokens(body_md),

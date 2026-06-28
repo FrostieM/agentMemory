@@ -85,6 +85,32 @@ class EnvironmentInfo(BaseModel):
     hf_offline_active: bool = False
 
 
+class DegradationItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    severity: str
+    count: int
+
+
+class DegradationSummary(BaseModel):
+    """Open ``maintenance_events`` surfaced on the FAST status path so an agent
+    or operator sees substrate degradation in ONE read.
+
+    Reliability audit (M6/L4): degradation facts (``vector_upsert_failed``,
+    ``durable_fts_sync_failed``, ``brain_pass_step_failed``) are persisted as
+    maintenance_events but were visible ONLY through the
+    30-60s deep ``/health?deep=true`` audit -- so a degraded memory substrate
+    looked healthy on every fast surface. ``degraded`` is True when any open
+    event is ERROR/CRITICAL severity (WARNING housekeeping does not flip it)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    open_maintenance_events: int = 0
+    degraded: bool = False
+    recent_degradations: list[DegradationItem] = Field(default_factory=list)
+
+
 class ActiveMemoryCounts(BaseModel):
     """v3.1 active-memory dashboard — one snapshot of every vector's
     current state so the operator can see "is the brain actually
@@ -124,6 +150,9 @@ class MemoryStatusResponse(BaseModel):
     last_decision_at: str | None
     last_ingest_file_at: str | None
     recent_actions_7d: dict[str, int] = Field(default_factory=dict)
+    # Always present (cheap GROUP BY): open maintenance_events on the fast path
+    # so a degraded substrate is visible without the deep /health audit (M6/L4).
+    degradation: DegradationSummary = Field(default_factory=DegradationSummary)
     # Optional environment block — populated when the agent passes
     # ``include_environment=true`` so existing callers see no payload
     # bloat. The block answers "where am I running and what
