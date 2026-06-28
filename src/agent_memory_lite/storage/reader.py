@@ -444,6 +444,9 @@ _MIN_SEARCH_TOKEN_LEN = 2
 # Cap on query tokens — bounds the generated SQL (one CASE arm per
 # token), mirroring the chunk path's _sanitize length cap.
 _MAX_SEARCH_TOKENS = 32
+# Extra rows fetched per kind so the post-LIMIT discredited-row filter (in
+# search()) does not starve a live row that ranked just below dead ones.
+_DISCREDITED_OVERFETCH = 10
 # Punctuation trimmed from each token so "plan_steps." matches the bare
 # word in stored text.
 _TOKEN_TRIM = ".,;:!?()[]{}\"'`"
@@ -683,13 +686,38 @@ def search(
     # requested kind, so the global top-`limit` is not distorted by a per-kind
     # cap. Default wide search keeps the divided budget (balance + bounded scan).
     per_kind = limit if kinds is not None else max(2, limit // max(1, len(selected)))
+    # Over-fetch a buffer per kind, then drop discredited rows + trim back to the
+    # kind's budget (audit rounds 1-2, C1-F2 + balance). The discredited-row
+    # filter (v3 liveness contract below) runs AFTER the per-kind SQL LIMIT, so
+    # without slack a kind whose top rows are all dead would starve a LIVE row
+    # ranked just below them. Filtering + capping PER KIND -- not over one global
+    # pool -- preserves the wide-search balance so a high-volume kind (e.g. many
+    # episodes) cannot crowd a live low-volume row out of the global top-`limit`.
+    fetch_per_kind = per_kind + _DISCREDITED_OVERFETCH
+    # v3 liveness contract (reliability audit 2026-06-26): memory_search must NOT
+    # surface DISCREDITED rows -- superseded/rejected/weakened decisions/theories/
+    # insights, deactivated (active=0) behaviors/skills/concepts, archived
+    # episodes/chunks, terminal work items, non-pinned negative-outcome rows. The
+    # read path's _append_archive_filter only hides is_archived + status==
+    # 'archived'; the OTHER dead states leaked through, and agents call
+    # memory_search before every write (discipline rule #3), so a retired hit
+    # made them act on dead knowledge. Reuse the SINGLE canonical predicate the
+    # brief applies to associates so search + brief stay in lockstep. recall()
+    # seeds from search(), so its SEEDS inherit this filter; its spreading-
+    # activation frontier resolves further nodes that are NOT yet filtered here
+    # (a follow-up -- apply _is_discredited after recall's batch-resolve).
+    from agent_memory_lite.cognition.brief_sections_organ_discredit import (  # noqa: PLC0415
+        _is_discredited,
+    )
     from agent_memory_lite.fts.durable_fts import DURABLE_FTS_KINDS  # noqa: PLC0415
 
     hits: list[SearchHit] = []
     for kind in selected:
         if kind == "chunk":
-            hits.extend(
-                search_chunks_fts(conn, workspace_id=workspace_id, query=query, limit=per_kind)
+            kind_hits: list[SearchHit] = list(
+                search_chunks_fts(
+                    conn, workspace_id=workspace_id, query=query, limit=fetch_per_kind
+                )
             )
         elif kind in DURABLE_FTS_KINDS:
             # FTS5/BM25 relevance for the durable knowledge kinds, with the LIKE
@@ -697,17 +725,20 @@ def search(
             # sanitized query, or a pre-0007 DB without durable_fts), fall back so
             # this is purely additive -- a query that worked before still works.
             kind_hits = search_kind_fts(
-                conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind
+                conn, workspace_id=workspace_id, kind=kind, query=query, limit=fetch_per_kind
             )
             if not kind_hits:
                 kind_hits = search_kind(
-                    conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind
+                    conn, workspace_id=workspace_id, kind=kind, query=query, limit=fetch_per_kind
                 )
-            hits.extend(kind_hits)
         else:
-            hits.extend(
-                search_kind(conn, workspace_id=workspace_id, kind=kind, query=query, limit=per_kind)
+            kind_hits = search_kind(
+                conn, workspace_id=workspace_id, kind=kind, query=query, limit=fetch_per_kind
             )
+        # Drop this kind's discredited rows, then trim to its budget so the
+        # over-fetch buffer can never let one kind dominate the global merge.
+        live = [h for h in kind_hits if not _is_discredited(h.projection)]
+        hits.extend(live[:per_kind])
     hits.sort(key=lambda h: h.score, reverse=True)
     # v3.1: env-gated auto-rerank lets the operator turn on the cross-
     # encoder for every search without changing call sites. Explicit

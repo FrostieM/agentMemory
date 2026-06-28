@@ -27,6 +27,7 @@ from agent_memory_lite.ingestion.canonical_state_writers import (
 from agent_memory_lite.ingestion.issue_writer import write_issue_canonical
 from agent_memory_lite.ingestion.plan_step_writer import add_plan_step_from_payload
 from agent_memory_lite.logging_setup import get_logger
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.storage.writer import write as storage_write
 from agent_memory_lite.vector_store.base import VectorStore
 
@@ -82,6 +83,16 @@ def write_canonical(
     # create path so the 15+ bare status read sites all hold.)
     if isinstance(payload.get("status"), str):
         payload = {**payload, "status": payload["status"].strip().lower()}
+    # Redact secret shapes from every free-text field at the single create choke
+    # point (reliability audit 2026-06-26, H1). The decision/theory/behavior/
+    # episode business writers already redact their own fields, but the
+    # else-branch durable kinds (insight/skill/concept/snapshot/code_digest) and
+    # issue route straight to storage.writer.write with NO redaction -- a pasted
+    # secret landed cleartext on disk AND in the durable_fts BM25 index. Doing it
+    # here (before issue derives its dedup signature from the title, and before
+    # the else-branch storage_write) closes ALL create paths; re-redacting the
+    # self-redacting kinds is a harmless idempotent no-op.
+    payload = redact_freetext_fields(payload)
     body = {**payload, "workspace_id": workspace_id}
     if source_episode_id is not None:
         body["source_episode_id"] = source_episode_id

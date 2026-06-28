@@ -18,19 +18,34 @@ from __future__ import annotations
 # a positive associate in that window.
 _DEAD_STATUSES = frozenset({"superseded", "archived", "rejected", "weakened"})
 
-# The work-item kinds invert that: few live states, many terminal ones
-# (done/cancelled/skipped/closed/fixed/wontfix/...). An ALLOWLIST of live
-# statuses is safer than a denylist -- a terminal status added later is
-# automatically dead. The live sets match the brief's own section filters
-# (brief_sections_core/plan: tasks IN (active,in_progress); plan_steps IN
-# (active,pending,blocked) per hygiene; brief_sections_watch: issues IN
-# (open,in_progress)). 'blocked' is a LIVE plan-step state (a current obstacle),
-# not terminal.
+# plan_step + issue have CLOSED status vocabularies (plan_step: pending/active/
+# done/blocked/skipped; issue: open->in_progress->fixed/wontfix/accepted), so a
+# live ALLOWLIST is safest -- a terminal status added later is automatically
+# dead. 'blocked' is a LIVE plan-step state (a current obstacle), not terminal.
 _LIVE_STATUS_BY_KIND: dict[str, frozenset[str]] = {
-    "task": frozenset({"active", "in_progress"}),
     "plan_step": frozenset({"active", "pending", "blocked"}),
     "issue": frozenset({"open", "in_progress"}),
 }
+# task is the exception: TaskStateIn.status is FREE-FORM (no enum), so a live
+# allowlist would wrongly discredit legitimately-live states an agent picks --
+# 'blocked', 'pending', 'paused', 'todo' (audit 2026-06-26: a blocked task
+# silently vanished from memory_search). Use a terminal DENYLIST instead: only
+# the clearly-finished states are dead; any other (incl. a custom in-flight
+# label) stays live.
+_TASK_DEAD_STATUSES = frozenset(
+    {
+        "done",
+        "completed",
+        "complete",
+        "cancelled",
+        "canceled",
+        "closed",
+        "abandoned",
+        "dropped",
+        "archived",
+        "wontfix",
+    }
+)
 
 
 def _is_discredited(proj: dict[str, object]) -> bool:
@@ -38,7 +53,8 @@ def _is_discredited(proj: dict[str, object]) -> bool:
     every kind reachable in the associates substrate, by its terminal mechanism:
 
     * status DENYLIST (_DEAD_STATUSES) -- decision / theory / insight
-    * status ALLOWLIST (_LIVE_STATUS_BY_KIND) -- task / plan_step / issue
+    * status ALLOWLIST (_LIVE_STATUS_BY_KIND) -- plan_step / issue (closed vocab)
+    * status DENYLIST (_TASK_DEAD_STATUSES) -- task (open free-form vocab)
     * active=0 -- the active-flag kinds behavior / skill / concept
     * is_archived=1 -- episode / chunk
     * non-pinned negative outcome_score -- the outcome-bearing kinds
@@ -61,11 +77,16 @@ def _is_discredited(proj: dict[str, object]) -> bool:
     # episode/chunk: is_archived=1 is terminal (those tables have no status).
     if proj.get("is_archived") is True:
         return True
-    # Work-item kinds: any status outside the live allowlist is terminal.
+    # Work-item kinds. task: open vocab -> terminal denylist. plan_step/issue:
+    # closed vocab -> any status outside the live allowlist is terminal.
     kind = proj.get("kind")
     if isinstance(kind, str):
-        live = _LIVE_STATUS_BY_KIND.get(kind)
-        if live is not None and status not in live:
+        if kind == "task":
+            terminal = status in _TASK_DEAD_STATUSES
+        else:
+            live = _LIVE_STATUS_BY_KIND.get(kind)
+            terminal = live is not None and status not in live
+        if terminal:
             return True
     # Terminal checks precede the pinned bypass (a pinned-but-dead row is still
     # dead); the outcome arm is last.

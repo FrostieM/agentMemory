@@ -262,6 +262,7 @@ def test_is_discredited_covers_every_terminal_mechanism() -> None:
         {"kind": "episode", "is_archived": True},
         {"kind": "chunk", "is_archived": True},
         {"kind": "task", "status": "done"},
+        {"kind": "task", "status": "cancelled"},  # task open-vocab terminal denylist
         {"kind": "plan_step", "status": "skipped"},
         {"kind": "issue", "status": "fixed"},
         {"kind": "decision", "status": "Archived"},  # case-folded
@@ -274,6 +275,8 @@ def test_is_discredited_covers_every_terminal_mechanism() -> None:
         {"kind": "decision", "status": "active", "outcome_score": 0.5},
         {"kind": "theory", "status": "supported", "outcome_score": 0.2},
         {"kind": "task", "status": "in_progress"},
+        {"kind": "task", "status": "blocked"},  # open-vocab live state (audit 2026-06-26)
+        {"kind": "task", "status": "pending"},  # open-vocab live state, not terminal
         {"kind": "plan_step", "status": "blocked"},  # blocked is a LIVE obstacle
         {"kind": "plan_step", "status": "active"},
         {"kind": "issue", "status": "open"},

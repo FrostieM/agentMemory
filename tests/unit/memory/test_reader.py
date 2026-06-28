@@ -60,13 +60,36 @@ def _insert_behavior(
     name: str,
     rule: str = "rule body",
     pinned: int = 0,
+    active: int = 1,
     workspace: str = "ws-test",
 ) -> None:
     conn.execute(
         """INSERT INTO behaviors (id, workspace_id, name, kind, rule, rule_one_line,
            pinned, active, created_at, updated_at)
-           VALUES (?, ?, ?, 'operating_rule', ?, ?, ?, 1, 'ts', 'ts')""",
-        (id_, workspace, name, rule, rule[:80], pinned),
+           VALUES (?, ?, ?, 'operating_rule', ?, ?, ?, ?, 'ts', 'ts')""",
+        (id_, workspace, name, rule, rule[:80], pinned, active),
+    )
+    conn.commit()
+
+
+def _insert_theory(
+    conn: sqlite3.Connection,
+    *,
+    id_: str,
+    title: str,
+    claim: str,
+    status: str = "proposed",
+    workspace: str = "ws-test",
+) -> None:
+    conn.execute(
+        """INSERT INTO theories
+           (id, workspace_id, title, domain, claim, mechanism,
+            predictions_json, validation_criteria_json, experiment_plan,
+            tags_json, status, confidence, importance, source_episode_id,
+            evidence_count, evidence_strength, created_at, updated_at)
+           VALUES (?, ?, ?, 'd', ?, '', '[]', '[]', '', '[]', ?, 0.5, 0.5, NULL,
+                   0, 0.0, 'ts', 'ts')""",
+        (id_, workspace, title, claim, status),
     )
     conn.commit()
 
@@ -289,6 +312,130 @@ def test_archived_decision_hidden_from_list_and_search_but_gettable(
     )
     assert out is not None
     assert out["status"] == "archived"
+
+
+def test_search_excludes_discredited_rows_superseded_weakened_deactivated(
+    conn: sqlite3.Connection,
+) -> None:
+    """Reliability audit 2026-06-26 (C1): memory_search must not surface
+    DISCREDITED rows the brief's _is_discredited filter is built to suppress --
+    superseded decisions, weakened theories, deactivated (active=0) behaviors.
+
+    Pre-fix the read path applied only _append_archive_filter (hides
+    is_archived + status=='archived'), so these other terminal states leaked.
+    Agents call memory_search before every decision/theory/behavior write
+    (discipline rule #3), so a retired hit made them act on dead knowledge. A
+    LIVE row of each kind must still be returned (no over-filtering)."""
+    # decision: live vs superseded (status denylist)
+    _insert_decision(conn, id_="dec_live", title="kelly criterion sizing live")
+    _insert_decision(conn, id_="dec_dead", title="kelly criterion sizing old", status="superseded")
+    # theory: live vs weakened (status denylist; weakened sets no valid_to,
+    # so list_kind's bi-temporal filter would NOT catch it -- only this does)
+    _insert_theory(conn, id_="th_live", title="market edge live", claim="market edge")
+    _insert_theory(
+        conn, id_="th_dead", title="market edge old", claim="market edge", status="weakened"
+    )
+    # behavior: active vs deactivated (active=0 flag; behaviors have no status)
+    _insert_behavior(conn, id_="beh_live", name="ruff gate live")
+    _insert_behavior(conn, id_="beh_dead", name="ruff gate old", active=0)
+
+    dec = {
+        h.projection["id"]
+        for h in search(
+            conn, workspace_id="ws-test", query="kelly criterion", kinds=["decision"], limit=10
+        )
+    }
+    assert "dec_live" in dec
+    assert "dec_dead" not in dec  # superseded must not surface
+
+    theo = {
+        h.projection["id"]
+        for h in search(
+            conn, workspace_id="ws-test", query="market edge", kinds=["theory"], limit=10
+        )
+    }
+    assert "th_live" in theo
+    assert "th_dead" not in theo  # weakened must not surface
+
+    beh = {
+        h.projection["id"]
+        for h in search(
+            conn, workspace_id="ws-test", query="ruff gate", kinds=["behavior"], limit=10
+        )
+    }
+    assert "beh_live" in beh
+    assert "beh_dead" not in beh  # deactivated must not surface
+
+
+def test_search_keeps_live_blocked_task_drops_terminal(conn: sqlite3.Connection) -> None:
+    """C1 follow-up (audit round 1): task.status is FREE-FORM (no enum), so the
+    liveness filter uses a terminal DENYLIST, not a live allowlist. A 'blocked'
+    task is a LIVE obstacle and must still surface in memory_search (the
+    allowlist wrongly dropped it); only terminal states are filtered."""
+    _insert_task(
+        conn,
+        task_id="t_blocked",
+        status="blocked",
+        updated_at="ts",
+        goal_one_line="auth refactor blocked",
+    )
+    _insert_task(
+        conn,
+        task_id="t_done",
+        status="done",
+        updated_at="ts",
+        goal_one_line="auth refactor done",
+    )
+    task_ids = {
+        h.projection.get("task_id")
+        for h in search(
+            conn, workspace_id="ws-test", query="auth refactor", kinds=["task"], limit=10
+        )
+    }
+    assert "t_blocked" in task_ids  # live obstacle must surface (allowlist wrongly dropped it)
+    assert "t_done" not in task_ids  # terminal task must not surface
+
+
+def test_search_overfetch_keeps_live_row_below_discredited(conn: sqlite3.Connection) -> None:
+    """C1-F2 (audit round 1): the discredited filter runs AFTER the per-kind SQL
+    LIMIT, so without an over-fetch buffer a live row ranked just below dead
+    rows is starved. Two superseded decisions match more tokens (rank above) one
+    live decision; with limit=2 the live row must still surface."""
+    _insert_decision(conn, id_="d_dead1", title="alpha beta gamma one", status="superseded")
+    _insert_decision(conn, id_="d_dead2", title="alpha beta gamma two", status="superseded")
+    _insert_decision(conn, id_="d_live", title="alpha only live")  # matches fewer tokens
+    ids = {
+        h.projection["id"]
+        for h in search(
+            conn, workspace_id="ws-test", query="alpha beta gamma", kinds=["decision"], limit=2
+        )
+    }
+    assert "d_live" in ids  # not starved by the 2 higher-ranked superseded rows
+    assert "d_dead1" not in ids
+    assert "d_dead2" not in ids
+
+
+def test_search_wide_balance_keeps_low_volume_live_row(conn: sqlite3.Connection) -> None:
+    """C1-F2 balance (audit round 2): the discredited filter + over-fetch are
+    applied PER KIND, so a high-volume kind (20 decisions) cannot crowd a live
+    low-volume row (one task) out of the global top-`limit` in a wide search.
+    A flat global over-fetch would let the 20 decisions bury the task."""
+    for i in range(20):
+        _insert_decision(conn, id_=f"d{i}", title="deploy rollback runbook")
+    _insert_task(
+        conn,
+        task_id="t_live",
+        status="in_progress",
+        updated_at="ts",
+        goal_one_line="deploy rollback runbook",
+    )
+    kinds_seen = {
+        h.kind
+        for h in search(
+            conn, workspace_id="ws-test", query="deploy rollback", limit=6, log_coactivations=False
+        )
+    }
+    assert "task" in kinds_seen  # the single live task is not crowded out by 20 decisions
 
 
 def test_workspace_isolation(conn: sqlite3.Connection) -> None:

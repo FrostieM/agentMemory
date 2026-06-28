@@ -111,6 +111,65 @@ def test_edit_resyncs_fts_content(conn: sqlite3.Connection) -> None:
     assert did in _ids(hits)
 
 
+class _CapturingLog:
+    """Records ``.warning(event, **kw)`` calls; no-ops every other logger method."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def warning(self, event: str, **_kw: object) -> None:
+        self.events.append(event)
+
+    def __getattr__(self, _name: str) -> object:
+        return lambda *_a, **_k: None
+
+
+def test_edit_observes_and_logs_failed_resync(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3 (audit rounds 1-2): edit() CAPTURES the sync_durable_fts bool (was
+    silently discarded) and logs ``durable_fts_sync_skipped_on_edit`` when the
+    re-sync rolls back. The edit's row mutation still stands."""
+    did = _decision(conn, "Widget plan", "about widgets")
+    cap = _CapturingLog()
+    monkeypatch.setattr("agent_memory_lite.storage.writer._log", cap)
+    # sync_durable_fts is a local import in edit(); patch the source attribute.
+    monkeypatch.setattr("agent_memory_lite.fts.durable_fts.sync_durable_fts", lambda *a, **k: False)
+    out = edit(
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id=did,
+        fields={"decision_text": "now about sprocket assemblies"},
+    )
+    assert out is not None  # edit completes despite the failed re-sync
+    row = conn.execute("SELECT decision_text FROM decisions WHERE id = ?", (did,)).fetchone()
+    assert row["decision_text"] == "now about sprocket assemblies"  # mutation stands
+    assert "durable_fts_sync_skipped_on_edit" in cap.events  # observed, not silent
+
+
+def test_rollback_observes_and_logs_failed_resync(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M3: rollback() mirrors edit() -- it observes the sync bool and logs
+    ``durable_fts_sync_skipped_on_rollback`` on a rolled-back re-sync."""
+    from agent_memory_lite.storage.writer import rollback  # noqa: PLC0415
+
+    did = _decision(conn, "zebra title", "use the zebra approach")
+    edit(
+        conn,
+        workspace_id="ws",
+        kind="decision",
+        object_id=did,
+        fields={"decision_text": "now the giraffe approach"},
+    )
+    cap = _CapturingLog()
+    monkeypatch.setattr("agent_memory_lite.storage.writer._log", cap)
+    monkeypatch.setattr("agent_memory_lite.fts.durable_fts.sync_durable_fts", lambda *a, **k: False)
+    rollback(conn, workspace_id="ws", kind="decision", object_id=did, to_version=1, why="test")
+    assert "durable_fts_sync_skipped_on_rollback" in cap.events
+
+
 def test_or_semantics_and_bm25_ranking(conn: sqlite3.Connection) -> None:
     """OR matches a row with ANY query token; BM25 ranks a row matching more (and
     rarer) tokens above one matching only a single shared token."""

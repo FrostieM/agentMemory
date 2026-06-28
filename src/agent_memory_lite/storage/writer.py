@@ -23,8 +23,12 @@ import time
 import uuid
 from typing import Any
 
+from agent_memory_lite.logging_setup import get_logger
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.storage.projections import project
 from agent_memory_lite.storage.reader import get_object
+
+_log = get_logger("storage.writer")
 
 # ============================================================
 # Constants — kind → (table, gist_source_col, gist_target_col)
@@ -434,6 +438,10 @@ def edit(
     fields = {k: v for k, v in fields.items() if k in _table_columns(conn, table)}
     if not fields:
         return None
+    # Redact secret shapes from free-text fields on the edit path too (H1): an
+    # edit can re-introduce a pasted secret into a searchable column, and the
+    # durable_fts re-sync below would index it. Mirrors the create choke point.
+    fields = redact_freetext_fields(fields)
     # Canonicalize status + reject non-numeric values for numeric columns before
     # they reach the row (the edit path has no Pydantic guard, unlike memory_write).
     _normalize_status_field(fields)
@@ -468,8 +476,19 @@ def edit(
         sync_durable_fts,
     )
 
-    if kind in DURABLE_FTS_KINDS:
-        sync_durable_fts(conn, kind=kind, object_id=object_id, workspace_id=workspace_id)
+    if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
+        conn, kind=kind, object_id=object_id, workspace_id=workspace_id
+    ):
+        # M3 (reliability audit 2026-06-26): observe the sync bool the create
+        # choke point already checks. A rolled-back sync leaves the row text
+        # updated but durable_fts stale (temporarily unsearchable); log it so the
+        # edit choke point is observable, not just the FTS helper's own warning.
+        _log.warning(
+            "durable_fts_sync_skipped_on_edit",
+            kind=kind,
+            object_id=object_id,
+            workspace_id=workspace_id,
+        )
     _audit(
         conn,
         workspace_id=workspace_id,
@@ -630,8 +649,18 @@ def rollback(
         sync_durable_fts,
     )
 
-    if kind in DURABLE_FTS_KINDS:
-        sync_durable_fts(conn, kind=kind, object_id=object_id, workspace_id=workspace_id)
+    if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
+        conn, kind=kind, object_id=object_id, workspace_id=workspace_id
+    ):
+        # M3: observe the sync bool (see edit()); a rolled-back re-index leaves
+        # durable_fts pointing at the pre-rollback text until the brain-pass
+        # backstop rebuilds it.
+        _log.warning(
+            "durable_fts_sync_skipped_on_rollback",
+            kind=kind,
+            object_id=object_id,
+            workspace_id=workspace_id,
+        )
     _audit(
         conn,
         workspace_id=workspace_id,
