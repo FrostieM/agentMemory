@@ -28,6 +28,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent_memory_lite.cognition.impact_check import impact_check
+from agent_memory_lite.config.workspace_read_guard import read_workspace_unavailable_reason
 from agent_memory_lite.mcp.stdio_guards import _with_workspace
 from agent_memory_lite.mcp.stdio_runtime import _runtime
 from agent_memory_lite.models.episodes import EpisodeIn
@@ -45,6 +46,31 @@ def _ok(data: dict[str, Any] | list[Any] | None) -> dict[str, Any]:
 
 def _err(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "data": None, "error": {"code": code, "message": message}}
+
+
+def _read_guard(workspace_id: str) -> tuple[Any, dict[str, Any] | None]:
+    """Resolve the workspace's conn + refuse a DEFINITE cross-workspace mismatch.
+
+    The read analogue of the write handlers' ``ensure_workspace_matches_db``. It
+    shares the FastAPI-free ``read_workspace_unavailable_reason`` decision with the
+    HTTP ``ensure_workspace_readable_db`` guard (so the two stay in lockstep) and
+    NOT ``api.workspace_routing`` -> ``api.errors`` -> FastAPI, so the discipline's
+    first MCP call (impact_check / brief / search) never pays the FastAPI
+    cold-start cost the write handler defers. Soft like its HTTP twin: refuses ONLY
+    a definite physical-file mismatch; ambiguous / unregistered-non-anchor /
+    in-memory / anchor / corrupt-registry reads stay readable. Returns
+    ``(conn, None)`` on success or ``(conn, err_envelope)`` with a
+    ``workspace_unavailable`` code on refusal.
+    """
+    conn = _runtime.db_for(workspace_id)
+    reason = read_workspace_unavailable_reason(conn, workspace_id, _runtime.settings)
+    if reason is not None:
+        return conn, _err(
+            "workspace_unavailable",
+            f"workspace_id={workspace_id!r} is unavailable on this connection: "
+            f"{reason}; refusing to avoid surfacing another workspace's rows.",
+        )
+    return conn, None
 
 
 def _parse_fields(raw: Any) -> list[str] | None:
@@ -88,9 +114,12 @@ def _handle_v3_search(args: dict[str, Any]) -> dict[str, Any]:
         return _err("invalid_args", "kinds must be a list of strings")
     limit = int(payload.get("limit") or 10)
     rerank = bool(payload.get("rerank") or False)
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     try:
         hits = search(
-            _runtime.db_for(workspace_id),
+            conn,
             workspace_id=workspace_id,
             query=query,
             kinds=kinds,
@@ -111,9 +140,12 @@ def _handle_v3_get(args: dict[str, Any]) -> dict[str, Any]:
     if not kind or not object_id:
         return _err("invalid_args", "kind and id are required")
     fields = _parse_fields(payload.get("fields"))
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     try:
         obj = get_object(
-            _runtime.db_for(workspace_id),
+            conn,
             workspace_id=workspace_id,
             kind=kind,
             object_id=object_id,
@@ -132,8 +164,11 @@ def _handle_v3_plan(args: dict[str, Any]) -> dict[str, Any]:
     task_id = str(payload.get("task_id") or "")
     if not task_id:
         return _err("invalid_args", "task_id is required")
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     steps = plan_for_task(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         task_id=task_id,
     )
@@ -340,8 +375,11 @@ def _handle_v3_brief(args: dict[str, Any]) -> dict[str, Any]:
     task = payload.get("task")
     raw_session = payload.get("session_id")
     session_id = str(raw_session) if isinstance(raw_session, str) and raw_session else None
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     brief = compose_brief(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         task=task if isinstance(task, str) else None,
         max_tokens=max_tokens,
@@ -369,8 +407,11 @@ def _handle_v3_lint(args: dict[str, Any]) -> dict[str, Any]:
     if not tool_name or not isinstance(tool_payload, dict):
         return _err("invalid_args", "tool_name + tool_payload object are required")
     transcript_path = payload.get("transcript_path")
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     result = run_lint(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         tool_name=tool_name,
         tool_payload=tool_payload,
@@ -387,8 +428,11 @@ def _handle_v3_invoke_skill(args: dict[str, Any]) -> dict[str, Any]:
     skill_id = str(payload.get("skill_id") or "")
     if not skill_id:
         return _err("invalid_args", "skill_id is required")
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     out = fetch_skill_body(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         skill_id=skill_id,
     )
@@ -405,8 +449,11 @@ def _handle_v3_impact_check(args: dict[str, Any]) -> dict[str, Any]:
         return _err("invalid_args", "file_path is required")
     callers_limit = int(payload.get("callers_limit") or 20)
     hot_threshold = int(payload.get("hot_threshold") or 3)
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     report = impact_check(
-        _runtime.db_for(workspace_id),
+        conn,
         workspace_id=workspace_id,
         file_path=file_path,
         callers_limit=callers_limit,
@@ -443,7 +490,9 @@ def _handle_v3_status(args: dict[str, Any]) -> dict[str, Any]:
         recent_actions_7d,
     )
 
-    conn = _runtime.db_for(workspace_id)
+    conn, guard_err = _read_guard(workspace_id)
+    if guard_err is not None:
+        return guard_err
     data: dict[str, Any] = {
         "version": _runtime_version(),
         "workspace_id": workspace_id,

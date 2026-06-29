@@ -134,6 +134,51 @@ def test_fts_coverage_drift_detected(conn: sqlite3.Connection) -> None:
     assert any(f.startswith("fts:") for f in result.findings)
 
 
+def test_fts_coverage_drift_is_workspace_scoped(conn: sqlite3.Connection) -> None:
+    """Batch C: the chunks_fts coverage numerator must be scoped to THIS workspace.
+
+    ws_a has a real <90% FTS gap; ws_b is fully covered. A global COUNT(*) over
+    chunks_fts would let ws_b's index inflate ws_a's coverage past the threshold and
+    MASK ws_a's genuine gap (and could spuriously affect ws_b). Each workspace's
+    drift must reflect only its own chunks_fts rows.
+    """
+    from agent_memory_lite.fts.chunks_fts import insert_chunk_fts  # noqa: PLC0415
+
+    _seed_file(conn, file_id="fa", ws="ws_a")
+    _seed_file(conn, file_id="fb", ws="ws_b")
+    # ws_a: 10 chunks, only 5 FTS rows -> 50% (a real, below-threshold gap).
+    for i in range(10):
+        _seed_chunk(conn, chunk_id=f"a{i}", file_id="fa", ws="ws_a")
+    for i in range(5):
+        insert_chunk_fts(
+            conn,
+            chunk_id=f"a{i}",
+            workspace_id="ws_a",
+            path=None,
+            symbols=[],
+            text=f"a{i}",
+            summary=None,
+        )
+    # ws_b: 10 chunks, 10 FTS rows -> fully covered.
+    for i in range(10):
+        _seed_chunk(conn, chunk_id=f"b{i}", file_id="fb", ws="ws_b")
+    for i in range(10):
+        insert_chunk_fts(
+            conn,
+            chunk_id=f"b{i}",
+            workspace_id="ws_b",
+            path=None,
+            symbols=[],
+            text=f"b{i}",
+            summary=None,
+        )
+    conn.commit()
+
+    # ws_a's real gap is caught; ws_b's full coverage is not spuriously flagged.
+    assert any(f.startswith("fts:") for f in detect_drift(conn, workspace_id="ws_a").findings)
+    assert not any(f.startswith("fts:") for f in detect_drift(conn, workspace_id="ws_b").findings)
+
+
 def test_vector_coverage_drift_detected(conn: sqlite3.Connection) -> None:
     """Chunks without embedding_id below threshold → flag."""
     _seed_file(conn, file_id="f1")

@@ -618,6 +618,12 @@ def test_search_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Mon
     relaxed = v3._runtime.settings.model_copy(
         update={
             "workspace_id": "anchor",
+            # db_path must match the mocked anchor connection: in a real runtime
+            # _runtime.db() opens settings.db_path, so the anchor conn's physical
+            # file IS settings.db_path. Keeping them consistent lets the read guard
+            # (ensure_workspace_readable_db / connection_matches_workspace) see the
+            # anchor read as a match rather than a definite cross-DB mismatch.
+            "db_path": str(anchor_path),
             "workspaces_file": workspaces_file,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
@@ -682,6 +688,12 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     relaxed = v3._runtime.settings.model_copy(
         update={
             "workspace_id": "anchor",
+            # db_path must match the mocked anchor connection: in a real runtime
+            # _runtime.db() opens settings.db_path, so the anchor conn's physical
+            # file IS settings.db_path. Keeping them consistent lets the read guard
+            # (ensure_workspace_readable_db / connection_matches_workspace) see the
+            # anchor read as a match rather than a definite cross-DB mismatch.
+            "db_path": str(anchor_path),
             "workspaces_file": workspaces_file,
             "strict_workspace_isolation": False,
             "forbid_default_workspace": False,
@@ -715,6 +727,43 @@ def test_get_routes_via_db_for_not_db(tmp_path: Path, monkeypatch: pytest.Monkey
     assert env_anchor["error"]["code"] == "not_found"
     anchor.close()
     foreign.close()
+
+
+def test_read_handler_refuses_cross_db_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Batch C cert: the MCP _read_guard REJECT branch. A read for registered
+    workspace B that lands on the anchor (A's) connection -- the unrouted/misrouted
+    case -- must return ok=False / 'workspace_unavailable', not silently read A's DB.
+    (The reject branch had zero coverage before this test.)"""
+    anchor_path = tmp_path / "anchor.db"
+    wf = tmp_path / "workspaces.json"
+    WorkspaceRegistry(wf).register(
+        workspace_id="ws-b",
+        db_path=str(tmp_path / "b.db"),
+        vector_path=str(tmp_path / "b.lance"),
+    )
+    anchor = sqlite3.connect(anchor_path)
+    relaxed = v3._runtime.settings.model_copy(
+        update={
+            "workspace_id": "anchor",
+            "db_path": str(anchor_path),
+            "workspaces_file": wf,
+            "strict_workspace_isolation": False,
+            "forbid_default_workspace": False,
+            "hub_mode": True,
+        }
+    )
+    monkeypatch.setattr(v3._runtime, "settings", relaxed)
+    monkeypatch.setattr(v3._runtime, "db", lambda: anchor)
+    # Misroute: db_for('ws-b') returns the ANCHOR conn (b.db's own DB was not opened).
+    monkeypatch.setattr(v3._runtime, "db_for", lambda _wsid: anchor)
+    try:
+        env = v3._handle_v3_get({"workspace_id": "ws-b", "kind": "decision", "id": "dec_x"})
+        assert env["ok"] is False
+        assert env["error"]["code"] == "workspace_unavailable"
+    finally:
+        anchor.close()
 
 
 # ============================================================

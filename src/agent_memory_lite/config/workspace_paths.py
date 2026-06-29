@@ -19,12 +19,17 @@ directly and skips only on definite DB mismatches.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
 
 from agent_memory_lite.config.settings import Settings
+
+# Re-exported (back-compat) -- the low-level physical-path helpers moved to a
+# sibling module to keep this file at/under the 150-SLOC ceiling.
+from agent_memory_lite.config.workspace_connection_match import (
+    _connection_db_path,
+    _connections_match,
+)
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 
 
@@ -62,6 +67,23 @@ def resolve_workspace_paths(
         return None
     vector_path = entry.vector_path or str(settings.vector_db_path)
     return ResolvedWorkspacePaths(db_path=entry.db_path, vector_path=vector_path)
+
+
+def registry_load_error(settings: Settings) -> str | None:
+    """Return the workspace registry's ``last_load_error`` (corrupt-vs-absent).
+
+    ``'corrupt:json'`` / ``'corrupt:io'`` / ``'corrupt:shape'`` when the registry
+    file exists but cannot be read, else ``None`` (absent or parsed cleanly). Lets
+    routing guards distinguish "registry unavailable" (a transient/operator issue --
+    surface it, fail-closed) from "workspace genuinely not registered". Failure-soft:
+    any unexpected error reading the registry maps to a generic corrupt marker.
+    """
+    try:
+        registry = WorkspaceRegistry(settings.workspaces_file)
+        registry.list()  # triggers _load(), which sets last_load_error
+        return registry.last_load_error
+    except Exception:  # pragma: no cover - defensive
+        return "corrupt:unknown"
 
 
 def workspace_db_path(workspace_id: str | None, settings: Settings) -> str | None:
@@ -109,22 +131,6 @@ def workspace_vector_path(workspace_id: str | None, settings: Settings) -> str |
     return entry.vector_path or str(settings.vector_db_path)
 
 
-def _connection_db_path(conn: sqlite3.Connection) -> str:
-    """Absolute file backing the connection's ``main`` schema.
-
-    ``PRAGMA database_list`` reports the physical file SQLite opened.
-    Empty for an in-memory or temp database -- the guard then has no
-    path to compare against and skips.
-    """
-    try:
-        for row in conn.execute("PRAGMA database_list"):
-            if row[1] == "main":
-                return str(row[2] or "")
-    except sqlite3.Error:
-        return ""
-    return ""
-
-
 def _expected_db_path(workspace_id: str, settings: Settings) -> str | None:
     """Registry DB path ``workspace_id`` is supposed to live in.
 
@@ -133,27 +139,6 @@ def _expected_db_path(workspace_id: str, settings: Settings) -> str | None:
     The guard skips rather than guess in that case.
     """
     return workspace_db_path(workspace_id, settings)
-
-
-def _connections_match(actual: str, expected: str) -> bool:
-    """True when ``actual`` and ``expected`` name the same physical file
-    -- or cannot be told apart.
-
-    ``os.path.samefile`` compares device + inode, so it sees through
-    symlinks, ``subst`` drives and UNC-vs-drive-letter forms that a
-    ``Path.resolve()`` string compare can miss. It needs both files to
-    exist; when one does not, fall back to a resolved-path compare. When
-    even that fails, treat the pair as matching -- a transient
-    resolution glitch must never false-reject a legitimate write.
-    """
-    try:
-        return os.path.samefile(actual, expected)
-    except OSError:
-        pass
-    try:
-        return Path(actual).resolve() == Path(expected).resolve()
-    except (OSError, ValueError):
-        return True
 
 
 def connection_matches_workspace(

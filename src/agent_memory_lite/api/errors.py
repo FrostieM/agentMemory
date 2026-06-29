@@ -40,6 +40,17 @@ class ConflictError(MemoryServiceError):
     error_code = "conflict"
 
 
+class WorkspaceUnavailableError(MemoryServiceError):
+    """A read landed on a connection that is a DEFINITE mismatch for the
+    requested workspace (the served DB is a different physical file than the
+    workspace's registered DB). Returning a result would risk surfacing another
+    workspace's rows, so the read is refused with a distinct, actionable signal
+    instead of a misleading empty (or a silent cross-workspace leak)."""
+
+    status_code = 409
+    error_code = "workspace_unavailable"
+
+
 def install_handlers(app: FastAPI) -> None:
     @app.exception_handler(MemoryServiceError)
     async def _handle_service_error(_request: Request, exc: MemoryServiceError) -> JSONResponse:
