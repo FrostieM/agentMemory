@@ -290,6 +290,13 @@ def _persist_insight(
     """INSERT one insight row with status='candidate'."""
     insight_id = f"insight_{uuid.uuid4().hex[:16]}"
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # Redact the LLM/heuristic-derived summary BEFORE it reaches SQLite + durable_fts
+    # (CLAUDE.md: "Never store secrets"). The summary is built from episode gists
+    # (themselves redacted at ingest), but redact here too so the durable-row
+    # invariant is uniform and defends against an LLM echoing a secret-shaped token.
+    from agent_memory_lite.redaction.redactor import redact  # noqa: PLC0415
+
+    summary_safe = redact(draft.summary).text
     conn.execute(
         """
         INSERT INTO insights (
@@ -302,7 +309,7 @@ def _persist_insight(
             insight_id,
             workspace_id,
             insight_type,
-            draft.summary,
+            summary_safe,
             json.dumps(draft.evidence_episode_ids),
             json.dumps(draft.signal_tokens_csv.split(",") if draft.signal_tokens_csv else []),
             0.55,
@@ -310,6 +317,18 @@ def _persist_insight(
             now,
         ),
     )
+    # M1 (write-atomicity batch): consolidation runs from its own cron, INSERTing
+    # the insight row directly and bypassing write_canonical's FTS sync choke
+    # point. insight is a DURABLE_FTS_KIND, so without this sync the consolidated
+    # insight (its searchable summary) is invisible to memory_search until a later
+    # brain-pass durable_fts rebuild tick. Failure-soft -- never breaks the write.
+    from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+    if not sync_durable_fts(conn, kind="insight", object_id=insight_id, workspace_id=workspace_id):
+        logger.warning(
+            "durable_fts_sync_skipped_on_consolidation_insight",
+            extra={"workspace_id": workspace_id, "insight_id": insight_id},
+        )
     conn.commit()
     return insight_id
 

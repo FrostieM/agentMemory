@@ -105,6 +105,49 @@ def test_jaccard_disjoint_returns_zero() -> None:
 
 
 # ============================================================
+# M1: persisted consolidation insight is FTS-searchable
+# ============================================================
+
+
+def test_persisted_consolidation_insight_is_fts_searchable(conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch): consolidation runs from its own cron and
+    INSERTs the insight row directly via _persist_insight, bypassing
+    write_canonical's FTS sync choke point. Before M1 the consolidated insight
+    (its searchable summary) was invisible to memory_search until a later
+    brain-pass durable_fts rebuild tick. It must be searchable immediately."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    draft = cons.InsightDraft(
+        summary="Pattern: narwhal indexing stalls when the badger cache is cold.",
+        evidence_episode_ids=["ep1"],
+        signal_tokens_csv="narwhal,badger",
+    )
+    insight_id = cons._persist_insight(conn, workspace_id="ws", draft=draft)
+    hits = search_kind_fts(conn, workspace_id="ws", kind="insight", query="narwhal badger", limit=5)
+    assert insight_id in [h.projection["id"] for h in hits]
+
+
+def test_persisted_consolidation_insight_redacts_secret(conn: sqlite3.Connection) -> None:
+    """R6 audit (uniformity): _persist_insight redacts its (LLM/heuristic-derived)
+    summary before it reaches SQLite + durable_fts, so no secret-shaped token can
+    land cleartext in a durable row or its searchable index."""
+    secret_raw = "sk-ant-secret-LEAK-CONSOLIDATE"
+    draft = cons.InsightDraft(
+        summary=f"api_key: {secret_raw} recurring pattern",
+        evidence_episode_ids=["ep1"],
+        signal_tokens_csv="pattern",
+    )
+    insight_id = cons._persist_insight(conn, workspace_id="ws", draft=draft)
+    row = conn.execute("SELECT summary FROM insights WHERE id=?", (insight_id,)).fetchone()
+    assert secret_raw not in (row[0] or "")
+    frow = conn.execute(
+        "SELECT content FROM durable_fts WHERE object_id=?", (insight_id,)
+    ).fetchone()
+    assert frow is not None
+    assert secret_raw not in (frow[0] or "")
+
+
+# ============================================================
 # Clustering
 # ============================================================
 

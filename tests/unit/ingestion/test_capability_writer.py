@@ -40,6 +40,78 @@ def test_capability_upserts_reuse_name_per_workspace(applied_conn: sqlite3.Conne
     assert updated_role.responsibilities == ["Check health endpoints", "Preserve evidence"]
 
 
+def test_upsert_agent_role_and_playbook_are_fts_searchable(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """R6 audit: roles + playbooks live in the ``skills`` table (subtype role/
+    playbook) and the 0007 backfill + rebuild_durable_fts index EVERY skills row as
+    kind='skill'. Before the fix only upsert_agent_skill synced inline -- so once a
+    competing skill made search_kind_fts(kind='skill') non-empty, the reader's LIKE
+    fallback was suppressed and an unsynced role/playbook was silently hidden. With
+    the writers syncing too, both are directly findable in the FTS index."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    # A competing skill so the FTS index is non-empty (the suppression trigger).
+    upsert_agent_skill(
+        applied_conn,
+        AgentSkillIn(
+            workspace_id="default",
+            name="Decoy skill",
+            summary="Unrelated decoy capability.",
+        ),
+    )
+    role = upsert_agent_role(
+        applied_conn,
+        AgentRoleIn(
+            workspace_id="default",
+            name="Quokka operator",
+            purpose="Operate the quokka pipeline safely.",
+            confidence=0.8,
+        ),
+    )
+    playbook = upsert_agent_playbook(
+        applied_conn,
+        AgentPlaybookIn(
+            workspace_id="default",
+            name="Wombat recovery drill",
+            goal="Recover the wombat service after an incident.",
+            confidence=0.9,
+        ),
+    )
+    role_hits = search_kind_fts(
+        applied_conn, workspace_id="default", kind="skill", query="quokka operator", limit=10
+    )
+    assert role.id in [h.projection["id"] for h in role_hits]
+    pb_hits = search_kind_fts(
+        applied_conn, workspace_id="default", kind="skill", query="wombat recovery", limit=10
+    )
+    assert playbook.id in [h.projection["id"] for h in pb_hits]
+
+
+def test_upsert_agent_skill_is_fts_searchable(applied_conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch): an agent skill is a DURABLE_FTS_KIND
+    (subtype='skill'). upsert_agent_skill is the business writer the capability
+    routes + project seeding funnel through, bypassing write_canonical's FTS choke
+    point. Syncing inside the writer makes the seeded/route-created skill findable
+    by memory_search (the project-seed path was a reported silent-loss bug)."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    skill = upsert_agent_skill(
+        applied_conn,
+        AgentSkillIn(
+            workspace_id="default",
+            name="Okapi migration drill",
+            summary="Rehearse the okapi schema migration on a snapshot before prod.",
+            when_to_use=["A forward-only migration touches okapi tables"],
+            confidence=0.9,
+        ),
+    )
+    hits = search_kind_fts(
+        applied_conn, workspace_id="default", kind="skill", query="okapi migration", limit=5
+    )
+    assert skill.id in [h.projection["id"] for h in hits]
+
+
 def test_agent_capabilities_rank_relevant_roles_skills_playbooks(
     applied_conn: sqlite3.Connection,
 ) -> None:

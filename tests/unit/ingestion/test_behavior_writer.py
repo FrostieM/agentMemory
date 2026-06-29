@@ -13,6 +13,87 @@ from agent_memory_lite.models.enums import (
 from agent_memory_lite.repositories.behavior_repo import list_behavior_instructions
 
 
+def test_upsert_behavior_instruction_redacts_secret_in_name(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """Certification finding: `name` is FTS-indexed for behavior; once Batch B syncs
+    the writer inline, a secret in the name surfaces into durable_fts. Redact it (the
+    blessed write_canonical path already does). The secret must be absent from both
+    the stored name and the FTS index."""
+    secret_raw = "sk-ant-secret-LEAK-BEHNAME"
+    bi = upsert_behavior_instruction(
+        applied_conn,
+        BehaviorInstructionIn(
+            workspace_id="default",
+            name=f"rule api_key: {secret_raw}",
+            kind=BehaviorInstructionKind.OPERATING_RULE,
+            scope=BehaviorInstructionScope.WORKSPACE,
+            priority=BehaviorInstructionPriority.USER_PREFERENCE,
+            rule="a clean rule body",
+            conflict_policy=BehaviorConflictPolicy.CURRENT_USER_WINS,
+            confidence=0.9,
+        ),
+    )
+    assert secret_raw not in bi.name
+    row = applied_conn.execute(
+        "SELECT content FROM durable_fts WHERE object_id=?", (bi.id,)
+    ).fetchone()
+    assert row is not None
+    assert secret_raw not in (row[0] or "")
+
+
+def test_upsert_behavior_instruction_is_fts_searchable(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """M1 (write-atomicity batch): behavior is a DURABLE_FTS_KIND and
+    upsert_behavior_instruction is the single business writer EVERY behavior-
+    create path funnels through (write_canonical, correction/candidate promotion,
+    promote_durable, project seeding). Syncing FTS inside the writer makes ALL
+    those callers searchable at one choke point. This locks the invariant: a row
+    produced by the writer is immediately findable by memory_search. An UPSERT that
+    reuses the row id must keep the (single) row findable by the new rule text."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    first = upsert_behavior_instruction(
+        applied_conn,
+        BehaviorInstructionIn(
+            workspace_id="default",
+            name="Pangolin review rule",
+            kind=BehaviorInstructionKind.OPERATING_RULE,
+            scope=BehaviorInstructionScope.WORKSPACE,
+            priority=BehaviorInstructionPriority.USER_PREFERENCE,
+            rule="Always run the pangolin lint before merging.",
+            conflict_policy=BehaviorConflictPolicy.CURRENT_USER_WINS,
+            confidence=0.9,
+        ),
+    )
+    hits = search_kind_fts(
+        applied_conn, workspace_id="default", kind="behavior", query="pangolin lint", limit=5
+    )
+    assert first.id in [h.projection["id"] for h in hits]
+
+    # UPSERT on the same name reuses first.id and rewrites the indexed rule text;
+    # the re-sync must keep the single row findable by the new text.
+    updated = upsert_behavior_instruction(
+        applied_conn,
+        BehaviorInstructionIn(
+            workspace_id="default",
+            name="Pangolin review rule",
+            kind=BehaviorInstructionKind.OPERATING_RULE,
+            scope=BehaviorInstructionScope.WORKSPACE,
+            priority=BehaviorInstructionPriority.USER_PREFERENCE,
+            rule="Always run the armadillo type-check before merging.",
+            conflict_policy=BehaviorConflictPolicy.CURRENT_USER_WINS,
+            confidence=0.95,
+        ),
+    )
+    assert updated.id == first.id
+    hits2 = search_kind_fts(
+        applied_conn, workspace_id="default", kind="behavior", query="armadillo type-check", limit=5
+    )
+    assert updated.id in [h.projection["id"] for h in hits2]
+
+
 def test_behavior_instruction_upserts_reuse_name_per_workspace(
     applied_conn: sqlite3.Connection,
 ) -> None:

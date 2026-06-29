@@ -50,9 +50,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.enums import TheoryEvidenceKind
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
+
+_log = get_logger("cognition.autonomous_loop")
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 _MIN_TOKEN_LEN = 4  # filter ultra-short like "and", "the", "of"
@@ -281,13 +285,18 @@ def _promote_to_theory(
     """
     now = iso_now()
     theory_id = new_id(IdKind.THEORY)
-    title = proposal_text[:60].strip() or f"From insight {insight_id}"
+    # Redact the candidate proposal text BEFORE it becomes the theory title + claim
+    # (both durable_fts-indexed). It is insight/episode-derived (redacted at ingest),
+    # but redact here too so the durable-row "never store secrets" invariant is
+    # uniform. redact() is identity on non-secret text.
+    proposal_safe = redact(proposal_text).text
+    title = proposal_safe[:60].strip() or f"From insight {insight_id}"
     primary_episode = supporting_episodes[0] if supporting_episodes else None
     # v3.4 audit-followup (insight_6cf19fa37cf05012): synthesize discipline
     # fields BEFORE the INSERT so the hygiene check never flags autonomously
     # promoted theories as ``undisciplined_active_theories``.
     predictions, validation_criteria = _synthesize_discipline(
-        proposal_text=proposal_text,
+        proposal_text=proposal_safe,
         supporting_episode_count=len(supporting_episodes),
     )
     conn.execute(
@@ -303,7 +312,7 @@ def _promote_to_theory(
             theory_id,
             workspace_id,
             title,
-            proposal_text,
+            proposal_safe,
             json.dumps(predictions),
             json.dumps(validation_criteria),
             confidence,
@@ -314,6 +323,20 @@ def _promote_to_theory(
             now,
         ),
     )
+    # M1 (write-atomicity batch): this brain-pass path INSERTs the theory row
+    # directly, bypassing write_canonical's FTS sync choke point. theory is a
+    # DURABLE_FTS_KIND, so without this sync the auto-promoted theory is invisible
+    # to memory_search. Especially acute here: the durable_fts rebuild backstop
+    # step runs EARLIER in the same brain_pass than the autonomous loop, so the
+    # row would otherwise stay unsearchable until the NEXT pass. Failure-soft.
+    from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+    if not sync_durable_fts(conn, kind="theory", object_id=theory_id, workspace_id=workspace_id):
+        _log.warning(
+            "durable_fts_sync_skipped_on_promote_theory",
+            object_id=theory_id,
+            workspace_id=workspace_id,
+        )
     # v3.4 follow-up: route the kind through the enum so any future
     # rename or migration touches a single place. ``add_theory_evidence``
     # is the canonical helper, but we keep the raw INSERT here because

@@ -23,6 +23,7 @@ import time
 import uuid
 from typing import Any
 
+from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.storage.projections import project
@@ -375,36 +376,42 @@ def write(
         return None
     table, _, _ = _KIND_META[kind]
     object_id = payload.get("id") or _gen_id(_PREFIXES.get(kind, "obj"))
-    # Read prior row for snapshot + audit.
-    prior = conn.execute(
-        f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
-        (workspace_id, object_id),
-    ).fetchone()
-    if prior is not None:
-        _snapshot_version(
+    # M2 (reliability audit): version snapshot + row mutation + audit are ONE
+    # atomic unit. Connections are autocommit, so the prior sequence committed
+    # each step separately -- a crash or a _validate_numeric_fields raise after
+    # the snapshot left an orphan version row, or a committed mutation with no
+    # audit row (violating the module's every-mutation-appends-audit invariant).
+    # with_tx degrades to a SAVEPOINT if a caller already opened a transaction.
+    with with_tx(conn):
+        # Read prior row for snapshot + audit.
+        prior = conn.execute(
+            f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
+            (workspace_id, object_id),
+        ).fetchone()
+        if prior is not None:
+            _snapshot_version(
+                conn,
+                workspace_id=workspace_id,
+                kind=kind,
+                target_id=object_id,
+                row=prior,
+                actor=agent_id,
+            )
+        columns = _build_column_payload(conn, kind, payload, workspace_id, object_id)
+        _normalize_status_field(columns)
+        _validate_numeric_fields(conn, table, columns)
+        _insert_or_replace(conn, table=table, columns=columns)
+        _audit(
             conn,
             workspace_id=workspace_id,
+            action="write" if prior is None else "update",
             kind=kind,
-            target_id=object_id,
-            row=prior,
-            actor=agent_id,
+            object_id=object_id,
+            agent_id=agent_id,
+            before_row=prior,
+            after_payload=columns,
+            source_episode_id=source_episode_id,
         )
-    columns = _build_column_payload(conn, kind, payload, workspace_id, object_id)
-    _normalize_status_field(columns)
-    _validate_numeric_fields(conn, table, columns)
-    _insert_or_replace(conn, table=table, columns=columns)
-    _audit(
-        conn,
-        workspace_id=workspace_id,
-        action="write" if prior is None else "update",
-        kind=kind,
-        object_id=object_id,
-        agent_id=agent_id,
-        before_row=prior,
-        after_payload=columns,
-        source_episode_id=source_episode_id,
-    )
-    conn.commit()
     new_row = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),
@@ -452,54 +459,59 @@ def edit(
     ).fetchone()
     if prior is None:
         return None
-    _snapshot_version(
-        conn,
-        workspace_id=workspace_id,
-        kind=kind,
-        target_id=object_id,
-        row=prior,
-        actor=agent_id,
-    )
-    set_clauses = ", ".join(f"{col} = ?" for col in fields)
-    if kind in _HAS_UPDATED_AT:
-        sql = f"UPDATE {table} SET {set_clauses}, updated_at = ? WHERE workspace_id = ? AND id = ?"
-        params = [*fields.values(), _now_iso(), workspace_id, object_id]
-    else:
-        sql = f"UPDATE {table} SET {set_clauses} WHERE workspace_id = ? AND id = ?"
-        params = [*fields.values(), workspace_id, object_id]
-    conn.execute(sql, params)
-    # Re-index the durable-kind FTS content in the same transaction as the edit
-    # (an edit can change searchable columns). edit() is the single edit choke
-    # point for every kind, so this covers all of them.
-    from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
-        DURABLE_FTS_KINDS,
-        sync_durable_fts,
-    )
+    # M2: snapshot + UPDATE + FTS re-sync + audit are ONE atomic unit (with_tx
+    # degrades to a SAVEPOINT under an outer tx). Autocommit previously committed
+    # each separately, so a failed _audit left a mutated row with no audit row.
+    with with_tx(conn):
+        _snapshot_version(
+            conn,
+            workspace_id=workspace_id,
+            kind=kind,
+            target_id=object_id,
+            row=prior,
+            actor=agent_id,
+        )
+        set_clauses = ", ".join(f"{col} = ?" for col in fields)
+        if kind in _HAS_UPDATED_AT:
+            sql = (
+                f"UPDATE {table} SET {set_clauses}, updated_at = ? "
+                "WHERE workspace_id = ? AND id = ?"
+            )
+            params = [*fields.values(), _now_iso(), workspace_id, object_id]
+        else:
+            sql = f"UPDATE {table} SET {set_clauses} WHERE workspace_id = ? AND id = ?"
+            params = [*fields.values(), workspace_id, object_id]
+        conn.execute(sql, params)
+        # Re-index the durable-kind FTS content in the SAME transaction as the
+        # edit -- now literally one with_tx (the prior "same transaction" comment
+        # was false under autocommit). edit() is the single edit choke point.
+        from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
+            DURABLE_FTS_KINDS,
+            sync_durable_fts,
+        )
 
-    if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
-        conn, kind=kind, object_id=object_id, workspace_id=workspace_id
-    ):
-        # M3 (reliability audit 2026-06-26): observe the sync bool the create
-        # choke point already checks. A rolled-back sync leaves the row text
-        # updated but durable_fts stale (temporarily unsearchable); log it so the
-        # edit choke point is observable, not just the FTS helper's own warning.
-        _log.warning(
-            "durable_fts_sync_skipped_on_edit",
+        if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
+            conn, kind=kind, object_id=object_id, workspace_id=workspace_id
+        ):
+            # M3: observe the sync bool. A rolled-back sync leaves the row text
+            # updated but durable_fts stale (temporarily unsearchable); log it so
+            # the edit choke point is observable, not just the FTS helper's warning.
+            _log.warning(
+                "durable_fts_sync_skipped_on_edit",
+                kind=kind,
+                object_id=object_id,
+                workspace_id=workspace_id,
+            )
+        _audit(
+            conn,
+            workspace_id=workspace_id,
+            action="edit",
             kind=kind,
             object_id=object_id,
-            workspace_id=workspace_id,
+            agent_id=agent_id,
+            before_row=prior,
+            after_payload=fields,
         )
-    _audit(
-        conn,
-        workspace_id=workspace_id,
-        action="edit",
-        kind=kind,
-        object_id=object_id,
-        agent_id=agent_id,
-        before_row=prior,
-        after_payload=fields,
-    )
-    conn.commit()
     new_row = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),
@@ -629,49 +641,51 @@ def rollback(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),
     ).fetchone()
-    _snapshot_version(
-        conn,
-        workspace_id=workspace_id,
-        kind=kind,
-        target_id=object_id,
-        row=current,
-        actor=agent_id,
-        why=f"pre-rollback to v{to_version}",
-    )
-    snapshot["workspace_id"] = workspace_id
-    snapshot["id"] = object_id
-    snapshot["updated_at"] = _now_iso()
-    _insert_or_replace(conn, table=table, columns=snapshot)
-    # rollback restores the FTS-indexed text columns; re-index so durable_fts
-    # matches the restored row (mirrors edit(); failure-soft + pre-0007-safe).
-    from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
-        DURABLE_FTS_KINDS,
-        sync_durable_fts,
-    )
+    # M2: pre-rollback snapshot + restore + FTS re-sync + audit are ONE atomic
+    # unit (with_tx -> SAVEPOINT under an outer tx).
+    with with_tx(conn):
+        _snapshot_version(
+            conn,
+            workspace_id=workspace_id,
+            kind=kind,
+            target_id=object_id,
+            row=current,
+            actor=agent_id,
+            why=f"pre-rollback to v{to_version}",
+        )
+        snapshot["workspace_id"] = workspace_id
+        snapshot["id"] = object_id
+        snapshot["updated_at"] = _now_iso()
+        _insert_or_replace(conn, table=table, columns=snapshot)
+        # rollback restores the FTS-indexed text columns; re-index so durable_fts
+        # matches the restored row (mirrors edit(); failure-soft + pre-0007-safe).
+        from agent_memory_lite.fts.durable_fts import (  # noqa: PLC0415
+            DURABLE_FTS_KINDS,
+            sync_durable_fts,
+        )
 
-    if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
-        conn, kind=kind, object_id=object_id, workspace_id=workspace_id
-    ):
-        # M3: observe the sync bool (see edit()); a rolled-back re-index leaves
-        # durable_fts pointing at the pre-rollback text until the brain-pass
-        # backstop rebuilds it.
-        _log.warning(
-            "durable_fts_sync_skipped_on_rollback",
+        if kind in DURABLE_FTS_KINDS and not sync_durable_fts(
+            conn, kind=kind, object_id=object_id, workspace_id=workspace_id
+        ):
+            # M3: observe the sync bool (see edit()); a rolled-back re-index leaves
+            # durable_fts pointing at the pre-rollback text until the brain-pass
+            # backstop rebuilds it.
+            _log.warning(
+                "durable_fts_sync_skipped_on_rollback",
+                kind=kind,
+                object_id=object_id,
+                workspace_id=workspace_id,
+            )
+        _audit(
+            conn,
+            workspace_id=workspace_id,
+            action="rollback",
             kind=kind,
             object_id=object_id,
-            workspace_id=workspace_id,
+            agent_id=agent_id,
+            before_row=current,
+            after_payload={"to_version": to_version, "why": why},
         )
-    _audit(
-        conn,
-        workspace_id=workspace_id,
-        action="rollback",
-        kind=kind,
-        object_id=object_id,
-        agent_id=agent_id,
-        before_row=current,
-        after_payload={"to_version": to_version, "why": why},
-    )
-    conn.commit()
     new_row = conn.execute(
         f"SELECT * FROM {table} WHERE workspace_id = ? AND id = ?",
         (workspace_id, object_id),

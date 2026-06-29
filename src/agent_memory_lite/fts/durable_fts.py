@@ -131,25 +131,32 @@ def rebuild_durable_fts(conn: sqlite3.Connection, workspace_id: str | None = Non
     """
     if not _table_has_durable_fts(conn):
         return 0
-    if workspace_id is None:
-        conn.execute("DELETE FROM durable_fts")
-    else:
-        conn.execute("DELETE FROM durable_fts WHERE workspace_id = ?", (workspace_id,))
+    # M2 (reliability audit): the wipe + full re-populate are ONE atomic unit.
+    # Connections are autocommit, so the old code committed the DELETE first --
+    # a crash (or a single bad row) partway through the INSERT loop left the
+    # index half-empty, silently hiding every not-yet-reinserted durable row
+    # from memory_search. with_tx rolls the DELETE back on any failure, so the
+    # prior (complete) index survives intact. SAVEPOINT-safe under an outer tx.
     written = 0
-    for kind, table in _KIND_TABLE.items():
-        cols = _FTS_COLUMNS[kind]
-        ws_clause = "" if workspace_id is None else " AND workspace_id = ?"
-        params = () if workspace_id is None else (workspace_id,)
-        rows = conn.execute(
-            f"SELECT id, workspace_id, {', '.join(cols)} FROM {table} WHERE 1 = 1{ws_clause}",
-            params,
-        ).fetchall()
-        for row in rows:
-            vals = list(row)
-            conn.execute(
-                "INSERT INTO durable_fts (object_id, workspace_id, kind, content) "
-                "VALUES (?, ?, ?, ?)",
-                (vals[0], vals[1], kind, _content_from_values(vals[2:])),
-            )
-            written += 1
+    with with_tx(conn):
+        if workspace_id is None:
+            conn.execute("DELETE FROM durable_fts")
+        else:
+            conn.execute("DELETE FROM durable_fts WHERE workspace_id = ?", (workspace_id,))
+        for kind, table in _KIND_TABLE.items():
+            cols = _FTS_COLUMNS[kind]
+            ws_clause = "" if workspace_id is None else " AND workspace_id = ?"
+            params = () if workspace_id is None else (workspace_id,)
+            rows = conn.execute(
+                f"SELECT id, workspace_id, {', '.join(cols)} FROM {table} WHERE 1 = 1{ws_clause}",
+                params,
+            ).fetchall()
+            for row in rows:
+                vals = list(row)
+                conn.execute(
+                    "INSERT INTO durable_fts (object_id, workspace_id, kind, content) "
+                    "VALUES (?, ?, ?, ?)",
+                    (vals[0], vals[1], kind, _content_from_values(vals[2:])),
+                )
+                written += 1
     return written
