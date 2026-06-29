@@ -133,6 +133,79 @@ def test_outcome_floor_filters_after_spreading(conn: sqlite3.Connection) -> None
     assert "dec_bad" not in ids
 
 
+def test_discredited_neighbour_filtered_after_spreading(conn: sqlite3.Connection) -> None:
+    """Batch D: recall() must drop a DISCREDITED frontier node (one reached ONLY via
+    spreading), matching search()'s _is_discredited filter. A SUPERSEDED decision
+    with a POSITIVE outcome_score -- so the outcome_floor does NOT catch it -- reached
+    via a soft_edge must not surface as a live RecallHit; the live seed must."""
+    _seed_decision(conn, id_="dec_live", title="kelly sizing", outcome=0.6)
+    # Superseded neighbour: positive outcome (passes outcome_floor) BUT terminal
+    # status -> only _is_discredited can exclude it. Reached via spreading only
+    # (search() already drops superseded rows, so it is never a recall seed).
+    conn.execute(
+        "INSERT INTO decisions (id, workspace_id, title, decision_text, gist, status, "
+        "valid_from, created_at, updated_at, outcome_score, pinned) "
+        "VALUES ('dec_superseded', 'ws', 'old kelly rule', 'b', 'old kelly rule', "
+        "'superseded', ?, ?, ?, 0.7, 0)",
+        (iso_now(), iso_now(), iso_now()),
+    )
+    upsert_soft_edge(
+        conn,
+        workspace_id="ws",
+        src="decision:dec_live",
+        dst="decision:dec_superseded",
+        kind="co_retrieved",
+        weight_increment=3.0,
+    )
+    conn.commit()
+    out = recall(conn, workspace_id="ws", topic="kelly", outcome_floor=-1.0)
+    ids = {h.object_id for h in out}
+    assert "dec_live" in ids
+    assert "dec_superseded" not in ids
+
+
+def test_live_negative_outcome_neighbour_survives_permissive_floor(
+    conn: sqlite3.Connection,
+) -> None:
+    """Batch D regression guard: a LIVE (status='active', non-pinned) frontier node
+    with a NEGATIVE outcome_score must NOT be dropped by the discredited filter --
+    recall owns the outcome dimension via outcome_floor, so under a permissive floor
+    the row surfaces (ranked low), matching the mood-congruent-recall design. Only
+    STRUCTURALLY terminal rows are dropped. (Before the fix, _is_discredited's bare
+    negative-outcome arm clamped the effective floor to 0.0 and silently dropped it.)
+    """
+    _seed_decision(conn, id_="dec_live", title="kelly sizing", outcome=0.6)
+    # Active, non-pinned, NEGATIVE outcome, reachable ONLY via spreading (its title
+    # does not BM25-match the topic, so it is never a seed -- frontier-only).
+    conn.execute(
+        "INSERT INTO decisions (id, workspace_id, title, decision_text, gist, status, "
+        "valid_from, created_at, updated_at, outcome_score, pinned) "
+        "VALUES ('dec_neg', 'ws', 'unrelated side note', 'b', 'unrelated side note', "
+        "'active', ?, ?, ?, -0.3, 0)",
+        (iso_now(), iso_now(), iso_now()),
+    )
+    upsert_soft_edge(
+        conn,
+        workspace_id="ws",
+        src="decision:dec_live",
+        dst="decision:dec_neg",
+        kind="co_retrieved",
+        weight_increment=3.0,
+    )
+    conn.commit()
+    # Permissive floor (-1.0) admits the live negative-outcome neighbour.
+    permissive = {
+        h.object_id for h in recall(conn, workspace_id="ws", topic="kelly", outcome_floor=-1.0)
+    }
+    assert "dec_live" in permissive
+    assert "dec_neg" in permissive
+    # outcome_floor is STILL the live outcome gate: a 0.0 floor excludes it.
+    strict = {
+        h.object_id for h in recall(conn, workspace_id="ws", topic="kelly", outcome_floor=0.0)
+    }
+    assert "dec_neg" not in strict
+
+
 def test_kinds_filter_restricts_output(conn: sqlite3.Connection) -> None:
     _seed_decision(conn, id_="dec_a", title="kelly")
     _seed_theory(conn, id_="th_a", title="kelly thesis")

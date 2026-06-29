@@ -79,7 +79,14 @@ memory-cli = "agent_memory_lite.cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_memory_lite = ["py.typed", "evals/fixtures/*.yaml", "ui/*", "ui/vendor/*"]
+agent_memory_lite = [
+    "py.typed",
+    "evals/fixtures/*.yaml",
+    "evals/golden/*.yaml",
+    "evals/golden/*.json",
+    "ui/*",
+    "ui/vendor/*",
+]
 
 [tool.ruff]
 line-length = 100

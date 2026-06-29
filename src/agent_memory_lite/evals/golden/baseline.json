@@ -1,0 +1,7 @@
+{
+  "corpus_size": 114,
+  "queries_evaluated": 87,
+  "retrieval_mrr_at_10": 0.9943,
+  "retrieval_ndcg_at_10": 0.9822,
+  "retrieval_recall_at_10": 1.0
+}
