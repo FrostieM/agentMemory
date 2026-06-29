@@ -48,7 +48,7 @@ _TASK_DEAD_STATUSES = frozenset(
 )
 
 
-def _is_discredited(proj: dict[str, object]) -> bool:
+def _is_discredited(proj: dict[str, object], *, include_outcome_arm: bool = True) -> bool:
     """A neighbor that must not be surfaced as a positive association. Covers
     every kind reachable in the associates substrate, by its terminal mechanism:
 
@@ -62,7 +62,16 @@ def _is_discredited(proj: dict[str, object]) -> bool:
     (code_digest carries no dead state -- it is hard-pruned when its file is
     deleted -- so it is intentionally never discredited here.) Status is
     case-folded (and whitespace-stripped) so a mixed-case or padded label
-    cannot slip a dead row through, nor over-filter a padded live one."""
+    cannot slip a dead row through, nor over-filter a padded live one.
+
+    ``include_outcome_arm`` (default True) controls ONLY the final bare
+    negative-outcome arm. ``recall()`` passes False: it already owns the
+    outcome dimension via its ``outcome_floor`` knob (and ranks negative rows
+    low rather than dropping them), so for its spreading frontier it wants the
+    structural arms (terminal status / deactivated / archived / terminal
+    work-item) WITHOUT this predicate silently clamping the effective floor to
+    0.0. The brief associates and search() callers keep the default True (they
+    have no outcome_floor, so the outcome arm IS their negative-row gate)."""
     status = str(proj.get("status") or "").strip().lower()
     # Knowledge kinds: terminal-status denylist.
     if status in _DEAD_STATUSES:
@@ -89,8 +98,10 @@ def _is_discredited(proj: dict[str, object]) -> bool:
         if terminal:
             return True
     # Terminal checks precede the pinned bypass (a pinned-but-dead row is still
-    # dead); the outcome arm is last.
-    if proj.get("pinned"):
+    # dead); the outcome arm is last. Skip it entirely for outcome-floor owners
+    # (include_outcome_arm=False) and for pinned rows (a pin protects a live row
+    # from the bare negative-outcome arm).
+    if not include_outcome_arm or proj.get("pinned"):
         return False
     raw = proj.get("outcome_score")
     return isinstance(raw, (int, float)) and float(raw) < 0.0

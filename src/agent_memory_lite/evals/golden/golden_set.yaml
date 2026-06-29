@@ -1,0 +1,1213 @@
+# Offline golden-set retrieval fixture (Batch D).
+#
+# corpus: durable memory rows seeded ONCE into a shared in-memory DB.
+# queries: each has `relevant` labels; the runner computes recall/MRR/NDCG@10
+# over the whole corpus with an explicit-kinds (full per-kind budget) search.
+#
+# Two query families:
+#  * EASY clusters (c0..c9): the relevant row is the dominant lexical match;
+#    they pin baseline recall/MRR high.
+#  * HARD adversarial sets (h*_): the relevant row wins on a RARE term (high
+#    BM25/IDF) while a same-kind distractor packs MORE of the query's COMMON
+#    tokens -- so the LIKE token-overlap fallback ranks the distractor first.
+#    These give the gate teeth: if the FTS5/BM25 arm breaks and search falls
+#    back to LIKE, MRR/NDCG drop well past the regression threshold.
+# Keep labels globally unique. Re-save baseline.json after editing.
+corpus:
+- kind: concept
+  label: c0_kelly_criterion
+  payload:
+    name: Kelly criterion
+    definition: The Kelly criterion is a formula that computes the optimal fraction of bankroll to wager
+      on a bet with positive expected value in order to maximize the long-run growth rate of capital.
+      For a binary bet it is f = (bp - q) / b, where b is the net odds, p the win probability, and q =
+      1 - p.
+- kind: concept
+  label: c0_fractional_kelly
+  payload:
+    name: Fractional Kelly
+    definition: Fractional Kelly stakes only a fixed multiple of the full Kelly fraction, such as half
+      Kelly or quarter Kelly, to reduce bankroll volatility and drawdown at the cost of a small reduction
+      in long-run growth rate.
+- kind: theory
+  label: c0_half_kelly_volatility
+  payload:
+    title: Half Kelly cuts volatility more than growth
+    claim: Betting half the Kelly fraction retains roughly three quarters of the long-run growth rate
+      while cutting the variance of bankroll returns by about half, giving a far better growth-to-volatility
+      tradeoff than full Kelly.
+- kind: theory
+  label: c0_overbetting_ruin
+  payload:
+    title: Overbetting past Kelly destroys growth
+    claim: Wagering more than the full Kelly fraction lowers the long-run growth rate and sharply increases
+      drawdown and the probability of ruin; betting at twice the Kelly fraction drives the expected growth
+      rate to zero.
+- kind: decision
+  label: c0_use_quarter_kelly_live
+  payload:
+    title: Use quarter Kelly in live trading
+    decision_text: We size live positions at quarter Kelly rather than full Kelly to keep drawdown tolerable
+      given that our estimated win probability and edge are noisy. Fractional Kelly protects the bankroll
+      against parameter error.
+- kind: decision
+  label: c0_cap_kelly_edge_estimate
+  payload:
+    title: Cap Kelly stake on uncertain edge
+    decision_text: When the edge estimate comes from a small sample we cap the Kelly fraction and shrink
+      the win probability toward the base rate, because an overstated edge makes full Kelly overbet and
+      risk ruin.
+- kind: insight
+  label: c0_edge_overestimate_ruin
+  payload:
+    summary: Overestimating the edge or win probability is the main practical cause of accidental overbetting
+      and ruin under Kelly sizing, since the optimal fraction is highly sensitive to the assumed probability.
+    insight_type: risk
+    status: new
+- kind: insight
+  label: c0_drawdown_bankroll_pattern
+  payload:
+    summary: A reliable pattern is that lowering the staked fraction of bankroll reduces maximum drawdown
+      roughly linearly, so fractional Kelly is the simplest lever for controlling worst-case bankroll
+      drawdown.
+    insight_type: pattern
+    status: new
+- kind: concept
+  label: c1_hnsw_index
+  payload:
+    name: HNSW graph index
+    definition: Hierarchical Navigable Small World is a graph-based approximate nearest neighbour index
+      that layers proximity graphs so a greedy search descends from coarse to fine layers. Recall and
+      query latency are tuned via the ef_search and M parameters that control candidate list size and
+      graph connectivity.
+- kind: concept
+  label: c1_ivf_pq
+  payload:
+    name: IVF-PQ index
+    definition: Inverted File with Product Quantization partitions the embedding space into Voronoi cells
+      via k-means and compresses each vector into quantized subspace codes. It trades a small recall loss
+      for large memory savings and faster approximate nearest neighbour search at scale.
+- kind: concept
+  label: c1_cosine_similarity
+  payload:
+    name: Cosine similarity metric
+    definition: Cosine similarity measures the angle between two embedding vectors, ignoring magnitude,
+      and is the most common distance metric for normalized sentence-transformer embeddings. On L2-normalized
+      vectors it is rank-equivalent to Euclidean distance and the inner product.
+- kind: theory
+  label: c1_recall_latency_tradeoff
+  payload:
+    title: ANN recall-latency tradeoff
+    claim: Raising the HNSW ef_search candidate list increases recall toward the exact nearest neighbours
+      but linearly increases query latency. The right operating point is found by sweeping ef_search until
+      recall@10 plateaus against the brute-force ground truth.
+- kind: theory
+  label: c1_quantization_recall_loss
+  payload:
+    title: Quantization degrades recall
+    claim: Product quantization compresses embedding vectors into coarse subspace codes, so the approximate
+      distances it computes lose precision and recall drops compared to uncompressed HNSW. Re-ranking
+      the top candidates with exact full-precision vectors recovers most of the lost recall.
+- kind: insight
+  label: c1_normalize_before_index
+  payload:
+    summary: Always L2-normalize embedding vectors before indexing when the metric is cosine similarity;
+      an un-normalized vector silently corrupts the inner-product distance and tanks nearest neighbour
+      recall.
+    insight_type: lesson
+    status: new
+- kind: insight
+  label: c1_rerank_recovers_recall
+  payload:
+    summary: When an IVF-PQ approximate nearest neighbour search returns low-precision candidates, fetching
+      a wide candidate list and re-ranking with exact cosine similarity on full-precision embeddings restores
+      recall@10 close to brute force.
+    insight_type: pattern
+    status: new
+- kind: decision
+  label: c1_choose_hnsw_over_ivfpq
+  payload:
+    title: Use HNSW for the hot collection
+    decision_text: We chose the HNSW graph index over IVF-PQ for the latency-sensitive embedding collection
+      because HNSW gives higher recall at low query latency without a quantization step. IVF-PQ stays
+      reserved for the cold archive where memory savings outweigh the recall loss.
+- kind: decision
+  label: c2_enable_wal_mode
+  payload:
+    title: Enable WAL journal mode for the writer
+    decision_text: We set SQLite to WAL journal mode so concurrent readers do not block the single writer
+      and write throughput stays high under load. WAL is enabled once at connection open via PRAGMA journal_mode=WAL.
+- kind: decision
+  label: c2_busy_timeout_setting
+  payload:
+    title: Set a busy_timeout to absorb lock contention
+    decision_text: We configure PRAGMA busy_timeout to a few seconds so a writer that hits SQLITE_BUSY
+      retries internally instead of failing immediately on a contended database lock. This replaces ad-hoc
+      retry loops around the connection.
+- kind: theory
+  label: c2_single_writer_serialization
+  payload:
+    title: SQLite serializes all writers to one at a time
+    claim: SQLite permits many concurrent readers but only a single writer holds the write lock at any
+      moment, so write contention is serialized rather than parallel even in WAL mode. A second writer
+      blocks until the first commits or the busy_timeout elapses.
+- kind: theory
+  label: c2_wal_checkpoint_growth
+  payload:
+    title: WAL file grows until a checkpoint runs
+    claim: In WAL mode the write-ahead log file keeps growing while readers hold old snapshots, and disk
+      space is only reclaimed when a checkpoint copies committed pages back into the main database. A
+      blocked checkpoint can let the WAL file grow without bound.
+- kind: concept
+  label: c2_sqlite_busy_error
+  payload:
+    name: SQLITE_BUSY
+    definition: The error SQLite returns when a connection cannot acquire the database lock because another
+      writer holds it, signalling write contention. A configured busy_timeout makes the engine retry internally
+      before surfacing SQLITE_BUSY to the caller.
+- kind: concept
+  label: c2_wal_checkpoint
+  payload:
+    name: WAL checkpoint
+    definition: A checkpoint is the operation that transfers committed pages from the write-ahead log
+      back into the main SQLite database file and truncates the WAL. Checkpoints can run automatically
+      (PASSIVE) on commit or be forced with TRUNCATE/RESTART modes.
+- kind: insight
+  label: c2_concurrent_writer_serialized
+  payload:
+    summary: Two processes writing the same SQLite database under WAL still serialize on the write lock,
+      so a slow transaction holding the writer makes other writers hit busy_timeout and fail with SQLITE_BUSY.
+    insight_type: risk
+    status: new
+- kind: insight
+  label: c2_long_read_blocks_checkpoint
+  payload:
+    summary: A long-running read transaction pins an old WAL snapshot and prevents the checkpoint from
+      reclaiming space, so the WAL file grows and write latency climbs until the reader finishes.
+    insight_type: pattern
+    status: new
+- kind: concept
+  label: c3_prompt_injection
+  payload:
+    name: Prompt injection
+    definition: An attack where untrusted input embedded in data smuggles adversarial instructions into
+      an LLM prompt, hijacking the model away from its original system instructions. Indirect prompt injection
+      delivers the payload through retrieved content such as web pages, emails, or documents rather than
+      the direct user turn.
+- kind: concept
+  label: c3_jailbreak
+  payload:
+    name: Jailbreak
+    definition: A class of prompt injection that bypasses an LLM's safety guardrails and refusal training
+      to elicit prohibited output, often via role-play personas, obfuscation, or many-shot priming. Unlike
+      indirect injection, a jailbreak usually targets the model's alignment rather than a downstream tool
+      action.
+- kind: concept
+  label: c3_system_prompt_extraction
+  payload:
+    name: System prompt extraction
+    definition: An adversarial probe that coaxes the model into revealing its hidden system instructions
+      or developer prompt, often as a precursor to a targeted jailbreak. Defences include refusing meta-requests
+      about instructions and never echoing the system prompt verbatim.
+- kind: theory
+  label: c3_data_instruction_confusion
+  payload:
+    title: Data-instruction confusion is the root cause
+    claim: Prompt injection succeeds because the LLM cannot reliably distinguish trusted instructions
+      from untrusted data when both arrive as plain text in the same context window. Any defence that
+      does not establish a privilege boundary between instructions and data only raises the attacker's
+      cost, it does not close the channel.
+- kind: decision
+  label: c3_delimiter_isolation
+  payload:
+    title: Wrap untrusted data in delimiters
+    decision_text: Wrap all retrieved and user-supplied content in explicit delimiters and instruct the
+      model to treat anything inside as inert data, never as instructions. This is a mitigation that raises
+      attacker cost but does not by itself close the prompt injection channel, so it must be paired with
+      output-side controls.
+- kind: decision
+  label: c3_dual_llm_quarantine
+  payload:
+    title: Dual-LLM quarantine pattern
+    decision_text: Route untrusted content through a quarantined LLM with no tool access, and let a privileged
+      LLM act only on its structured, validated summary. This privilege boundary between data and instructions
+      defends against indirect prompt injection delivered through retrieved documents.
+- kind: insight
+  label: c3_guardrails_bypassed_by_obfuscation
+  payload:
+    summary: Refusal-classifier guardrails are routinely bypassed by obfuscation such as base64, leetspeak,
+      low-resource languages, and many-shot priming, so a single input filter is not a sufficient jailbreak
+      defence.
+    insight_type: risk
+    status: new
+- kind: insight
+  label: c3_least_privilege_tools
+  payload:
+    summary: The highest-leverage defence against indirect prompt injection is least-privilege tool access
+      plus human confirmation on irreversible actions, so that a successful injection cannot trigger a
+      harmful tool call on its own.
+    insight_type: lesson
+    status: new
+- kind: concept
+  label: c4_cache_control_directives
+  payload:
+    name: Cache-Control header directives
+    definition: The Cache-Control response header carries caching directives like max-age, s-maxage, public,
+      private, no-cache, and no-store that tell browsers and CDN edge caches how long a response may be
+      reused and by whom.
+- kind: concept
+  label: c4_etag_conditional_revalidation
+  payload:
+    name: ETag and conditional revalidation
+    definition: An ETag is a response validator that the client echoes back via If-None-Match so the origin
+      can answer 304 Not Modified, letting a stale cache revalidate freshness without re-downloading the
+      full body.
+- kind: concept
+  label: c4_stale_while_revalidate
+  payload:
+    name: stale-while-revalidate
+    definition: A Cache-Control extension that lets a CDN serve a stale cached response immediately while
+      it revalidates the entry with the origin in the background, trading strict freshness for lower tail
+      latency.
+- kind: decision
+  label: c4_immutable_hashed_assets
+  payload:
+    title: Cache hashed static assets as immutable for one year
+    decision_text: 'Serve fingerprinted JS and CSS bundles with Cache-Control: public, max-age=31536000,
+      immutable so browsers and the CDN never revalidate them; cache-busting is handled by changing the
+      content hash in the filename.'
+- kind: decision
+  label: c4_surrogate_key_purge
+  payload:
+    title: Invalidate CDN content by surrogate key on publish
+    decision_text: Tag every cached HTML response with Surrogate-Key labels and issue a targeted CDN purge
+      by key when an article is published or edited, instead of a slow blanket purge of the whole edge
+      cache.
+- kind: theory
+  label: c4_purge_vs_versioned_urls
+  payload:
+    title: Versioned URLs beat active purge for correctness
+    claim: Embedding a content hash or version token in the URL gives stronger cache-correctness guarantees
+      than relying on active CDN purge, because purge propagation across edge nodes is eventually consistent
+      and can briefly serve stale content.
+- kind: theory
+  label: c4_vary_header_fragmentation
+  payload:
+    title: Vary header fragments the CDN cache
+    claim: 'A broad Vary header such as Vary: Accept-Encoding, Cookie multiplies the number of cache keys
+      the CDN must store for one URL, lowering the edge hit ratio and inflating origin traffic.'
+- kind: insight
+  label: c4_no_store_disables_caching
+  payload:
+    summary: 'Setting Cache-Control: no-store on authenticated pages reliably keeps private responses
+      out of both the browser and CDN edge cache, whereas no-cache still allows storage and only forces
+      revalidation.'
+    insight_type: lesson
+    status: new
+- kind: concept
+  label: c5_raft_leader_election
+  payload:
+    name: Raft leader election
+    definition: Raft elects a single leader per term using randomized election timeouts; a follower becomes
+      a candidate, increments its term, and requests votes from peers, winning when it gathers a majority
+      quorum.
+- kind: concept
+  label: c5_paxos_quorum
+  payload:
+    name: Paxos quorum and majority
+    definition: Multi-Paxos uses two phases, prepare and accept, where a proposer must gather promises
+      and acceptances from a majority quorum of acceptors to commit a value, guaranteeing any two quorums
+      intersect.
+- kind: theory
+  label: c5_split_vote_randomized_timeout
+  payload:
+    title: Randomized timeouts reduce split votes
+    claim: Raft uses randomized election timeouts so that candidates rarely start elections simultaneously,
+      which reduces split votes where no candidate reaches a majority quorum and forces a new term.
+- kind: decision
+  label: c5_choose_raft_over_paxos
+  payload:
+    title: Adopt Raft over Multi-Paxos
+    decision_text: We chose Raft over Multi-Paxos for the consensus layer because its understandable leader
+      election and strong-leader log replication make the implementation easier to reason about than Paxos
+      prepare and accept phases.
+- kind: insight
+  label: c5_log_replication_commit_majority
+  payload:
+    summary: In Raft the leader commits a log entry only after it is replicated to a majority quorum of
+      followers, and entries from prior terms are committed indirectly via a current-term entry.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: c5_split_brain_no_quorum
+  payload:
+    summary: A network partition can cause split brain with two leaders, but a quorum-based consensus
+      protocol prevents conflicting commits because a minority partition cannot reach a majority to elect
+      a leader or commit entries.
+    insight_type: risk
+    status: new
+- kind: theory
+  label: c5_term_monotonic_stale_leader
+  payload:
+    title: Monotonic terms detect stale leaders
+    claim: Each Raft term has at most one leader, and because terms increase monotonically, a stale leader
+      that rejoins after a partition discovers a higher term and steps down to a follower.
+- kind: concept
+  label: c5_zab_atomic_broadcast
+  payload:
+    name: ZAB atomic broadcast
+    definition: Zookeeper Atomic Broadcast (ZAB) is a leader-based consensus protocol that, like Raft,
+      elects a single leader and replicates a totally ordered log of state changes to a majority quorum
+      of followers.
+- kind: decision
+  label: c6_warmup_cosine_schedule
+  payload:
+    title: Use linear warmup then cosine decay for the learning rate
+    decision_text: Adopt a linear warmup over the first 2000 steps followed by cosine decay of the learning
+      rate to near zero over the remaining training steps. This stabilizes early gradient descent and
+      improves final convergence over a constant learning rate.
+- kind: decision
+  label: c6_adamw_over_sgd
+  payload:
+    title: Default to AdamW optimizer with decoupled weight decay
+    decision_text: Use the AdamW optimizer instead of plain SGD with momentum for transformer training,
+      because decoupled weight decay regularizes more cleanly than L2 coupled into the gradient. Set weight
+      decay to 0.01 and tune the learning rate separately.
+- kind: theory
+  label: c6_lr_too_high_diverges
+  payload:
+    title: Excessive learning rate makes gradient descent diverge
+    claim: When the learning rate exceeds roughly twice the inverse of the largest eigenvalue of the loss
+      Hessian, gradient descent overshoots the minimum and the loss diverges instead of converging. Lowering
+      the learning rate or adding warmup keeps updates inside the stable region.
+- kind: theory
+  label: c6_batch_size_lr_scaling
+  payload:
+    title: Scale learning rate linearly with batch size
+    claim: Increasing the mini-batch size reduces gradient variance, so the learning rate should be scaled
+      up roughly linearly with batch size to keep the effective optimization step constant. The linear
+      scaling rule holds until very large batches where it breaks down and warmup becomes necessary.
+- kind: concept
+  label: c6_momentum
+  payload:
+    name: Momentum
+    definition: Momentum accumulates an exponentially decaying moving average of past gradients and adds
+      it to the current gradient descent step, smoothing the trajectory and accelerating convergence along
+      consistent directions. SGD with momentum is a common baseline optimizer.
+- kind: concept
+  label: c6_adaptive_optimizer
+  payload:
+    name: Adaptive optimizer
+    definition: An adaptive optimizer such as Adam or AdamW maintains per-parameter learning rates derived
+      from running estimates of the first and second moments of the gradient, so each weight gets an effective
+      step size scaled by its own gradient history. This reduces the need to hand-tune a single global
+      learning rate.
+- kind: insight
+  label: c6_lr_finder_sweep
+  payload:
+    summary: Running a learning rate range test, sweeping the learning rate exponentially and watching
+      where the loss starts to diverge, finds a good maximum learning rate far faster than a blind grid
+      search over the optimizer hyperparameters.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: c6_warmup_prevents_early_divergence
+  payload:
+    summary: Adding learning rate warmup early in training prevents the large unstable gradient updates
+      that otherwise make Adam diverge in the first few hundred steps, especially when the initial learning
+      rate is high.
+    insight_type: lesson
+    status: new
+- kind: concept
+  label: c7_clusterip_service
+  payload:
+    name: ClusterIP Service
+    definition: A ClusterIP Service exposes a set of pods on a stable internal virtual IP reachable only
+      inside the cluster, load-balancing traffic across the matching pod endpoints. It is the default
+      Kubernetes Service type and the basis for in-cluster service discovery via DNS.
+- kind: concept
+  label: c7_nodeport_service
+  payload:
+    name: NodePort Service
+    definition: A NodePort Service exposes a pod-backed Service on a static port on every node's IP, forwarding
+      external traffic through that port to the underlying ClusterIP and its pod endpoints. It is often
+      used as a building block for external load balancers and ingress controllers.
+- kind: concept
+  label: c7_ingress_resource
+  payload:
+    name: Ingress Resource
+    definition: An Ingress resource defines HTTP and HTTPS routing rules that map external host and path
+      requests to backend Services, and is reconciled by an ingress controller such as NGINX or Traefik.
+      Ingress provides host-based and path-based routing, TLS termination, and a single entry point for
+      many Services.
+- kind: concept
+  label: c7_cni_pod_network
+  payload:
+    name: CNI Pod Network
+    definition: The Container Network Interface (CNI) plugin assigns each pod a routable IP and wires
+      the pod network so every pod can reach every other pod without NAT across nodes. Plugins like Calico,
+      Cilium, and Flannel implement the flat pod network and may enforce NetworkPolicy.
+- kind: theory
+  label: c7_kube_proxy_iptables
+  payload:
+    title: kube-proxy programs Service routing
+    claim: kube-proxy watches Services and Endpoints and programs iptables or IPVS rules on each node
+      so that traffic to a ClusterIP virtual IP is DNAT'd and load-balanced across healthy pod endpoints.
+      When endpoints are stale, kube-proxy lag is the usual cause of traffic routed to dead pods.
+- kind: theory
+  label: c7_networkpolicy_default_deny
+  payload:
+    title: NetworkPolicy default-deny isolation
+    claim: Applying a default-deny NetworkPolicy in a namespace blocks all ingress and egress pod traffic
+      until explicit allow rules are added, but it only takes effect if the CNI plugin enforces NetworkPolicy.
+      Flannel ignores NetworkPolicy, so default-deny silently allows all pod traffic on a Flannel pod
+      network.
+- kind: insight
+  label: c7_dns_resolution_failure
+  payload:
+    summary: Pods that cannot resolve a ClusterIP Service name almost always have a broken CoreDNS path
+      or a missing Service, not a routing bug; check the Service exists and that kube-dns endpoints are
+      healthy before blaming the CNI pod network.
+    insight_type: lesson
+    status: new
+- kind: insight
+  label: c7_ingress_tls_termination
+  payload:
+    summary: When ingress HTTPS returns a default-certificate or 404, the ingress controller usually cannot
+      match the host rule or load the TLS secret; confirm the Ingress host, the TLS secret name, and that
+      the backend Service has ready pod endpoints.
+    insight_type: risk
+    status: new
+- kind: concept
+  label: c8_access_token
+  payload:
+    name: OAuth2 access token
+    definition: An access token is a short-lived bearer credential issued by the authorization server
+      that a client presents to the resource server to access protected APIs. It typically expires within
+      minutes and is scoped to specific permissions.
+- kind: concept
+  label: c8_refresh_token
+  payload:
+    name: OAuth2 refresh token
+    definition: A refresh token is a long-lived credential the client uses to obtain a new access token
+      from the authorization server token endpoint without re-prompting the user. It is more sensitive
+      than an access token and must be stored confidentially.
+- kind: concept
+  label: c8_refresh_token_rotation
+  payload:
+    name: Refresh token rotation
+    definition: Refresh token rotation issues a brand-new refresh token on every refresh and invalidates
+      the prior one, so a leaked refresh token becomes useless after the next legitimate use. The authorization
+      server tracks the token family to detect replay.
+- kind: decision
+  label: c8_short_access_token_lifetime
+  payload:
+    title: Keep access token lifetime at 5 minutes
+    decision_text: We set the access token lifetime to 5 minutes so a leaked bearer token has a short
+      blast radius, and rely on the refresh token to mint a new access token silently. Longer access token
+      lifetimes were rejected as too risky for our public client.
+- kind: decision
+  label: c8_enable_rotation_reuse_detection
+  payload:
+    title: Enable refresh token rotation with reuse detection
+    decision_text: We enable refresh token rotation and revoke the entire token family on reuse detection,
+      so a stolen refresh token triggers an automatic revocation of the whole session. This was chosen
+      over static long-lived refresh tokens for public clients.
+- kind: theory
+  label: c8_rotation_replay_revokes_family
+  payload:
+    title: Replay of an old refresh token signals theft
+    claim: If a previously rotated refresh token is replayed at the token endpoint, the authorization
+      server should treat it as a stolen-token signal and revoke the whole token family. This reuse detection
+      limits damage even when refresh token rotation alone would have leaked a valid token.
+- kind: insight
+  label: c8_store_refresh_token_securely
+  payload:
+    summary: Store the refresh token in an HttpOnly secure cookie or platform keychain, never in localStorage,
+      because a long-lived refresh token in JavaScript-readable storage is a high-value XSS target.
+    insight_type: risk
+    status: new
+- kind: insight
+  label: c8_silent_refresh_before_expiry
+  payload:
+    summary: Refresh the access token silently a few seconds before it expires rather than waiting for
+      a 401, so in-flight requests are not interrupted when the short-lived bearer token lapses.
+    insight_type: pattern
+    status: new
+- kind: concept
+  label: c9_token_bucket
+  payload:
+    name: Token bucket algorithm
+    definition: A rate limiting algorithm where each request consumes one token from a bucket that refills
+      at a fixed rate, allowing short bursts up to the bucket capacity while bounding the long-run average
+      request rate.
+- kind: concept
+  label: c9_leaky_bucket
+  payload:
+    name: Leaky bucket algorithm
+    definition: A rate limiting algorithm that processes queued requests at a constant fixed rate like
+      water leaking from a bucket, smoothing bursts into a steady output stream but without allowing the
+      burst capacity of a token bucket.
+- kind: concept
+  label: c9_exponential_backoff
+  payload:
+    name: Exponential backoff with jitter
+    definition: A client retry strategy where the wait between retries grows exponentially (base times
+      two to the attempt number) and random jitter is added to spread retries, preventing a thundering
+      herd of synchronized clients hammering a rate limited API.
+- kind: concept
+  label: c9_retry_after_header
+  payload:
+    name: Retry-After header
+    definition: An HTTP response header returned with a 429 Too Many Requests status that tells the client
+      how many seconds to wait before retrying, letting the server steer client backoff instead of relying
+      on blind exponential backoff.
+- kind: decision
+  label: c9_use_token_bucket_redis
+  payload:
+    title: Token bucket in Redis for distributed rate limiting
+    decision_text: We implement the token bucket rate limiter in Redis with an atomic Lua script so the
+      bucket capacity and refill rate are shared across all API gateway nodes, giving consistent distributed
+      rate limiting instead of per-node leaky bucket counters.
+- kind: decision
+  label: c9_return_429_retry_after
+  payload:
+    title: Return 429 with Retry-After on limit exceeded
+    decision_text: When a client exhausts its token bucket the API returns HTTP 429 Too Many Requests
+      with a Retry-After header set to the seconds until the next token refills, so well-behaved clients
+      use server-steered backoff rather than blind exponential backoff.
+- kind: insight
+  label: c9_jitter_prevents_herd
+  payload:
+    summary: Without random jitter, exponential backoff causes synchronized clients to retry in lockstep,
+      producing a thundering herd that re-saturates the rate limited API at each retry wave; adding full
+      jitter to the backoff interval flattens the retry spikes.
+    insight_type: lesson
+    status: new
+- kind: theory
+  label: c9_burst_capacity_tradeoff
+  payload:
+    title: Bucket capacity trades burst tolerance for fairness
+    claim: Increasing token bucket capacity lets clients absorb larger bursts but weakens average rate
+      enforcement, so a leaky bucket with small or zero burst capacity gives smoother fairness while a
+      large token bucket favors latency-sensitive bursty clients.
+- kind: insight
+  label: h1_residual
+  payload:
+    summary: Residual quantization on an IVF index encodes the residual after coarse assignment; storing
+      the residual per cell shrinks error and lifts recall.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: h1_residual_distractor
+  payload:
+    summary: A larger index with a wider search beam raises recall; expanding the index probes and the
+      search frontier together let recall climb as the index grows.
+    insight_type: pattern
+    status: new
+- kind: decision
+  label: h2_beginconcurrent_rel
+  payload:
+    title: Adopt begin-concurrent for the writer
+    decision_text: We enable begin-concurrent so each transaction stages its pages privately; begin-concurrent
+      lets non-overlapping begin-concurrent writers proceed without serializing.
+- kind: decision
+  label: h2_beginconcurrent_dist
+  payload:
+    title: Single global writer lock
+    decision_text: The database keeps one coarse lock per database file, so every transaction must take
+      that lock; a held lock blocks the next transaction until the prior transaction commits.
+- kind: concept
+  label: h2_wal2_rel
+  payload:
+    name: wal2 mode
+    definition: wal2 is a two-log variant of write-ahead logging; wal2 alternates between two log files
+      so a checkpoint can drain one log while the database keeps appending to the other.
+- kind: concept
+  label: h2_wal2_dist
+  payload:
+    name: Reader-writer coexistence
+    definition: In this mode a read sees a stable snapshot while a write appends new frames, so a read
+      and a write run concurrently and a long read never blocks a write.
+- kind: insight
+  label: h2_mmap_rel
+  payload:
+    summary: mmap I/O bypasses the pager copy on each page read; mmap maps the file directly so the mmap
+      region is shared and avoids a buffer copy.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: h2_mmap_dist
+  payload:
+    summary: A write transaction escalates from a reserved lock to an exclusive lock at commit, so the
+      lock upgrade can fail if another transaction already holds a conflicting lock.
+    insight_type: risk
+    status: new
+- kind: concept
+  label: h3_canary_rel
+  payload:
+    name: Canary token leak check
+    definition: A canary is a secret string placed in the system prompt; if the model emits the canary,
+      a canary leak signals a successful extraction.
+- kind: concept
+  label: h3_canary_dist
+  payload:
+    name: Prompt injection against the model
+    definition: An injection targets the prompt the model reads, so the model treats injection text in
+      the prompt as instruction the model then obeys.
+- kind: insight
+  label: h3_paraphrase_rel
+  payload:
+    summary: Paraphrase the prompt to break injection payloads; paraphrase rewriting reorders tokens so
+      a paraphrase defeats position-dependent injections.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: h3_paraphrase_dist
+  payload:
+    summary: An injection overrides the instruction in the prompt, so the injection instruction and the
+      prompt instruction collide whenever an injection appears.
+    insight_type: risk
+    status: new
+- kind: concept
+  label: h4_soft_purge
+  payload:
+    name: Soft-purge
+    definition: A soft-purge marks a cache entry stale rather than deleting it, so a soft-purge lets stale-while-revalidate
+      serve the old copy until a fresh fetch lands.
+- kind: concept
+  label: h4_soft_purge_distractor
+  payload:
+    name: Origin cache header
+    definition: An origin cache header tells the cache how long to retain content; the origin sets this
+      header and the cache obeys the header on every lookup.
+- kind: insight
+  label: h4_dark_cache
+  payload:
+    summary: A dark-cache pre-warms a hidden response copy; the dark-cache absorbs the first miss so a
+      dark-cache never exposes cold latency to users.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: h4_dark_cache_distractor
+  payload:
+    summary: When the edge fails to revalidate, the edge keeps serving a stale response; revalidate the
+      response at the edge before each edge hit returns it.
+    insight_type: risk
+    status: new
+- kind: theory
+  label: h4_vary_fanout
+  payload:
+    title: Vary-fanout multiplies entries
+    claim: A wide Vary header triggers vary-fanout, where vary-fanout explodes one URL into many cached
+      variants and vary-fanout collapses the hit ratio.
+- kind: theory
+  label: h4_vary_fanout_distractor
+  payload:
+    title: Origin request header passthrough
+    claim: The cache forwards each request header to the origin unchanged, so the origin sees the same
+      request header set and answers the request as if no cache header rewrite occurred.
+- kind: insight
+  label: h5_flexquorum
+  payload:
+    summary: Flexible-quorum decouples read and write sets so a flexible-quorum can shrink write latency
+      while a flexible-quorum still overlaps with reads.
+    insight_type: pattern
+    status: new
+- kind: insight
+  label: h5_leader_follower_distractor
+  payload:
+    summary: The leader drives progress while each follower applies committed entries; when a follower
+      lags the leader retransmits, and a quorum of followers must persist before the leader marks an entry
+      committed.
+    insight_type: lesson
+    status: new
+- kind: theory
+  label: h5_jointconfig
+  payload:
+    title: Joint-consensus for membership change
+    claim: Membership changes pass through a joint-consensus phase where both old and new configurations
+      must agree; joint-consensus prevents two disjoint majorities during the term of transition.
+- kind: theory
+  label: h5_term_replicate_distractor
+  payload:
+    title: Term-tagged log replication
+    claim: Each log entry carries the term in which it was created, and the leader must replicate that
+      log entry to a majority; a replicate that conflicts on term is overwritten so the log and its term
+      tags converge.
+- kind: decision
+  label: h6_rprop
+  payload:
+    title: Adopt rprop for full-batch runs
+    decision_text: We switched to rprop because rprop adapts each weight step from gradient sign alone.
+- kind: decision
+  label: h6_rprop_distractor
+  payload:
+    title: Standard optimizer baseline
+    decision_text: The optimizer schedule ties the learning rate to the optimizer warmup, and learning
+      resumes after the optimizer reset.
+- kind: theory
+  label: h6_lookahead
+  payload:
+    title: Lookahead stabilizes slow weights
+    claim: Lookahead keeps a slow weight copy, and lookahead interpolates toward fast weights every few
+      steps.
+- kind: theory
+  label: h6_lookahead_distractor
+  payload:
+    title: Optimizer training dynamics
+    claim: Longer optimizer training improves the optimizer estimate, since extended training lets the
+      optimizer settle.
+- kind: concept
+  label: h6_shampoo
+  payload:
+    name: Shampoo preconditioner
+    definition: Shampoo is a second-order method; shampoo maintains per-dimension preconditioner matrices
+      to rescale each learning update.
+- kind: concept
+  label: h6_shampoo_distractor
+  payload:
+    name: Mini-batch stepping
+    definition: Each batch defines one step, and the batch size sets how many examples feed a single step
+      before the next batch.
+- kind: insight
+  label: h6_yogi
+  payload:
+    summary: Yogi controls the second moment so the gradient update stays bounded; yogi avoids the variance
+      blow-up of adaptive methods.
+    insight_type: lesson
+    status: new
+- kind: insight
+  label: h6_yogi_distractor
+  payload:
+    summary: Longer training with smaller step sizes smooths each step, and the training curve flattens
+      as the step shrinks.
+    insight_type: pattern
+    status: new
+- kind: decision
+  label: h6_lamb
+  payload:
+    title: Use lamb for large batches
+    decision_text: We chose lamb because lamb applies layerwise trust ratios that scale each weight update
+      for very large batches.
+- kind: decision
+  label: h6_lamb_distractor
+  payload:
+    title: Optimizer learning policy
+    decision_text: The optimizer drives the learning rate, and the learning schedule resets whenever the
+      optimizer plateaus during learning.
+- kind: theory
+  label: h7_par_push
+  payload:
+    title: PAR removes request tampering
+    claim: Pushing the authorization request through PAR before redirect means the client sends a PAR
+      reference, and PAR-registered parameters cannot be altered in the browser.
+- kind: theory
+  label: h7_pkce_public
+  payload:
+    title: Public client token interception
+    claim: A public client that skips code verification lets an attacker intercept the authorization code
+      and redeem it for an access token at the token endpoint.
+queries:
+- name: kelly_formula_optimal_fraction
+  query: Kelly criterion formula for the optimal fraction of bankroll to bet given win probability and
+    odds
+  relevant:
+  - c0_kelly_criterion
+- name: fractional_kelly_reduce_volatility
+  query: fractional Kelly half Kelly to reduce bankroll volatility and drawdown
+  relevant:
+  - c0_fractional_kelly
+  - c0_half_kelly_volatility
+- name: half_kelly_growth_variance_tradeoff
+  query: half Kelly growth rate versus variance tradeoff
+  relevant:
+  - c0_half_kelly_volatility
+- name: overbetting_growth_ruin
+  query: betting more than full Kelly fraction lowers long-run growth rate and increases probability of
+    ruin
+  relevant:
+  - c0_overbetting_ruin
+- name: quarter_kelly_decision_noisy_edge
+  query: decision to use quarter Kelly fractional sizing because edge and win probability estimate are
+    noisy
+  relevant:
+  - c0_use_quarter_kelly_live
+  - c0_cap_kelly_edge_estimate
+- name: overestimated_edge_causes_ruin
+  query: overestimating the edge or win probability causes overbetting and ruin under Kelly
+  relevant:
+  - c0_edge_overestimate_ruin
+  - c0_cap_kelly_edge_estimate
+- name: fraction_of_bankroll_controls_drawdown
+  query: lowering the staked fraction of bankroll to control maximum drawdown
+  relevant:
+  - c0_drawdown_bankroll_pattern
+  - c0_fractional_kelly
+- name: hnsw_parameters
+  query: HNSW graph index ef_search parameter to tune recall and query latency
+  relevant:
+  - c1_hnsw_index
+  - c1_recall_latency_tradeoff
+- name: product_quantization_recall
+  query: product quantization compresses embedding vectors into subspace codes and loses recall
+  relevant:
+  - c1_quantization_recall_loss
+  - c1_ivf_pq
+- name: cosine_normalize
+  query: normalize embedding vectors before indexing for cosine similarity nearest neighbour recall
+  relevant:
+  - c1_normalize_before_index
+  - c1_cosine_similarity
+- name: rerank_full_precision
+  query: re-rank approximate nearest neighbour candidates with exact full-precision cosine similarity
+    to recover recall
+  relevant:
+  - c1_rerank_recovers_recall
+  - c1_quantization_recall_loss
+- name: hnsw_vs_ivfpq_choice
+  query: choose HNSW over IVF-PQ for low latency embedding collection higher recall
+  relevant:
+  - c1_choose_hnsw_over_ivfpq
+  - c1_hnsw_index
+  - c1_ivf_pq
+- name: ann_recall_latency
+  query: approximate nearest neighbour search recall versus query latency tradeoff sweep
+  relevant:
+  - c1_recall_latency_tradeoff
+  - c1_hnsw_index
+- name: embedding_distance_metric
+  query: cosine similarity distance metric for normalized sentence-transformer embedding vectors
+  relevant:
+  - c1_cosine_similarity
+  - c1_normalize_before_index
+- name: wal mode concurrent readers writer
+  query: WAL journal mode lets concurrent readers not block the single writer
+  relevant:
+  - c2_enable_wal_mode
+  - c2_single_writer_serialization
+- name: busy_timeout sqlite_busy contention
+  query: configure busy_timeout so writer retries on SQLITE_BUSY lock contention
+  relevant:
+  - c2_busy_timeout_setting
+  - c2_sqlite_busy_error
+- name: single writer serialized write lock
+  query: only a single writer holds the write lock so writers are serialized
+  relevant:
+  - c2_single_writer_serialization
+  - c2_concurrent_writer_serialized
+- name: wal checkpoint reclaim space
+  query: checkpoint copies committed pages back into the main database and truncates the WAL file
+  relevant:
+  - c2_wal_checkpoint
+  - c2_wal_checkpoint_growth
+- name: long read blocks checkpoint wal growth
+  query: long-running read transaction pins old snapshot and prevents checkpoint so WAL file grows
+  relevant:
+  - c2_long_read_blocks_checkpoint
+  - c2_wal_checkpoint_growth
+- name: two writers same database busy
+  query: two concurrent writers on the same SQLite database hit SQLITE_BUSY when the write lock is held
+  relevant:
+  - c2_concurrent_writer_serialized
+  - c2_sqlite_busy_error
+- name: sqlite write contention overview
+  query: SQLite write contention and locking under concurrency
+  relevant:
+  - c2_single_writer_serialization
+  - c2_sqlite_busy_error
+  - c2_concurrent_writer_serialized
+- name: indirect_injection_via_retrieved_content
+  query: indirect prompt injection delivered through retrieved documents and web pages
+  relevant:
+  - c3_prompt_injection
+  - c3_dual_llm_quarantine
+- name: data_vs_instruction_boundary
+  query: privilege boundary between trusted instructions and untrusted data in the context window
+  relevant:
+  - c3_data_instruction_confusion
+  - c3_dual_llm_quarantine
+- name: jailbreak_obfuscation_bypass
+  query: jailbreak bypasses safety guardrails using base64 obfuscation and many-shot priming
+  relevant:
+  - c3_guardrails_bypassed_by_obfuscation
+  - c3_jailbreak
+- name: delimiter_mitigation_cost
+  query: wrap untrusted data in delimiters as a mitigation that only raises attacker cost
+  relevant:
+  - c3_delimiter_isolation
+- name: least_privilege_tool_defence
+  query: least-privilege tool access and human confirmation to defend against indirect prompt injection
+  relevant:
+  - c3_least_privilege_tools
+  - c3_dual_llm_quarantine
+- name: extract_hidden_system_prompt
+  query: extract the hidden system instructions as a precursor to a targeted jailbreak
+  relevant:
+  - c3_system_prompt_extraction
+- name: broad_injection_defence_overview
+  query: defences against prompt injection and jailbreak attacks on LLM safety guardrails
+  relevant:
+  - c3_prompt_injection
+  - c3_jailbreak
+  - c3_least_privilege_tools
+- name: cache_control_directives_overview
+  query: Cache-Control header directives max-age public private for CDN edge caching
+  relevant:
+  - c4_cache_control_directives
+  - c4_immutable_hashed_assets
+- name: conditional_revalidation_304
+  query: ETag If-None-Match conditional revalidation 304 not modified to revalidate stale cache
+  relevant:
+  - c4_etag_conditional_revalidation
+- name: serve_stale_background_revalidate
+  query: serve stale cached response while revalidating with origin in background to reduce latency
+  relevant:
+  - c4_stale_while_revalidate
+- name: immutable_fingerprinted_assets
+  query: immutable max-age one year fingerprinted hashed static JS CSS bundles cache busting
+  relevant:
+  - c4_immutable_hashed_assets
+- name: cdn_invalidation_purge
+  query: invalidate CDN edge cache purge by surrogate key on publish versus versioned URL content hash
+  relevant:
+  - c4_surrogate_key_purge
+  - c4_purge_vs_versioned_urls
+- name: vary_header_hit_ratio
+  query: Vary header fragments cache keys lowering CDN edge hit ratio and increasing origin traffic
+  relevant:
+  - c4_vary_header_fragmentation
+- name: no_store_private_pages
+  query: Cache-Control no-store versus no-cache keep authenticated private responses out of CDN edge cache
+  relevant:
+  - c4_no_store_disables_caching
+- name: raft_leader_election_term
+  query: how does raft leader election work with terms and majority quorum votes
+  relevant:
+  - c5_raft_leader_election
+- name: split_vote_randomized
+  query: randomized election timeouts to avoid split votes when no candidate gets a majority
+  relevant:
+  - c5_split_vote_randomized_timeout
+- name: majority_quorum_commit
+  query: committing log entries after replication to a majority quorum of followers
+  relevant:
+  - c5_log_replication_commit_majority
+  - c5_raft_leader_election
+- name: paxos_prepare_accept
+  query: paxos prepare and accept phases majority quorum of acceptors
+  relevant:
+  - c5_paxos_quorum
+  - c5_choose_raft_over_paxos
+- name: split_brain_partition
+  query: network partition split brain two leaders quorum prevents conflicting commits
+  relevant:
+  - c5_split_brain_no_quorum
+  - c5_term_monotonic_stale_leader
+- name: choose_raft_vs_paxos
+  query: why choose raft over multi-paxos for understandable consensus and leader election
+  relevant:
+  - c5_choose_raft_over_paxos
+- name: leader_based_consensus_protocols
+  query: leader-based consensus protocol electing a single leader replicating an ordered log to a majority
+    quorum
+  relevant:
+  - c5_zab_atomic_broadcast
+  - c5_raft_leader_election
+- name: warmup_then_decay_schedule
+  query: linear warmup then cosine decay learning rate schedule for stable gradient descent
+  relevant:
+  - c6_warmup_cosine_schedule
+- name: high_lr_divergence
+  query: why does a high learning rate make gradient descent diverge instead of converge
+  relevant:
+  - c6_lr_too_high_diverges
+  - c6_warmup_prevents_early_divergence
+- name: adamw_weight_decay_choice
+  query: AdamW optimizer decoupled weight decay instead of SGD momentum
+  relevant:
+  - c6_adamw_over_sgd
+- name: adaptive_per_parameter_lr
+  query: adaptive optimizer with per-parameter learning rates from gradient moment estimates
+  relevant:
+  - c6_adaptive_optimizer
+- name: batch_size_lr_relationship
+  query: scale learning rate with batch size linear scaling rule and warmup
+  relevant:
+  - c6_batch_size_lr_scaling
+- name: find_good_learning_rate
+  query: learning rate range test sweep to find maximum learning rate before loss diverges
+  relevant:
+  - c6_lr_finder_sweep
+  - c6_warmup_prevents_early_divergence
+- name: momentum_optimizer_baseline
+  query: momentum moving average of gradients SGD optimizer baseline
+  relevant:
+  - c6_momentum
+- name: clusterip_virtual_ip_load_balancing
+  query: stable virtual IP that load-balances traffic across pod endpoints inside the cluster
+  relevant:
+  - c7_clusterip_service
+  - c7_kube_proxy_iptables
+- name: kube_proxy_iptables_routing
+  query: kube-proxy iptables IPVS rules DNAT ClusterIP virtual IP to healthy pod endpoints
+  relevant:
+  - c7_kube_proxy_iptables
+- name: ingress_host_path_routing_tls
+  query: ingress controller host and path routing rules with TLS termination to backend Services
+  relevant:
+  - c7_ingress_resource
+  - c7_ingress_tls_termination
+- name: networkpolicy_default_deny_cni
+  query: default-deny NetworkPolicy isolating pod ingress and egress depends on CNI plugin enforcement
+  relevant:
+  - c7_networkpolicy_default_deny
+  - c7_cni_pod_network
+- name: expose_service_external_node_port
+  query: expose a pod-backed Service externally on a static port on every node
+  relevant:
+  - c7_nodeport_service
+- name: pod_cannot_resolve_service_dns
+  query: pod cannot resolve ClusterIP Service DNS name CoreDNS kube-dns endpoints
+  relevant:
+  - c7_dns_resolution_failure
+  - c7_clusterip_service
+- name: flat_pod_network_routable_ip
+  query: CNI plugin assigns each pod a routable IP flat pod network without NAT across nodes
+  relevant:
+  - c7_cni_pod_network
+- name: what is a refresh token
+  query: refresh token long-lived credential to obtain new access token from token endpoint
+  relevant:
+  - c8_refresh_token
+- name: refresh token rotation reuse detection
+  query: refresh token rotation revoke token family on reuse detection stolen token
+  relevant:
+  - c8_refresh_token_rotation
+  - c8_enable_rotation_reuse_detection
+  - c8_rotation_replay_revokes_family
+- name: access token short lifetime decision
+  query: short-lived access token 5 minute lifetime bearer token blast radius public client
+  relevant:
+  - c8_short_access_token_lifetime
+- name: where to store refresh token
+  query: store refresh token HttpOnly secure cookie not localStorage XSS long-lived
+  relevant:
+  - c8_store_refresh_token_securely
+- name: replayed refresh token theft signal
+  query: replayed rotated refresh token at token endpoint signals theft revoke whole family
+  relevant:
+  - c8_rotation_replay_revokes_family
+  - c8_refresh_token_rotation
+- name: silent refresh before expiry
+  query: silently refresh access token before it expires avoid 401 short-lived bearer token
+  relevant:
+  - c8_silent_refresh_before_expiry
+  - c8_short_access_token_lifetime
+- name: access token definition
+  query: access token short-lived bearer credential presented to resource server protected API
+  relevant:
+  - c8_access_token
+- name: token bucket distributed across gateway nodes
+  query: distributed token bucket rate limiting shared across gateway nodes with refill rate
+  relevant:
+  - c9_use_token_bucket_redis
+  - c9_token_bucket
+- name: what does retry-after on 429 do
+  query: 429 Too Many Requests Retry-After header tells client how many seconds to wait
+  relevant:
+  - c9_retry_after_header
+  - c9_return_429_retry_after
+- name: jitter and thundering herd
+  query: jitter prevents thundering herd of synchronized clients retrying in lockstep against rate limited
+    API
+  relevant:
+  - c9_jitter_prevents_herd
+  - c9_exponential_backoff
+- name: exponential backoff retry strategy
+  query: client exponential backoff retry strategy wait grows exponentially between retries
+  relevant:
+  - c9_exponential_backoff
+- name: leaky bucket vs token bucket burst
+  query: leaky bucket constant fixed rate versus token bucket burst capacity tradeoff for fairness
+  relevant:
+  - c9_burst_capacity_tradeoff
+  - c9_leaky_bucket
+- name: server steered backoff vs blind backoff
+  query: server steered backoff using Retry-After instead of blind exponential backoff after 429
+  relevant:
+  - c9_return_429_retry_after
+  - c9_retry_after_header
+- name: bucket capacity refill rate average rate
+  query: bucket capacity and refill rate bound the long run average request rate while allowing bursts
+  relevant:
+  - c9_token_bucket
+  - c9_burst_capacity_tradeoff
+- name: hard_h1_residual
+  query: index search recall residual
+  relevant:
+  - h1_residual
+- name: hard_h2_beginconcurrent_rel
+  query: database transaction lock begin-concurrent
+  relevant:
+  - h2_beginconcurrent_rel
+- name: hard_h2_wal2_rel
+  query: database read write wal2
+  relevant:
+  - h2_wal2_rel
+- name: hard_h2_mmap_rel
+  query: page lock transaction mmap
+  relevant:
+  - h2_mmap_rel
+- name: hard_h3_canary_rel
+  query: prompt injection model canary
+  relevant:
+  - h3_canary_rel
+- name: hard_h3_paraphrase_rel
+  query: prompt injection instruction paraphrase
+  relevant:
+  - h3_paraphrase_rel
+- name: hard_h4_soft_purge
+  query: cache header origin soft-purge
+  relevant:
+  - h4_soft_purge
+- name: hard_h4_dark_cache
+  query: response edge revalidate dark-cache
+  relevant:
+  - h4_dark_cache
+- name: hard_h4_vary_fanout
+  query: header request origin vary-fanout
+  relevant:
+  - h4_vary_fanout
+- name: hard_h5_flexquorum
+  query: leader follower quorum flexible-quorum
+  relevant:
+  - h5_flexquorum
+- name: hard_h5_jointconfig
+  query: term log replicate joint-consensus
+  relevant:
+  - h5_jointconfig
+- name: hard_h6_rprop
+  query: gradient optimizer learning rprop
+  relevant:
+  - h6_rprop
+- name: hard_h6_lookahead
+  query: optimizer training weight lookahead
+  relevant:
+  - h6_lookahead
+- name: hard_h6_shampoo
+  query: learning batch step shampoo
+  relevant:
+  - h6_shampoo
+- name: hard_h6_yogi
+  query: gradient training step yogi
+  relevant:
+  - h6_yogi
+- name: hard_h6_lamb
+  query: optimizer weight learning lamb
+  relevant:
+  - h6_lamb
+- name: hard_h7_par_push
+  query: client token access par
+  relevant:
+  - h7_par_push

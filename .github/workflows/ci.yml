@@ -31,6 +31,13 @@ jobs:
         run: pytest
       - name: Retrieval evals
         run: python scripts/run_evals.py --workspace default --no-vector
+      - name: Golden retrieval ranking gate (MRR/NDCG@10 vs committed baseline)
+        # Offline, in-process golden set: seeds a fixed corpus and fails if MRR@10
+        # or NDCG@10 regresses past the threshold versus the committed baseline.
+        # Re-run `python scripts/golden_eval.py --save-baseline
+        # src/agent_memory_lite/evals/golden/baseline.json` and commit when an
+        # intended ranking change moves the numbers.
+        run: python scripts/golden_eval.py --compare-baseline
       - name: Agent contract sync (CLAUDE.md + AGENTS.md vs docs/AGENT_CONTRACT.md)
         # Re-runs the same upsert that `python scripts/setup_agent.py
         # --sync-repo` would. Fails if the working tree is dirty after,

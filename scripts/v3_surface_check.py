@@ -10,6 +10,11 @@ from typing import Any
 
 _SKIP_DIRS = {
     ".agent_memory",
+    # .claude holds gitignored agent-local state, incl. nested git WORKTREES
+    # (.claude/worktrees/<name>/ = a full checkout of another branch). Those are
+    # untracked and absent from a clean CI checkout, so scanning them lints a
+    # SIBLING branch's source and emits phantom violations -- skip the whole tree.
+    ".claude",
     ".git",
     ".mypy_cache",
     ".pytest_cache",

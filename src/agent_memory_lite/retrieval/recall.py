@@ -170,6 +170,26 @@ def recall(
                 src_ids=ids,
             ).items()
         }
+    # Drop discredited frontier nodes (Batch D): search() filters its hits via
+    # _is_discredited (reader.py), and recall's SEEDS inherit that, but the
+    # spreading-activation frontier resolves further nodes that bypass it -- so a
+    # superseded/rejected/weakened decision, a weakened theory, a deactivated
+    # behavior/skill/concept, an archived episode/chunk, or a terminal work item
+    # reachable ONLY via spreading would otherwise surface as a live RecallHit
+    # (closing the reader.py:705-708 follow-up). node.kind is authoritative, so
+    # inject it for the work-item (task/plan_step/issue) status arms.
+    #
+    # include_outcome_arm=False is CRITICAL: _is_discredited's default bare
+    # negative-outcome arm (non-pinned + outcome_score < 0.0) would otherwise OR
+    # into the skip below and silently clamp the effective outcome floor to 0.0,
+    # killing the negative half of the caller's outcome_floor knob (and the
+    # auto-tuner's recall-widening lever). recall OWNS the outcome dimension via
+    # outcome_floor + _combined_score (negative rows sink in ranking, not get
+    # dropped), so here we want only the STRUCTURAL terminal/deactivated arms.
+    from agent_memory_lite.cognition.brief_sections_organ_discredit import (  # noqa: PLC0415
+        _is_discredited,
+    )
+
     # Now build the RecallHit list using O(1) dict lookups instead of
     # per-node SQL. Iteration order matches ``activations`` so the
     # downstream sort is deterministic across the batched and the
@@ -178,8 +198,14 @@ def recall(
         proj = projections_by_kind.get(node.kind, {}).get(node.object_id)
         if proj is None:
             continue
+        # Drop structurally-discredited frontier nodes OR those below the outcome
+        # floor (one skip to keep the branch count under the lint ceiling). The
+        # outcome arm is excluded from _is_discredited here -- outcome_floor is
+        # recall's own outcome gate (see the note above).
         score_value = float(proj.get("outcome_score") or 0.0)
-        if score_value < outcome_floor:
+        if score_value < outcome_floor or _is_discredited(
+            {**proj, "kind": node.kind}, include_outcome_arm=False
+        ):
             continue
         # Phase 6 bi-temporal cut: see legacy note above; the as_of
         # filter still lives in list_kind callers, not here.

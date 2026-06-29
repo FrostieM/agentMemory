@@ -288,6 +288,31 @@ def test_is_discredited_covers_every_terminal_mechanism() -> None:
         assert not _is_discredited(proj), f"expected live: {proj}"
 
 
+def test_is_discredited_outcome_arm_is_opt_out() -> None:
+    """include_outcome_arm=False (used by recall, which owns its own outcome_floor)
+    must suppress ONLY the bare negative-outcome arm -- the structural terminal /
+    deactivated / archived / work-item arms still fire. A live non-pinned row with a
+    negative outcome_score is discredited by default but NOT when the arm is opt-out;
+    a structurally-terminal row is dropped either way."""
+    from agent_memory_lite.cognition.brief_sections_organ import _is_discredited  # noqa: PLC0415
+
+    live_negative = {"kind": "decision", "status": "active", "outcome_score": -0.3}
+    assert _is_discredited(live_negative) is True  # default: outcome arm fires
+    assert _is_discredited(live_negative, include_outcome_arm=False) is False
+
+    # Structural arms are independent of the flag.
+    for terminal in (
+        {"kind": "decision", "status": "superseded", "outcome_score": -0.3},
+        {"kind": "behavior", "active": False, "outcome_score": -0.3},
+        {"kind": "episode", "is_archived": True, "outcome_score": -0.3},
+        {"kind": "task", "status": "done", "outcome_score": -0.3},
+    ):
+        assert _is_discredited(terminal, include_outcome_arm=False) is True, terminal
+    # A live POSITIVE row stays live under both.
+    live_positive = {"kind": "decision", "status": "active", "outcome_score": 0.4}
+    assert _is_discredited(live_positive, include_outcome_arm=False) is False
+
+
 def test_terminal_workitem_and_archived_episode_neighbors_filtered(
     conn: sqlite3.Connection,
 ) -> None:
