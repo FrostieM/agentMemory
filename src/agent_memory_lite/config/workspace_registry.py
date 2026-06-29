@@ -12,26 +12,14 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_memory_lite.config.workspace_entry import WorkspaceEntry
+from agent_memory_lite.utils.atomic_write import atomic_write_text, read_text_retrying
 from agent_memory_lite.utils.time import iso_now
 
-
-@dataclass(frozen=True)
-class WorkspaceEntry:
-    id: str
-    db_path: str
-    vector_path: str
-    label: str = ""
-    project_root: str = ""
-    registered_at: str = ""
-    last_seen_at: str = ""
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+__all__ = ["WorkspaceEntry", "WorkspaceRegistry"]
 
 
 class WorkspaceRegistry:
@@ -44,27 +32,53 @@ class WorkspaceRegistry:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._lock = threading.Lock()
+        # Reason the most recent _load() could not READ an EXISTING registry file;
+        # None when the file was absent (a clean empty) or parsed successfully.
+        self._last_load_error: str | None = None
 
     @property
     def path(self) -> Path:
         return self._path
 
+    @property
+    def last_load_error(self) -> str | None:
+        """Corrupt-vs-absent signal from the most recent ``_load()``.
+
+        ``'corrupt:json'`` / ``'corrupt:io'`` / ``'corrupt:shape'`` when an EXISTING
+        file could not be parsed; ``None`` for a missing file or a clean parse. Lets
+        routing callers fail-closed with "registry unavailable" instead of silently
+        treating an unreadable registry as "no workspaces". Meaningful only right
+        after a load (list/get/register/remove/touch).
+        """
+        return self._last_load_error
+
     def _load(self) -> list[dict[str, Any]]:
         if not self._path.exists():
+            self._last_load_error = None  # absent is a clean empty, not an error
             return []
         try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            raw = json.loads(read_text_retrying(self._path))
+        except json.JSONDecodeError:
+            self._last_load_error = "corrupt:json"
+            return []
+        except OSError:
+            self._last_load_error = "corrupt:io"
             return []
         if not isinstance(raw, dict):
+            self._last_load_error = "corrupt:shape"
             return []
+        self._last_load_error = None  # a successful parse clears any prior error
         entries = raw.get("workspaces", [])
         return [entry for entry in entries if isinstance(entry, dict) and entry.get("id")]
 
     def _write(self, entries: list[dict[str, Any]]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Atomic replace (temp file + os.replace): a concurrent reader -- e.g. the
+        # read guard's registry_load_error() check, which opens the file unlocked --
+        # sees either the old or the new COMPLETE file, never a torn/truncated parse
+        # that would read as 'corrupt' and trigger a spurious workspace_unavailable.
+        # Makes the class docstring's "Operations are atomic" true on the file too.
         payload = {"version": 1, "workspaces": entries}
-        self._path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write_text(self._path, json.dumps(payload, indent=2, sort_keys=True))
 
     def list(self) -> list[WorkspaceEntry]:
         with self._lock:

@@ -14,27 +14,62 @@ from __future__ import annotations
 
 import sqlite3
 
-from agent_memory_lite.api.errors import ValidationError
+from agent_memory_lite.api.errors import ValidationError, WorkspaceUnavailableError
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.config.workspace_paths import (
-    ResolvedWorkspacePaths,
+from agent_memory_lite.config.workspace_connection_match import (
     _connection_db_path,
     _connections_match,
+)
+from agent_memory_lite.config.workspace_paths import (
+    ResolvedWorkspacePaths,
     connection_matches_workspace,
+    registry_load_error,
     resolve_workspace_paths,
     workspace_db_path,
     workspace_vector_path,
 )
+from agent_memory_lite.config.workspace_read_guard import read_workspace_unavailable_reason
 
 __all__ = [
     "ResolvedWorkspacePaths",
     "connection_matches_workspace",
     "ensure_store_matches_workspace",
     "ensure_workspace_matches_db",
+    "ensure_workspace_readable_db",
     "resolve_workspace_paths",
     "workspace_db_path",
     "workspace_vector_path",
 ]
+
+
+def ensure_workspace_readable_db(
+    conn: sqlite3.Connection, workspace_id: str, settings: Settings
+) -> None:
+    """Refuse a READ whose connection is a DEFINITE mismatch for ``workspace_id``.
+
+    The read-path analogue of ``ensure_workspace_matches_db``, but deliberately
+    SOFT: reads to any registered workspace are allowed (strict isolation does
+    not block reads), so this only raises on a DEFINITE physical-file mismatch --
+    ``connection_matches_workspace`` returns ``False`` -- and stays a no-op for
+    every ambiguous case it returns ``True`` for (unregistered non-anchor
+    workspace, in-memory/temp connection, or a resolution glitch). That closes
+    the read leak where a hub request for workspace B that was NOT routed to B's
+    own DB would otherwise read B-tagged rows straight out of the anchor (A's)
+    DB -- the read analogue of the 2026-05-21 pollution incident -- surfacing a
+    misleading empty or, against a polluted anchor, another workspace's rows. Stays
+    soft on a corrupt registry (unlike the write guard) -- see
+    ``read_workspace_unavailable_reason`` for the deliberate read/write asymmetry.
+    """
+    reason = read_workspace_unavailable_reason(conn, workspace_id, settings)
+    if reason is None:
+        return
+    raise WorkspaceUnavailableError(
+        f"workspace_id={workspace_id!r} is unavailable on this connection: {reason}. "
+        "The hub router did not route the read to the workspace's own DB -- restart "
+        "the HTTP service so it picks up WorkspaceRoutingMiddleware, or pass a "
+        "correct X-Memory-DB-Path header. The read was refused to avoid surfacing "
+        "another workspace's rows."
+    )
 
 
 def ensure_workspace_matches_db(
@@ -67,6 +102,18 @@ def ensure_workspace_matches_db(
         return
     expected = workspace_db_path(workspace_id, settings)
     if expected is None:
+        # Distinguish a CORRUPT registry (cannot verify routing -> the workspace
+        # may well be registered) from a genuinely-unregistered workspace, so the
+        # operator gets an actionable message instead of a misleading "not
+        # registered" for a registry that simply could not be read.
+        load_error = registry_load_error(settings)
+        if load_error is not None:
+            raise ValidationError(
+                f"workspace_id={workspace_id!r}: the workspace registry is "
+                f"unavailable ({load_error}) -- cannot verify routing. Repair or "
+                "restore the registry file before writing to prevent "
+                "cross-workspace pollution."
+            )
         raise ValidationError(
             f"workspace_id={workspace_id!r} is not registered and is not the "
             f"anchor workspace {settings.workspace_id!r}. Register the workspace "

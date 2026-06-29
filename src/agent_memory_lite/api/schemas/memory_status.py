@@ -71,6 +71,11 @@ class EnvironmentInfo(BaseModel):
     strict_workspace_isolation: bool
     registry_path: str
     registry_workspaces: list[str]
+    # None when the registry was absent (clean empty) or parsed successfully;
+    # 'corrupt:json' / 'corrupt:io' / 'corrupt:shape' / 'corrupt:unknown' when the
+    # registry file existed but could not be read -- so the operator sees
+    # "registry unavailable", not a misleading empty registry_workspaces.
+    registry_load_error: str | None = None
     applied_migrations: list[str]
     # P2 additions — runtime stack visibility.
     embedding_backend: str = ""

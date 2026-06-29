@@ -176,7 +176,17 @@ def _check_coverage_gap(
         return None
     if sibling_table == "chunks_fts":
         try:
-            sibling = conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0]
+            # Scope the FTS numerator to THIS workspace (matches the chunks
+            # denominator above + the vector branch below). chunks_fts carries a
+            # denormalized workspace_id (FTS5 enforces no FK), so a global COUNT(*)
+            # against a shared/hub DB divides a foreign workspace's index size by
+            # this workspace's chunk count -- inflating coverage past the threshold
+            # and silently MASKING a real FTS-coverage gap (the drift this sentinel
+            # exists to catch).
+            sibling = conn.execute(
+                "SELECT COUNT(*) FROM chunks_fts WHERE workspace_id = ?",
+                (workspace_id,),
+            ).fetchone()[0]
         except sqlite3.OperationalError:
             return None
     else:  # embedding_id presence acts as vector-coverage proxy

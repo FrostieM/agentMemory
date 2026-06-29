@@ -16,12 +16,15 @@ from pathlib import Path
 
 import pytest
 
-from agent_memory_lite.api.errors import ValidationError
+from agent_memory_lite.api.errors import ValidationError, WorkspaceUnavailableError
+from agent_memory_lite.api.routes.memory_status import memory_status_route
 from agent_memory_lite.api.workspace_routing import (
     ensure_store_matches_workspace,
     ensure_workspace_matches_db,
+    ensure_workspace_readable_db,
     resolve_workspace_paths,
 )
+from agent_memory_lite.config.settings import get_settings
 from agent_memory_lite.config.workspace_registry import WorkspaceRegistry
 from agent_memory_lite.vector_store.lancedb_store import LanceDBStore
 
@@ -58,6 +61,118 @@ def _register(settings: _FakeSettings, workspace_id: str, db_path: Path) -> None
 def _conn(path: Path) -> sqlite3.Connection:
     """A real file-backed connection so ``PRAGMA database_list`` has a path."""
     return sqlite3.connect(str(path))
+
+
+def test_read_guard_rejects_definite_cross_db_mismatch(tmp_path: Path) -> None:
+    """Batch C read-path isolation: ensure_workspace_readable_db refuses a read
+    whose connection is a DEFINITE mismatch -- a registered workspace B read on the
+    anchor (A's) DB instead of B's registered DB -- with workspace_unavailable,
+    closing the read analogue of the 2026-05-21 pollution leak."""
+    settings = _settings(tmp_path)
+    b_db = tmp_path / "b.db"
+    _register(settings, "ws-b", b_db)
+    anchor_conn = _conn(settings.db_path)  # the read landed on A's DB, not B's
+    try:
+        with pytest.raises(WorkspaceUnavailableError):
+            ensure_workspace_readable_db(anchor_conn, "ws-b", settings)  # type: ignore[arg-type]
+    finally:
+        anchor_conn.close()
+
+
+def test_read_guard_is_soft_on_anchor_and_ambiguous(tmp_path: Path) -> None:
+    """ensure_workspace_readable_db is SOFT: it must NOT false-reject the anchor
+    read (conn IS settings.db_path), an unregistered non-anchor workspace (nothing
+    authoritative to compare), or an in-memory connection (no physical file)."""
+    settings = _settings(tmp_path)
+    anchor_conn = _conn(settings.db_path)
+    mem_conn = sqlite3.connect(":memory:")
+    try:
+        # Anchor read: conn == settings.db_path -> match -> no-op.
+        ensure_workspace_readable_db(anchor_conn, "anchor-ws", settings)  # type: ignore[arg-type]
+        # Unregistered non-anchor workspace: nothing authoritative -> soft no-op.
+        ensure_workspace_readable_db(anchor_conn, "never-registered", settings)  # type: ignore[arg-type]
+        # In-memory connection: no physical path -> soft no-op.
+        ensure_workspace_readable_db(mem_conn, "ws-b", settings)  # type: ignore[arg-type]
+    finally:
+        anchor_conn.close()
+        mem_conn.close()
+
+
+def test_read_guard_is_soft_on_corrupt_registry(tmp_path: Path) -> None:
+    """Batch C: the READ guard stays SOFT on a CORRUPT registry (unlike the WRITE
+    guard, which fails closed). A corrupt registry makes the expected DB
+    unresolvable, so connection_matches_workspace cannot prove a mismatch -- and
+    failing closed here would false-reject a correctly-routed read AND self-defeat
+    the /memory/status diagnostic (which exists to reveal the corruption). The
+    asymmetry is deliberate: a misrouted WRITE creates pollution (fail closed); a
+    misrouted READ only surfaces pre-existing pollution that the write guards
+    already prevent (stay soft, never guess)."""
+    settings = _settings(tmp_path)
+    settings.workspaces_file.parent.mkdir(parents=True, exist_ok=True)
+    settings.workspaces_file.write_text("not json", encoding="utf-8")  # corrupt registry
+    anchor_conn = _conn(settings.db_path)
+    try:
+        # Foreign read under a corrupt registry: unresolvable -> soft (no raise).
+        ensure_workspace_readable_db(anchor_conn, "ws-foreign", settings)  # type: ignore[arg-type]
+        # Anchor read: always resolvable, soft.
+        ensure_workspace_readable_db(anchor_conn, "anchor-ws", settings)  # type: ignore[arg-type]
+    finally:
+        anchor_conn.close()
+
+
+def test_memory_status_route_refuses_cross_db_mismatch(tmp_path: Path) -> None:
+    """Batch C cert: GET /memory/status (memory_status_route) must refuse a definite
+    cross-DB mismatch like its 8 sibling read endpoints + its MCP twin -- it was
+    missed in the first pass, letting status report a foreign DB's counts."""
+    anchor_db = tmp_path / "anchor.db"
+    wf = tmp_path / "workspaces.json"
+    WorkspaceRegistry(wf).register(
+        workspace_id="ws-b", db_path=str(tmp_path / "b.db"), vector_path=str(tmp_path / "b.lance")
+    )
+    settings = get_settings().model_copy(
+        update={"workspace_id": "anchor-ws", "db_path": anchor_db, "workspaces_file": wf}
+    )
+    conn = sqlite3.connect(str(anchor_db))
+    try:
+        with pytest.raises(WorkspaceUnavailableError):
+            memory_status_route(conn=conn, settings=settings, workspace_id="ws-b")  # type: ignore[arg-type]
+    finally:
+        conn.close()
+
+
+def test_memory_status_route_does_not_self_defeat_on_corrupt_registry(tmp_path: Path) -> None:
+    """Batch C cert: /memory/status must NOT 409 a default-workspace read under a
+    corrupt registry -- doing so would hide the very registry_load_error field the
+    endpoint exists to surface. With the read guard soft on corrupt, the route
+    returns the diagnostic instead of refusing."""
+    from agent_memory_lite.db.migrations import apply_migrations  # noqa: PLC0415
+
+    anchor_db = tmp_path / "anchor.db"
+    wf = tmp_path / "workspaces.json"
+    wf.write_text("not json", encoding="utf-8")  # corrupt registry
+    settings = get_settings().model_copy(
+        update={
+            "workspace_id": "agent-memory-lite",
+            "db_path": anchor_db,
+            "workspaces_file": wf,
+            "forbid_default_workspace": False,
+        }
+    )
+    conn = sqlite3.connect(str(anchor_db))
+    conn.row_factory = sqlite3.Row
+    apply_migrations(conn)
+    conn.commit()
+    try:
+        resp = memory_status_route(
+            conn=conn,  # type: ignore[arg-type]
+            settings=settings,  # type: ignore[arg-type]
+            workspace_id="default",
+            include_environment=True,
+        )
+        assert resp.environment is not None
+        assert resp.environment.registry_load_error == "corrupt:json"
+    finally:
+        conn.close()
 
 
 def test_http_routes_with_db_writes_also_check_physical_db() -> None:

@@ -42,7 +42,10 @@ from agent_memory_lite.api.schemas.memory import (
     WriteRequest,
 )
 from agent_memory_lite.api.ui_telemetry import trace_memory_operation
-from agent_memory_lite.api.workspace_routing import ensure_workspace_matches_db
+from agent_memory_lite.api.workspace_routing import (
+    ensure_workspace_matches_db,
+    ensure_workspace_readable_db,
+)
 from agent_memory_lite.cognition.brief import compose_brief, fetch_skill_body
 from agent_memory_lite.cognition.impact_check import impact_check
 from agent_memory_lite.cognition.lint import lint as run_lint
@@ -225,6 +228,7 @@ def get_endpoint(
 ) -> Envelope:
     """Fetch one row by id. Returns compact projection by default."""
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     field_list = [f.strip() for f in fields.split(",")] if fields else None
     try:
         obj = get_object(
@@ -250,6 +254,7 @@ def plan_endpoint(
 ) -> Envelope:
     """List one plan's live steps as compact projections, rank-ordered."""
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     steps = plan_for_task(conn, workspace_id=workspace_id, task_id=task_id)
     return _ok(steps)
 
@@ -265,6 +270,7 @@ def plans_endpoint(
     UI's picker so it auto-shows the current plan and paginates without a
     task_id."""
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     return _ok(list_plans(conn, workspace_id=workspace_id))
 
 
@@ -276,6 +282,7 @@ def plans_endpoint(
 @router.post("/search", response_model=Envelope)
 def search_endpoint(req: SearchRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     ensure_workspace_readable(req.workspace_id, settings)
+    ensure_workspace_readable_db(conn, req.workspace_id, settings)
     _maybe_autorun_sentinels(req.workspace_id, settings)
     with trace_memory_operation(
         workspace_id=req.workspace_id,
@@ -508,6 +515,7 @@ def brief_endpoint(
     prompt.
     """
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     _maybe_autorun_sentinels(workspace_id, settings)
     b = compose_brief(
         conn,
@@ -530,6 +538,7 @@ def brief_endpoint(
 def lint_endpoint(req: LintRequest, conn: DbDep, settings: SettingsDep) -> Envelope:
     """Pre-task advisory. Wraps enforcement/dispatch with canonical retrievals."""
     ensure_workspace_readable(req.workspace_id, settings)
+    ensure_workspace_readable_db(conn, req.workspace_id, settings)
     result = run_lint(
         conn,
         workspace_id=req.workspace_id,
@@ -549,6 +558,7 @@ def invoke_skill_endpoint(
 ) -> Envelope:
     """Return skill body_md and bump usage_count. Used by memory_invoke_skill."""
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     out = fetch_skill_body(conn, workspace_id=workspace_id, skill_id=skill_id)
     if out is None:
         return _err("not_found", f"skill:{skill_id} not in {workspace_id}")
@@ -579,6 +589,7 @@ def impact_check_endpoint(
     Failure-soft: schema mismatch or missing file → not_indexed.
     """
     ensure_workspace_readable(workspace_id, settings)
+    ensure_workspace_readable_db(conn, workspace_id, settings)
     report = impact_check(
         conn,
         workspace_id=workspace_id,
