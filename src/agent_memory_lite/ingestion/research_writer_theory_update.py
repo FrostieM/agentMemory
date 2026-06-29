@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.enums import (
     InsightStatus,
     InsightType,
@@ -26,6 +27,8 @@ from agent_memory_lite.repositories.theories_repo import (
     update_theory_confidence_status,
 )
 from agent_memory_lite.utils.ids import IdKind, new_id
+
+_log = get_logger("ingestion.research_writer_theory_update")
 
 
 def confidence_after_result(
@@ -72,10 +75,15 @@ def update_theory_after_result(
     *,
     theory_id: str,
     payload: ExperimentResultIn,
+    summary: str,
     timestamp: str,
     observed_at: str,
     metrics: dict[str, Any],
 ) -> None:
+    # ``summary`` is the already-redacted result summary threaded from the entry
+    # point (add_experiment_result). Use it -- never ``payload.summary`` -- so the
+    # secret redaction applied once at the boundary is preserved in BOTH the
+    # theory_evidence row and the (FTS-indexed) contradiction insight below.
     theory = get_theory(conn, theory_id)
     assert theory is not None
     evidence_id = new_id(IdKind.THEORY_EVIDENCE)
@@ -85,7 +93,7 @@ def update_theory_after_result(
         workspace_id=payload.workspace_id,
         theory_id=theory.id,
         kind=payload.kind,
-        summary=payload.summary,
+        summary=summary,
         source_episode_id=payload.source_episode_id,
         artifact_path=payload.artifact_path,
         metrics=metrics,
@@ -127,7 +135,7 @@ def update_theory_after_result(
             insight_id=insight_id,
             workspace_id=payload.workspace_id,
             insight_type=InsightType.CONTRADICTION,
-            summary=(f"Experiment result weakens theory {theory.id}: {payload.summary}"),
+            summary=(f"Experiment result weakens theory {theory.id}: {summary}"),
             proposed_action="Review the theory mechanism and design a follow-up cohort split.",
             target_type="theory",
             target_id=theory.id,
@@ -139,3 +147,18 @@ def update_theory_after_result(
             tags=["contradiction", payload.kind.value],
             created_at=timestamp,
         )
+        # M1 (write-atomicity batch): the contradiction insight is a
+        # DURABLE_FTS_KIND written via insert_insight_row, bypassing
+        # write_canonical's FTS sync choke point (reached from the
+        # record_experiment_result route). Without this sync the insight's
+        # searchable summary is invisible to memory_search. Failure-soft.
+        from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+        if not sync_durable_fts(
+            conn, kind="insight", object_id=insight_id, workspace_id=payload.workspace_id
+        ):
+            _log.warning(
+                "durable_fts_sync_skipped_on_contradiction_insight",
+                object_id=insight_id,
+                workspace_id=payload.workspace_id,
+            )

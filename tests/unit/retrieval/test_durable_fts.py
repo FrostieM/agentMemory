@@ -329,6 +329,36 @@ def test_sync_failure_is_atomic_and_surfaced_not_silent() -> None:
         c.close()
 
 
+def test_rebuild_is_atomic_insert_failure_preserves_prior_index() -> None:
+    """M2 (write-atomicity batch): rebuild_durable_fts wipes + re-populates the
+    index. Before M2 the DELETE auto-committed first, so a failure partway through
+    the INSERT loop left the index half-empty -- silently hiding every
+    not-yet-reinserted durable row from memory_search. Now the wipe + repopulate
+    run inside one with_tx: a failed INSERT rolls the DELETE back, so the prior
+    (complete) index survives intact and the row is still findable."""
+    c = sqlite3.connect(":memory:", factory=_FailDurableInsertConn, isolation_level=None)
+    assert isinstance(c, _FailDurableInsertConn)
+    c.row_factory = sqlite3.Row
+    apply_migrations(c)
+    try:
+        did = _decision(c, "kelly rebuild atomic case", "quarter kelly sizing")
+        assert did in _ids(
+            search_kind_fts(c, workspace_id="ws", kind="decision", query="kelly", limit=5)
+        )
+        # Force the repopulate INSERT to fail after the DELETE has run.
+        c.fail_durable_insert = True
+        with pytest.raises(sqlite3.OperationalError):
+            rebuild_durable_fts(c, workspace_id="ws")
+        c.fail_durable_insert = False
+        # The DELETE was rolled back with the failed INSERT -> prior index intact.
+        # Pre-fix this assertion failed (the index was wiped and never refilled).
+        assert did in _ids(
+            search_kind_fts(c, workspace_id="ws", kind="decision", query="kelly", limit=5)
+        )
+    finally:
+        c.close()
+
+
 def test_brain_pass_rebuild_step_reindexes(conn: sqlite3.Connection) -> None:
     """The eventual-consistency backstop: a stale/empty durable_fts is rebuilt."""
     from agent_memory_lite.config.settings import Settings  # noqa: PLC0415

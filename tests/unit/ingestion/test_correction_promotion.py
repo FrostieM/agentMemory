@@ -207,6 +207,34 @@ def test_promote_atomicity_rollback_on_step2_pin_failure(conn: sqlite3.Connectio
     assert cand["status"] == "new"
 
 
+def test_promoted_behavior_is_fts_searchable(conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch): promote_correction_to_behavior upserts the
+    behavior directly via ``upsert_behavior_instruction``, bypassing
+    write_canonical's FTS sync choke point. Before M1 the promoted rule was
+    invisible to memory_search until the brain-pass rebuild backstop re-indexed
+    it -- whenever another FTS row matched the query, the brand-new pinned rule
+    silently lost. It must be searchable the instant the promotion commits."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    _seed_correction_candidate(
+        conn,
+        candidate_id="cand_fts",
+        subject="Always run the wombat lint before merging the payload",
+    )
+    instruction = promote_correction_to_behavior(
+        conn,
+        CorrectionPromoteInput(
+            workspace_id="ws-promote",
+            candidate_id="cand_fts",
+            name="wombat-lint-rule",
+        ),
+    )
+    hits = search_kind_fts(
+        conn, workspace_id="ws-promote", kind="behavior", query="wombat lint", limit=5
+    )
+    assert instruction.id in [h.projection["id"] for h in hits]
+
+
 def test_promote_succeeds_atomically_on_happy_path(conn: sqlite3.Connection) -> None:
     """Sanity: with the new transactional wrapper, a clean promote
     still produces ALL of: behavior_instruction live, candidate flipped,

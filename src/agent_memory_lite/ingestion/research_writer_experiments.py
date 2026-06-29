@@ -24,6 +24,7 @@ from agent_memory_lite.models.research import (
     ExperimentResult,
     ExperimentResultIn,
 )
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.research_repo import (
     get_experiment,
@@ -92,6 +93,13 @@ def add_experiment_result(
     metrics = _result_metrics_with_links(
         payload.metrics, experiment_id=payload.experiment_id, result_id=result_id
     )
+    # CLAUDE.md invariant ("Never store secrets"): redact the free-text summary
+    # ONCE here at the entry point, then thread the safe value to every sink it
+    # reaches -- the experiment_results row below AND, via
+    # update_theory_after_result, the theory_evidence row + contradiction insight.
+    # Without this, a secret pasted into a result summary lands cleartext in all
+    # three tables (and, since the insight is FTS-indexed, in memory_search).
+    summary_safe = redact(payload.summary).text
 
     with with_tx(conn):
         insert_experiment_result_row(
@@ -101,7 +109,7 @@ def add_experiment_result(
             experiment_id=payload.experiment_id,
             theory_id=theory_id,
             kind=payload.kind,
-            summary=payload.summary,
+            summary=summary_safe,
             metrics=metrics,
             artifact_path=payload.artifact_path,
             confidence=payload.confidence,
@@ -134,6 +142,7 @@ def add_experiment_result(
                 conn,
                 theory_id=theory_id,
                 payload=payload,
+                summary=summary_safe,
                 timestamp=timestamp,
                 observed_at=observed_at,
                 metrics=metrics,

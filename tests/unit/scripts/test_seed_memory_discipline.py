@@ -112,6 +112,58 @@ def test_seeded_rules_have_plan_rule(db_path: Path) -> None:
     assert "plan_steps" in one_line
 
 
+class _CapturingLog:
+    """Records ``.warning(event, **kw)`` calls; no-ops every other logger method."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def warning(self, event: str, **_kw: object) -> None:
+        self.events.append(event)
+
+    def __getattr__(self, _name: str) -> object:
+        return lambda *_a, **_k: None
+
+
+def test_seed_rule_observes_failed_fts_sync(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Certification finding: _insert_rule was the only Batch B sync_durable_fts call
+    site ignoring the bool. On a forced sync rollback (returns False), the seed must
+    surface a warning instead of reporting a clean 'inserted' silently."""
+    import agent_memory_lite.fts.durable_fts as dfts  # noqa: PLC0415
+
+    monkeypatch.setattr(dfts, "sync_durable_fts", lambda *_a, **_k: False)
+    cap = _CapturingLog()
+    monkeypatch.setattr(seed, "_log", cap)
+    conn = sqlite3.connect(db_path)
+    try:
+        results = seed.seed_discipline(conn, workspace_id="ws")
+    finally:
+        conn.close()
+    assert all(r.status == "inserted" for r in results)  # rows still committed
+    assert "durable_fts_sync_skipped_on_seed_rule" in cap.events  # but the gap is loud
+
+
+def test_seeded_discipline_rules_are_fts_searchable(db_path: Path) -> None:
+    """M1 (write-atomicity batch): seed_discipline raw-INSERTs pinned discipline
+    behaviors (bypassing the self-syncing business writer + write_canonical), so it
+    owns the durable_fts sync. These rules are the highest-trust habits a freshly-
+    registered agent relies on; without the sync they're silently invisible to
+    memory_search. The cornerstone 'graph-tools-first' rule must be findable."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        results = seed.seed_discipline(conn, workspace_id="ws")
+        graph_rule_id = next(r.id for r in results if r.name == "graph-tools-first")
+        hits = search_kind_fts(
+            conn, workspace_id="ws", kind="behavior", query="impact_check Read Edit Grep", limit=10
+        )
+    finally:
+        conn.close()
+    assert graph_rule_id in [h.projection["id"] for h in hits]
+
+
 def test_seeded_applies_to_json_round_trips(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
     try:

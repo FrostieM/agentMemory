@@ -234,6 +234,70 @@ def test_run_autonomous_pass_promotes_confident_candidate(
     assert cand[0] == "accepted"
 
 
+def test_promoted_theory_is_fts_searchable(conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch): the autonomous loop INSERTs the theory row
+    directly, bypassing write_canonical's FTS sync choke point. Before M1 the
+    auto-promoted theory was invisible to memory_search -- especially acute
+    because the durable_fts rebuild backstop step runs EARLIER in the same
+    brain_pass than this loop, so the row stayed unsearchable until the NEXT pass.
+    It must be searchable the instant the promotion commits."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    for ep_id in ("ep1", "ep2", "ep3"):
+        _seed_episode(conn, ep_id=ep_id, text="wombat drawdown quarter")
+    _seed_episode(conn, ep_id="ep4", text="wombat drawdown additional run")
+    _seed_insight(
+        conn,
+        insight_id="ins_wombat",
+        summary="Quarter-wombat sizing reduces drawdown",
+        source_eps=["ep1", "ep2", "ep3"],
+    )
+    _seed_candidate(
+        conn,
+        cand_id="cand_prop_ins_wombat",
+        insight_id="ins_wombat",
+        proposal_text="Quarter-wombat bet sizing improves drawdown",
+        primary_ep="ep1",
+    )
+    report = run_autonomous_pass(conn, workspace_id="ws")
+    assert report.promoted == 1
+    theory_id = report.promoted_ids[0]
+    hits = search_kind_fts(conn, workspace_id="ws", kind="theory", query="wombat drawdown", limit=5)
+    assert theory_id in [h.projection["id"] for h in hits]
+
+
+def test_promoted_theory_redacts_secret_in_claim(conn: sqlite3.Connection) -> None:
+    """R6 audit (uniformity): _promote_to_theory redacts the candidate proposal
+    text before it becomes the theory title + claim (durable_fts-indexed), so a
+    secret-shaped token never lands cleartext on disk or in the search index.
+    Scoring still runs on the raw text, so the candidate still promotes."""
+    secret_raw = "sk-ant-secret-LEAK-AUTONOMOUS"
+    for ep_id in ("ep1", "ep2", "ep3"):
+        _seed_episode(conn, ep_id=ep_id, text="kelly drawdown quarter")
+    _seed_episode(conn, ep_id="ep4", text="kelly drawdown additional run")
+    _seed_insight(
+        conn, insight_id="ins_sec", summary="secret carrier", source_eps=["ep1", "ep2", "ep3"]
+    )
+    _seed_candidate(
+        conn,
+        cand_id="cand_sec",
+        insight_id="ins_sec",
+        proposal_text=f"kelly drawdown improves api_key: {secret_raw}",
+        primary_ep="ep1",
+    )
+    report = run_autonomous_pass(conn, workspace_id="ws")
+    assert report.promoted == 1
+    theory_id = report.promoted_ids[0]
+    row = conn.execute("SELECT title, claim FROM theories WHERE id=?", (theory_id,)).fetchone()
+    assert secret_raw not in (row[0] or "")
+    assert secret_raw not in (row[1] or "")
+    frow = conn.execute(
+        "SELECT content FROM durable_fts WHERE object_id=?", (theory_id,)
+    ).fetchone()
+    assert frow is not None
+    assert secret_raw not in (frow[0] or "")
+
+
 def test_run_autonomous_pass_holds_weak_candidate(
     conn: sqlite3.Connection,
 ) -> None:

@@ -32,6 +32,27 @@ def test_write_decision_persists_active(applied_conn: sqlite3.Connection) -> Non
     assert decision.id.startswith("dec_")
 
 
+def test_write_decision_is_fts_searchable(applied_conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch): decision is a DURABLE_FTS_KIND and write_decision
+    is the single business writer all decision-create paths funnel through
+    (write_canonical AND candidate_promotion._promote_decision). Syncing FTS inside
+    the writer closes the bypass at one choke point -- a decision produced by the
+    writer is immediately findable by memory_search."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    decision = write_decision(
+        applied_conn,
+        _decision(
+            title="Adopt the capybara cache layer",
+            decision_text="Front the hot path with a capybara LRU cache.",
+        ),
+    )
+    hits = search_kind_fts(
+        applied_conn, workspace_id="default", kind="decision", query="capybara cache", limit=5
+    )
+    assert decision.id in [h.projection["id"] for h in hits]
+
+
 def test_supersedes_chain_closes_prior(applied_conn: sqlite3.Connection) -> None:
     first = write_decision(applied_conn, _decision(title="v1"))
     second = write_decision(

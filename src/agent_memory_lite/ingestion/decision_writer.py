@@ -12,7 +12,9 @@ import sqlite3
 from agent_memory_lite.api.errors import NotFoundError, ValidationError
 from agent_memory_lite.config.settings import Settings, get_settings
 from agent_memory_lite.db.transactions import with_tx
+from agent_memory_lite.fts.durable_fts import sync_durable_fts
 from agent_memory_lite.ingestion.conflict_detect import detect_conflicts
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.models.decisions import Decision, DecisionIn
 from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
@@ -23,6 +25,8 @@ from agent_memory_lite.repositories.decisions_repo import (
 )
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
+
+_log = get_logger("ingestion.decision_writer")
 
 
 def write_decision(
@@ -87,6 +91,21 @@ def write_decision(
                 "supersedes": payload.supersedes_decision_id,
             },
         )
+        # M1 (write-atomicity batch): decision is a DURABLE_FTS_KIND. write_decision
+        # is the single business writer all decision-create paths funnel through
+        # (write_decision_canonical AND candidate_promotion._promote_decision), so
+        # syncing the FTS index HERE closes the bypass at one choke point. The
+        # superseded prior row's indexed text is unchanged (only status/valid_to
+        # flip), so only the new row needs indexing. Idempotent vs write_canonical's
+        # post-sync; failure-soft + observed; inside the with_tx for atomicity.
+        if not sync_durable_fts(
+            conn, kind="decision", object_id=decision_id, workspace_id=payload.workspace_id
+        ):
+            _log.warning(
+                "durable_fts_sync_skipped_on_write_decision",
+                object_id=decision_id,
+                workspace_id=payload.workspace_id,
+            )
 
     decision = get_decision(conn, decision_id)
     assert decision is not None

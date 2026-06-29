@@ -72,6 +72,48 @@ def test_neutral_project_memory_seed_writes_only_population_helpers(
     assert _count(applied_conn, "concepts", "project-x") == 4
 
 
+def test_seeded_skill_and_behavior_are_fts_searchable(applied_conn: sqlite3.Connection) -> None:
+    """M1 (write-atomicity batch), end-to-end: project seeding writes durable skill
+    + behavior rows via upsert_agent_skill / upsert_behavior_instruction, bypassing
+    write_canonical's FTS choke point. The writer-level FTS sync closes this path so
+    the discipline rules a freshly-registered agent relies on are immediately
+    searchable. Before the fix they were silently invisible to memory_search until a
+    brain-pass rebuild tick (a reported HIGH silent-loss bug)."""
+    from agent_memory_lite.storage.reader import search_kind_fts  # noqa: PLC0415
+
+    result = seed_neutral_project_memory(applied_conn, workspace_id="project-x")
+
+    skill_id = result.skills[0].id  # "Memory population discipline"
+    skill_hits = search_kind_fts(
+        applied_conn,
+        workspace_id="project-x",
+        kind="skill",
+        query="population discipline",
+        limit=10,
+    )
+    assert skill_id in [h.projection["id"] for h in skill_hits]
+
+    # R6 audit: the seeded playbook ("Neutral memory bootstrap") lives in the skills
+    # table and must ALSO be FTS-searchable -- before the role/playbook sync fix it
+    # was silently hidden behind the competing seeded skill (the LIKE fallback was
+    # suppressed once any skill was FTS-indexed).
+    playbook_id = result.playbooks[0].id
+    pb_hits = search_kind_fts(
+        applied_conn, workspace_id="project-x", kind="skill", query="neutral bootstrap", limit=10
+    )
+    assert playbook_id in [h.projection["id"] for h in pb_hits]
+
+    target = next(
+        b
+        for b in result.behavior_instructions
+        if b.name == "applies-to-checklist-must-be-stated-verbatim"
+    )
+    beh_hits = search_kind_fts(
+        applied_conn, workspace_id="project-x", kind="behavior", query="verbatim", limit=20
+    )
+    assert target.id in [h.projection["id"] for h in beh_hits]
+
+
 def test_neutral_project_memory_seed_is_idempotent(applied_conn: sqlite3.Connection) -> None:
     first = seed_neutral_project_memory(applied_conn, workspace_id="project-x")
     second = seed_neutral_project_memory(applied_conn, workspace_id="project-x")

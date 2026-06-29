@@ -115,6 +115,9 @@ def promote_correction_to_behavior(
                 active=True,
             ),
         )
+        # NOTE: the durable_fts sync for the new behavior now lives INSIDE
+        # upsert_behavior_instruction (the single behavior business writer), so
+        # every promotion path is indexed at one choke point -- no per-caller sync.
         # Step 2: optional pin.
         if payload.pinned:
             pin_memory_object(

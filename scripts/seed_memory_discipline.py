@@ -35,6 +35,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent_memory_lite.logging_setup import get_logger
+
+_log = get_logger("scripts.seed_memory_discipline")
+
 # Each rule is `pinned=1` + `active=1`, so it rides every brief
 # behaviors section without competing on relevance score. Keep the
 # rule body terse (≤30 words) so it fits the 120-token behaviors
@@ -170,6 +174,23 @@ def _insert_rule(
             now,
         ),
     )
+    # M1 (write-atomicity batch): these pinned discipline rules are durable
+    # behaviors written via a raw INSERT (bypassing the self-syncing
+    # upsert_behavior_instruction business writer + write_canonical), so this seed
+    # script owns the durable_fts sync. Without it the highest-trust seeded rules a
+    # freshly-registered agent relies on are silently invisible to memory_search
+    # until a brain-pass rebuild tick. Failure-soft (no-op pre-0007).
+    from agent_memory_lite.fts.durable_fts import sync_durable_fts  # noqa: PLC0415
+
+    if not sync_durable_fts(conn, kind="behavior", object_id=rule_id, workspace_id=workspace_id):
+        # Observe the sync bool (matches every other Batch B call site): a rolled-back
+        # sync leaves this pinned discipline rule committed but unsearchable until a
+        # brain-pass rebuild tick. Surface it instead of a clean-looking seed report.
+        _log.warning(
+            "durable_fts_sync_skipped_on_seed_rule",
+            object_id=rule_id,
+            workspace_id=workspace_id,
+        )
     conn.commit()
     return rule_id
 
