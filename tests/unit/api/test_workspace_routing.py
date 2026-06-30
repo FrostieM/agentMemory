@@ -208,6 +208,64 @@ def test_http_routes_with_db_writes_also_check_physical_db() -> None:
     assert missing == []
 
 
+def test_http_read_routes_with_db_reads_also_check_physical_db() -> None:
+    """Read-path mirror of ``test_http_routes_with_db_writes_also_check_physical_db``.
+
+    Batch C added the read-path physical-DB guard ``ensure_workspace_readable_db``
+    and wired it into every DB-using read endpoint in ``memory.py`` (get, plan,
+    plans, search, brief, lint, invoke_skill, impact_check) plus
+    ``memory_status_route``. Without this meta-test, a future read endpoint in
+    those modules could keep the logical ``ensure_workspace_readable`` guard but
+    drop its physical ``ensure_workspace_readable_db`` pairing — reopening the
+    read analogue of the 2026-05-21 cross-DB leak (a registered workspace reading
+    a foreign/co-resident DB's rows) — with no test failing.
+
+    Scope is deliberately the two Batch-C-guarded modules, NOT the whole routes
+    directory: the sibling write test sweeps every route file because every write
+    endpoint pairs both guards, but the read-db guard only lives in ``memory.py``
+    and ``memory_status.py``. The other read routes (audit_list, hygiene,
+    telemetry, cold_*, ui_*, …) were outside Batch C's scope and do not yet carry
+    the physical read guard, so widening this assertion would couple it to
+    unrelated work and fail on the current tree.
+
+    Async endpoints are introspected too (``AsyncFunctionDef``) so a future
+    ``async def`` read endpoint cannot slip the pairing — the only intentional
+    divergence from the sync-only sibling, whose endpoints are all ``def``.
+    """
+    routes_dir = Path(__file__).parents[3] / "src" / "agent_memory_lite" / "api" / "routes"
+    guarded_modules = ("memory.py", "memory_status.py")
+    missing: list[tuple[str, str, int]] = []
+    checked_per_module: dict[str, int] = dict.fromkeys(guarded_modules, 0)
+    for name in guarded_modules:
+        path = routes_dir / name
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            calls: set[str] = set()
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    if isinstance(child.func, ast.Name):
+                        calls.add(child.func.id)
+                    elif isinstance(child.func, ast.Attribute):
+                        calls.add(child.func.attr)
+            # Exact-string set membership, so the ``_db`` suffix is never confused
+            # with its prefix: a function calling only the logical readable guard
+            # gets flagged; one calling the physical guard too does not.
+            if "ensure_workspace_readable" not in calls:
+                continue
+            checked_per_module[name] += 1
+            if "ensure_workspace_readable_db" not in calls:
+                missing.append((name, node.name, node.lineno))
+
+    assert missing == []
+    # Guard against a vacuous pass: if either module were renamed/moved, or its
+    # read guards stripped wholesale, the AST walk would find nothing to check and
+    # the assertion above would pass for the wrong reason. Each guarded module must
+    # contribute at least one read endpoint that the pairing rule actually checks.
+    assert all(count > 0 for count in checked_per_module.values()), checked_per_module
+
+
 def test_matches_db_rejects_leak_even_with_hub_mode_off(tmp_path: Path) -> None:
     """Round-1 audit §4: with hub_mode AND strict isolation off,
     ``ensure_workspace_writable`` permits a foreign write — so this guard
