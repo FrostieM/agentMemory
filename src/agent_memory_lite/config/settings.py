@@ -303,6 +303,25 @@ class Settings(BaseSettings):
     # brain_pass_enabled (both default ON) -- otherwise deferred chunks are never
     # embedded and stay invisible to vector search (FTS/BM25 still finds them).
     defer_embedding: bool = Field(False, validation_alias="MEMORY_DEFER_EMBEDDING")
+    # Batch E: when on, the synchronous episode write persists the episode and
+    # returns WITHOUT running the (slow, Ollama-backed) auto_promote extractor on
+    # the request thread -- it marks episodes.extraction_pending = 1 and the
+    # brain-pass extraction-drain step runs the extractor asynchronously, writing
+    # the candidates later. Pairs with defer_embedding for a fully async write.
+    # Default OFF -- opt-in, zero change to the default path. WARNING: requires
+    # brain_pass_enabled, else pending episodes are never extracted (the validator
+    # enforces this).
+    defer_extraction: bool = Field(False, validation_alias="MEMORY_DEFER_EXTRACTION")
+    # The brain-pass extraction-drain healer (the inverse complement of the defer
+    # above): probes episodes.extraction_pending = 1 and runs the extractor for a
+    # bounded batch. Default ON so a pending backlog drains even if defer_extraction
+    # is later turned off. Steady state (no pending) costs one indexed EXISTS probe.
+    extraction_repair_enabled: bool = Field(
+        True, validation_alias="MEMORY_EXTRACTION_REPAIR_ENABLED"
+    )
+    extraction_repair_max_per_pass: int = Field(
+        64, ge=1, le=100000, validation_alias="MEMORY_EXTRACTION_REPAIR_MAX_PER_PASS"
+    )
     # Phase 5b -- distil a completed plan (every live step done/skipped,
     # >=1 done) into a `plan:<task_id>` playbook. Idempotent; the cap
     # bounds NEW playbooks per pass.
@@ -492,6 +511,19 @@ class Settings(BaseSettings):
                 "vector-repair step is what embeds deferred chunks. Without it, "
                 "deferred episodes are never embedded and stay invisible to vector "
                 "search. Enable both loops, or turn off MEMORY_DEFER_EMBEDDING."
+            )
+        # Batch E: deferred extraction relies on the brain-pass extraction-drain
+        # step. Same fail-loud guard as deferred embedding -- without its healers a
+        # pending episode's candidates are never extracted (silent permanent loss).
+        if self.defer_extraction and not (
+            self.extraction_repair_enabled and self.brain_pass_enabled
+        ):
+            raise ValueError(
+                "MEMORY_DEFER_EXTRACTION=1 requires MEMORY_EXTRACTION_REPAIR_ENABLED=1 and "
+                "MEMORY_BRAIN_PASS_ENABLED=1 (both default on): the brain-pass "
+                "extraction-drain step is what runs the deferred extractor. Without "
+                "it, pending episodes are never extracted and their candidates are "
+                "lost. Enable both loops, or turn off MEMORY_DEFER_EXTRACTION."
             )
         return self
 

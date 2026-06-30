@@ -102,6 +102,9 @@ class BrainPassReport:
     # Plan 7: chunks whose vector was missing (embedding_id IS NULL) re-embedded
     # this pass -- the self-healing complement to orphan-prune.
     vectors_repaired: int = 0
+    # Batch E: episodes whose deferred extraction (extraction_pending = 1) was
+    # drained this pass -- the off-thread complement to MEMORY_DEFER_EXTRACTION.
+    extractions_drained: int = 0
     # Phase-4 row retention (opt-in; default OFF): rows age-pruned this pass from
     # the four unbounded tables.
     audit_rows_pruned: int = 0
@@ -176,6 +179,7 @@ class BrainPassReport:
             "vacuum_ran": self.vacuum_ran,
             "vectors_pruned": self.vectors_pruned,
             "vectors_repaired": self.vectors_repaired,
+            "extractions_drained": self.extractions_drained,
             "audit_rows_pruned": self.audit_rows_pruned,
             "usage_feedback_pruned": self.usage_feedback_pruned,
             "retention_causal_pruned": self.retention_causal_pruned,
@@ -662,6 +666,9 @@ def _step_repair_missing_vectors(
         ).fetchone()
         if probe is None:
             return
+        from agent_memory_lite.embeddings.dimension_check import (  # noqa: PLC0415
+            pin_or_check,
+        )
         from agent_memory_lite.embeddings.factory import (  # noqa: PLC0415
             get_embedding_provider,
         )
@@ -674,10 +681,17 @@ def _step_repair_missing_vectors(
 
         store = get_vector_store(settings)
         try:
+            provider = get_embedding_provider(settings)
+            # Batch E: under defer_embedding the ingest path skips pin_or_check (it
+            # would load the embedding model on the request thread), so a deferred
+            # workspace is pinned + drift-checked HERE -- the model is loaded anyway
+            # to embed the missing vectors below, and a mismatch is caught by the
+            # outer try (recorded as a vector_repair error, not a crash).
+            pin_or_check(conn, workspace_id, provider)
             report.vectors_repaired = repair_missing_vectors(
                 conn,
                 workspace_id=workspace_id,
-                provider=get_embedding_provider(settings),
+                provider=provider,
                 store=store,
                 limit=settings.vector_repair_max_per_pass,
             )
@@ -685,6 +699,43 @@ def _step_repair_missing_vectors(
             store.close()
     except Exception as exc:
         report.errors.append(f"vector_repair:{exc}")
+
+
+def _step_drain_pending_extraction(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    settings: Settings,
+    report: BrainPassReport,
+) -> None:
+    """Batch E: run the deferred auto_promote extractor for a bounded batch of
+    episodes flagged ``extraction_pending = 1`` (the off-thread complement of
+    ``MEMORY_DEFER_EXTRACTION``), so a deferred extraction self-heals here instead
+    of blocking the synchronous write. Same cost discipline as vector-repair: a
+    cheap EXISTS probe (idx_episodes_extraction_pending) runs first, and the heavy
+    extractor stack loads ONLY when there is real work, so the steady state costs
+    one indexed query and never imports the Ollama client. Failure-soft."""
+    if not settings.extraction_repair_enabled:
+        return
+    try:
+        from agent_memory_lite.repositories.episodes_extraction_repo import (  # noqa: PLC0415
+            has_pending_extraction,
+        )
+
+        if not has_pending_extraction(conn, workspace_id):
+            return
+        from agent_memory_lite.ingestion.extraction_repair import (  # noqa: PLC0415
+            drain_pending_extraction,
+        )
+
+        result = drain_pending_extraction(
+            conn,
+            workspace_id=workspace_id,
+            settings=settings,
+            limit=settings.extraction_repair_max_per_pass,
+        )
+        report.extractions_drained = result.episodes_drained
+    except Exception as exc:
+        report.errors.append(f"extraction_drain:{exc}")
 
 
 def _step_experiment_proposal(
@@ -1197,6 +1248,19 @@ def run_brain_pass(
     # Plan 7: re-embed missing vectors (inverse of prune). Lazy-loads the
     # provider only when the cheap EXISTS probe finds work.
     _step_repair_missing_vectors(conn, workspace_id, settings, report)
+    # Batch E: run the deferred episode extractor off the request thread. Grouped
+    # right after vector-repair because both HEAL the two halves of a deferred
+    # write (missing embedding + missing extraction). Placed BEFORE the candidate
+    # consumers below (_step_experiment_proposal + _step_autonomous_loop): the
+    # heuristic + correction extractors emit only decision/rule/correction
+    # candidates, but on the OLLAMA backend -- the very one deferred extraction
+    # exists to move off the request thread -- auto_promote can emit a
+    # theory_proposal candidate (llm_extractor builds MemoryCandidateKind(raw_kind)
+    # for any model-chosen kind), which those steps consume (kind='theory_proposal'
+    # AND status='new'). Draining first lets a deferred episode's theory_proposal be
+    # promoted the SAME pass, matching the synchronous path -- so for that backend
+    # the order is load-bearing, not merely cohesion.
+    _step_drain_pending_extraction(conn, workspace_id, settings, report)
     _step_experiment_proposal(conn, workspace_id, report)
     # v3.4 #1: autonomous loop reads V1 candidates emitted by the
     # step above and promotes the confident ones to theories BEFORE

@@ -90,6 +90,7 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "0005_chunks_missing_embedding_index",
             "0006_soft_edges_dst_index_and_analyze",
             "0007_durable_fts",
+            "0008_episodes_extraction_pending",
         ]
         versions = conn.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
         assert [row[0] for row in versions] == [
@@ -100,6 +101,7 @@ def test_real_project_migrations_apply(tmp_path: Path) -> None:
             "0005_chunks_missing_embedding_index",
             "0006_soft_edges_dst_index_and_analyze",
             "0007_durable_fts",
+            "0008_episodes_extraction_pending",
         ]
         tables = {
             row[0]
@@ -236,6 +238,7 @@ def test_migration_module_cli_applies_root_migration(tmp_path: Path) -> None:
             "0005_chunks_missing_embedding_index",
             "0006_soft_edges_dst_index_and_analyze",
             "0007_durable_fts",
+            "0008_episodes_extraction_pending",
         ]
         tables = {
             row[0]
