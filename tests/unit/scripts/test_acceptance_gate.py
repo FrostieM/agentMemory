@@ -263,6 +263,27 @@ def test_verdict_pass_when_all_targets_met() -> None:
     assert gate.compute_verdict(report) == "pass"
 
 
+def test_verdict_warn_when_digests_exist_but_age_unmeasurable() -> None:
+    """round-A: digests are present (count > 0) but their age is None (every
+    timestamp unparseable -- a corruption signal). This must WARN, not silently pass."""
+    report = {
+        "brief": {"within_budget": True, "cache_hit_rate": 0.9},
+        "search": {"within_target": True},
+        "digests": {"count": 2, "newest_age_minutes": None},
+    }
+    assert gate.compute_verdict(report) == "warn"
+
+
+def test_verdict_pass_when_no_digests_at_all() -> None:
+    """count == 0 + age None is benign (nothing indexed) -- stays a pass."""
+    report = {
+        "brief": {"within_budget": True, "cache_hit_rate": 0.9},
+        "search": {"within_target": True},
+        "digests": {"count": 0, "newest_age_minutes": None},
+    }
+    assert gate.compute_verdict(report) == "pass"
+
+
 # ============================================================
 # End-to-end main()
 # ============================================================

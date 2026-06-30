@@ -36,6 +36,14 @@ class ExtractedSymbol:
     char_end: int
 
 
+# global-audit round-A: bound the recursive descent. Tree-sitter parses
+# pathologically nested code (e.g. 500+ nested classes) fine, but an unguarded
+# recursive _walk then blows Python's ~1000-frame limit and raised an UNCAUGHT
+# RecursionError (the call site was outside the try), breaking the "Never raises"
+# contract. Real source nests far shallower than this bound.
+_MAX_WALK_DEPTH = 200
+
+
 def _walk(
     node: Any,
     *,
@@ -43,7 +51,10 @@ def _walk(
     lang: str,
     parent_qname: str | None,
     out: list[ExtractedSymbol],
+    _depth: int = 0,
 ) -> None:
+    if _depth >= _MAX_WALK_DEPTH:
+        return
     decls = LANG_DECLS.get(lang, {})
     for child in node.children:
         kind = decls.get(child.type)
@@ -54,7 +65,14 @@ def _walk(
             # what we *intend* to recurse through, but we recurse into
             # any non-leaf node anyway to catch nested decls.
             if child.type in TRANSPARENT_NODES or child.child_count > 0:
-                _walk(child, source=source, lang=lang, parent_qname=parent_qname, out=out)
+                _walk(
+                    child,
+                    source=source,
+                    lang=lang,
+                    parent_qname=parent_qname,
+                    out=out,
+                    _depth=_depth + 1,
+                )
             continue
         name = node_name(child, source, lang=lang)
         if name is None:
@@ -76,7 +94,7 @@ def _walk(
         # Containers (class / interface / struct / enum) recurse into
         # their body so methods get qualified names.
         if kind in CONTAINER_KINDS or kind == "class":
-            _walk(child, source=source, lang=lang, parent_qname=qname, out=out)
+            _walk(child, source=source, lang=lang, parent_qname=qname, out=out, _depth=_depth + 1)
 
 
 def extract_symbols_via_ts(text: str, lang: str) -> list[ExtractedSymbol]:
@@ -91,10 +109,13 @@ def extract_symbols_via_ts(text: str, lang: str) -> list[ExtractedSymbol]:
     if parser is None:
         return []
     source = text.encode("utf-8", errors="replace")
+    out: list[ExtractedSymbol] = []
+    # round-A: _walk must be INSIDE the guard too. The depth bound prevents the
+    # RecursionError, but keep parse + walk under one try so this honours the
+    # documented "Never raises -- caller falls back to text chunking" contract.
     try:
         tree = parser.parse(source)
+        _walk(tree.root_node, source=source, lang=lang, parent_qname=None, out=out)
     except Exception:
         return []
-    out: list[ExtractedSymbol] = []
-    _walk(tree.root_node, source=source, lang=lang, parent_qname=None, out=out)
     return out

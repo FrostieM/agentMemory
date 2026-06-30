@@ -65,7 +65,14 @@ def run_retrieval(
     # recall < min_recall (default 1.0, the by-design eval invariant) now fails the
     # case. Cases without expect_labels do not exercise recall.
     min_recall = float(case.get("min_recall", 1.0))
-    if expected_ids and recall < min_recall:
+    if expected_labels and not expected_ids:
+        # round-A: expect_labels were declared but NONE resolved to an ingested row
+        # (a typo / malformed case). Without this, recall_at_k([],...) returns 1.0 and
+        # the case silently passes -- masking the fixture bug. Fail loudly instead.
+        failures.append(
+            f"expect_labels {expected_labels} resolve to no ingested rows -- malformed case"
+        )
+    elif expected_ids and recall < min_recall:
         missing = [lbl for lbl in expected_labels if label_map.get(lbl) not in retrieved_ids]
         failures.append(
             f"recall@10 {recall:.3f} < required {min_recall:.3f}: "

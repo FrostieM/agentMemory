@@ -34,3 +34,11 @@ def test_embed_kind_defaults_to_doc(app_factory) -> None:
     resp = client.post("/embed", json={"texts": ["x"]})  # kind omitted
     assert resp.status_code == 200
     assert len(resp.json()["vectors"]) == 1
+
+
+def test_embed_rejects_oversized_batch(app_factory) -> None:
+    """global-audit round-A: the texts list is bounded (max 2048) so a single request
+    cannot spawn unbounded embedding batches / allocations. Over the cap -> 422."""
+    client = TestClient(app_factory())
+    resp = client.post("/embed", json={"texts": ["x"] * 2049})
+    assert resp.status_code == 422

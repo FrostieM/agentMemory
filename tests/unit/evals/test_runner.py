@@ -150,6 +150,32 @@ def test_retrieval_case_fails_when_expected_row_is_not_recalled(
     assert any("recall@10" in f for f in report.failures)
 
 
+def test_retrieval_case_fails_when_expect_labels_resolve_to_nothing(
+    fake_embedding_provider, fake_vector_store
+) -> None:
+    """round-A: a case that declares expect_labels which do NOT resolve to any
+    ingested row (a typo / malformed fixture) used to score a silent perfect recall
+    (recall_at_k of an empty expected set returns 1.0). It must FAIL instead."""
+    cases = [
+        {
+            "name": "bad_labels",
+            "type": "retrieval",
+            "setup": [{"episode": "Implemented the FTS query module.", "label": "fts"}],
+            "query": "FTS query module",
+            "expect_labels": ["does_not_exist"],  # never ingested
+        }
+    ]
+    report = run_evals(
+        _fresh_factory(),
+        workspace_id="default",
+        cases=cases,
+        embedding_provider=fake_embedding_provider,
+        vector_store=fake_vector_store,
+    )
+    assert report.cases_passed == 0
+    assert any("malformed case" in f for f in report.failures)
+
+
 def test_runner_handles_retrieval_context_quality_case(
     fake_embedding_provider,
     fake_vector_store,

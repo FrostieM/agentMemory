@@ -73,6 +73,31 @@ def test_distill_insight_redacts_secret_on_disk_and_in_fts(
     assert _SECRET_RAW not in _fts_content(applied_conn, insight.id)
 
 
+def test_register_snapshot_redacts_secret_in_title_and_metadata(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """global-audit round-A: register_snapshot bypassed write_canonical's redaction,
+    persisting title + metadata cleartext (both are returned to users via the research
+    API). A secret in either must not survive in the stored snapshot row."""
+    snap = register_snapshot(
+        applied_conn,
+        MemorySnapshotIn(
+            workspace_id="default",
+            snapshot_key="snap_secret",
+            title=f"backup {_SECRET}",
+            source="vps",
+            total_rows=1,
+            metadata={"note": _SECRET, "nested": {"k": _SECRET_RAW}},
+        ),
+    )
+    row = applied_conn.execute(
+        "SELECT title, metadata_json FROM snapshots WHERE id = ?", (snap.id,)
+    ).fetchone()
+    blob = f"{row[0]}{row[1]}"
+    assert _SECRET_RAW not in blob
+    assert REDACTION_MARKER_PREFIX in str(row[0])
+
+
 def test_upsert_domain_concept_redacts_secret_in_name(
     applied_conn: sqlite3.Connection,
 ) -> None:

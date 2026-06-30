@@ -17,16 +17,21 @@ vector for the supplied text.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_memory_lite.api.deps import EmbeddingProviderDep
 from agent_memory_lite.embeddings.base import EmbeddingKind
 
 router = APIRouter()
 
+# global-audit round-A: bound the batch. The 10MB body cap alone still admits tens
+# of thousands of tiny strings, each spawning an embedding batch + vector allocation
+# -- a same-host resource-exhaustion vector. A legitimate batch is far smaller.
+_MAX_EMBED_TEXTS = 2048
+
 
 class EmbedRequest(BaseModel):
-    texts: list[str]
+    texts: list[str] = Field(max_length=_MAX_EMBED_TEXTS)
     kind: EmbeddingKind = "doc"
 
 

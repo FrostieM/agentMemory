@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 
 def evidence_seen(
@@ -42,3 +42,39 @@ def evidence_seen(
         if existing == target:
             return True
     return False
+
+
+def persist_if_unseen(
+    conn: sqlite3.Connection,
+    *,
+    workspace_id: str,
+    evidence_ids: Iterable[str],
+    persist: Callable[[], object],
+) -> bool:
+    """Atomically: skip if the evidence set was already consolidated, else ``persist``.
+
+    Round-A (global-audit): ``evidence_seen`` (a bare SELECT) followed by a separate
+    INSERT is a TOCTOU race -- two concurrent consolidation runs could both read
+    "unseen" and double-insert the same cluster. This acquires the write lock with
+    ``BEGIN IMMEDIATE`` BEFORE the check (deferred ``BEGIN`` would not -- the lock is
+    only taken on first write, after the SELECT), so concurrent runs serialize: the
+    second blocks, then sees the first's row and skips. ``persist`` must do its
+    INSERT(s) but NOT commit -- this manages the transaction. Returns True if it
+    persisted. When already inside a transaction, runs inline under the caller's lock.
+    """
+    if conn.in_transaction:
+        if evidence_seen(conn, workspace_id=workspace_id, evidence_ids=evidence_ids):
+            return False
+        persist()
+        return True
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if evidence_seen(conn, workspace_id=workspace_id, evidence_ids=evidence_ids):
+            conn.rollback()
+            return False
+        persist()
+        conn.commit()
+        return True
+    except BaseException:
+        conn.rollback()
+        raise

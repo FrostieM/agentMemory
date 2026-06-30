@@ -253,8 +253,16 @@ def compute_verdict(report: dict[str, Any]) -> str:
     digests = report.get("digests", {})
     if isinstance(digests, dict):
         newest = digests.get("newest_age_minutes")
-        if isinstance(newest, int | float) and newest > 120:
-            warnings.append("digest_staleness_above_target")
+        count = int(digests.get("count", 0) or 0)
+        if isinstance(newest, int | float):
+            if newest > 120:
+                warnings.append("digest_staleness_above_target")
+        elif count > 0:
+            # global-audit round-A: digests EXIST but their age is unmeasurable
+            # (every timestamp unparseable -> measure_digests returns None). That is a
+            # data-corruption signal; it must NOT silently pass. count==0 (no digests
+            # at all) stays a benign pass.
+            warnings.append("digest_staleness_unmeasurable")
     return "warn" if warnings else "pass"
 
 

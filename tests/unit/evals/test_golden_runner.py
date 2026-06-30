@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from agent_memory_lite.db.migrations import apply_migrations
+from agent_memory_lite.evals.golden import runner as runner_mod
 from agent_memory_lite.evals.golden.runner import (
     _CORPUS_KINDS,
     _WS,
@@ -206,3 +207,35 @@ def test_disabling_fts_arm_trips_the_gate(monkeypatch: pytest.MonkeyPatch) -> No
         f"ndcg_drop={ndcg_drop:.4f} threshold={DEFAULT_REGRESSION_THRESHOLD} "
         f"-- the corpus has gone saturated; add HARD adversarial sets"
     )
+
+
+# ============================================================
+# round-A: fail-fast on degenerate fixtures (gate-integrity)
+# ============================================================
+
+
+def test_run_golden_eval_rejects_empty_query_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty query set must FAIL fast, not report 0.0 metrics -- a 0.0-vs-0.0
+    comparison passes the regression gate (delta 0.0) and silently launders a broken
+    golden set."""
+    monkeypatch.setattr(runner_mod, "load_golden_set", lambda: {"corpus": [], "queries": []})
+    with pytest.raises(ValueError, match="zero queries"):
+        run_golden_eval()
+
+
+def test_run_golden_eval_rejects_query_without_relevant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A query with no declared 'relevant' labels scores a silent perfect 1.0 (empty
+    expected set), masking a malformed fixture. It must fail fast instead."""
+    fixture = {
+        "corpus": [
+            {
+                "label": "d1",
+                "kind": "decision",
+                "payload": {"title": "t", "decision_text": "body about retries and backoff"},
+            }
+        ],
+        "queries": [{"query": "retries", "relevant": []}],
+    }
+    monkeypatch.setattr(runner_mod, "load_golden_set", lambda: fixture)
+    with pytest.raises(ValueError, match="no 'relevant' labels"):
+        run_golden_eval()

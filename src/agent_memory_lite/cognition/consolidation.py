@@ -28,8 +28,9 @@ import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
+from functools import partial
 
-from agent_memory_lite.cognition.consolidation_dedup import evidence_seen
+from agent_memory_lite.cognition.consolidation_dedup import persist_if_unseen
 
 logger = logging.getLogger("agent_memory_lite.consolidation")
 
@@ -324,7 +325,8 @@ def _persist_insight(
             "durable_fts_sync_skipped_on_consolidation_insight",
             extra={"workspace_id": workspace_id, "insight_id": insight_id},
         )
-    conn.commit()
+    # No commit here: persist_if_unseen owns the (BEGIN IMMEDIATE) transaction so the
+    # dedup check + this insert are atomic against concurrent consolidation runs.
     return insight_id
 
 
@@ -387,9 +389,8 @@ def consolidate_workspace(
     window_hours: int = DEFAULT_WINDOW_HOURS,
     max_insights: int = DEFAULT_MAX_INSIGHTS_PER_RUN,
 ) -> ConsolidationReport:
-    """Run one consolidation pass for a workspace. Idempotent (H6: a cluster whose
-    evidence set was already consolidated is skipped). Never raises -- per-cluster
-    errors are logged and skipped."""
+    """Run one consolidation pass. Idempotent (H6: a cluster whose evidence set was
+    already consolidated is skipped). Never raises -- per-cluster errors are logged."""
     episodes = _load_recent_episodes(conn, workspace_id=workspace_id, window_hours=window_hours)
     if not episodes:
         return ConsolidationReport(
@@ -421,22 +422,28 @@ def consolidate_workspace(
                 if _matches_pinned_behavior(cluster.signal_tokens, pinned_behavior_tokens)
                 else "consolidation"
             )
-            # H6: idempotency. The cron re-clusters an overlapping 24h window every
-            # 6h; without this guard the SAME episode cluster persisted a DUPLICATE
-            # candidate every tick. Skip a cluster whose evidence set was already
-            # consolidated; a changed set (new episodes joined) is still a new insight.
-            if evidence_seen(
-                conn, workspace_id=workspace_id, evidence_ids=draft.evidence_episode_ids
-            ):
-                insights_skipped += 1
-                continue
-            _persist_insight(
+            # H6 + round-A: idempotency, made ATOMIC. The cron re-clusters an
+            # overlapping 24h window every 6h; persist_if_unseen skips a cluster whose
+            # evidence set was already consolidated (a changed set is still a new
+            # insight) AND holds a write lock across the check+insert so two concurrent
+            # runs cannot double-insert the same cluster.
+            persisted = persist_if_unseen(
                 conn,
                 workspace_id=workspace_id,
-                draft=draft,
-                insight_type=insight_type,
+                evidence_ids=draft.evidence_episode_ids,
+                # partial binds the loop vars NOW (no late-binding); called immediately.
+                persist=partial(
+                    _persist_insight,
+                    conn,
+                    workspace_id=workspace_id,
+                    draft=draft,
+                    insight_type=insight_type,
+                ),
             )
-            insights_written += 1
+            if persisted:
+                insights_written += 1
+            else:
+                insights_skipped += 1
         except sqlite3.Error as exc:
             logger.warning(
                 "consolidation_cluster_failed",

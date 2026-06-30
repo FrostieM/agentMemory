@@ -73,6 +73,15 @@ def _seed_corpus(conn: sqlite3.Connection, corpus: list[dict[str, Any]]) -> dict
 def run_golden_eval(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     """Seed the corpus, run every query, return aggregate recall/MRR/NDCG@10."""
     data = load_golden_set()
+    # global-audit round-A: fail fast on an empty query set. Previously
+    # ``n = len(queries) or 1`` divided by 1, reporting all-0.0 metrics for a
+    # corrupted/empty fixture -- and a 0.0-vs-0.0 comparison passes the regression
+    # gate (delta 0.0), silently laundering a broken golden set.
+    if not data.get("queries"):
+        raise ValueError(
+            "golden set has zero queries -- refusing to emit 0.0 metrics that would "
+            "silently pass the retrieval-regression gate."
+        )
     own = conn is None
     if conn is None:
         conn = sqlite3.connect(":memory:")
@@ -84,7 +93,15 @@ def run_golden_eval(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         mrrs: list[float] = []
         ndcgs: list[float] = []
         for query in data["queries"]:
-            expected = [label_to_id[label] for label in query.get("relevant", [])]
+            relevant = query.get("relevant", [])
+            # round-A: a query with NO declared relevant labels scores a silent
+            # perfect 1.0 (recall/MRR/NDCG return 1.0 on an empty expected set),
+            # masking a malformed fixture. Every golden query must assert relevance.
+            if not relevant:
+                raise ValueError(
+                    f"golden query {query.get('query')!r} declares no 'relevant' labels"
+                )
+            expected = [label_to_id[label] for label in relevant]
             hits = search(
                 conn,
                 workspace_id=_WS,
@@ -97,7 +114,7 @@ def run_golden_eval(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
             recalls.append(recall_at_k(retrieved, expected, k=10))
             mrrs.append(reciprocal_rank(retrieved, expected, k=10))
             ndcgs.append(ndcg_at_k(retrieved, expected, k=10))
-        n = len(data["queries"]) or 1
+        n = len(data["queries"])  # guaranteed >= 1 by the guard above
         return {
             "queries_evaluated": len(data["queries"]),
             "corpus_size": len(data["corpus"]),

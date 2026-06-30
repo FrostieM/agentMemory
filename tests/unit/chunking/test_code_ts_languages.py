@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from agent_memory_lite.chunking.code import chunk_code
+from agent_memory_lite.chunking.symbol_query import extract_symbols_via_ts
 from agent_memory_lite.chunking.ts_grammar import is_supported
 
 
@@ -182,3 +183,19 @@ def test_unparseable_input_falls_back_silently() -> None:
     chunks = chunk_code(src, language="cpp")
     # The fallback path always emits at least the wrapping text chunk
     assert chunks
+
+
+def test_deeply_nested_code_does_not_raise_recursionerror() -> None:
+    """global-audit round-A: tree-sitter parses pathologically nested code fine, but an
+    unguarded recursive _walk then blew Python's frame limit and raised an UNCAUGHT
+    RecursionError (the walk call was outside the try). The depth bound + try now honour
+    the documented "Never raises -- caller falls back to text chunking" contract."""
+    _require("python")
+    # 600 nested classes -- past CPython's ~1000-frame default once wrapper nodes
+    # are counted, and well past the _MAX_WALK_DEPTH bound.
+    depth = 600
+    src = "".join("    " * i + f"class C{i}:\n" for i in range(depth))
+    src += "    " * depth + "pass\n"
+    # Must return a list (possibly truncated at the depth bound) WITHOUT raising.
+    symbols = extract_symbols_via_ts(src, "python")
+    assert isinstance(symbols, list)

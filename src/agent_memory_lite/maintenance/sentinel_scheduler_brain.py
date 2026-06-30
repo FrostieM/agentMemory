@@ -49,8 +49,10 @@ def _maybe_run_brain_pass(
 
 def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:
     conn = sqlite3.connect(db_path, timeout=5.0)
-    enable_foreign_keys(conn)
     try:
+        # M9/round-A: enable_foreign_keys moved INSIDE the try -- if it raised, the
+        # open connection leaked because the finally was never entered.
+        enable_foreign_keys(conn)
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:
