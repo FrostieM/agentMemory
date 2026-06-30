@@ -73,6 +73,19 @@ consecutive zero-finding rounds, which has not yet been reached.
 - `MEMORY_PREDICTIVE_LR_ENABLED` now defaults **off** (opt-in): the model trained on
   every brain pass but its inference was never wired into a consumer.
 
+### Docs / setup
+
+- `AGENT_SETUP/` collapsed to exactly two paste-and-go project-initialization
+  prompts: `01_NEW_PROJECT.md` (greenfield -- wire memory, index the code, run a
+  ~7-question interview, seed the answers) and `02_EXISTING_PROJECT.md` (does all
+  of that AND first mines the existing codebase / manifests / docs / git history /
+  code-map into memory on its own, marked agent-inferred so the operator's
+  interview answers override it). Both map answers to the correct canonical kinds
+  -- including roles / skills / playbooks as `kind="skill"` with the right
+  `subtype` and the verified field shapes (behaviors need `name`+`rule`+`source_type`;
+  decisions reject a `source` field; insights need `insight_type`+`status`). The
+  prior three prompts (silent setup, chat-capture, onboard) were folded in.
+
 ## 3.22.0 - 2026-06-23
 
 ### Added
