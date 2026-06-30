@@ -86,17 +86,27 @@ Sources to read and what to infer:
 
 Write each inference to the right kind, and MARK IT as agent-inferred so the
 operator can review and it never masquerades as ground truth:
-- Descriptive facts (purpose, stack, key modules, active areas) ->
-  `memory_write(kind="decision")` or `kind="insight"` with
-  `source = "agent_inference"`, `trust_level = "agent_observed"`, modest
-  importance.
+- Descriptive facts (purpose, stack, key modules, active areas) -> prefer
+  `kind="insight"` (REQUIRED `summary` + `insight_type` e.g. "lesson" +
+  `status="candidate"`) -- it also accepts `source="agent_inference"` +
+  `trust_level="agent_observed"` and is the natural "observation" kind. If you
+  write an inferred `kind="decision"` instead, mark it in its `rationale`
+  ("agent-inferred, unconfirmed") with low `confidence` -- a `decision` REJECTS a
+  `source` field, so do not pass one.
 - Operator-authored rules found in an existing `CLAUDE.md`/`.cursorrules` ->
   `memory_write(kind="behavior")` (these ARE operator intent -> normal trust).
 - Conventions YOU guessed from config (not explicitly stated) -> behavior
   CANDIDATES only / low trust, flagged for review -- do NOT auto-activate a rule
   you merely inferred (the contract forbids promoting un-reviewed inferred
   instructions to active high-trust behavior).
+- A build / test / run procedure you detected from CI / Makefile / scripts ->
+  `memory_write(kind="skill", subtype="playbook")` named "build-test-run"
+  (the commands in `body_md`, plus `steps_json`), agent-inferred / low trust --
+  the interview will confirm or correct it.
 - A summary of this chat's work, if any -> `memory_write(kind="episode")`.
+
+Do NOT fabricate a ROLE from code alone -- the role comes from the operator in
+the interview (Step 4). Mine descriptive facts and a draft playbook only.
 
 # Step 4 -- the interview (ask ONCE, as one message)
 
@@ -117,15 +127,48 @@ or fix it (e.g. "I see the stack is X / the build is `make test` -- correct?").
 
 # Step 5 -- persist the operator's answers (they win)
 
-For each answer, `memory_search` first, then write to the canonical kind exactly
-as in `01_NEW_PROJECT.md` Step 4 (Q1/Q2 -> decision, Q3 -> behavior per rule,
-Q4 -> skill "build-test-run", Q5 -> behavior/skill, Q6 -> insight, Q7 ->
-behavior), with `source = "operator_onboarding"` and HIGH trust. When an answer
-CONTRADICTS something you inferred in Step 3, supersede the inferred memory
-(`memory_edit` / archive the inferred one and write the operator's as canonical)
-so there is one consistent truth. Promote any Step-3 behavior CANDIDATE the
-operator confirmed to active. Inspect `capability_suggestions` after decision /
-behavior writes.
+For each answer, `memory_search` first (dedup), then write to the RIGHT kind at
+HIGH trust. Mark operator provenance with the field each kind supports: a
+`behavior` takes `source_type="operator_onboarding"` (NOT `source`); a `decision`
+REJECTS a `source` field, so note provenance in its `rationale`; skills have no
+source field. ROLES, SKILLS, and PLAYBOOKS are all `kind="skill"` told apart by
+`subtype` -- get this right or a role is not a role. For every capability write set `subtype`, a one-line `summary`, a
+`when_to_use_short`, and the full detail in `body_md`; optionally fill the
+structured `*_json` fields (JSON-encoded lists) for filtering/links.
+
+- Q1 goal -> `kind="decision"` (`title`, `decision_text`, `rationale`). Q2 stack +
+  each constraint -> `kind="decision"` (with `rationale`).
+- Q3 each ALWAYS / NEVER rule -> `kind="behavior"`, REQUIRED `name` + `rule`;
+  optional `rationale`, `applies_to`, `conflict_group`,
+  `source_type="operator_onboarding"` (the field is `source_type`, NOT `source`).
+- Q4 build / test / run -> `kind="skill", subtype="playbook"` "build-test-run"
+  (commands in `body_md`; `steps_json`, `success_criteria_json`).
+- Q5 definition of done -> `kind="skill", subtype="playbook"` ("verify-before-ship")
+  AND a short `kind="behavior"` ("before shipping, verify: ...").
+- Q6 each gotcha -> `kind="insight"` (REQUIRED `summary` + `insight_type` e.g.
+  "lesson" + `status="candidate"`).
+- Q7 your ROLE -> `kind="skill", subtype="role"` (`body_md` = purpose +
+  responsibilities + boundaries; optionally `responsibilities_json`,
+  `boundaries_json`, `handoff_triggers_json`, `tools_json`). Communication style ->
+  `kind="behavior"`.
+- Any reusable technique -> `kind="skill", subtype="skill"` (`inputs_json`,
+  `outputs_json`, `tools_json`). Any domain term -> `kind="concept"` (`name`,
+  `definition`, `concept_kind`).
+
+Example role write (kind=skill + subtype=role; substance in body_md; skills have
+no "source" field):
+`memory_write(kind="skill", payload={"workspace_id":"<WORKSPACE_ID>",
+"subtype":"role","name":"backend-engineer","summary":"Owns the API + DB layer",
+"when_to_use_short":"server-side / schema work","body_md":"## Purpose ... ##
+Responsibilities ... ## Boundaries ...","responsibilities_json":"[\"design APIs\"]"})`
+A behavior rule uses `name` + `rule` (both required) +
+`source_type="operator_onboarding"`.
+
+When an operator answer CONTRADICTS something you inferred in Step 3, supersede
+the inferred memory (`memory_edit`, or archive the inferred one and write the
+operator's as canonical) so there is one consistent truth. Promote any Step-3
+behavior CANDIDATE or draft playbook the operator confirmed to active. Inspect
+`capability_suggestions` after decision / behavior writes.
 
 # Step 6 -- verify + report
 
@@ -135,10 +178,10 @@ the inferred and the operator-confirmed memories surface. Then print:
 ```
 Existing project memory initialized for <PROJECT_NAME> (workspace <WORKSPACE_ID>).
 
-indexed:        <N> code files into the code map
-agent-inferred: decisions=<N> insights=<N> behavior-candidates=<N> episodes=<N>
-operator-seeded: decisions=<N> behaviors=<N> skills=<N> insights=<N>
-mcp tools:      <verified | restart your runtime to load them>
+indexed:         <N> code files into the code map
+agent-inferred:  decisions=<N> insights=<N> behavior-candidates=<N> draft-playbooks=<N> episodes=<N>
+operator-seeded: decisions=<N> behaviors=<N> roles=<N> skills=<N> playbooks=<N> insights=<N> concepts=<N>
+mcp tools:       <verified | restart your runtime to load them>
 
 I mined the existing code, docs, and git history into memory and then confirmed
 the key facts with you -- your answers superseded anything I guessed. Every

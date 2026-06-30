@@ -83,29 +83,77 @@ answers into project memory. Mirror the operator's language.
 7. Who are you (role), and how should I communicate -- language, tone, level of
    detail, anything you dislike?
 
-# Step 4 -- persist the answers as canonical memory
+# Step 4 -- persist the answers to the RIGHT kind (roles / skills / playbooks too)
 
 Before EVERY write call `memory_search(query=...)` first and skip/merge if an
-equivalent memory exists (no duplicates). Use `workspace_id = <WORKSPACE_ID>`.
-Operator answers are HIGH trust (`source = "operator_onboarding"`) but never
-override system / developer / current-user instructions. Map answers to kinds:
+equivalent memory exists (no duplicates). Use `workspace_id = <WORKSPACE_ID>` in
+every payload. Operator answers are HIGH trust but never override system /
+developer / current-user instructions. Mark provenance with the field each kind
+actually supports: a `behavior` takes `source_type="operator_onboarding"` (the
+field is `source_type`, NOT `source`); other kinds have no source field, so note
+provenance in `rationale` / `summary`. Skip any "-" answer; do not invent content
+the operator did not give. After each decision/behavior write, inspect
+`capability_suggestions` and record a clearly applicable one on a plan step.
 
-- Q1 goal -> `memory_write(kind="decision")` -- the project anchor.
-- Q2 stack + constraints -> `memory_write(kind="decision")` (one per constraint,
-  each with a rationale).
-- Q3 always/never rules -> `memory_write(kind="behavior")`, one per rule (set a
-  conflict group when two could collide).
-- Q4 build/test/run -> `memory_write(kind="skill")` -- a playbook named
-  "build-test-run" whose body is the exact commands.
-- Q5 definition of done -> `memory_write(kind="behavior")` ("before shipping,
-  verify: ...") and/or a `skill` if it is a command sequence.
-- Q6 gotchas -> `memory_write(kind="insight")`, one per landmine.
-- Q7 role + communication -> `memory_write(kind="behavior")` for the operating /
-  communication style.
+Map each answer to its kind. ROLES, SKILLS, and PLAYBOOKS are all
+`kind="skill"`, told apart by `subtype` -- get this right or a role is not a
+role. For every capability write set `subtype`, a one-line `summary`, a
+`when_to_use_short`, and put the FULL detail in `body_md` (markdown -- this is
+what the agent reads back via `memory_invoke_skill`); optionally also fill the
+structured `*_json` fields (JSON-encoded lists, exact column names below) for
+filtering and linking.
 
-After each decision/behavior write, inspect `capability_suggestions` and record
-a clearly-applicable one on a follow-up plan step or task. Skip any "-" answer;
-do not invent content the operator did not give.
+- Q1 goal -> `kind="decision"` (fields: `title`, `decision_text`, `rationale`) --
+  the project anchor (what it is + current goal).
+- Q2 stack + each hard constraint -> `kind="decision"` (one per constraint, with
+  a `rationale`: "must not change because ...").
+- Q3 each ALWAYS / NEVER rule -> `kind="behavior"`, REQUIRED fields `name` +
+  `rule`; optional `rationale`, `applies_to` (list), `conflict_group` (when two
+  rules can clash), `source_type="operator_onboarding"`. One write per rule.
+- Q4 build / test / run -> `kind="skill", subtype="playbook"`, name
+  "build-test-run". Put the exact commands in `body_md`; optionally
+  `steps_json`, `success_criteria_json`, `triggers_json`, `required_skills_json`.
+- Q5 definition of done -> `kind="skill", subtype="playbook"` ("verify-before-ship",
+  the checks as `steps_json` / `success_criteria_json`) AND a short
+  `kind="behavior"` ("before shipping, verify: ...") so it also shapes behaviour.
+- Q6 each gotcha / landmine -> `kind="insight"`, REQUIRED `summary` +
+  `insight_type` (e.g. "lesson") + `status="candidate"`.
+- Q7 your ROLE -> `kind="skill", subtype="role"`. `body_md` = purpose +
+  responsibilities + boundaries; optionally `responsibilities_json`,
+  `boundaries_json`, `handoff_triggers_json`, `tools_json`, `related_roles_json`.
+- Q7 communication style (language / tone / detail) -> `kind="behavior"`.
+- Any reusable technique the operator describes -> `kind="skill", subtype="skill"`
+  (optionally `when_to_use_json`, `inputs_json`, `outputs_json`, `tools_json`).
+- Any project-specific term / jargon worth pinning -> `kind="concept"`
+  (`name`, `definition`, `concept_kind`).
+
+Two CORRECT example writes (verified payload shapes):
+
+```
+# a ROLE (kind=skill + subtype=role; substance in body_md; no "source" field)
+memory_write(kind="skill", payload={
+  "workspace_id": "<WORKSPACE_ID>", "subtype": "role",
+  "name": "backend-engineer",
+  "summary": "Owns the API + DB layer of this project",
+  "when_to_use_short": "server-side / schema / migration work",
+  "body_md": "## Purpose\n<...>\n## Responsibilities\n- <...>\n## Boundaries\n- <...>",
+  "responsibilities_json": "[\"design APIs\", \"guard migrations\"]",
+  "boundaries_json": "[\"no UI work\"]"
+})
+
+# a BEHAVIOR rule (name + rule REQUIRED; provenance is source_type)
+memory_write(kind="behavior", payload={
+  "workspace_id": "<WORKSPACE_ID>",
+  "name": "tests-before-commit",
+  "rule": "Always run `pytest -q` and the linters before committing.",
+  "rationale": "operator onboarding answer",
+  "applies_to": ["git commit"], "conflict_group": "ci",
+  "source_type": "operator_onboarding"
+})
+```
+
+A playbook uses `"subtype": "playbook"` with `steps_json` / `success_criteria_json`;
+a plain skill uses `"subtype": "skill"` with `inputs_json` / `outputs_json`.
 
 # Step 5 -- verify + report
 
@@ -116,7 +164,7 @@ memories surface. Then print:
 Project memory initialized for <PROJECT_NAME> (workspace <WORKSPACE_ID>).
 
 indexed:    <N> code files into the code map
-seeded:     decisions=<N>  behaviors=<N>  skills=<N>  insights=<N>
+seeded:     decisions=<N>  behaviors=<N>  roles=<N>  skills=<N>  playbooks=<N>  insights=<N>  concepts=<N>
 mcp tools:  <verified | restart your runtime to load them>
 
 From now on every fresh chat in this project starts with this context via
