@@ -4,21 +4,14 @@ Runs every 6 hours (03/09/15/21 local) via OS-level scheduled task.
 The cron itself is a thin wrapper that calls ``consolidate_workspace``
 for each registered workspace, catches up after laptop sleep.
 
-The pipeline (per the plan):
+The pipeline (per the plan): read last 24h episodes, cluster by token-overlap
+similarity (cheap, no embedding on the hot path), distill one lesson per cluster
+(summary + evidence_episode_ids), and INSERT into ``insights`` with
+status='candidate' for the operator review queue.
 
-  1. Read last 24h episodes for the workspace.
-  2. Cluster by token-overlap similarity (cheap, no embedding required
-     on the hot path — embedding clustering is the future second pass).
-  3. Distill one lesson per cluster:  4-bullet summary
-     (the_observation / the_correction_signal / suggested_rule /
-     evidence_episode_ids).
-  4. INSERT into ``insights`` table with status='candidate' so the
-     operator review queue picks them up.
-
-Failure-soft: each cluster is wrapped in try/except so one bad cluster
-doesn't drop the others. The whole consolidate_workspace call is
-idempotent — running it twice on the same window only emits new
-candidates if new episodes appeared.
+Failure-soft: each cluster is wrapped in try/except so one bad cluster doesn't
+drop the others. The whole consolidate_workspace call is idempotent — running it
+twice on the same window only emits new candidates if new episodes appeared.
 
 Why not Ollama on the hot path: the plan explicitly requires the
 consolidation cron to be fast and offline-safe. The Ollama narrative
@@ -35,6 +28,8 @@ import sqlite3
 import time
 import uuid
 from dataclasses import dataclass, field
+
+from agent_memory_lite.cognition.consolidation_dedup import evidence_seen
 
 logger = logging.getLogger("agent_memory_lite.consolidation")
 
@@ -336,14 +331,10 @@ def _persist_insight(
 def _pinned_behavior_token_sets(
     conn: sqlite3.Connection, *, workspace_id: str
 ) -> list[frozenset[str]]:
-    """Return token sets of all pinned, active behavior rules.
-
-    Used by the behavior_reinforcement detector: a cluster whose
-    signal_tokens overlap >= 0.6 Jaccard with a pinned behavior is
-    almost certainly the SAME rule re-emerging, not a novel insight.
-    Tag it as ``behavior_reinforcement`` instead of generic
-    consolidation so the operator review queue can act on it.
-    """
+    """Token sets of all pinned, active behavior rules. A cluster whose
+    signal_tokens overlap a pinned behavior (>= 0.6 Jaccard) is the SAME rule
+    re-emerging, so the detector tags it ``behavior_reinforcement`` rather than a
+    novel insight, and the operator review queue can act on it."""
     try:
         rows = conn.execute(
             "SELECT name, rule, rule_one_line FROM behaviors "
@@ -396,10 +387,9 @@ def consolidate_workspace(
     window_hours: int = DEFAULT_WINDOW_HOURS,
     max_insights: int = DEFAULT_MAX_INSIGHTS_PER_RUN,
 ) -> ConsolidationReport:
-    """Run one consolidation pass for a workspace. Idempotent.
-
-    Returns a report; never raises (per-cluster errors logged and skipped).
-    """
+    """Run one consolidation pass for a workspace. Idempotent (H6: a cluster whose
+    evidence set was already consolidated is skipped). Never raises -- per-cluster
+    errors are logged and skipped."""
     episodes = _load_recent_episodes(conn, workspace_id=workspace_id, window_hours=window_hours)
     if not episodes:
         return ConsolidationReport(
@@ -431,6 +421,15 @@ def consolidate_workspace(
                 if _matches_pinned_behavior(cluster.signal_tokens, pinned_behavior_tokens)
                 else "consolidation"
             )
+            # H6: idempotency. The cron re-clusters an overlapping 24h window every
+            # 6h; without this guard the SAME episode cluster persisted a DUPLICATE
+            # candidate every tick. Skip a cluster whose evidence set was already
+            # consolidated; a changed set (new episodes joined) is still a new insight.
+            if evidence_seen(
+                conn, workspace_id=workspace_id, evidence_ids=draft.evidence_episode_ids
+            ):
+                insights_skipped += 1
+                continue
             _persist_insight(
                 conn,
                 workspace_id=workspace_id,

@@ -9,12 +9,23 @@ from __future__ import annotations
 
 import sqlite3
 
+from agent_memory_lite.ingestion.canonical_writer import write_canonical
 from agent_memory_lite.retrieval.last_retrieved_tracker import (
     SUPPORTED_KINDS,
     RetrievalUpdate,
     decide_audit_emission,
     mark_retrieved,
+    mark_retrieved_hits,
 )
+from agent_memory_lite.storage.reader import search
+
+
+class _Hit:
+    """Duck-typed SearchHit (kind + projection['id']) for tracker unit tests."""
+
+    def __init__(self, kind: str, row_id: str) -> None:
+        self.kind = kind
+        self.projection = {"id": row_id}
 
 
 def _seed_chunk(conn: sqlite3.Connection, *, chunk_id: str = "ch_a") -> None:
@@ -116,3 +127,86 @@ def test_audit_row_emitted_only_when_batch_threshold_reached(
 
 def test_empty_updates_returns_zero(applied_conn: sqlite3.Connection) -> None:
     assert mark_retrieved(applied_conn, workspace_id="default", updates=[]) == 0
+
+
+def test_mark_retrieved_hits_stamps_supported_kind(applied_conn: sqlite3.Connection) -> None:
+    _seed_chunk(applied_conn, chunk_id="ch_h")
+    updated = mark_retrieved_hits(
+        applied_conn, workspace_id="default", hits=[_Hit("chunk", "ch_h")]
+    )
+    assert updated == 1
+    assert _read_last_retrieved(applied_conn, "ch_h") is not None
+
+
+def test_mark_retrieved_hits_ignores_unsupported_kind(applied_conn: sqlite3.Connection) -> None:
+    # behaviors are not ranking-recency-tracked; a hit of an unsupported kind is skipped.
+    assert (
+        mark_retrieved_hits(applied_conn, workspace_id="default", hits=[_Hit("behavior", "beh_x")])
+        == 0
+    )
+
+
+def test_search_stamps_last_retrieved_at_on_top_k(applied_conn: sqlite3.Connection) -> None:
+    """H8 (global-audit 2026-06-30): the dead caller is now wired -- a real search()
+    stamps last_retrieved_at on the rows it returns, so the cold-memory lifecycle is
+    no longer inert. Before this fix mark_retrieved had NO caller."""
+    row = write_canonical(
+        applied_conn,
+        kind="decision",
+        payload={
+            "title": "FTS5 ranking",
+            "decision_text": "Use FTS5 BM25 for durable kinds lexical ranking",
+            "rationale": "x",
+            "workspace_id": "default",
+        },
+        workspace_id="default",
+    )
+    did = row["id"] if isinstance(row, dict) else row.get("id")
+    before = applied_conn.execute(
+        "SELECT last_retrieved_at FROM decisions WHERE id = ?", (did,)
+    ).fetchone()[0]
+    assert before is None
+
+    hits = search(
+        applied_conn,
+        workspace_id="default",
+        query="FTS5 BM25 durable lexical ranking",
+        kinds=["decision"],
+        limit=5,
+    )
+    assert hits  # the decision is retrievable
+
+    after = applied_conn.execute(
+        "SELECT last_retrieved_at FROM decisions WHERE id = ?", (did,)
+    ).fetchone()[0]
+    assert after is not None  # the read stamped recency
+
+
+def test_internal_read_does_not_stamp_last_retrieved_at(applied_conn: sqlite3.Connection) -> None:
+    """Internal callers (log_coactivations=False, e.g. the brief resolving associates)
+    must NOT stamp recency, or the brief would keep every row perpetually warm and
+    defeat cold detection."""
+    row = write_canonical(
+        applied_conn,
+        kind="decision",
+        payload={
+            "title": "cold vectors",
+            "decision_text": "Second cold decision about the vectors index",
+            "rationale": "x",
+            "workspace_id": "default",
+        },
+        workspace_id="default",
+    )
+    did = row["id"] if isinstance(row, dict) else row.get("id")
+    search(
+        applied_conn,
+        workspace_id="default",
+        query="Second cold decision vectors index",
+        kinds=["decision"],
+        limit=5,
+        log_coactivations=False,
+    )
+    after = applied_conn.execute(
+        "SELECT last_retrieved_at FROM decisions WHERE id = ?", (did,)
+    ).fetchone()[0]
+    assert after is None

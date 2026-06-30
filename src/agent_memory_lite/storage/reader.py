@@ -21,6 +21,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from agent_memory_lite.retrieval.last_retrieved_tracker import mark_retrieved_hits
 from agent_memory_lite.storage.projections import project
 from agent_memory_lite.utils.text_encoding import repair_common_mojibake
 
@@ -667,15 +668,13 @@ def search(
     ``limit`` budget (#120) -- a search narrowed to one/few kinds can then
     return up to ``limit`` of them instead of being capped at ``limit // N``.
 
-    ``rerank=True`` runs the optional cross-encoder reranker over the
-    initial hit set. Requires the ``[rerank]`` extra; falls back to the
-    BM25/LIKE order if the model is unavailable.
+    ``rerank=True`` runs the optional cross-encoder reranker over the initial hit
+    set (``[rerank]`` extra); falls back to BM25/LIKE order if it is unavailable.
 
-    ``log_coactivations`` (Phase 2 default ON) records the returned hit
-    set into the ``retrieval_coactivation`` staging table; a sentinel
-    sweep later distills co-occurrence into ``soft_edges``. Set False
-    for internal callers that don't want their reads to feed the
-    Hebbian loop (e.g. ``brief.compose_brief`` resolving associates).
+    ``log_coactivations`` (Phase 2 default ON) records the returned hit set into
+    the ``retrieval_coactivation`` staging table (a sentinel sweep distills it into
+    ``soft_edges``) and stamps last_retrieved_at. Set False for internal callers that
+    must not feed those loops (e.g. ``brief.compose_brief`` resolving associates).
     """
     if not query.strip():
         return []
@@ -752,6 +751,10 @@ def search(
     ranked = rerank_hits(query, hits, top_k=limit) if effective_rerank and hits else hits[:limit]
     if log_coactivations and ranked:
         _maybe_log_coactivation(conn, workspace_id, query, ranked)
+        # H8: stamp last_retrieved_at on the top-K so the cold-memory lifecycle has a
+        # live recency signal. Shares the "real external read" gate (internal callers
+        # like the brief pass log_coactivations=False). Failure-soft inside the tracker.
+        mark_retrieved_hits(conn, workspace_id=workspace_id, hits=ranked)
     return ranked
 
 

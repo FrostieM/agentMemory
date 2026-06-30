@@ -68,35 +68,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     install_handlers(app)
     install_api_token_guard(app, settings)
-    # v3.6 sector-7 Round-2: outermost middleware. Adds CSP /
-    # X-Frame-Options / X-Content-Type-Options to every response
-    # (incl. inner-middleware errors) and rejects non-JSON POSTs to
-    # /memory/* — a by-design CSRF guard since a browser <form> cannot
-    # send Content-Type: application/json. Registered FIRST so its
-    # response headers wrap the OriginGuard 403 / BodySizeLimit 413 too.
-    app.add_middleware(SecurityMiddleware)
-    # v3.5 sector-6+7 audit-followup: refuse browser requests whose
-    # Origin / Host header doesn't point at loopback. Defeats DNS-
-    # rebinding + cross-site form-POST attacks against the local
-    # service. curl / httpx / inject hooks pass loopback unchanged.
-    # Operator opts out with MEMORY_ALLOW_REMOTE_ORIGIN=1.
-    app.add_middleware(OriginGuardMiddleware)
-    # v3.6 Round-2: hard-cap request body size BEFORE workspace routing
-    # touches it. The service has no auth by default and binds 127.0.0.1
-    # so a careless tool loop or a same-host attacker can otherwise POST
-    # GBs and either pin the embedding worker or fill the WAL. Default
-    # 10 MB covers legitimate code/episode ingest; raise via env when
-    # ingesting larger documents on purpose.
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
-    # Hub mode: route /memory/* requests to the workspace_id's own DB
-    # automatically when the caller did not pass an explicit
-    # X-Memory-DB-Path header. No-op when hub_mode is off, so project
-    # mode still uses the anchor DB unchanged.
-    app.add_middleware(WorkspaceRoutingMiddleware, settings=settings)
-    # 1.3.0: stash X-Memory-Agent-Id in a request-scoped ContextVar
-    # so insert_audit can attribute every mutating call to its agent
-    # client. Mounted AFTER routing so the workspace_id is already
-    # decided when the audit row is written.
+    # ORDERING (global-audit 2026-06-30): Starlette runs the LAST-added middleware
+    # OUTERMOST (first on the inbound path), so we register INNERMOST -> OUTERMOST.
+    # The intended inbound order is:
+    #   Security -> OriginGuard -> BodySizeLimit -> WorkspaceRouting -> AgentIdentity
+    # The previous code was written top-to-bottom as if the FIRST-added were
+    # outermost, which inverted every layer -- most critically it let
+    # WorkspaceRouting drain an UNBOUNDED request body (it buffers the body to read
+    # workspace_id) BEFORE BodySizeLimit could cap it, bypassing the DoS guard in
+    # hub mode. Registering in reverse fixes that and makes Security genuinely
+    # outermost so its headers wrap the inner 413/403/415 responses.
+
+    # innermost: stash X-Memory-Agent-Id in a request-scoped ContextVar AFTER
+    # routing has decided the workspace, so insert_audit attributes every mutating
+    # call to its agent client.
     app.add_middleware(AgentIdentityMiddleware)
+    # Hub mode: route /memory/* to the workspace_id's own DB when the caller did not
+    # pass an explicit X-Memory-DB-Path header. It DRAINS+replays the body to read
+    # workspace_id, so it must sit INSIDE BodySizeLimit (below) -- that drain is then
+    # already byte-capped. No-op when hub_mode is off.
+    app.add_middleware(WorkspaceRoutingMiddleware, settings=settings)
+    # Hard-cap request body size BEFORE workspace routing drains it. No auth by
+    # default + a 127.0.0.1 bind means a careless tool loop or a same-host attacker
+    # could otherwise POST GBs and pin the embedding worker or fill the WAL. Default
+    # 10 MB covers legitimate code/episode ingest; raise via env for larger docs.
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes)
+    # Refuse browser requests whose Origin / Host header doesn't point at loopback.
+    # Defeats DNS-rebinding + cross-site form-POST attacks against the local service.
+    # curl / httpx / inject hooks pass loopback unchanged. Opt out with
+    # MEMORY_ALLOW_REMOTE_ORIGIN=1.
+    app.add_middleware(OriginGuardMiddleware)
+    # outermost: add CSP / X-Frame-Options / X-Content-Type-Options to EVERY response
+    # (including the inner middlewares' 413 / 403 / 415) and reject non-JSON POSTs to
+    # /memory/* -- a by-design CSRF guard since a browser <form> cannot send
+    # Content-Type: application/json. Registered LAST so it is outermost.
+    app.add_middleware(SecurityMiddleware)
     register_all(app)
     return app

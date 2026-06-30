@@ -131,6 +131,30 @@ def test_consolidation_emits_one_insight(conn: sqlite3.Connection, llm_pattern: 
     assert rows[0]["status"] == "candidate"
 
 
+def test_consolidation_is_idempotent_across_overlapping_runs(
+    conn: sqlite3.Connection, llm_pattern: None
+) -> None:
+    """H6 (global-audit 2026-06-30): the cron re-clusters an overlapping 24h window
+    every 6h. A second run over the SAME episodes must NOT persist a duplicate
+    candidate (the evidence set is already consolidated)."""
+    for i in range(3):
+        _seed_episode(conn, id_=f"ep_{i}", raw_text="calibrator volatility threshold tuning")
+    first = consolidate_workspace(conn, workspace_id="ws")
+    count_after_first = conn.execute(
+        "SELECT COUNT(*) FROM insights WHERE workspace_id = 'ws'"
+    ).fetchone()[0]
+    assert first.insights_written == 1
+    assert count_after_first == 1
+
+    second = consolidate_workspace(conn, workspace_id="ws")
+    count_after_second = conn.execute(
+        "SELECT COUNT(*) FROM insights WHERE workspace_id = 'ws'"
+    ).fetchone()[0]
+    assert second.insights_written == 0  # nothing new persisted
+    assert second.insights_skipped >= 1  # the duplicate cluster was skipped
+    assert count_after_second == 1  # no duplicate row
+
+
 # ============================================================
 # behavior_reinforcement detection
 # ============================================================

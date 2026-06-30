@@ -17,9 +17,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
+from agent_memory_lite.logging_setup import get_logger
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.utils.time import iso_now
+
+_log = get_logger("retrieval.last_retrieved_tracker")
 
 KIND_TO_TABLE: dict[str, str] = {
     "chunk": "chunks",
@@ -116,3 +120,44 @@ def mark_retrieved(
             after={"kinds": summary, "total": total_updated, "at": now_iso},
         )
     return total_updated
+
+
+def mark_retrieved_hits(conn: sqlite3.Connection, *, workspace_id: str, hits: Iterable[Any]) -> int:
+    """Read-path entry point: stamp ``last_retrieved_at`` on the ranking-eligible
+    rows in a search's top-K.
+
+    H8 (global-audit 2026-06-30): this caller did not exist -- ``mark_retrieved``
+    was dead, so ``last_retrieved_at`` stayed NULL despite ``cold_tracking_enabled``
+    defaulting ON, and the whole cold-memory lifecycle (cold_scanner, the cold
+    routes, outcome-decay age) was inert. ``search()`` now calls this on its final
+    top-K. Self-contained and FAILURE-SOFT: gated on the flag, swallows every error,
+    and never breaks the search hot path. Hits are duck-typed (``.kind`` +
+    ``.projection['id']``) to avoid a reader<->tracker import cycle.
+    """
+    try:
+        from agent_memory_lite.config.settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        if not settings.cold_tracking_enabled:
+            return 0
+        by_kind: dict[str, list[str]] = {}
+        for hit in hits:
+            kind = str(getattr(hit, "kind", "") or "")
+            if kind not in KIND_TO_TABLE:
+                continue
+            proj = getattr(hit, "projection", {}) or {}
+            row_id = str(proj.get("id") or "")
+            if row_id:
+                by_kind.setdefault(kind, []).append(row_id)
+        if not by_kind:
+            return 0
+        updates = [RetrievalUpdate(kind=k, ids=tuple(ids)) for k, ids in by_kind.items()]
+        return mark_retrieved(
+            conn,
+            workspace_id=workspace_id,
+            updates=updates,
+            audit_batch_size=settings.cold_tracking_audit_batch_size,
+        )
+    except Exception as exc:  # recency telemetry must never break a search
+        _log.debug("mark_retrieved_hits_failed", error=str(exc))
+        return 0
