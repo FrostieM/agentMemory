@@ -36,6 +36,26 @@ def test_github_pat_redacted() -> None:
     assert secret not in out.text
 
 
+def test_github_fine_grained_pat_redacted() -> None:
+    # H1 (global-audit 2026-06-30): fine-grained PATs (github_pat_...) are a
+    # distinct SHAPE from classic ghp_ and were slipping through unredacted.
+    # No keyword prefix here, so the SHAPE rule is what must catch it.
+    secret = "github_pat_11ABCDEFG0aBcDeFgHiJkL_mNoPqRsTuVwXyZ0123456789abcdef"
+    out = redact(f"deployed with {secret} today")
+    assert secret not in out.text
+    assert "github_fine_pat" in out.kinds_seen
+
+
+def test_env_var_prefixed_secret_redacted() -> None:
+    # H2 (global-audit 2026-06-30): the \b keyword boundary never fires between an
+    # underscore and a letter (both are \w chars), so a secret keyword glued to an
+    # UPPERCASE env-var prefix by an underscore (MY_PASSWORD=...) bypassed
+    # redaction. The boundary now also fires immediately after an underscore.
+    out = redact("export MY_PASSWORD=hunter2")
+    assert "hunter2" not in out.text
+    assert "password_kv" in out.kinds_seen
+
+
 def test_jwt_redacted() -> None:
     jwt = (
         "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ"

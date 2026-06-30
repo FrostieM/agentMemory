@@ -682,7 +682,7 @@ def main(*, as_json: bool = False, fix: bool = False) -> int:
         or (Path.home() / ".agent_memory" / "workspaces.json")
     )
     repo_root = Path(__file__).resolve().parents[1]
-    migrations_dir = repo_root / "migrations"
+    migrations_dir = repo_root / "src" / "agent_memory_lite" / "migrations"
     if fix:
         reports = run_fix(registry_path, migrations_dir=migrations_dir, repo_root=repo_root)
     else:

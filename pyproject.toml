@@ -81,6 +81,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 agent_memory_lite = [
     "py.typed",
+    "migrations/*.sql",
     "evals/fixtures/*.yaml",
     "evals/golden/*.yaml",
     "evals/golden/*.json",

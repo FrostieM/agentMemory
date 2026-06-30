@@ -22,29 +22,36 @@ import re
 # regex engine prefers the whole-quoted-string match.
 _VALUE = r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|\S+)"
 
+# Left boundary for a keyword. A bare ``\b`` does NOT fire between an underscore
+# and a letter (both are word chars), so env-var-style names like
+# ``AWS_SECRET_ACCESS_KEY=`` / ``DATABASE_PASSWORD=`` / ``FOO_API_KEY=`` slipped
+# past every rule -- the keyword sat after an ``_``. Allow the keyword to start
+# at a word boundary OR immediately after an underscore (global-audit 2026-06-30).
+_KW = r"(?:\b|(?<=_))"
+
 KEYWORD_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "password_kv",
         re.compile(
-            rf"(?i)\b(?:password|passwd|pwd)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
+            rf"(?i){_KW}(?:password|passwd|pwd)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
         ),
     ),
     (
         "api_key_kv",
         re.compile(
-            rf"(?i)\b(?:api[_-]?key|apikey|access[_-]?key)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
+            rf"(?i){_KW}(?:api[_-]?key|apikey|access[_-]?key)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
         ),
     ),
     (
         "secret_kv",
         re.compile(
-            rf"(?i)\b(?:secret|secret[_-]?key|client[_-]?secret)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
+            rf"(?i){_KW}(?:secret|secret[_-]?key|client[_-]?secret)\s*[:=]\s*(?!<<REDACTED){_VALUE}",
         ),
     ),
     (
         "token_kv",
         re.compile(
-            r"(?i)\b(?:token|auth[_-]?token|access[_-]?token|bearer[_-]?token)"
+            rf"(?i){_KW}(?:token|auth[_-]?token|access[_-]?token|bearer[_-]?token)"
             rf"\s*[:=]\s*(?!<<REDACTED){_VALUE}",
         ),
     ),

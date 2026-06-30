@@ -12,6 +12,10 @@ SHAPE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
     ("openai_key", re.compile(r"sk-(?:proj-)?[A-Za-z0-9]{20,}")),
     ("github_pat", re.compile(r"gh[psour]_[A-Za-z0-9]{30,}")),
+    # Fine-grained PAT: literal ``github_pat_`` prefix + base62 with underscores
+    # (the classic gh?_ rule above misses it, and its underscores break a
+    # [A-Za-z0-9] class). global-audit 2026-06-30.
+    ("github_fine_pat", re.compile(r"github_pat_[A-Za-z0-9_]{30,}")),
     ("slack_token", re.compile(r"xox[bpars]-[A-Za-z0-9-]{10,}")),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),

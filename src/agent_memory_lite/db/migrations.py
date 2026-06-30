@@ -16,7 +16,13 @@ from agent_memory_lite.db.migration_validation import (
 )
 from agent_memory_lite.utils.time import iso_now
 
-MIGRATION_DIR = Path(__file__).resolve().parents[3] / "migrations"
+# Migrations live INSIDE the package (src/agent_memory_lite/migrations) so they
+# ship in the wheel/sdist via package-data and resolve identically for an editable
+# checkout and a `pip install`. (Previously parents[3]/migrations -> the repo root,
+# absent from an installed wheel: the service then created an EMPTY schema and
+# crashed on first query, while CI -- editable-only -- never noticed.
+# global-audit 2026-06-30.)
+MIGRATION_DIR = Path(__file__).resolve().parents[1] / "migrations"
 _FILENAME_RE = re.compile(r"^\d{4}_[A-Za-z0-9_]+$")
 
 

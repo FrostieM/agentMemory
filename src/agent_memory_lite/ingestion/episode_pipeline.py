@@ -65,33 +65,32 @@ class EpisodeIngestResult:
     duplicate_similarity: float = 0.0
 
 
-def _redact_metadata(value: object) -> object:
+def _redact_metadata(value: object, _depth: int = 0) -> object:
     """Recursively redact secret-shaped substrings in a metadata value.
 
-    Round-2 re-audit: ``EpisodeIn.metadata`` was persisted cleartext —
-    only raw_text / summary / label were redacted. metadata is written
-    verbatim to ``episodes.metadata_json``, returned by ``get_episode``
-    / ``list_recent_episodes``, and rendered in the UI, so a secret in
-    a metadata value (``metadata={"note": "key: sk-ant-..."}``) leaked.
-    The redaction pass was field-enumerated, not recursive — this walks
-    the nested dict/list structure. Non-secret control fields
-    (``correction_role`` etc.) are untouched: ``redact`` only replaces
-    secret-shaped spans, leaving plain values exactly as they were.
-
-    Round-2 final verification: dict KEYS are redacted too, not just
-    values — a secret used as a metadata key (an odd but possible
-    shape) would otherwise survive. A normal key like ``"note"`` does
-    not match any secret pattern, so it passes through unchanged.
+    Round-2 re-audit: ``EpisodeIn.metadata`` was persisted cleartext (only
+    raw_text / summary / label were redacted), yet metadata is stored verbatim in
+    ``episodes.metadata_json``, returned by ``get_episode`` / ``list_recent_episodes``
+    and rendered in the UI, so a secret in a value (``{"note": "key: sk-ant-..."}``)
+    leaked. This walks the nested dict/list structure, redacting KEYS as well as
+    values (a secret used as a key would otherwise survive). ``redact`` only replaces
+    secret-shaped spans, so plain control fields (``correction_role`` etc.) and
+    normal keys (``"note"``) pass through unchanged.
     """
+    # Bound recursion so deeply-nested metadata (a crafted dict/list ~7KB) cannot
+    # raise RecursionError -> HTTP 500 on the write (global-audit 2026-06-30,
+    # mirroring redaction.payload._MAX_REDACT_DEPTH). Real metadata is shallow.
+    if _depth >= 25:
+        return value
     if isinstance(value, str):
         return redact(value).text if value else value
     if isinstance(value, dict):
         return {
-            (redact(k).text if isinstance(k, str) and k else k): _redact_metadata(v)
+            (redact(k).text if isinstance(k, str) and k else k): _redact_metadata(v, _depth + 1)
             for k, v in value.items()
         }
     if isinstance(value, list):
-        return [_redact_metadata(v) for v in value]
+        return [_redact_metadata(v, _depth + 1) for v in value]
     return value
 
 
