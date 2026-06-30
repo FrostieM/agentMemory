@@ -128,3 +128,14 @@ def test_strict_project_mode_allows_configured_workspace(app_factory) -> None:
             },
         )
     assert response.status_code == 200, response.text
+
+
+def test_ingest_file_rejects_oversized_content(client: TestClient) -> None:
+    """round-B: a single file's content is bounded (max 1,000,000 chars) so one
+    request cannot spawn thousands of chunks embedded sequentially on the request
+    thread (a localhost time-DoS). Over the cap -> 422."""
+    response = client.post(
+        "/memory/ingest_file",
+        json={"path": "huge.py", "content": "x" * 1_000_001},
+    )
+    assert response.status_code == 422

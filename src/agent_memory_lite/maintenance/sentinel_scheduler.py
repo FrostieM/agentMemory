@@ -23,7 +23,7 @@ from pathlib import Path
 from agent_memory_lite.config import workspace_meta
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.config.workspace_paths import connection_matches_workspace
-from agent_memory_lite.db.pragmas import enable_foreign_keys
+from agent_memory_lite.db.pragmas import apply_pragmas
 from agent_memory_lite.embeddings.base import EmbeddingProvider
 from agent_memory_lite.maintenance.retrieval_quality import (
     load_retrieval_quality_cases,
@@ -136,7 +136,7 @@ def _run_sentinel_pass(
     # row["col"] access -- which is exactly how this sentinel recorded 19/19
     # 'failed' runs on the live DB before this line existed.
     conn.row_factory = sqlite3.Row
-    enable_foreign_keys(conn)  # brain_pass writes are FK-safe (differential-verified)
+    apply_pragmas(conn)  # brain_pass writes are FK-safe (differential-verified)
     try:
         # Cross-workspace guard: if this connection's physical DB is not
         # workspace_id's registered DB, abort before any write. A

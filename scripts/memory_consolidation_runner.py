@@ -29,6 +29,7 @@ import sys
 from pathlib import Path
 
 from agent_memory_lite.cognition.consolidation import consolidate_workspace
+from agent_memory_lite.db.pragmas import apply_pragmas
 
 logger = logging.getLogger("agent_memory_lite.scripts.consolidation_runner")
 
@@ -79,6 +80,11 @@ def _run_one(
     except sqlite3.Error as exc:
         return {"workspace_id": workspace_id, "status": "error", "error": str(exc)}
     try:
+        # round-B: this background runner opened a raw connection with NO pragmas, so
+        # it ran with synchronous=FULL + no busy_timeout, inconsistent with the HTTP
+        # path and (critically) without the 5s busy_timeout the new BEGIN IMMEDIATE
+        # dedup lock relies on. apply_pragmas brings it in line (must run before DML).
+        apply_pragmas(conn)
         report = consolidate_workspace(
             conn,
             workspace_id=workspace_id,

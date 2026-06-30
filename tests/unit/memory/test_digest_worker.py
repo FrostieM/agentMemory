@@ -201,6 +201,23 @@ def test_upsert_digest_replaces_existing_row(db_path: Path) -> None:
         conn.close()
 
 
+def test_upsert_digest_returns_persisted_id_on_conflict(db_path: Path) -> None:
+    """round-B: upsert_digest must return the PERSISTED id, not a freshly-minted
+    uuid. The old SELECT-then-INSERT race let a second writer return a uuid that the
+    ON CONFLICT UPDATE discarded (returned id != persisted id). RETURNING id fixes it."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        result = dw.compute_digest("/repo/foo.py", '"""V1."""\ndef x(): pass\n')
+        first_id = dw.upsert_digest(conn, workspace_id="default", result=result)
+        # A second upsert hits ON CONFLICT and must return the SAME (persisted) id.
+        second_id = dw.upsert_digest(conn, workspace_id="default", result=result)
+        persisted = conn.execute("SELECT id FROM code_digests").fetchone()["id"]
+        assert first_id == second_id == persisted
+    finally:
+        conn.close()
+
+
 # ============================================================
 # End-to-end: process_entry + drain_queue
 # ============================================================

@@ -47,12 +47,19 @@ class IngestEpisodeResponse(BaseModel):
     candidates_written: int = 0
 
 
+# round-B: bound a single file's content. Without this, the 10MB body cap still lets
+# one /memory/ingest_file request carry ~9MB -> thousands of chunks, each embedded
+# SEQUENTIALLY on the (synchronous) request thread -> a localhost time-DoS. A real
+# source file is far smaller; oversized files belong in the bulk-index path.
+_MAX_FILE_CONTENT_CHARS = 1_000_000
+
+
 class IngestFileRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str = "default"
     path: str = Field(min_length=1)
-    content: str = Field(min_length=0)
+    content: str = Field(min_length=0, max_length=_MAX_FILE_CONTENT_CHARS)
     language: str | None = None
 
 

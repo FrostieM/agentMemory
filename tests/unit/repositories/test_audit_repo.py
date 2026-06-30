@@ -105,3 +105,29 @@ def test_insert_audit_non_serializable_payload_does_not_raise(
     ).fetchone()
     assert row is not None
     assert "2026-05-21" in row["after_json"]
+
+
+def test_insert_audit_redacts_secrets_in_before_and_after(
+    applied_conn: sqlite3.Connection,
+) -> None:
+    """round-B: the audit trail is a single chokepoint that must NEVER persist
+    secrets. The low-level storage.writer.write() path did not redact before this,
+    so a direct write() leaked secrets into audit_log.after_json. insert_audit now
+    redacts before/after for every caller."""
+    insert_audit(
+        applied_conn,
+        workspace_id="ws",
+        action="write_decision",
+        target_type="decision",
+        target_id="dec_x",
+        before={"old": "token sk-ant-api03-OLDOLDOLDOLDOLDOLDOLD"},
+        after={"note": "key sk-ant-api03-LEAKLEAKLEAKLEAKLEAK", "pw": "password=hunter2"},
+    )
+    row = applied_conn.execute(
+        "SELECT before_json, after_json FROM audit_log WHERE target_id = 'dec_x'"
+    ).fetchone()
+    blob = f"{row[0]}{row[1]}"
+    assert "sk-ant-api03-LEAK" not in blob
+    assert "sk-ant-api03-OLD" not in blob
+    assert "hunter2" not in blob
+    assert "REDACTED" in blob

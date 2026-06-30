@@ -15,7 +15,7 @@ from pathlib import Path
 
 from agent_memory_lite.config import workspace_meta
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.db.pragmas import enable_foreign_keys
+from agent_memory_lite.db.pragmas import apply_pragmas
 from agent_memory_lite.utils.time import iso_now
 
 _LAST_RUN_KEY = "last_sentinel_run_at"
@@ -52,7 +52,7 @@ def _stamp_last_run(*, db_path: Path, workspace_id: str) -> None:
     try:
         # M9/round-A: enable_foreign_keys moved INSIDE the try -- if it raised, the
         # open connection leaked because the finally was never entered.
-        enable_foreign_keys(conn)
+        apply_pragmas(conn)
         workspace_meta.set_value(conn, workspace_id, _LAST_RUN_KEY, iso_now())
         conn.commit()
     finally:

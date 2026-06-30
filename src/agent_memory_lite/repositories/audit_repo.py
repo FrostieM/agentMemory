@@ -8,6 +8,7 @@ import sqlite3
 
 from agent_memory_lite.api.agent_context import current_agent_id
 from agent_memory_lite.models.audit import AuditEntry
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.utils.ids import IdKind, new_id
 from agent_memory_lite.utils.time import iso_now
 
@@ -38,6 +39,13 @@ def insert_audit(
         agent_id = current_agent_id()
     entry_id = new_id(IdKind.AUDIT)
     created_at = iso_now()
+    # round-B: redact before/after at THIS single chokepoint so EVERY audit write is
+    # secret-safe regardless of caller. write_canonical + edit redacted their payloads,
+    # but the low-level storage.writer.write() path did NOT -- a direct write() leaked
+    # secrets into audit_log.after_json. redact_freetext_fields is idempotent, so
+    # double-redacting an already-clean payload is a no-op.
+    before = None if before is None else redact_freetext_fields(before)
+    after = None if after is None else redact_freetext_fields(after)
     # default=str: a non-serializable payload value must not crash the operation being audited.
     before_json = None if before is None else json.dumps(before, sort_keys=True, default=str)
     after_json = None if after is None else json.dumps(after, sort_keys=True, default=str)

@@ -90,7 +90,18 @@ def evaluate(rounds: list[dict[str, object]], require: int, head: str | None) ->
     if not streak_head:
         return False, "the latest round has no recorded head (cannot certify)."
     at_head = [r for r in rounds if str(r.get("head") or "") == streak_head]
-    dirty = [r for r in at_head if int(r.get("findings", 1)) != 0]
+
+    def _is_dirty(round_row: dict[str, object]) -> bool:
+        # round-B: a null / missing / unparseable ``findings`` must be treated as
+        # DIRTY (cannot certify on ambiguous data), never crash the gate. ``.get(k, 1)``
+        # alone returned None for a JSON null and ``int(None)`` raised TypeError.
+        raw = round_row.get("findings")
+        try:
+            return raw is None or int(raw) != 0  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return True
+
+    dirty = [r for r in at_head if _is_dirty(r)]
     if dirty:
         return False, (
             f"{len(dirty)} round(s) at the current commit {streak_head[:12]} found defects -- "

@@ -69,6 +69,22 @@ def test_null_head_round_cannot_certify() -> None:
     assert "no recorded head" in msg
 
 
+def test_null_findings_is_treated_as_dirty_not_a_crash() -> None:
+    """round-B: a JSON-null ``findings`` (corrupt ledger entry) must be treated as
+    DIRTY, never crash the gate. ``int(r.get('findings', 1))`` raised TypeError on
+    None because the default only applies to a MISSING key, not a null value."""
+    rounds = [{"head": "aaa", "findings": None}, {"head": "aaa", "findings": 0}]
+    ok, msg = audit_streak.evaluate(rounds, require=1, head=None)
+    assert ok is False  # the null round counts as dirty
+    assert "ZERO dirty" in msg
+
+
+def test_unparseable_findings_is_treated_as_dirty() -> None:
+    rounds = [{"head": "aaa", "findings": "not-a-number"}]
+    ok, _ = audit_streak.evaluate(rounds, require=1, head=None)
+    assert ok is False
+
+
 def test_record_then_evaluate_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ledger = tmp_path / "certification_ledger.jsonl"
     monkeypatch.setattr(audit_streak, "LEDGER", ledger)

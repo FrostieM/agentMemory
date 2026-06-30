@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_memory_lite.config.settings import Settings
-from agent_memory_lite.db.pragmas import enable_foreign_keys
+from agent_memory_lite.db.pragmas import apply_pragmas
 from agent_memory_lite.maintenance.hebbian_pass_distill import distill_workspace, qualified
 from agent_memory_lite.retrieval.coactivation_log import prune_log
 from agent_memory_lite.utils.time import iso_now
@@ -115,7 +115,7 @@ def run_hebbian_pass(settings: Settings) -> HebbianReport:
         try:
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
-            enable_foreign_keys(conn)
+            apply_pragmas(conn)
         except sqlite3.Error:
             failed.append(ws)
             # M9 (global-audit 2026-06-30): if connect succeeded but a later

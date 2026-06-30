@@ -308,14 +308,15 @@ def upsert_digest(
     workspace_id: str,
     result: DigestResult,
 ) -> str:
-    """Insert or replace one code_digests row. Returns the digest id."""
+    """Insert or replace one code_digests row. Returns the PERSISTED digest id."""
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    existing = conn.execute(
-        "SELECT id FROM code_digests WHERE workspace_id = ? AND file_path = ?",
-        (workspace_id, result.file_path),
-    ).fetchone()
-    digest_id = existing[0] if existing else f"digest_{uuid.uuid4().hex[:16]}"
-    conn.execute(
+    # round-B: no pre-SELECT (it was a TOCTOU window: two concurrent writers both saw
+    # "no row", minted different uuids, both inserted; ON CONFLICT kept the FIRST id
+    # but each returned its OWN -> returned id != persisted id). INSERT .. ON CONFLICT
+    # .. RETURNING id makes the returned id ALWAYS the row that actually persists (the
+    # UPDATE keeps the original id), so the result is idempotent under concurrency.
+    candidate_id = f"digest_{uuid.uuid4().hex[:16]}"
+    row = conn.execute(
         """
         INSERT INTO code_digests (
             id, workspace_id, file_path, file_sha1, language,
@@ -331,9 +332,10 @@ def upsert_digest(
             top_symbols_json=excluded.top_symbols_json,
             last_indexed_at=excluded.last_indexed_at,
             updated_at=excluded.updated_at
+        RETURNING id
         """,
         (
-            digest_id,
+            candidate_id,
             workspace_id,
             result.file_path,
             result.file_sha1,
@@ -345,9 +347,9 @@ def upsert_digest(
             now,
             now,
         ),
-    )
+    ).fetchone()
     conn.commit()
-    return digest_id
+    return str(row[0])
 
 
 # ============================================================
@@ -376,13 +378,13 @@ def process_entry(entry: QueueEntry) -> str | None:
         return None
     result = compute_digest(digest_file_path, content)
     try:
-        from agent_memory_lite.db.pragmas import enable_foreign_keys  # noqa: PLC0415
+        from agent_memory_lite.db.pragmas import apply_pragmas  # noqa: PLC0415
 
         conn = sqlite3.connect(entry.db_path)
         try:
             # M9 (global-audit 2026-06-30): enable_foreign_keys moved INSIDE the
             # try/finally -- if it raised, the open connection leaked before.
-            enable_foreign_keys(conn)
+            apply_pragmas(conn)
             return upsert_digest(conn, workspace_id=entry.workspace_id, result=result)
         finally:
             conn.close()
