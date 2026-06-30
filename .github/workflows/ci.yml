@@ -27,6 +27,13 @@ jobs:
         run: python scripts/check_sloc.py --enforce
       - name: V3-only surface gate
         run: python scripts/v3_surface_check.py
+      - name: Env-var documentation gate
+        # Every settings env var (Settings.validation_alias) must be documented in
+        # .env.example. Run `python scripts/check_env_docs.py --write` to backfill.
+        run: python scripts/check_env_docs.py --enforce
+      - name: Encoding gate (UTF-8 / mojibake)
+        # Tracked text files must be clean UTF-8 with no mojibake / U+FFFD.
+        run: python scripts/check_encoding.py --enforce
       - name: Tests
         run: pytest
       - name: Retrieval evals
