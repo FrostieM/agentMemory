@@ -130,7 +130,14 @@ def ingest_episode(
             }
         )
 
-    if embedding_provider is not None:
+    runtime_settings = get_settings()
+    # pin_or_check reads provider.dim, which LAZILY LOADS the embedding model
+    # (~1.5s, or a cold-cache HF fetch) on the request thread. Under
+    # defer_embedding the write does no embedding here, so skip the pin too -- the
+    # brain-pass vector-repair step pins/drift-checks when it actually embeds
+    # off-thread (see maintenance/brain_pass._step_repair_missing_vectors). This
+    # keeps a deferred write a pure SQLite write (Batch E), not just zero embeds.
+    if embedding_provider is not None and not runtime_settings.defer_embedding:
         pin_or_check(conn, episode_in.workspace_id, embedding_provider)
 
     # v1.10: bypass embedding dedup for episodes that are part of a
@@ -154,9 +161,14 @@ def ingest_episode(
     # writing a low-information duplicate. Skipped when the
     # provider/store/settings aren't both available, or when the
     # episode is part of a v1.10 correction pair (see above).
+    #
+    # Batch E async write: the dedup query EMBEDS the new text on the request
+    # thread. When embedding is deferred we skip it so the write issues 0 embed
+    # calls -- a deferred write trades request-thread dedup for latency (any
+    # duplicate is rare and reconcilable later; correctness is unaffected).
     duplicate = (
         None
-        if is_correction_pair
+        if is_correction_pair or runtime_settings.defer_embedding
         else maybe_dedup(
             conn,
             workspace_id=episode_in.workspace_id,
@@ -179,7 +191,20 @@ def ingest_episode(
                 duplicate_similarity=duplicate.score,
             )
 
-    episode, chunk = persist(conn, episode_in, redacted.text, redacted.kinds_seen)
+    # Batch E: defer the slow auto_promote extractor off the request thread when
+    # MEMORY_DEFER_EXTRACTION is on (and auto-promote is requested at all). The
+    # episode is flagged extraction_pending ATOMICALLY in persist()'s transaction;
+    # the brain-pass extraction-drain step runs the extractor later.
+    should_defer_extraction = (
+        auto_promote_settings is not None and runtime_settings.defer_extraction
+    )
+    episode, chunk = persist(
+        conn,
+        episode_in,
+        redacted.text,
+        redacted.kinds_seen,
+        extraction_pending=should_defer_extraction,
+    )
 
     embedded = False
     # Plan 10.1: opt-in deferred embedding (MEMORY_DEFER_EMBEDDING). The chunk is
@@ -191,7 +216,7 @@ def ingest_episode(
     if (
         embedding_provider is not None
         and vector_store is not None
-        and not get_settings().defer_embedding
+        and not runtime_settings.defer_embedding
     ):
         embedded = embed_and_upsert(chunk, redacted.text, embedding_provider, vector_store)
         if embedded:
@@ -226,7 +251,10 @@ def ingest_episode(
             )
 
     decisions = rules = core = candidates_written = 0
-    if auto_promote_settings is not None:
+    # Skip the inline extractor when deferred (it ran nothing slow on this thread;
+    # persist() flagged the episode extraction_pending and the brain-pass
+    # extraction-drain step will run auto_promote off-thread).
+    if auto_promote_settings is not None and not should_defer_extraction:
         from agent_memory_lite.ingestion.auto_promote import auto_promote  # noqa: PLC0415
 
         try:

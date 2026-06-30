@@ -23,6 +23,9 @@ from agent_memory_lite.repositories.chunks_repo import (
     chunk_text_sha256,
     insert_chunk,
 )
+from agent_memory_lite.repositories.episodes_extraction_repo import (
+    mark_episode_extraction_pending,
+)
 from agent_memory_lite.repositories.episodes_repo import insert_episode
 from agent_memory_lite.vector_store.base import VectorRow, VectorStore
 from agent_memory_lite.vector_store.namespaces import NAMESPACE_CHUNKS
@@ -35,7 +38,17 @@ def persist(
     episode_in: EpisodeIn,
     redacted_text: str,
     redacted_kinds: list[str],
+    *,
+    extraction_pending: bool = False,
 ) -> tuple[Episode, Chunk]:
+    """Persist the episode + chunk + FTS row + audit in ONE transaction.
+
+    ``extraction_pending`` (Batch E async write): set the episode's
+    extraction_pending flag IN THIS SAME transaction so "episode exists" and
+    "episode awaits deferred extraction" are atomic -- there is no window where a
+    persisted episode is silently un-flagged. The brain-pass extraction-drain step
+    later runs the extractor and clears it.
+    """
     with with_tx(conn):
         episode = insert_episode(conn, episode_in, redacted_text=redacted_text)
         chunk = insert_chunk(
@@ -76,6 +89,8 @@ def persist(
                 "trust_level": episode.trust_level.value,
             },
         )
+        if extraction_pending:
+            mark_episode_extraction_pending(conn, episode.id)
     return episode, chunk
 
 

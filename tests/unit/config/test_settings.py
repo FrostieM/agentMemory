@@ -73,6 +73,34 @@ def test_defer_embedding_with_both_loops_is_accepted(settings_factory) -> None:
     assert s.defer_embedding is True
 
 
+def test_defer_extraction_without_extraction_repair_raises(settings_factory) -> None:
+    """Batch E: deferred extraction leans on the brain-pass extraction-drain step
+    to run the extractor later. With that healer off, pending episodes are never
+    extracted and their candidates are lost -- reject the combo at startup."""
+    with pytest.raises(ValueError, match="MEMORY_DEFER_EXTRACTION"):
+        settings_factory(
+            MEMORY_DEFER_EXTRACTION="true",
+            MEMORY_EXTRACTION_REPAIR_ENABLED="false",
+        )
+
+
+def test_defer_extraction_without_brain_pass_raises(settings_factory) -> None:
+    with pytest.raises(ValueError, match="MEMORY_BRAIN_PASS_ENABLED"):
+        settings_factory(
+            MEMORY_DEFER_EXTRACTION="true",
+            MEMORY_BRAIN_PASS_ENABLED="false",
+        )
+
+
+def test_defer_extraction_with_both_loops_is_accepted(settings_factory) -> None:
+    s = settings_factory(
+        MEMORY_DEFER_EXTRACTION="true",
+        MEMORY_EXTRACTION_REPAIR_ENABLED="true",
+        MEMORY_BRAIN_PASS_ENABLED="true",
+    )
+    assert s.defer_extraction is True
+
+
 def test_settings_is_frozen() -> None:
     s = Settings(_env_file=None)  # type: ignore[call-arg]
     try:
