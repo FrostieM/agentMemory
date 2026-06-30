@@ -74,3 +74,31 @@ def test_gate_passes_when_drop_within_threshold(tmp_path: Path) -> None:
         retrieval_ndcg_at_10=live["retrieval_ndcg_at_10"] + 0.01,
     )
     assert golden_eval.main(["--compare-baseline", str(baseline)]) == 0
+
+
+def test_save_baseline_refuses_to_lower_a_committed_metric(tmp_path: Path) -> None:
+    """M7 (global-audit 2026-06-30): --save-baseline must REFUSE to ratchet a
+    committed metric DOWN past the threshold -- otherwise a ranking regression could
+    be laundered by simply re-saving a lower baseline, defeating --compare-baseline."""
+    live = run_golden_eval()
+    # An existing baseline that is 0.2 ABOVE the live report on MRR. Saving the live
+    # (lower) report over it would lower the committed metric -> must be refused.
+    target = _write_baseline(
+        tmp_path / "b.json", retrieval_mrr_at_10=live["retrieval_mrr_at_10"] + 0.2
+    )
+    assert golden_eval.main(["--save-baseline", str(target)]) == 1
+    # The file was NOT overwritten (the higher committed metric stands).
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert saved["retrieval_mrr_at_10"] == pytest.approx(live["retrieval_mrr_at_10"] + 0.2)
+
+
+def test_save_baseline_allows_lowering_with_override(tmp_path: Path) -> None:
+    """An intentional, justified lowering is permitted with --allow-regression."""
+    live = run_golden_eval()
+    target = _write_baseline(
+        tmp_path / "b.json", retrieval_mrr_at_10=live["retrieval_mrr_at_10"] + 0.2
+    )
+    assert golden_eval.main(["--save-baseline", str(target), "--allow-regression"]) == 0
+    # The override wrote the live (lower) metrics over the higher baseline.
+    saved = json.loads(target.read_text(encoding="utf-8"))
+    assert saved["retrieval_mrr_at_10"] == pytest.approx(live["retrieval_mrr_at_10"])

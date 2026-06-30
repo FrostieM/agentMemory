@@ -15,6 +15,7 @@ import pytest
 from agent_memory_lite.maintenance.predictive_lr import (
     LRModel,
     _train_sgd,
+    is_enabled,
     load_model,
     predict_negative_outcome,
     save_model,
@@ -29,7 +30,10 @@ from agent_memory_lite.maintenance.predictive_lr_features import (
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MEMORY_PREDICTIVE_LR_ENABLED", raising=False)
+    # M4 (global-audit 2026-06-30): the feature is now OPT-IN (default off). This
+    # module exercises the training behaviour, so it enables it explicitly; the
+    # disabled-path and opt-in-default tests override this within their own bodies.
+    monkeypatch.setenv("MEMORY_PREDICTIVE_LR_ENABLED", "true")
     monkeypatch.delenv("MEMORY_PREDICTIVE_LR_MIN_SAMPLES", raising=False)
     monkeypatch.delenv("MEMORY_PREDICTIVE_LR_EPOCHS", raising=False)
     monkeypatch.delenv("MEMORY_PREDICTIVE_LR_LEARNING_RATE", raising=False)
@@ -237,6 +241,16 @@ def test_train_workspace_persists_model(conn: sqlite3.Connection) -> None:
     loaded = load_model(conn, workspace_id="ws")
     assert loaded is not None
     assert loaded.n_samples == 30
+
+
+def test_predictive_lr_is_opt_in_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M4 (global-audit 2026-06-30): the model trains fine but its inference is not
+    wired into any consumer, so default-on just trained an unused model every brain
+    pass. Training is now OPT-IN -- is_enabled() is False unless explicitly turned on."""
+    monkeypatch.delenv("MEMORY_PREDICTIVE_LR_ENABLED", raising=False)
+    assert is_enabled() is False
+    monkeypatch.setenv("MEMORY_PREDICTIVE_LR_ENABLED", "1")
+    assert is_enabled() is True
 
 
 def test_disabled_skips_training(conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch) -> None:

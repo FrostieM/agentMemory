@@ -25,9 +25,9 @@ key ``predictive_lr_model_v1`` as JSON. Failure-soft: if the meta
 table is missing, train/predict return None and the legacy Jaccard
 V5 path keeps the warning surface alive.
 
-Settings: ``MEMORY_PREDICTIVE_LR_ENABLED`` (default true),
-``MEMORY_PREDICTIVE_LR_MIN_SAMPLES`` (default 30), ``..._EPOCHS``
-(default 20), ``..._LEARNING_RATE`` (default 0.1).
+Settings: ``MEMORY_PREDICTIVE_LR_ENABLED`` (default FALSE -- opt-in; trains a model
+whose inference is not yet wired, so it stays off to avoid an unused model),
+``..._MIN_SAMPLES`` (30), ``..._EPOCHS`` (20), ``..._LEARNING_RATE`` (0.1).
 """
 
 from __future__ import annotations
@@ -77,7 +77,12 @@ def _float_env(name: str, default: float) -> float:
 
 
 def is_enabled() -> bool:
-    return _bool_env("MEMORY_PREDICTIVE_LR_ENABLED", True)
+    # M4 (global-audit 2026-06-30): OPT-IN. The model trains fine, but its inference
+    # (predict_negative_outcome) is not yet wired into any consumer -- training it on
+    # every brain pass by default just burned cycles to produce a model nothing reads.
+    # Default OFF until a consumer (e.g. the lint warning path) is wired up; an
+    # operator can still opt in with MEMORY_PREDICTIVE_LR_ENABLED=1.
+    return _bool_env("MEMORY_PREDICTIVE_LR_ENABLED", False)
 
 
 def min_samples() -> int:
