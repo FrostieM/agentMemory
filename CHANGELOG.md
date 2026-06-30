@@ -2,12 +2,76 @@
 
 All notable active-line changes to **agent-memory-lite**.
 
-This file intentionally tracks only the current v3 line. Older pre-v3
-development history was removed from the active tree; use git history when
+This file intentionally tracks only the current active line (v3 → v4). Older
+pre-v3 development history was removed from the active tree; use git history when
 archaeology is required.
 
 Versioning follows semver. Minor bumps add functionality; patch bumps fix
 bugs without behavioral expansion.
+
+## 4.0.0 - 2026-06-30
+
+Whole-system security & reliability hardening milestone. A multi-agent global
+audit (attacker/fuzzer framing over the entire merged tree, not per-batch diffs)
+plus three further fresh whole-system adversarial rounds surfaced defects the
+per-batch certifications missed; all confirmed findings were remediated, each with
+a paired test. The full local bar stays green (ruff / format / mypy / check_sloc
+/ v3_surface_check / check_encoding / check_env_docs / pytest / run_evals
+recall@10=1.0 secret_leak=0 / golden no-regression / crash_test).
+
+NOTE: this is a hardening release, NOT a certified "production-ready" claim — fresh
+whole-system audit rounds still plateau at a handful of (increasingly
+defense-in-depth / concurrency) findings per round; certification requires three
+consecutive zero-finding rounds, which has not yet been reached.
+
+### Security
+
+- **Secrets never reach storage on any path.** Redaction added at the lowest
+  chokepoints: `insert_audit` redacts every audit `before`/`after` payload (the
+  low-level `storage.writer.write()` path previously leaked into `audit_log`), and
+  `storage.writer.write()` itself now redacts defensively (mirrors `edit`). The
+  research snapshot writer (`register_snapshot`) and experiment metrics writers,
+  which bypassed `write_canonical`, now redact title / metadata / metrics.
+- Fine-grained GitHub PATs (`github_pat_…`) and underscore-prefixed env secrets
+  (`AWS_SECRET_ACCESS_KEY=…`, `MY_PASSWORD=…`) are now redacted.
+- **CRITICAL packaging fix:** SQL migrations moved into the package
+  (`src/agent_memory_lite/migrations`) and ship via `package-data`. A non-editable
+  install previously resolved the migrations dir to the absent repo root, built an
+  EMPTY schema, and crashed on first query (invisible to editable-only CI).
+- DoS caps: the request-body cap now applies before the workspace-routing
+  middleware drains the body (middleware order corrected); `POST /embed` bounds the
+  batch (<=2048 texts); `POST /memory/ingest_file` bounds content (<=1,000,000
+  chars); recursive metadata redaction + tree-sitter symbol walking are
+  depth-bounded.
+
+### Reliability
+
+- **Concurrency.** Consolidation dedup, `upsert_digest`, and `upsert_soft_edge`
+  are now atomic (BEGIN IMMEDIATE / `INSERT ... ON CONFLICT ... RETURNING`) so
+  concurrent writers cannot double-insert or drop an update. Background runners now
+  apply the full pragma set (synchronous=NORMAL + 5s busy_timeout), consistent with
+  the HTTP path. Several error-path connection leaks closed.
+- **Deferred-extraction data loss fixed:** the drain no longer clears
+  `extraction_pending` when Ollama is the configured backend but unreachable -- it
+  skips and retries once Ollama recovers.
+- **Dead recency write wired:** `last_retrieved_at` is now stamped on the read
+  path's top-K, so the cold-memory lifecycle + outcome decay are no longer inert.
+
+### Gate integrity
+
+- Closed several false-green / tautological gates: `run_evals` now fails on low
+  retrieval recall and on malformed cases; the golden runner fails fast on an empty
+  query set or a query with no declared relevances; the prompt-injection eval drives
+  the real trust gate instead of fixture metadata; the acceptance gate warns on
+  unmeasurable digest staleness; `golden_eval --save-baseline` refuses to ratchet a
+  metric down without `--allow-regression`; the audit-streak gate cannot be
+  certified past any dirty round at a commit and no longer crashes on a null
+  `findings` value.
+
+### Changed
+
+- `MEMORY_PREDICTIVE_LR_ENABLED` now defaults **off** (opt-in): the model trained on
+  every brain pass but its inference was never wired into a consumer.
 
 ## 3.22.0 - 2026-06-23
 

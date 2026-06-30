@@ -3,15 +3,21 @@
 Rolling state for cross-session work. Pair-read with `AGENTS.md` and
 `CHANGELOG.md`.
 
-## Current State - v3.22.0
+## Current State - v4.0.0
 
 The v3-only compact surface is the shipped, default project state. The latest
-release `3.22.0` adds FTS5/BM25 relevance retrieval for the durable knowledge
-kinds (`durable_fts`, migration 0007) and restores/hardens the brief, write, and
-retrieval-quality-sentinel paths (see `CHANGELOG.md`). Standing invariants:
+release `4.0.0` is a whole-system security & reliability hardening milestone: a
+multi-agent global audit plus three fresh whole-system adversarial rounds found
+and fixed defects the per-batch certs missed (secret-redaction at the lowest
+chokepoints, a CRITICAL migrations-packaging fix, DoS caps, atomic concurrency,
+deferred-extraction data-loss, dead `last_retrieved_at` wiring, several
+false-green gates). It is a hardening release, NOT a certified production-ready
+claim (fresh audit rounds still plateau; certification needs three consecutive
+clean rounds). See `CHANGELOG.md`. Standing invariants:
 
 - v3 compact tools are the only active agent surface.
-- Root migrations are the only active migration chain.
+- Package migrations (`src/agent_memory_lite/migrations`, shipped via
+  package-data) are the only active migration chain.
 - v3 canonical tables are the default storage target.
 - Legacy routes, docs, compatibility names, and duplicate runners are removed
   from active project space instead of kept as working context.
@@ -22,7 +28,7 @@ retrieval-quality-sentinel paths (see `CHANGELOG.md`). Standing invariants:
 
 ## Active Plan
 
-1. Keep final release checks green for the `3.22.0` package.
+1. Keep final release checks green for the `4.0.0` package.
 2. Do not commit, tag, push, or deploy until the operator explicitly asks.
 3. After source edits, restart already-open MCP stdio clients before trusting
    that they are running the new code.

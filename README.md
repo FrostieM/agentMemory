@@ -233,6 +233,21 @@ fresh chat and the agent wires everything itself.
 
 ## Status
 
+**v4.0.0** (2026-06-30). Whole-system security & reliability hardening milestone.
+A multi-agent global audit (attacker/fuzzer framing over the whole merged tree)
+plus three further fresh whole-system adversarial rounds found defects the
+per-batch certifications missed; all confirmed findings are remediated, each with a
+paired test, and the full local bar is green. Highlights: secrets are redacted at
+the lowest storage chokepoints (audit log + `storage.writer.write`, snapshot +
+experiment writers); a CRITICAL packaging fix moves SQL migrations into the package
+so a non-editable install no longer builds an empty schema and crashes; DoS caps on
+`/embed`, `/memory/ingest_file`, body-size-vs-routing order, and recursive
+walks; atomic concurrency for consolidation dedup / `upsert_digest` /
+`upsert_soft_edge`; deferred-extraction data-loss fixed; `last_retrieved_at`
+wiring restored; and several false-green / tautological quality gates closed.
+`MEMORY_PREDICTIVE_LR_ENABLED` now defaults off (opt-in). This is a hardening
+release, NOT a certified "production-ready" claim — see `CHANGELOG.md`.
+
 **v3.22.0** (2026-06-23). FTS5/BM25 relevance retrieval for the durable knowledge
 kinds (decisions / theories / behaviors / skills / concepts / insights) via a new
 `durable_fts` table (migration 0007) — `memory_search` now ranks the agent's

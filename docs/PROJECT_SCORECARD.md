@@ -8,14 +8,23 @@ cycle and their findings were fixed, but a 3-consecutive-zero-new-findings
 streak across the whole system has **not** been certified. This document tracks
 where we stand and the remaining gaps.
 
-- **As of:** v3.22.0 — released and **pushed to origin/main with green CI** (the
-  full pipeline: install, ruff, mypy, check_sloc, v3-surface, tests, retrieval
-  evals, agent-contract checks). Every score below is for current `main`.
-- **Grounding (verified):** `pytest` collects 2812 tests (green this cycle);
-  `ruff`/`ruff format` clean; `mypy --strict` clean on 538 source files;
-  `scripts/crash_test` has 27 phases; the 150-SLOC ceiling
-  (`check_sloc.py --enforce`) is green; migrations `0001`–`0007`; v3 surface/
-  contract checks pass.
+- **As of:** v4.0.0 — committed to **local `main` only, NOT pushed** (the operator
+  has not authorized a push). The full LOCAL bar is green (ruff, ruff format, mypy,
+  check_sloc --enforce, v3-surface, check_encoding, check_env_docs, pytest,
+  run_evals, golden compare, crash_test). Every score below is for local `main`.
+- **4.0.0 hardening note:** a multi-agent global audit + three fresh whole-system
+  adversarial rounds (A/B/C) fixed defects the per-batch certs missed, raising the
+  real security / reliability / gate-integrity posture ABOVE several gaps the
+  per-dimension table below still lists (the table is conservative / pre-hardening
+  on those lines). Convergence plateaus at ~5 findings/round, so the
+  3-consecutive-zero-findings certification is still **not** reached. See
+  `CHANGELOG.md` 4.0.0.
+- **Grounding (verified):** `ruff`/`ruff format` clean; `mypy` clean on 564 source
+  files; `scripts/crash_test` runs 27 phases (25 pass / 0 fail / 2 skip); the
+  150-SLOC ceiling (`check_sloc.py --enforce`) is green; migrations `0001`–`0008`
+  ship inside the package (`src/agent_memory_lite/migrations`); v3 surface /
+  contract / encoding / env-docs checks pass; `run_evals` recall@10=1.0,
+  secret_leak=0; golden set shows no retrieval regression.
 
 ## What the project is
 
