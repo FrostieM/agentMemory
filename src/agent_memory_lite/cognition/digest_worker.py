@@ -379,8 +379,10 @@ def process_entry(entry: QueueEntry) -> str | None:
         from agent_memory_lite.db.pragmas import enable_foreign_keys  # noqa: PLC0415
 
         conn = sqlite3.connect(entry.db_path)
-        enable_foreign_keys(conn)
         try:
+            # M9 (global-audit 2026-06-30): enable_foreign_keys moved INSIDE the
+            # try/finally -- if it raised, the open connection leaked before.
+            enable_foreign_keys(conn)
             return upsert_digest(conn, workspace_id=entry.workspace_id, result=result)
         finally:
             conn.close()

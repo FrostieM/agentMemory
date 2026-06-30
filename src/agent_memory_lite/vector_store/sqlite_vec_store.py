@@ -43,15 +43,23 @@ class SqliteVecStore(VectorStore):
             ) from exc
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
-        conn.enable_load_extension(True)
+        # M9 (global-audit 2026-06-30): close the freshly-opened connection if the
+        # extension fails to load. Previously the OperationalError propagated as
+        # VectorStoreUnavailableError while `conn` -- never assigned to self._conn --
+        # was orphaned and leaked.
         try:
-            sqlite_vec.load(conn)
-        except sqlite3.OperationalError as exc:
-            raise VectorStoreUnavailableError(
-                f"failed to load sqlite-vec extension: {exc}"
-            ) from exc
-        finally:
-            conn.enable_load_extension(False)
+            conn.enable_load_extension(True)
+            try:
+                sqlite_vec.load(conn)
+            except sqlite3.OperationalError as exc:
+                raise VectorStoreUnavailableError(
+                    f"failed to load sqlite-vec extension: {exc}"
+                ) from exc
+            finally:
+                conn.enable_load_extension(False)
+        except BaseException:
+            conn.close()
+            raise
         self._conn = conn
 
     def close(self) -> None:

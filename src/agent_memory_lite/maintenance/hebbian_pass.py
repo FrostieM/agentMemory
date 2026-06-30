@@ -111,12 +111,17 @@ def run_hebbian_pass(settings: Settings) -> HebbianReport:
         if not db_path or not ws:
             continue
         scanned += 1
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(db_path)
             conn.row_factory = sqlite3.Row
             enable_foreign_keys(conn)
         except sqlite3.Error:
             failed.append(ws)
+            # M9 (global-audit 2026-06-30): if connect succeeded but a later
+            # setup call raised, the open connection would leak on this continue.
+            if conn is not None:
+                conn.close()
             continue
         try:
             up, gated = distill_workspace(

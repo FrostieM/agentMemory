@@ -66,12 +66,19 @@ def _outcome(c: sqlite3.Connection, id_: str) -> float:
 
 
 def test_learning_discriminates_useful_from_useless(conn: sqlite3.Connection) -> None:
-    """Directional quality: strongly-useful feedback must drive a decision's
-    outcome ABOVE one with strongly-useless feedback, after one brain pass."""
+    """Directional quality: useful feedback drives outcome POSITIVE and harmful
+    feedback drives it NEGATIVE after one brain pass.
+
+    M5 (global-audit 2026-06-30): this previously seeded usefulness=0.05 for the
+    "useless" decision, but usefulness is on a [-1, 1] scale (0 = neutral), so 0.05
+    is POSITIVE -- the test only ranked two positive values and never proved the
+    loop maps harmful feedback to a NEGATIVE outcome (the signal that lets a bad
+    memory be discredited). It now seeds genuinely-harmful feedback and asserts the
+    sign."""
     _seed_decision(conn, id_="dec_useful")
     _seed_decision(conn, id_="dec_useless")
     _seed_feedback(conn, source_id="dec_useful", usefulness=0.95)
-    _seed_feedback(conn, source_id="dec_useless", usefulness=0.05)
+    _seed_feedback(conn, source_id="dec_useless", usefulness=-0.9)
 
     report = run_brain_pass(conn, workspace_id=_WS, settings=Settings())
     assert report.errors == []
@@ -79,9 +86,10 @@ def test_learning_discriminates_useful_from_useless(conn: sqlite3.Connection) ->
     assert "decision" in report.outcome_updated
 
     useful, useless = _outcome(conn, "dec_useful"), _outcome(conn, "dec_useless")
-    # The learning loop must RANK them correctly and lift the useful one positive.
+    # RANK correctly AND get the signs right: useful positive, harmful negative.
     assert useful > useless, f"learning failed to discriminate: useful={useful} useless={useless}"
-    assert useful > 0.0
+    assert useful > 0.0, f"useful feedback did not drive a positive outcome: {useful}"
+    assert useless < 0.0, f"harmful feedback did not drive a NEGATIVE outcome: {useless}"
 
 
 def test_core_learning_loops_all_fire_without_error(conn: sqlite3.Connection) -> None:
