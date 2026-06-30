@@ -99,11 +99,10 @@ python scripts/serve.py
 # 3. attach a project — makes it memory-aware
 python scripts/setup_agent.py --project /path/to/your/project
 
-# 4. open an agent chat inside that project — memory auto-loads
-# 5. (optional) real initialization — paste AGENT_SETUP/03_ONBOARD_PROJECT.md:
-#    the agent indexes the codebase, runs a short ~7-question interview, and
-#    seeds the project's starting decisions / rules / build-test-run playbook.
-# 6. inspect at http://127.0.0.1:8765/ui
+# 4. real initialization — paste an AGENT_SETUP prompt into the project chat:
+#    AGENT_SETUP/01_NEW_PROJECT.md       (greenfield: index + interview + seed)
+#    AGENT_SETUP/02_EXISTING_PROJECT.md  (has code/history: also auto-mines it)
+# 5. inspect at http://127.0.0.1:8765/ui
 ```
 
 `setup_agent.py --project` is idempotent: it bootstraps the project's
@@ -112,9 +111,12 @@ python scripts/setup_agent.py --project /path/to/your/project
 installs the v3 brief, pre-tool, and post-edit hook stack for Claude and Codex,
 and registers the workspace. Re-run it any time. It seeds only the neutral
 *discipline* behaviors + memory-vocabulary — it does NOT add project-specific
-knowledge. For that, paste [`AGENT_SETUP/03_ONBOARD_PROJECT.md`](AGENT_SETUP/03_ONBOARD_PROJECT.md):
-it indexes the code and interviews you, then writes your answers into memory as
-the project's starting decisions, behavior rules, and playbooks.
+knowledge. For that, paste an [`AGENT_SETUP/`](AGENT_SETUP/) prompt:
+[`01_NEW_PROJECT.md`](AGENT_SETUP/01_NEW_PROJECT.md) for a fresh project, or
+[`02_EXISTING_PROJECT.md`](AGENT_SETUP/02_EXISTING_PROJECT.md) for one that
+already has code/history (it also mines the existing codebase into memory).
+Each indexes the code and interviews you, then writes your answers into memory
+as the project's starting decisions, behavior rules, and playbooks.
 
 Ollama is recommended but optional — set `OLLAMA_PROBE_SKIP=true` to run with
 the heuristic extractor only:

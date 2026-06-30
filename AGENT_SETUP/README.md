@@ -1,97 +1,54 @@
-﻿# AGENT_SETUP вЂ” paste-and-forget prompts
+# AGENT_SETUP -- project-initialization prompts
 
-Three self-contained prompts. Pick one, paste it as the first user message in
-a new chat (or as a follow-up in an active chat), and the agent does the
-rest autonomously.
+Two self-contained prompts. Pick the one that matches your project, paste it as
+the first user message in a new chat inside that project, and the agent does the
+rest. Both wire memory if needed, index the code, interview you once, and seed
+your answers into memory as the project's starting decisions / behavior rules /
+build-test-run playbook.
 
 | File | Use when |
 |---|---|
-| [`01_FRESH_PROJECT.md`](01_FRESH_PROJECT.md) | New chat. The agent is in a project but has never used memory here. It will detect, bootstrap, and verify everything (silent -- no questions). |
-| [`02_CAPTURE_THIS_CHAT.md`](02_CAPTURE_THIS_CHAT.md) | Active chat. You've already done work in this conversation and want it persisted to memory before the chat closes. |
-| [`03_ONBOARD_PROJECT.md`](03_ONBOARD_PROJECT.md) | New project. Real initialization: indexes the codebase, runs a short ~7-question interview, and seeds the project's starting decisions / behavior rules / build-test-run playbook into memory. The only prompt that asks you questions. |
+| [`01_NEW_PROJECT.md`](01_NEW_PROJECT.md) | A fresh / greenfield project whose memory is empty. The agent wires memory, indexes whatever code exists, interviews you (~7 questions), and seeds your answers. |
+| [`02_EXISTING_PROJECT.md`](02_EXISTING_PROJECT.md) | A project already worked on -- existing code, git history, docs, prior AI sessions. Does everything `01` does AND first mines the existing codebase / manifests / docs / git history into memory on its own, marked agent-inferred; your interview answers then override anything it guessed. |
 
-Both prompts assume the `agent-memory-lite` repo is checked out somewhere
-on this machine and `pip install -e ".[mcp]"` has been done in its venv.
-The prompts walk the agent through detection: it tries the
-`AGENT_MEMORY_LITE_HOME` env var first, then asks Python where the
-installed package lives (`python -c "import agent_memory_lite, pathlib;
-print(pathlib.Path(agent_memory_lite.__file__).parents[2])"`), then
-common workspace locations, and finally falls back to asking you.
-
-After either prompt finishes, the agent should:
-1. Tell you what it set up (paths, files written).
-2. Confirm the memory tools are working (a quick `memory_brief / memory_search` round-trip).
-3. Use the project's established workspace id, or the project directory name
-   when none is established.
-4. Run read-only `scripts/memory_audit.py --workspace <workspace_id> --json`
-   and `scripts/memory_hygiene.py --workspace <workspace_id> --json` checks
-   when the repo is available.
-5. Run `scripts/memory_quality_gate.py --workspace <workspace_id> --json` when
-   the repo is available, so research trust is blocked by untestable theories,
-   evidence-free terminal theories, weak experiment criteria, or weak decision
-   provenance.
-6. Run `scripts/memory_mcp_smoke.py --workspace <workspace_id> --json` after
-   MCP setup or restart so the actual agent-facing handler is proven fast.
-7. Run `scripts/memory_candidate_triage.py --workspace <workspace_id> --json`
-   when candidate extraction is enabled, so stale/high-value candidates are
-   reviewed instead of becoming invisible backlog.
-8. Confirm the neutral setup seed is present when a local DB was created:
-   it should add only memory-population skills/playbooks/concepts, never
-   language preferences, communication style, personality rules, or
-   project-specific behavior instructions.
-9. If hygiene only reports missing capability links, run
-   `scripts/memory_auto_triage.py --workspace <workspace_id> --json`; apply
-   with `--apply --backup-first` only after reviewing the dry-run output.
-10. For a one-command trust report, run
-   `scripts/memory_trust_dashboard.py --workspace <workspace_id> --project-root . --json`.
-11. Confirm retrieval sentinels are auto-discovered from
-   `.agent_memory/retrieval_sentinels.yaml` when the project has known memory
-   examples; use `--require-sentinels` for strict trust checks.
-12. Run `scripts/memory_encoding_audit.py --workspace <workspace_id> --json`
-   and repair only with `--repair --backup-first` if stored text is corrupted.
-13. Run `scripts/memory_workspace_doctor.py --workspace <workspace_id> --json`
-   if audit reports workspace pollution. Quarantine only with
-   `--quarantine --backup-first` after reviewing the exported rows.
-14. Use `scripts/memory_trend_report.py --db-path .agent_memory/memory.db --json`
-   to confirm the latest trust run is not hiding recent degradation.
-15. Continue with whatever you wanted to do.
-
-For research-heavy projects, the capture prompt also tells the agent to preserve
-research hypotheses, snapshots, experiments, results, and insights with the
-first-class research tools instead of burying them inside raw episodes. For
-operations-heavy projects, it tells the agent to preserve reusable roles,
-skills, and playbooks with the capability tools.
-Extraction candidates are review-first: promote supported candidates and reject
-weak ones instead of turning every extracted sentence into an active decision.
+Both assume the `agent-memory-lite` repo is checked out on this machine and
+`pip install -e ".[mcp]"` (or `.[dev,mcp]`) has been done in its venv. Each
+prompt locates the repo itself: it tries the `AGENT_MEMORY_LITE_HOME` env var,
+then `python -c "import agent_memory_lite, pathlib;
+print(pathlib.Path(agent_memory_lite.__file__).resolve().parents[2])"`, then
+common workspace locations, and finally asks you. Each also runs
+`setup_agent.py --project` if the project is not wired yet, so you do not need a
+separate setup step.
 
 ## What's safe by default after these prompts run
 
-`setup_agent.py --project` (which both prompts call) bakes the
-asymmetric isolation contract into the project's MCP env:
+`setup_agent.py --project` (which both prompts call) bakes the asymmetric
+isolation contract into the project's MCP env:
 
-- Reads from this project's chat to ANY registered workspace are allowed вЂ”
-  the user can ask to inspect another registered workspace's decisions and
-  the agent will route the read to that DB via the workspace registry.
-- Writes from this project's chat to ANY workspace other than its own
-  are blocked at the strict-isolation guard. The agent must refuse and
-  ask the user to switch contexts.
+- Reads from this project's chat to ANY registered workspace are allowed -- you
+  can ask to inspect another registered workspace's memory and the agent routes
+  the read to that DB via the workspace registry.
+- Writes from this project's chat to ANY workspace other than its own are
+  blocked at the strict-isolation guard. The agent refuses and asks you to
+  switch contexts.
 
-For full cross-workspace access (both read and write вЂ” useful for batch
-maintenance), open a chat in the **parent directory** (no project pin)
-or run the HTTP service with `MEMORY_HUB_MODE=true`. The PowerShell
-autostart wrapper takes `-HubMode`. The serve.py launcher accepts
-`--hub` / `--strict` overrides. Default is hub mode whenever the
-registry has at least one entry.
+For full cross-workspace access (read AND write -- useful for batch
+maintenance), open a chat in the **parent directory** (no project pin) or run
+the HTTP service with `MEMORY_HUB_MODE=true`. `serve.py` accepts `--hub` /
+`--strict`; default is hub mode whenever the registry has at least one entry.
 
-If the agent reports that MCP tools aren't visible in its tool list, you
-need to **restart whichever runtime is hosting it**:
+## If the memory tools are not in the agent's tool list
+
+Every MCP client reads its config at startup, not on every prompt, so a
+just-wired project needs a one-time **restart of whichever runtime hosts the
+agent**:
 
 | Runtime | What to restart | Where the MCP config lives |
 |---|---|---|
 | Claude Code | Close and reopen the app | `<project>/.claude/settings.json` (project mode) or `~/.claude/settings.json` (global) |
-| Codex | Close and reopen the editor / CLI | `~/.codex/config.toml` вЂ” Codex reads MCP globally only. `--project` mode still writes `<project>/AGENTS.md` and the DB, but the MCP entry must come from the global setup. Run `python scripts/setup_agent.py` (no `--project`) once for that, then restart. |
-| Cursor | Close and reopen Cursor | `~/.cursor/mcp.json` (or per-project equivalent if your build supports it) |
+| Codex | Close and reopen the editor / CLI | `~/.codex/config.toml` -- Codex reads MCP globally only. `--project` mode still writes `<project>/AGENTS.md` and the DB, but the MCP entry comes from the global setup: run `python scripts/setup_agent.py` (no `--project`) once, then restart. |
+| Cursor | Close and reopen Cursor | `~/.cursor/mcp.json` (or the per-project equivalent your build supports) |
 | Other MCP-aware client | Whatever the client treats as a session boundary | check the client's docs |
 
-This is not a bug in agent-memory-lite вЂ” every MCP client reads its
-config at startup, not on every prompt.
+After the restart, paste the prompt again -- both prompts are idempotent
+(`memory_search` dedups), so re-running is safe.
