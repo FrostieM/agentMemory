@@ -120,29 +120,21 @@ def _backup(settings: Settings) -> dict[str, str]:
         target = backup_dir / f"memory_before_audit_repair_{stamp}.db"
         shutil.copy2(settings.db_path, target)
         out["db"] = str(target)
-    if settings.vector_db_path.exists():
-        suffix = ".lance" if settings.vector_db_path.is_dir() else settings.vector_db_path.suffix
-        target = backup_dir / f"vectors_before_audit_repair_{stamp}{suffix}"
-        if settings.vector_db_path.is_dir():
-            if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(settings.vector_db_path, target)
-        else:
-            shutil.copy2(settings.vector_db_path, target)
-        out["vectors"] = str(target)
+    # Batch J / #122: DO NOT snapshot vectors.lance. SQLite is the source of
+    # record; the vector store is DERIVED from it and fully rebuildable with
+    # scripts/reindex_vectors.py (and the brain-pass vector-repair step heals
+    # missing vectors incrementally). The audit repair only touches SQLite
+    # (FK / FTS), never the vectors, so copytree-ing the whole store -- observed
+    # at ~20GB across the rolling backup family -- only bloated the backups dir
+    # without adding a recovery point. The SQLite backup alone is complete; on
+    # restore, run reindex_vectors to regenerate the vectors.
+    out["vectors"] = "skipped (rebuildable; run scripts/reindex_vectors.py on restore)"
     if "db" in out:
         prune_backups(
             backup_dir,
             prefix="memory_before_audit_repair_",
             keep=DEFAULT_KEEP,
             protect=Path(out["db"]),
-        )
-    if "vectors" in out:
-        prune_backups(
-            backup_dir,
-            prefix="vectors_before_audit_repair_",
-            keep=DEFAULT_KEEP,
-            protect=Path(out["vectors"]),
         )
     return out
 
