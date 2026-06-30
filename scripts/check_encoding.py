@@ -25,7 +25,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN_DIRS = ("src", "tests", "scripts", "docs")
+SCAN_DIRS = ("src", "tests", "scripts", "docs", "migrations")
 SCAN_SUFFIXES = {".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".sql", ".cfg", ".ini"}
 SKIP_PARTS = {"__pycache__", ".venv", ".git", "node_modules", ".claude"}
 # Encoding tools legitimately contain marker chars as detection data; exempt them.

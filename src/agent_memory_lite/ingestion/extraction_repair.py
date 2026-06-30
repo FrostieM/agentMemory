@@ -44,11 +44,34 @@ def drain_pending_extraction(
 ) -> ExtractionDrainResult:
     """Run the deferred extractor for up to ``limit`` pending episodes, clearing
     ``extraction_pending`` as each one completes. Per-episode failure-soft."""
+    pending = list_episodes_pending_extraction(conn, workspace_id, limit=limit)
+    if not pending:
+        return ExtractionDrainResult()
+
+    # M2 (global-audit 2026-06-30): the WHOLE POINT of deferring is the slow
+    # Ollama extraction. If Ollama is the configured backend but unreachable right
+    # now, draining would run the heuristic extractors only, clear
+    # extraction_pending, and PERMANENTLY lose the Ollama-derived candidates -- the
+    # episode is never re-drained. So probe first; when Ollama is expected and down,
+    # skip this pass and LEAVE the flag set, so the next brain pass retries once
+    # Ollama recovers. probe_ollama self-gates on ollama_probe_skip (a no-op when
+    # Ollama is intentionally unused -> heuristic-only drain proceeds, nothing lost).
+    # Mirrors repair_missing_vectors leaving the NULL marker when embedding is down.
+    from agent_memory_lite.extraction.base import ExtractorUnavailableError  # noqa: PLC0415
+    from agent_memory_lite.extraction.llm_extractor import probe_ollama  # noqa: PLC0415
+
+    try:
+        probe_ollama(settings)
+    except ExtractorUnavailableError as exc:
+        _log.warning(
+            "deferred_extraction_skipped_ollama_unreachable", pending=len(pending), error=str(exc)
+        )
+        return ExtractionDrainResult()
+
     # Imported lazily: auto_promote pulls the extractor stack (Ollama client etc.),
     # which must not load on the cheap steady-state probe path.
     from agent_memory_lite.ingestion.auto_promote import auto_promote  # noqa: PLC0415
 
-    pending = list_episodes_pending_extraction(conn, workspace_id, limit=limit)
     drained = 0
     candidates = 0
     for episode in pending:

@@ -16,6 +16,8 @@ import numpy as np
 import pytest
 
 from agent_memory_lite.embeddings.base import EmbeddingKind
+from agent_memory_lite.extraction import llm_extractor
+from agent_memory_lite.extraction.base import ExtractorUnavailableError
 from agent_memory_lite.ingestion import auto_promote as auto_promote_mod
 from agent_memory_lite.ingestion import episode_pipeline
 from agent_memory_lite.ingestion import extraction_repair as extraction_repair_mod
@@ -169,6 +171,52 @@ def test_brain_pass_drain_extracts_and_clears_pending(
     assert _candidate_count(applied_conn, "default") == before + drained.candidates_written
     # The flag is cleared so the next pass does not re-extract it.
     assert _pending(applied_conn, result.episode.id) == 0
+
+
+def test_drain_skips_and_keeps_pending_when_ollama_expected_but_down(
+    applied_conn: sqlite3.Connection,
+    fake_vector_store,
+    settings_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M2 (global-audit 2026-06-30): the deferred work IS the slow Ollama
+    extraction. When Ollama is the configured backend but unreachable at drain time,
+    the drain must NOT run heuristic-only and clear the flag -- that permanently
+    loses the Ollama-derived candidates. It skips the pass and leaves
+    extraction_pending = 1, retrying once Ollama recovers."""
+    async_settings = settings_factory(
+        MEMORY_DEFER_EMBEDDING="true",
+        MEMORY_DEFER_EXTRACTION="true",
+        OLLAMA_PROBE_SKIP="false",  # Ollama IS expected -- its extraction was deferred
+    )
+    monkeypatch.setattr(episode_pipeline, "get_settings", lambda: async_settings)
+    result = ingest_episode(
+        applied_conn,
+        _episode("Decision: keep deferred work until the extractor is back."),
+        embedding_provider=_SpyProvider(),
+        vector_store=fake_vector_store,
+        auto_promote_settings=async_settings,
+    )
+    assert _pending(applied_conn, result.episode.id) == 1
+
+    def _down(_settings: object) -> None:
+        raise ExtractorUnavailableError("Ollama probe failed: connection refused")
+
+    monkeypatch.setattr(llm_extractor, "probe_ollama", _down)
+
+    def _must_not_run(*_a: object, **_k: object) -> object:
+        pytest.fail("auto_promote ran with Ollama down -- the Ollama candidates would be lost")
+
+    monkeypatch.setattr(auto_promote_mod, "auto_promote", _must_not_run)
+
+    drained = drain_pending_extraction(
+        applied_conn, workspace_id="default", settings=async_settings, limit=64
+    )
+
+    assert drained.episodes_drained == 0
+    assert drained.candidates_written == 0
+    # Flag stays set: the next pass retries once Ollama recovers (no silent loss).
+    assert _pending(applied_conn, result.episode.id) == 1
 
 
 def test_drain_is_failure_soft_and_leaves_episode_pending(

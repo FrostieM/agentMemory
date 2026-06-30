@@ -24,6 +24,7 @@ from agent_memory_lite.models.research import (
     ExperimentResult,
     ExperimentResultIn,
 )
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.research_repo import (
@@ -90,8 +91,14 @@ def add_experiment_result(
     result_id = new_id(IdKind.EXPERIMENT_RESULT)
     timestamp = iso_now()
     observed_at = payload.observed_at or timestamp
-    metrics = _result_metrics_with_links(
-        payload.metrics, experiment_id=payload.experiment_id, result_id=result_id
+    # Redact the free-form metrics dict too -- it is persisted to
+    # experiment_results.metrics_json and a secret pasted into a metric value
+    # would otherwise land cleartext (global-audit 2026-06-30). The injected link
+    # fields (experiment_id / result_id, _id-suffixed) are preserved untouched.
+    metrics = redact_freetext_fields(
+        _result_metrics_with_links(
+            payload.metrics, experiment_id=payload.experiment_id, result_id=result_id
+        )
     )
     # CLAUDE.md invariant ("Never store secrets"): redact the free-text summary
     # ONCE here at the entry point, then thread the safe value to every sink it

@@ -6,9 +6,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from scripts.memory_audit import _backup
+
 from agent_memory_lite.config.settings import Settings
 from agent_memory_lite.db.migrations import apply_migrations
-from scripts.memory_audit import _backup
 
 
 def test_backup_snapshots_sqlite_but_skips_rebuildable_vectors(tmp_path: Path) -> None:

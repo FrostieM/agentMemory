@@ -6,8 +6,8 @@ from scripts.v3_surface_check import run
 
 
 def test_v3_surface_check_catches_relative_research_list_routes(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -30,8 +30,8 @@ def test_v3_surface_check_catches_relative_research_list_routes(tmp_path: Path) 
 
 
 def test_v3_surface_check_catches_theory_list_remount(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -54,8 +54,8 @@ def test_v3_surface_check_catches_theory_list_remount(tmp_path: Path) -> None:
 
 
 def test_v3_surface_check_catches_removed_bootstrap_capability_tool(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -78,8 +78,8 @@ def test_v3_surface_check_catches_removed_bootstrap_capability_tool(tmp_path: Pa
 
 
 def test_v3_surface_check_catches_removed_code_memory_routes(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -102,8 +102,8 @@ def test_v3_surface_check_catches_removed_code_memory_routes(tmp_path: Path) -> 
 
 
 def test_v3_surface_check_catches_removed_active_edits_table(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE active_edits (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -118,8 +118,8 @@ def test_v3_surface_check_catches_removed_active_edits_table(tmp_path: Path) -> 
 
 
 def test_v3_surface_check_catches_legacy_status_field_names(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -141,8 +141,8 @@ def test_v3_surface_check_catches_legacy_status_field_names(tmp_path: Path) -> N
 
 
 def test_v3_surface_check_catches_deleted_hook_config_reference(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )
@@ -161,8 +161,8 @@ def test_v3_surface_check_catches_deleted_hook_config_reference(tmp_path: Path) 
 
 
 def test_v3_surface_check_catches_removed_core_memory_module(tmp_path: Path) -> None:
-    (tmp_path / "migrations").mkdir()
-    (tmp_path / "migrations" / "0001_init.sql").write_text(
+    (tmp_path / "src" / "agent_memory_lite" / "migrations").mkdir(parents=True)
+    (tmp_path / "src" / "agent_memory_lite" / "migrations" / "0001_init.sql").write_text(
         "CREATE TABLE skills (id TEXT PRIMARY KEY);",
         encoding="utf-8",
     )

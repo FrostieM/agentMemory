@@ -48,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Compare against a baseline JSON (defaults to the committed baseline).",
     )
     parser.add_argument("--threshold", type=float, default=DEFAULT_REGRESSION_THRESHOLD)
+    parser.add_argument(
+        "--allow-regression",
+        action="store_true",
+        help="Permit --save-baseline to LOWER a committed metric (override the laundering guard).",
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -62,6 +67,26 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.save_baseline is not None:
+        # Anti-laundering (global-audit 2026-06-30): refuse to ratchet the baseline
+        # DOWN -- otherwise a ranking regression could be hidden by simply re-saving
+        # a lower baseline, defeating the compare gate. Mirrors the SLOC ratchet's
+        # refuse-to-raise-a-cap. An intentional, justified lowering uses
+        # --allow-regression (and should be explained in the commit).
+        if args.save_baseline.exists() and not args.allow_regression:
+            old = json.loads(args.save_baseline.read_text(encoding="utf-8"))
+            lowered = [
+                m
+                for m in _GATE_METRICS
+                if float(report.get(m, 0.0)) < float(old.get(m, 0.0)) - args.threshold
+            ]
+            if lowered:
+                print(
+                    f"REFUSED: saving this baseline would LOWER {lowered} by more than "
+                    f"{args.threshold} vs the committed baseline -- this would launder a "
+                    "ranking regression. Investigate the regression, or pass "
+                    "--allow-regression with a justification in the commit."
+                )
+                return 1
         args.save_baseline.parent.mkdir(parents=True, exist_ok=True)
         args.save_baseline.write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"

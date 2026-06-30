@@ -8,6 +8,8 @@ from agent_memory_lite.api.errors import NotFoundError
 from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.ingestion.research_writer_shared import validate_workspace
 from agent_memory_lite.models.research import Experiment, ExperimentIn
+from agent_memory_lite.redaction.payload import redact_freetext_fields
+from agent_memory_lite.redaction.redactor import redact
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.research_repo import (
     get_experiment,
@@ -38,6 +40,33 @@ def write_experiment(conn: sqlite3.Connection, payload: ExperimentIn) -> Experim
             payload_workspace_id=payload.workspace_id,
             field_name="snapshot_id",
         )
+
+    # This route bypasses write_canonical's redaction choke point, so redact the
+    # free-text fields (hypothesis / command / etc.) + the metadata dict here --
+    # else a pasted secret lands cleartext in experiments + the audit log
+    # (global-audit 2026-06-30). Typed fields (status/priority/ids/dates) untouched.
+    def _r(value: object) -> object:
+        # str directly; dict/list recursively (success_criteria / cohort_definition
+        # may be objects); other types pass through.
+        if isinstance(value, str):
+            return redact(value).text if value else value
+        if isinstance(value, dict):
+            return redact_freetext_fields(value)
+        if isinstance(value, list):
+            return [_r(v) for v in value]
+        return value
+
+    payload = payload.model_copy(
+        update={
+            "title": _r(payload.title),
+            "hypothesis": _r(payload.hypothesis),
+            "cohort_definition": _r(payload.cohort_definition),
+            "success_criteria": _r(payload.success_criteria),
+            "command": _r(payload.command),
+            "owner": _r(payload.owner),
+            "metadata": _r(payload.metadata),
+        }
+    )
 
     experiment_id = new_id(IdKind.EXPERIMENT)
     timestamp = iso_now()

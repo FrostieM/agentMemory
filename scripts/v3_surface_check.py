@@ -295,7 +295,9 @@ def _check_removed_legacy_modules(root: Path) -> list[dict[str, Any]]:
 
 def _check_migrations(root: Path) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    migration_dir = root / "migrations"
+    # Migrations live inside the package (shipped via package-data) since the
+    # global-audit packaging fix.
+    migration_dir = root / "src" / "agent_memory_lite" / "migrations"
     sql_files = sorted(p.name for p in migration_dir.glob("*.sql"))
     # The v3 baseline is the squashed 0001_init.sql. Forward-only numbered
     # migrations on top of it (0002_*, 0003_*, ...) are the SUPPORTED shape, not

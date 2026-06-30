@@ -3,19 +3,21 @@
 This is what turns "passes its tests" into a DEFENSIBLE certification. Each
 adversarial whole-system audit round (separate agents, attacker/fuzzer framing)
 records its outcome in a committed ledger (``docs/certification_ledger.jsonl``);
-a release is certified only when the most recent ``--require N`` rounds all found
-ZERO real defects AND were run at one consistent source commit.
+a commit is certified only when it has at least ``--require N`` rounds AND EVERY
+round recorded at that commit found ZERO real defects.
 
     python scripts/audit_streak.py --require 3
     python scripts/audit_streak.py --require 3 --strict   # also == current git HEAD
     python scripts/audit_streak.py --record --head <sha> --findings 0 \
         --scope whole-system --notes "round 1: bar + 3x5 lenses + verify"
 
-The "same head" rule (not "== current HEAD") is deliberate: recording a round
-appends to the ledger and would itself move HEAD, so the gate asks "were the last
-N rounds all clean at the SAME audited commit" -- the release then tags that
-commit. ``--strict`` additionally pins that commit to the current HEAD for the
-exact release moment.
+"Every round at the commit must be clean" (not merely "the last N are clean")
+closes a laundering hole -- otherwise a known-DIRTY round at commit X could be
+certified by re-running N clean rounds at the same X without fixing anything. The
+only way past a dirty round is to fix the code, which moves HEAD and begins a
+fresh streak. Recording a round appends to the ledger and itself moves HEAD, so
+the gate keys on the latest round's commit (the release tags it); ``--strict``
+additionally pins that commit == current git HEAD for the exact release moment.
 """
 
 from __future__ import annotations
@@ -72,27 +74,37 @@ def _record(args: argparse.Namespace) -> int:
 
 
 def evaluate(rounds: list[dict[str, object]], require: int, head: str | None) -> tuple[bool, str]:
-    if require < 1:
-        return False, "require must be >= 1"
-    if len(rounds) < require:
-        return False, f"only {len(rounds)} round(s) recorded; need {require}."
-    last = rounds[-require:]
-    dirty = [r for r in last if int(r.get("findings", 1)) != 0]
-    if dirty:
-        return False, f"{len(dirty)} of the last {require} round(s) found defects (not clean)."
-    heads = {str(r.get("head")) for r in last}
-    if len(heads) != 1:
-        return (
-            False,
-            f"the last {require} rounds span {len(heads)} commits, not one consistent head.",
+    """Certified iff the LATEST audited commit has >= ``require`` rounds and EVERY
+    round at that commit found zero defects.
+
+    Anti-laundering: it is NOT "the last N rounds are clean" -- that let a known
+    DIRTY round at commit X be certified by simply re-running N more clean rounds
+    at the same X without fixing anything (global-audit 2026-06-30). A certifiable
+    commit must have ZERO dirty rounds; the only way past a dirty round is to fix
+    the code, which moves HEAD and starts a fresh streak."""
+    if require < 1 or not rounds:
+        return False, (
+            "require must be >= 1" if require < 1 else f"no rounds recorded; need {require}."
         )
-    streak_head = next(iter(heads))
+    streak_head = str(rounds[-1].get("head") or "")
+    if not streak_head:
+        return False, "the latest round has no recorded head (cannot certify)."
+    at_head = [r for r in rounds if str(r.get("head") or "") == streak_head]
+    dirty = [r for r in at_head if int(r.get("findings", 1)) != 0]
+    if dirty:
+        return False, (
+            f"{len(dirty)} round(s) at the current commit {streak_head[:12]} found defects -- "
+            "a certifiable commit must have ZERO dirty rounds. Fix the code (which moves "
+            "HEAD) and accumulate a fresh clean streak."
+        )
+    if len(at_head) < require:
+        return False, f"only {len(at_head)} clean round(s) at {streak_head[:12]}; need {require}."
     if head is not None and streak_head != head:
         return False, (
             f"clean streak is at {streak_head[:12]} but current HEAD is {head[:12]} "
             "(source changed since certification)."
         )
-    return True, f"certified: {require} consecutive zero-finding rounds at {streak_head[:12]}."
+    return True, f"certified: {len(at_head)} zero-finding round(s) at {streak_head[:12]}."
 
 
 def main(argv: list[str]) -> int:
