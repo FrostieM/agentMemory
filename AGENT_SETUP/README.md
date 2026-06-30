@@ -1,13 +1,14 @@
 ﻿# AGENT_SETUP вЂ” paste-and-forget prompts
 
-Two self-contained prompts. Pick one, paste it as the first user message in
+Three self-contained prompts. Pick one, paste it as the first user message in
 a new chat (or as a follow-up in an active chat), and the agent does the
 rest autonomously.
 
 | File | Use when |
 |---|---|
-| [`01_FRESH_PROJECT.md`](01_FRESH_PROJECT.md) | New chat. The agent is in a project but has never used memory here. It will detect, bootstrap, and verify everything. |
+| [`01_FRESH_PROJECT.md`](01_FRESH_PROJECT.md) | New chat. The agent is in a project but has never used memory here. It will detect, bootstrap, and verify everything (silent -- no questions). |
 | [`02_CAPTURE_THIS_CHAT.md`](02_CAPTURE_THIS_CHAT.md) | Active chat. You've already done work in this conversation and want it persisted to memory before the chat closes. |
+| [`03_ONBOARD_PROJECT.md`](03_ONBOARD_PROJECT.md) | New project. Real initialization: indexes the codebase, runs a short ~7-question interview, and seeds the project's starting decisions / behavior rules / build-test-run playbook into memory. The only prompt that asks you questions. |
 
 Both prompts assume the `agent-memory-lite` repo is checked out somewhere
 on this machine and `pip install -e ".[mcp]"` has been done in its venv.
