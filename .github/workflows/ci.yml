@@ -49,3 +49,39 @@ jobs:
           git diff --exit-code -- CLAUDE.md AGENTS.md
       - name: Agent contract drift
         run: python scripts/memory_contract_check.py --strict
+
+  # Batch F reliability gate: the 27-phase end-to-end crash test, run in a
+  # separate job so its one-time embedding-model download does not slow the unit
+  # job. Spins up the real HTTP service and drives ingest / retrieval / decisions
+  # / theories / hygiene / compaction / correction end-to-end -- a regression that
+  # BREAKS any of those surfaces (a write that errors, a route that 500s, a search
+  # that returns nothing) turns this red. (Row/index FTS divergence + the durable
+  # sync-bypass invariant are gated separately, fast, by
+  # tests/unit/maintenance/test_reliability_detectors.py in the unit job.)
+  # --skip-ui drops Playwright; --skip-llm drops Ollama; both are unavailable on CI.
+  reliability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Cache embedding model (HuggingFace)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-e5-small-v1
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Warm embedding model (populate cache before the timed crash test)
+        # The crash test loads e5-small INLINE on its first ingest request (which
+        # has a 30s httpx timeout); on a cold cache the ~470MB download would exceed
+        # that and flake the run red. Pre-download it here -- no request timeout --
+        # via the SAME provider the service builds, so the crash test loads it warm.
+        # actions/cache then persists ~/.cache/huggingface for subsequent runs.
+        run: |
+          python -c "from agent_memory_lite.config.settings import get_settings; from agent_memory_lite.embeddings.factory import get_embedding_provider; get_embedding_provider(get_settings()).embed_batch(['warm'])"
+      - name: Reliability crash test (27 phases, offline)
+        run: python -m scripts.crash_test --skip-ui --skip-llm
