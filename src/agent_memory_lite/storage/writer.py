@@ -283,10 +283,9 @@ def _build_column_payload(
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Real column names of ``table`` — used to whitelist agent-supplied
-    payload / fields keys before they are interpolated as SQL column
-    names. ``table`` is always a hard-coded value from ``_KIND_META``,
-    never user input, so the f-string here is safe."""
+    """Real column names of ``table`` — used to whitelist agent-supplied payload /
+    fields keys before they are interpolated as SQL column names. ``table`` is always
+    a hard-coded ``_KIND_META`` value, never user input, so the f-string is safe."""
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return {str(row[1]) for row in rows}
 
@@ -375,6 +374,11 @@ def write(
     if kind not in _KIND_META:
         return None
     table, _, _ = _KIND_META[kind]
+    # round-C: defense-in-depth at the storage chokepoint. write_canonical redacts
+    # before calling write(), but write() is a PUBLIC export -- a direct call would
+    # otherwise persist secrets in the row. edit() already redacts its fields; mirror
+    # it here. Idempotent on already-clean input; id-shaped keys are never secret.
+    payload = redact_freetext_fields(payload)
     object_id = payload.get("id") or _gen_id(_PREFIXES.get(kind, "obj"))
     # M2 (reliability audit): version snapshot + row mutation + audit are ONE
     # atomic unit. Connections are autocommit, so the prior sequence committed

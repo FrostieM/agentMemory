@@ -289,6 +289,13 @@ def repair_missing_vectors(
             )
             for idx, item in enumerate(batch)
         ]
+        # SELF-HEALING by design (Batch-E NULL-marker), NOT a missing transaction:
+        # the LanceDB upsert is keyed by the deterministic chunk id, and the SQLite
+        # embedding_id is gated by embedding_text_hashes. If the outer brain-pass commit
+        # fails after this, embedding_id stays NULL -> the NEXT repair re-embeds the
+        # same chunk and the id-keyed upsert OVERWRITES the orphan (no duplicate, no
+        # loss; only redundant work). An intermediate commit here would instead break
+        # the brain pass's all-or-nothing transaction, so it is deliberately omitted.
         store.upsert(NAMESPACE_CHUNKS, vector_rows)
         set_many_chunk_embedding_ids(
             conn,

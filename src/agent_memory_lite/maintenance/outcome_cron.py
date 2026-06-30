@@ -61,9 +61,13 @@ def _load_registry(path: Path) -> list[dict[str, str]]:
 
 def _run_one(db_path: str, workspace_id: str, now_iso: str) -> dict[str, int]:
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    apply_pragmas(conn)
     try:
+        # round-C: apply_pragmas + row_factory moved INSIDE the try -- if apply_pragmas
+        # raised (e.g. read-only DB / I/O error), the connection leaked because the
+        # finally was never entered (the round-B apply_pragmas swap reintroduced the
+        # M9 leak shape here).
+        conn.row_factory = sqlite3.Row
+        apply_pragmas(conn)
         out = refresh_workspace(conn, workspace_id=workspace_id, now_iso=now_iso)
         conn.commit()
         return out

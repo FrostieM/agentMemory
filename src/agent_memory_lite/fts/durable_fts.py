@@ -96,7 +96,14 @@ def sync_durable_fts(
                 f"SELECT {', '.join(cols)} FROM {table} WHERE id = ? AND workspace_id = ?",
                 (object_id, workspace_id),
             ).fetchone()
-            conn.execute("DELETE FROM durable_fts WHERE object_id = ?", (object_id,))
+            # round-C: scope the DELETE to workspace_id too. object_id is a globally
+            # unique PK so today this only ever hits the right row, but adding the
+            # filter makes the FTS delete defensively consistent with the SELECT above
+            # -- a mis-passed workspace_id can never evict another workspace's index row.
+            conn.execute(
+                "DELETE FROM durable_fts WHERE object_id = ? AND workspace_id = ?",
+                (object_id, workspace_id),
+            )
             if row is not None:
                 conn.execute(
                     "INSERT INTO durable_fts (object_id, workspace_id, kind, content) "

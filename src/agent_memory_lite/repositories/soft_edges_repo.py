@@ -42,17 +42,12 @@ def upsert_soft_edge(
     if kind not in ALLOWED_SOFT_KINDS:
         raise ValueError(f"Unknown soft edge kind {kind!r}. Allowed: {sorted(ALLOWED_SOFT_KINDS)}")
     now = iso_now()
-    cur = conn.execute(
-        "UPDATE soft_edges "
-        "SET weight = weight + ?, observation_count = observation_count + 1, "
-        "last_seen_at = ? "
-        "WHERE workspace_id = ? AND src_qualified_name = ? "
-        "AND dst_qualified_name = ? AND edge_kind = ?",
-        (weight_increment, now, workspace_id, src, dst, kind),
-    )
-    if cur.rowcount > 0:
-        return
     edge_id = new_id(IdKind.SOFT_EDGE)
+    # round-C: single ATOMIC upsert (was UPDATE-then-conditional-INSERT). In autocommit
+    # mode two concurrent Hebbian writers both saw rowcount==0, both INSERTed, and the
+    # second hit the UNIQUE index + was swallowed by the caller -- so that weight
+    # increment was LOST. INSERT .. ON CONFLICT .. DO UPDATE folds the increment into
+    # the conflicting row instead, so no update is dropped under concurrency.
     conn.execute(
         """
         INSERT INTO soft_edges (
@@ -60,6 +55,11 @@ def upsert_soft_edge(
             edge_kind, weight, observation_count, last_seen_at,
             created_at, metadata_json
         ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        ON CONFLICT(workspace_id, src_qualified_name, dst_qualified_name, edge_kind)
+        DO UPDATE SET
+            weight = weight + excluded.weight,
+            observation_count = observation_count + 1,
+            last_seen_at = excluded.last_seen_at
         """,
         (edge_id, workspace_id, src, dst, kind, weight_increment, now, now, "{}"),
     )
