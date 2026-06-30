@@ -1,301 +1,188 @@
-"""Enforce the project's modular-file SLOC ceiling.
+"""Enforce the project's modular-file SLOC ceiling -- as a RATCHET.
 
 Project rule (CLAUDE.md / behaviors): source files under
-``src/agent_memory_lite`` stay at or below 150 SLOC, one concern per
-module. The ceiling drove real refactors in the early phases but
-silently slipped while we were adding features. This script is the
-guardrail.
+``src/agent_memory_lite`` stay at or below 150 SLOC, one concern per module.
 
-Two-tier policy (so it can land without a one-shot mega-refactor):
+The ceiling could not land as a one-shot mega-refactor, so a set of pre-existing
+oversized files was grandfathered. The old policy only WARNed on them -- which
+let grandfathered files keep GROWING (brain_pass.py ballooned from ~210 to 1000+
+SLOC while merely "warning"). This is now a RATCHET instead:
 
-* **Hard fail** when a file NEW to ``src/agent_memory_lite`` exceeds
-  ``DEFAULT_LIMIT`` (150) SLOC. Stops further drift.
-* **Warning** when a pre-existing oversized file is in the
-  ``GRANDFATHERED`` set. Allows the existing oversized files to be
-  decomposed in their own commits without blocking the build.
+* **Hard fail** when a file NEW to ``src/agent_memory_lite`` exceeds the limit
+  (150). Stops further drift. (unchanged)
+* **Hard fail** when a grandfathered file exceeds its FROZEN CAP -- the SLOC it
+  had when the ratchet landed (``scripts/sloc_baseline.json``). A grandfathered
+  file may shrink (good) or stay put, but never grow. The only way to add code
+  to one is to decompose it first.
+* **Hard fail** when a baselined file has dropped to <= 150 SLOC but is still in
+  the baseline -- decomposing a file must REMOVE it from the baseline, so the set
+  can only shrink, never silently retain stale entries.
 
-CI runs this with ``--enforce``; passing ``--list`` prints every
-file's SLOC for ad-hoc inspection.
+``--write-baseline`` regenerates ``sloc_baseline.json`` with RATCHET-DOWN
+semantics: it lowers a cap to the current size, drops files now <= 150, and
+REFUSES to raise any cap or admit a brand-new oversized file (those must be fixed,
+not baselined). Run it after an intentional decomposition.
 
-SLOC = lines that are not blank and not pure comments. Multi-line
-strings count (they're real content). Conservative on purpose.
+CI runs ``--enforce``. ``--list`` prints every file's SLOC.
+
+SLOC = lines that are not blank and not pure comments. Multi-line strings count.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 DEFAULT_LIMIT = 150
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src" / "agent_memory_lite"
-
-# Files known to exceed the cap on the day this script lands. Each one
-# gets a separate decomposition commit later; until then they only
-# warn. Adding NEW files to this set should require a comment about
-# the planned split.
-GRANDFATHERED: frozenset[str] = frozenset(
-    {
-        # 2.2 Move 1: settings.py is fundamentally a single concern
-        # (Pydantic config class), but it has accumulated 20+ feature flags
-        # across v1.0..v2.2. Decomposition into composed Settings (Embed +
-        # LLM + Quality + Storage) is real work scheduled separately. Until
-        # then this file is allowed to creep past the ceiling -- every new
-        # flag should still be justified in code review.
-        "config/settings.py",
-        # 2.2 Move 1-4 polish pass: every Move route was trimmed back
-        # below the 150-SLOC ceiling.
-        # decisions.py / theories.py: extracted
-        # ``ingestion/_write_helpers.resolve_source_episode_id`` (Move 1
-        # logic) plus ``api/routes/theory_responses.theory_in_from_body``
-        # / ``evidence_in_from_body`` (TheoryIn / TheoryEvidenceIn
-        # builders).
-        # Smaller pre-existing violators (150-300 SLOC). Each will get
-        # a dedicated trim/split commit later. Adding NEW files here
-        # should raise eyebrows in code review.
-        # Files removed from this set after they were trimmed below the
-        # 150-SLOC ceiling (kept here as a reminder of the decomposition
-        # work already shipped):
-        #   * api/routes/get_object.py
-        #     -> get_object.py + get_object_payloads.py
-        #   * repositories/candidates_repo.py
-        #     -> candidates_repo.py + candidates_search.py
-        #   * maintenance/encoding_audit.py
-        #     -> encoding_audit.py + encoding_audit_models.py
-        #   * ingestion/candidate_writer.py
-        #     -> candidate_writer.py + candidate_promotion.py
-        #   * api/schemas/research.py
-        #     -> research.py + research_taxonomy.py
-        #   * repositories/maintenance_repo.py
-        #     -> maintenance_repo.py + maintenance_queries.py
-        #   * repositories/workspace_manifest_repo.py
-        #     -> workspace_manifest_repo.py + workspace_pollution_inspector.py
-        #   * maintenance/benchmark.py
-        #     -> benchmark.py + benchmark_runner.py
-        #   * vector_store/sqlite_vec_store.py
-        #     -> sqlite_vec_store.py + sqlite_vec_namespace.py
-        #   * maintenance/feedback_report.py
-        #     -> feedback_report.py + feedback_report_queries.py
-        #   * ingestion/episode_pipeline.py
-        #     -> episode_pipeline.py + episode_persist.py
-        #   * models/research.py
-        #     -> research.py + research_taxonomy.py
-        #   * api/routes/theories.py
-        #     -> theories.py + theory_responses.py + theory_list.py
-        #   * maintenance/auto_triage.py
-        #     -> auto_triage.py + auto_triage_models.py + auto_triage_helpers.py
-        #   * api/routes/capabilities.py
-        #     -> capabilities.py + capability_responses.py + capability_upsert.py
-        #   * api/routes/memory.py
-        #     -> memory.py + focused helper modules
-        #   * bootstrap/project_memory_seed.py
-        #     -> seed.py + seed_templates.py + concepts.py
-        #   * ingestion/file_pipeline.py
-        #     -> file_pipeline.py + file_chunking.py + file_persist.py
-        #   * repositories/capability_links_repo.py
-        #     -> _repo.py + _resolver.py + _search.py
-        #   * maintenance/workspace_doctor.py
-        #     -> workspace_doctor.py + _internals.py + _quarantine.py
-        #   * repositories/behavior_repo.py
-        #     -> behavior_repo.py + _ranking.py + _search.py
-        #   * repositories/theories_repo.py
-        #     -> theories_repo.py + theories_search.py + theory_evidence_repo.py
-        #   * maintenance/retrieval_quality.py
-        #     -> retrieval_quality.py + _models.py + _runner.py + _grading.py
-        #   * cognition/brief.py
-        #     -> brief.py facade + brief_* section builders
-        #   * api/ui_telemetry.py
-        #     -> ui_telemetry.py + _event.py + _bus.py + _trace.py
-        #   * maintenance/quality_gate.py
-        #     -> quality_gate.py + _models.py + _checks.py + _behavior.py
-        #   * repositories/capabilities_repo.py
-        #     -> _repo.py (facade) + roles_repo + skills_repo + playbooks_repo
-        #         + search_helpers
-        #   * api/routes/research.py
-        #     -> research.py + _responses + _snapshots + _experiments + _insights
-        #         + _taxonomy
-        #   * ingestion/research_writer.py
-        #     -> research_writer.py (facade) + snapshots + experiments
-        #         + experiment_create + theory_update + insights + concepts + shared
-        #   * cognition/brief.py
-        #     -> brief.py facade + brief_* section builders
-        #   * mcp/stdio_server.py
-        #     -> stdio_server.py (transport) + stdio_runtime + stdio_env
-        #         + stdio_guards + stdio_tools + stdio_handlers
-        #         + stdio_tools_memory + stdio_handlers_memory.
-        #
-        # v3.0.0-final additions (crossed the 150-SLOC cap during the
-        # brain-organ phase work — Phases 1-7 of the v3 plan). Each
-        # file is fundamentally a single concern that grew past the
-        # ceiling because the brain-organ work added new sections /
-        # cases / handlers; decomposition into subpackages is real
-        # work scheduled for the v3.1 cycle. Listed in size-DESC order
-        # so v3.1 can knock out the worst offenders first:
-        #
-        # cognition/brief.py was decomposed in v3.7 (-> brief_models /
-        # brief_tokens / brief_sticky / brief_cache / brief_sections_* /
-        # brief_assembly / brief_compose / brief_skill) and removed from
-        # this set.
-        # * cognition/lint.py (392)
-        #     -> lint_main.py + _watch_outs.py + _reflexes.py +
-        #        _discipline.py.
-        # * cognition/self_model.py (344)
-        #     -> self_model.py (facade) + _heuristic + _llm + _persist.
-        # * cognition/consolidation.py (339)
-        #     -> consolidation.py + _cluster + _insight_writer.
-        # * cognition/digest_worker.py (323)
-        # * cognition/impact_check.py (278)
-        # * cognition/outcome_recompute.py (167)
-        "cognition/lint.py",
-        "cognition/self_model.py",
-        "cognition/consolidation.py",
-        "cognition/digest_worker.py",
-        "cognition/impact_check.py",
-        "cognition/outcome_recompute.py",
-        "cognition/code_indexer.py",
-        # Brain-aware UI endpoints (introduced by Phases 4-7):
-        # * api/routes/ui_brain_actions.py (329)
-        #     -> reflex_actions + self_model_actions + recall + insight.
-        # * api/routes/ui_brain.py (254)
-        #     -> ui_brain.py + brain_state_outcome + brain_state_self
-        #        + brain_state_reflex + brain_state_hebbian.
-        "api/routes/ui_brain.py",
-        "api/routes/ui_brain_actions.py",
-        # Canonical memory surface (compact projections; one module per
-        # kind):
-        # * api/routes/memory.py (246)
-        # * api/routes/decisions.py (163)
-        "api/routes/memory.py",
-        "api/routes/decisions.py",
-        # Storage layer (compact projections + bi-temporal writes):
-        # * storage/writer.py (461)
-        # * storage/reader.py (294)
-        # * storage/projections.py (190)
-        "storage/writer.py",
-        "storage/reader.py",
-        "storage/projections.py",
-        # MCP surface (12-tool compact projections):
-        # * mcp/stdio_tools_memory.py (263)
-        # * mcp/stdio_handlers_memory.py (227)
-        "mcp/stdio_tools_memory.py",
-        "mcp/stdio_handlers_memory.py",
-        # CLI:
-        # * cli/main.py (352)
-        "cli/main.py",
-        # Background loops + retrieval (Phases 2 + 7):
-        # * maintenance/brain_pass.py (210)
-        # * retrieval/causal_extractor.py (206)
-        # * maintenance/hebbian_pass.py (201)
-        # * enforcement/reflex_check.py (166)
-        # * maintenance/implicit_feedback.py (166)
-        # * retrieval/spreading_activation.py (160)
-        # * maintenance/sentinel_scheduler.py (157)
-        # * retrieval/recall.py (154)
-        "maintenance/brain_pass.py",
-        "retrieval/causal_extractor.py",
-        "retrieval/spreading_activation.py",
-        "retrieval/recall.py",
-        # v3.7 follow-up: the grandfather baseline went stale across the
-        # v3.1-v3.6 feature cycles -- 20 files crossed the 150-SLOC
-        # ceiling without being recorded here, so CI hard-failed on every
-        # push since. Baseline refreshed below; the two-tier policy is
-        # intact (these only WARN, a genuinely-new oversized file still
-        # FAILs). Each still wants decomposition in its own commit.
-        "cognition/autonomous_loop.py",
-        "maintenance/drift_sentinel.py",
-        "maintenance/predictive_lr.py",
-        "maintenance/experiment_proposal.py",
-        "retrieval/recall_tuning.py",
-        "retrieval/causal_granger.py",
-        "vector_store/lancedb_store.py",
-        "vector_store/reindex.py",
-        "models/enums.py",
-        "repositories/chunks_repo.py",
-        "api/deps.py",
-        "ingestion/episode_pipeline.py",
-    }
-)
+BASELINE_PATH = Path(__file__).resolve().parent / "sloc_baseline.json"
 
 
 def _sloc(path: Path) -> int:
     count = 0
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
+        if not stripped or stripped.startswith("#"):
             continue
         count += 1
     return count
 
 
-def collect(root: Path = SRC_ROOT) -> list[tuple[str, int]]:
+def collect(root: Path | None = None) -> list[tuple[str, int]]:
+    # Read SRC_ROOT at call time (not as a default arg bound at import) so tests
+    # can monkeypatch the module global.
+    root = root if root is not None else SRC_ROOT
     rows: list[tuple[str, int]] = []
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        rel = path.relative_to(root).as_posix()
-        rows.append((rel, _sloc(path)))
+        rows.append((path.relative_to(root).as_posix(), _sloc(path)))
     return rows
+
+
+def load_baseline() -> dict[str, int]:
+    if not BASELINE_PATH.exists():
+        return {}
+    return {
+        str(k): int(v) for k, v in json.loads(BASELINE_PATH.read_text(encoding="utf-8")).items()
+    }
+
+
+def _write_baseline(rows: list[tuple[str, int]], limit: int) -> int:
+    """Regenerate the baseline with ratchet-DOWN semantics: never raise a cap,
+    never admit a NEW oversized file. Returns a non-zero exit if it would have to
+    (so the caller fixes the file instead of baselining it)."""
+    old = load_baseline()
+    current = {rel: sloc for rel, sloc in rows if sloc > limit}
+    if not old:
+        # First-time bootstrap: freeze every currently-oversized file at its size.
+        BASELINE_PATH.write_text(
+            json.dumps(dict(sorted(current.items())), indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"bootstrapped {BASELINE_PATH.name}: {len(current)} capped file(s).")
+        return 0
+    new_offenders = sorted(rel for rel in current if rel not in old)
+    if new_offenders:
+        print(f"FAIL: refusing to baseline {len(new_offenders)} NEW oversized file(s):")
+        for rel in new_offenders:
+            print(f"  {current[rel]:5d}  {rel}")
+        print("Split them below the ceiling instead of baselining new debt.")
+        return 1
+    # Ratchet down: cap = min(old cap, current); drop files now <= limit.
+    new_baseline = {rel: min(old[rel], current[rel]) for rel in current}
+    BASELINE_PATH.write_text(
+        json.dumps(dict(sorted(new_baseline.items())), indent=2) + "\n", encoding="utf-8"
+    )
+    dropped = sorted(set(old) - set(new_baseline))
+    print(
+        f"wrote {BASELINE_PATH.name}: {len(new_baseline)} capped file(s); dropped {len(dropped)}."
+    )
+    return 0
+
+
+def _print_failures(
+    new_violations: list[tuple[str, int]],
+    grew: list[tuple[str, int]],
+    stale: list[str],
+    baseline: dict[str, int],
+    sloc_by_file: dict[str, int],
+    limit: int,
+) -> bool:
+    """Print each hard-fail class; return True if any fired."""
+    failed = False
+    if new_violations:
+        print(f"FAIL: {len(new_violations)} NEW file(s) over {limit} SLOC:")
+        for rel, sloc in sorted(new_violations, key=lambda r: -r[1]):
+            print(f"  {sloc:5d}  {rel}")
+        print("Split the file into a subpackage (one concern per module) before adding more.\n")
+        failed = True
+    if grew:
+        print(f"FAIL: {len(grew)} grandfathered file(s) GREW past their frozen cap (ratchet):")
+        for rel, sloc in sorted(grew, key=lambda r: -r[1]):
+            print(f"  {sloc:5d} > cap {baseline[rel]:<5d}  {rel}")
+        print("A grandfathered file may only shrink. Decompose it instead of adding code.\n")
+        failed = True
+    if stale:
+        print(
+            f"FAIL: {len(stale)} baselined file(s) dropped to <= {limit} SLOC -- "
+            "remove from baseline:"
+        )
+        for rel in stale:
+            print(f"  {sloc_by_file.get(rel, 0):5d}  {rel}")
+        print("Run `python scripts/check_sloc.py --write-baseline` to shrink the ratchet set.\n")
+        failed = True
+    return failed
+
+
+def _run_check(rows: list[tuple[str, int]], limit: int, enforce: bool) -> int:
+    baseline = load_baseline()
+    sloc_by_file = dict(rows)
+    over = [(rel, sloc) for rel, sloc in rows if sloc > limit]
+    new_violations = [(rel, sloc) for rel, sloc in over if rel not in baseline]
+    grew = [(rel, sloc) for rel, sloc in over if rel in baseline and sloc > baseline[rel]]
+    within_cap = [(rel, sloc) for rel, sloc in over if rel in baseline and sloc <= baseline[rel]]
+    # A baselined file now at/below the ceiling: decomposed -> must be removed.
+    stale = sorted(rel for rel in baseline if sloc_by_file.get(rel, 0) <= limit)
+
+    if within_cap:
+        print(f"WARN: {len(within_cap)} grandfathered file(s) over {limit} SLOC (within cap):")
+        for rel, sloc in sorted(within_cap, key=lambda r: -r[1]):
+            print(f"  {sloc:5d} / cap {baseline[rel]:<5d}  {rel}")
+        print("Decompose them in dedicated commits; the cap means they can only shrink.\n")
+
+    failed = _print_failures(new_violations, grew, stale, baseline, sloc_by_file, limit)
+    if not over and not stale:
+        print(f"OK: every src/agent_memory_lite/*.py is at or below {limit} SLOC.")
+    elif not failed:
+        print("OK: no new oversized files; all grandfathered files within their frozen caps.")
+    return 1 if (failed and enforce) else 0
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--enforce", action="store_true", help="Exit non-zero on hard violations.")
+    parser.add_argument("--list", action="store_true", help="Print every file's SLOC, high to low.")
     parser.add_argument(
-        "--enforce",
+        "--write-baseline",
         action="store_true",
-        help="Exit non-zero on hard violations (new oversized files).",
+        help="Regenerate sloc_baseline.json (ratchet-down).",
     )
     parser.add_argument(
-        "--list",
-        action="store_true",
-        help="Print every file's SLOC, sorted high to low.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=DEFAULT_LIMIT,
-        help=f"SLOC ceiling (default {DEFAULT_LIMIT}).",
+        "--limit", type=int, default=DEFAULT_LIMIT, help=f"Ceiling ({DEFAULT_LIMIT})."
     )
     args = parser.parse_args(argv)
 
     rows = collect()
-    over = [(rel, sloc) for rel, sloc in rows if sloc > args.limit]
-
     if args.list:
         for rel, sloc in sorted(rows, key=lambda r: -r[1]):
             print(f"{sloc:5d}  {rel}")
         return 0
-
-    grandfathered = [(rel, sloc) for rel, sloc in over if rel in GRANDFATHERED]
-    new_violations = [(rel, sloc) for rel, sloc in over if rel not in GRANDFATHERED]
-
-    if grandfathered:
-        print(f"WARN: {len(grandfathered)} grandfathered file(s) over {args.limit} SLOC:")
-        for rel, sloc in sorted(grandfathered, key=lambda r: -r[1]):
-            print(f"  {sloc:5d}  {rel}")
-        print(
-            "These need decomposition into subpackages but don't block CI. "
-            "Trim them in dedicated commits.\n"
-        )
-
-    if new_violations:
-        print(f"FAIL: {len(new_violations)} NEW file(s) over {args.limit} SLOC:")
-        for rel, sloc in sorted(new_violations, key=lambda r: -r[1]):
-            print(f"  {sloc:5d}  {rel}")
-        print(
-            "\nProject rule: src/agent_memory_lite/**/*.py stays at or below "
-            f"{args.limit} SLOC, one concern per module. Split the file into a "
-            "subpackage before adding more code."
-        )
-        if args.enforce:
-            return 1
-
-    if not over:
-        print(f"OK: every src/agent_memory_lite/*.py is at or below {args.limit} SLOC.")
-
-    return 0
+    if args.write_baseline:
+        return _write_baseline(rows, args.limit)
+    return _run_check(rows, args.limit, args.enforce)
 
 
 if __name__ == "__main__":
