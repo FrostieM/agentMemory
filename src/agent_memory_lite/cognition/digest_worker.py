@@ -307,8 +307,10 @@ def upsert_digest(
     *,
     workspace_id: str,
     result: DigestResult,
+    commit: bool = True,
 ) -> str:
-    """Insert or replace one code_digests row. Returns the PERSISTED digest id."""
+    """Insert/replace one code_digests row; returns the PERSISTED id. round-D:
+    ``commit`` defaults True; the brain pass passes False to ride its single final commit."""
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     # round-B: no pre-SELECT (it was a TOCTOU window: two concurrent writers both saw
     # "no row", minted different uuids, both inserted; ON CONFLICT kept the FIRST id
@@ -348,7 +350,8 @@ def upsert_digest(
             now,
         ),
     ).fetchone()
-    conn.commit()
+    if commit:
+        conn.commit()
     return str(row[0])
 
 

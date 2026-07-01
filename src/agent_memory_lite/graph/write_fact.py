@@ -13,6 +13,8 @@ from agent_memory_lite.db.transactions import with_tx
 from agent_memory_lite.graph.conflict_detector import find_conflicting_facts
 from agent_memory_lite.graph.invalidate import invalidate_facts
 from agent_memory_lite.models.facts import Fact, FactIn
+from agent_memory_lite.redaction import redact
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.repositories.audit_repo import insert_audit
 from agent_memory_lite.repositories.facts_repo import get_fact, insert_fact_row
 from agent_memory_lite.utils.ids import IdKind, new_id
@@ -37,6 +39,18 @@ def write_fact(conn: sqlite3.Connection, payload: FactIn) -> FactWriteResult:
     )
     conflict_ids = [c.id for c in conflicts]
 
+    # round-D: this v3 write path bypassed write_canonical/storage.writer, so a
+    # secret in the fact's literal_value / fact_text / metadata was persisted
+    # cleartext (the "redaction runs before every v3 write" invariant). Redact the
+    # free-text fields here. Typed (non-str) literals pass through untouched.
+    safe_literal = (
+        redact(payload.literal_value).text if payload.literal_value else payload.literal_value
+    )
+    safe_fact_text = redact(payload.fact_text).text
+    safe_metadata = (
+        redact_freetext_fields(payload.metadata) if payload.metadata else payload.metadata
+    )
+
     with with_tx(conn):
         insert_fact_row(
             conn,
@@ -45,15 +59,15 @@ def write_fact(conn: sqlite3.Connection, payload: FactIn) -> FactWriteResult:
             subject_entity_id=payload.subject_entity_id,
             relation=payload.relation,
             object_entity_id=payload.object_entity_id,
-            literal_value=payload.literal_value,
-            fact_text=payload.fact_text,
+            literal_value=safe_literal,
+            fact_text=safe_fact_text,
             source_episode_id=payload.source_episode_id,
             confidence=payload.confidence,
             importance=payload.importance,
             trust_level=payload.trust_level,
             observed_at=timestamp,
             valid_from=timestamp,
-            metadata=payload.metadata,
+            metadata=safe_metadata,
             created_at=timestamp,
         )
         invalidate_facts(

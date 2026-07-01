@@ -34,6 +34,7 @@ def write_maintenance_event(
             updated = update_maintenance_event_row(
                 conn,
                 event_id=event.id,
+                workspace_id=payload.workspace_id,
                 severity=payload.severity,
                 status=payload.status,
                 summary=payload.summary,

@@ -30,6 +30,9 @@ from agent_memory_lite.api.deps import DbDep, SettingsDep, ensure_workspace_read
 
 router = APIRouter()
 
+# round-D: cap how many active decisions the diff scan materializes (memory-DoS guard).
+_MAX_DECISION_SCAN = 5000
+
 
 class ExplainDiffRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -90,6 +93,11 @@ def explain_diff_route(  # noqa: PLR0912 — declarative-then-substring matching
 
     matched: dict[str, DiffMatchedDecision] = {}
     if files:
+        # round-D: BOUND the scan. This fetched every active decision with no LIMIT
+        # (limit_per_section only trims the RESPONSE), so a workspace with 10k+ active
+        # decisions materialized them all -- a same-host memory-exhaustion DoS. Scan the
+        # most-important N (realistic projects are far smaller); ties broken by id for
+        # determinism.
         rows = conn.execute(
             """
             SELECT id, title, status, importance, decision_text, rationale,
@@ -99,8 +107,10 @@ def explain_diff_route(  # noqa: PLR0912 — declarative-then-substring matching
                    ) AS references_json
             FROM decisions
             WHERE workspace_id = ? AND status = 'active'
+            ORDER BY importance DESC, id
+            LIMIT ?
             """,
-            (body.workspace_id,),
+            (body.workspace_id, _MAX_DECISION_SCAN),
         ).fetchall()
         for row in rows:
             decision_id = str(row["id"])

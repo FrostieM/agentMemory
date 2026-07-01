@@ -221,10 +221,11 @@ def test_brain_step_wires_registry_root_and_report(
         return SimpleNamespace(get=lambda _wid: SimpleNamespace(project_root="/some/root"))
 
     def _spy(
-        _conn: object, *, workspace_id: str, project_root: object, limit: int
+        _conn: object, *, workspace_id: str, project_root: object, limit: int, commit: bool = True
     ) -> DigestRefreshStats:
         captured["project_root"] = project_root
         captured["limit"] = limit
+        captured["commit"] = commit
         return DigestRefreshStats(checked=3, refreshed=2)
 
     monkeypatch.setattr(wr, "WorkspaceRegistry", _fake_registry)

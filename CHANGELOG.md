@@ -86,6 +86,30 @@ consecutive zero-finding rounds, which has not yet been reached.
   decisions reject a `source` field; insights need `insight_type`+`status`). The
   prior three prompts (silent setup, chat-capture, onboard) were folded in.
 
+### Additional hardening (round-D audit)
+
+A fourth fresh whole-system adversarial round found more (mostly defense-in-depth /
+concurrency) defects; all fixed with paired tests:
+
+- **Secrets**: the graph write paths (`write_fact`, `upsert_entity`) bypassed
+  redaction -- a secret in a fact's `literal_value` / `fact_text` / metadata or an
+  entity's aliases / properties was persisted cleartext. Both now redact.
+- **Workspace isolation**: `resolve` / `claim` / `dismiss` / `update` maintenance-event
+  mutations filtered by `id` only, so a shared-DB hub could mutate another workspace's
+  event by id. All now scope the UPDATE to `workspace_id`.
+- **Atomicity**: `upsert_digest` unconditionally committed, terminating the brain
+  pass's transaction mid-pass (a crash then lost later steps' writes). It now takes
+  `commit=False` on the brain-pass path so the pass keeps one final commit.
+- **Gate integrity**: `run_evals` passed with ZERO cases executed (missing/corrupt
+  fixtures) -- now fails; `golden_eval --compare-baseline` fails gracefully on a
+  missing baseline instead of a traceback.
+- **DoS / leaks**: `POST /memory/explain_diff` materialized ALL active decisions with
+  no LIMIT (now capped); the vector integrity check leaked its VectorStore
+  connection on every path (now closed in a finally).
+- **SQL safety**: the episode-FK guard interpolated table names into `PRAGMA
+  table_info(...)`; a quoted table name broke the SQL and dropped that table from the
+  guard. Switched to the bound `pragma_table_info(?)` form.
+
 ## 3.22.0 - 2026-06-23
 
 ### Added

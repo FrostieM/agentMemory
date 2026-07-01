@@ -84,6 +84,7 @@ def update_maintenance_event_row(
     conn: sqlite3.Connection,
     *,
     event_id: str,
+    workspace_id: str,
     severity: MaintenanceSeverity,
     status: MaintenanceEventStatus,
     summary: str,
@@ -91,6 +92,7 @@ def update_maintenance_event_row(
     target_type: str | None,
     target_id: str | None,
 ) -> MaintenanceEvent | None:
+    # round-D: scope the update to workspace_id (defense-in-depth).
     conn.execute(
         """
         UPDATE maintenance_events
@@ -100,7 +102,7 @@ def update_maintenance_event_row(
             details_json = ?,
             target_type = ?,
             target_id = ?
-        WHERE id = ?
+        WHERE id = ? AND workspace_id = ?
         """,
         (
             severity.value,
@@ -110,9 +112,13 @@ def update_maintenance_event_row(
             target_type,
             target_id,
             event_id,
+            workspace_id,
         ),
     )
-    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM maintenance_events WHERE id = ? AND workspace_id = ?",
+        (event_id, workspace_id),
+    ).fetchone()
     return row_to_event(row) if row is not None else None
 
 
@@ -120,6 +126,7 @@ def resolve_maintenance_event(
     conn: sqlite3.Connection,
     *,
     event_id: str,
+    workspace_id: str,
     status: MaintenanceEventStatus,
     resolved_at: str,
 ) -> MaintenanceEvent | None:
@@ -130,14 +137,25 @@ def resolve_maintenance_event(
     # (metric cleared or operator marked done) so the operator state goes
     # to RESOLVED too. The dedicated claim / dismiss paths only touch
     # ``action_status`` because the substrate state may still be open.
+    # round-D: scope the mutation to workspace_id (defense-in-depth) so a shared-DB
+    # hub deployment cannot resolve another workspace's event by guessing its id.
     conn.execute(
         """
         UPDATE maintenance_events
         SET status = ?, resolved_at = ?,
             action_status = ?
-        WHERE id = ?
+        WHERE id = ? AND workspace_id = ?
         """,
-        (status.value, resolved_at, MaintenanceActionStatus.RESOLVED.value, event_id),
+        (
+            status.value,
+            resolved_at,
+            MaintenanceActionStatus.RESOLVED.value,
+            event_id,
+            workspace_id,
+        ),
     )
-    row = conn.execute("SELECT * FROM maintenance_events WHERE id = ?", (event_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM maintenance_events WHERE id = ? AND workspace_id = ?",
+        (event_id, workspace_id),
+    ).fetchone()
     return row_to_event(row) if row is not None else None

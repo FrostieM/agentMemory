@@ -1193,7 +1193,11 @@ def test_brief_fingerprint_flips_on_same_count_severity_swap(conn: sqlite3.Conne
     # Resolve the WARNING and open an ERROR -> total open count stays 1, but the
     # degraded (ERROR/CRITICAL) count goes 0 -> 1.
     resolve_maintenance_event(
-        conn, event_id=warning_id, status=MaintenanceEventStatus.RESOLVED, resolved_at=iso_now()
+        conn,
+        event_id=warning_id,
+        workspace_id="ws",
+        status=MaintenanceEventStatus.RESOLVED,
+        resolved_at=iso_now(),
     )
     conn.commit()
     _open_event(conn, MaintenanceSeverity.ERROR, "vector_upsert_failed", "e1")

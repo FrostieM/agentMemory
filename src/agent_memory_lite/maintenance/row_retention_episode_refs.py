@@ -28,7 +28,13 @@ def _episode_referencing_pairs(conn: sqlite3.Connection) -> list[tuple[str, str]
     ).fetchall()
     for (table,) in rows:
         try:
-            cols = {row[1] for row in conn.execute(f"PRAGMA table_info('{table}')")}
+            # round-D: bind the table name via the pragma_table_info() table-valued
+            # function instead of interpolating it into `PRAGMA table_info('{table}')`.
+            # A table whose name contains a single quote produced invalid SQL that was
+            # silently swallowed, dropping that table from the episode-FK guard.
+            cols = {
+                row[0] for row in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))
+            }
         except sqlite3.Error:
             continue
         pairs.extend((table, col) for col in _EPISODE_REF_COLUMNS if col in cols)
@@ -53,7 +59,11 @@ def _episode_json_referencing_pairs(conn: sqlite3.Connection) -> list[tuple[str,
     ).fetchall()
     for (table,) in rows:
         try:
-            cols = [row[1] for row in conn.execute(f"PRAGMA table_info('{table}')")]
+            # round-D: bind the table name (see _episode_referencing_pairs) instead of
+            # interpolating it into a PRAGMA -- injection-safe + quote-name-safe.
+            cols = [
+                row[0] for row in conn.execute("SELECT name FROM pragma_table_info(?)", (table,))
+            ]
         except sqlite3.Error:
             continue
         pairs.extend((table, col) for col in cols if col.endswith("episode_ids_json"))

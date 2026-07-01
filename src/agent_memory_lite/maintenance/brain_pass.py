@@ -27,9 +27,8 @@ authoritative order):
 The per-step ``BrainPassReport`` carries the row counts.
 ``MEMORY_BRAIN_PASS_ENABLED`` is the master switch for the whole path.
 
-The whole pass is wrapped so that any uncaught exception simply
-swallows + logs; the next overdue tick retries. Returns a small
-report for telemetry / hygiene dashboards.
+The whole pass is wrapped so any uncaught exception is swallowed + logged; the
+next overdue tick retries. Returns a small report for telemetry / hygiene.
 """
 
 from __future__ import annotations
@@ -1050,6 +1049,7 @@ def _step_refresh_digests(
             workspace_id=workspace_id,
             project_root=project_root,
             limit=settings.digest_refresh_max_per_pass,
+            commit=False,
         )
         report.digests_checked = stats.checked
         report.digests_refreshed = stats.refreshed

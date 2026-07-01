@@ -6,6 +6,8 @@ import sqlite3
 
 from agent_memory_lite.graph.canonicalize import canonicalize_name
 from agent_memory_lite.models.entities import Entity, EntityIn
+from agent_memory_lite.redaction import redact
+from agent_memory_lite.redaction.payload import redact_freetext_fields
 from agent_memory_lite.repositories.entities_repo import (
     find_entity_by_name,
     insert_entity_row,
@@ -20,6 +22,14 @@ def upsert_entity(conn: sqlite3.Connection, payload: EntityIn) -> Entity:
     if not canonical:
         raise ValueError("canonical_name cannot be empty after canonicalization")
 
+    # round-D: aliases + properties were persisted cleartext (secrets could leak into
+    # entities.aliases_json / properties_json). Redact them before any write. The
+    # canonical_name stays the (already-canonicalized) lookup key.
+    safe_aliases = [redact(a).text if isinstance(a, str) and a else a for a in payload.aliases]
+    safe_props = (
+        redact_freetext_fields(payload.properties) if payload.properties else payload.properties
+    )
+
     existing = find_entity_by_name(
         conn,
         workspace_id=payload.workspace_id,
@@ -29,8 +39,8 @@ def upsert_entity(conn: sqlite3.Connection, payload: EntityIn) -> Entity:
     timestamp = iso_now()
 
     if existing is not None:
-        merged_aliases = list(dict.fromkeys([*existing.aliases, *payload.aliases]))
-        merged_props = {**existing.properties, **payload.properties}
+        merged_aliases = list(dict.fromkeys([*existing.aliases, *safe_aliases]))
+        merged_props = {**existing.properties, **safe_props}
         if merged_aliases != existing.aliases or merged_props != existing.properties:
             update_entity_meta(
                 conn,
@@ -57,8 +67,8 @@ def upsert_entity(conn: sqlite3.Connection, payload: EntityIn) -> Entity:
         workspace_id=payload.workspace_id,
         entity_type=payload.type,
         canonical_name=canonical,
-        aliases=payload.aliases,
-        properties=payload.properties,
+        aliases=safe_aliases,
+        properties=safe_props,
         timestamp=timestamp,
     )
     return Entity(
@@ -66,8 +76,8 @@ def upsert_entity(conn: sqlite3.Connection, payload: EntityIn) -> Entity:
         workspace_id=payload.workspace_id,
         type=payload.type,
         canonical_name=canonical,
-        aliases=list(payload.aliases),
-        properties=dict(payload.properties),
+        aliases=list(safe_aliases),
+        properties=dict(safe_props),
         created_at=timestamp,
         updated_at=timestamp,
     )

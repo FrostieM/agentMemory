@@ -54,6 +54,7 @@ def test_claim_flips_action_status_only(applied_conn: sqlite3.Connection) -> Non
     result = claim_maintenance_event(
         applied_conn,
         event_id=event_id,
+        workspace_id="ws",
         assigned_to="osino",
         claimed_at="2026-05-20T18:00:00+00:00",
         action_notes="taking a look",
@@ -74,6 +75,7 @@ def test_dismiss_flips_action_status_only(applied_conn: sqlite3.Connection) -> N
     result = dismiss_maintenance_event(
         applied_conn,
         event_id=event_id,
+        workspace_id="ws",
         dismissed_at="2026-05-20T18:01:00+00:00",
         action_notes="duplicate of #42",
     )
@@ -92,6 +94,7 @@ def test_resolve_syncs_both_statuses(applied_conn: sqlite3.Connection) -> None:
     result = resolve_maintenance_event(
         applied_conn,
         event_id=event_id,
+        workspace_id="ws",
         status=MaintenanceEventStatus.RESOLVED,
         resolved_at="2026-05-20T18:02:00+00:00",
     )
@@ -109,6 +112,7 @@ def test_list_filter_by_action_status(applied_conn: sqlite3.Connection) -> None:
     claim_maintenance_event(
         applied_conn,
         event_id=claimed_id,
+        workspace_id="ws",
         assigned_to="osino",
         claimed_at="2026-05-20T18:00:00+00:00",
     )
@@ -139,6 +143,7 @@ def test_claim_returns_none_for_missing_event(applied_conn: sqlite3.Connection) 
     result = claim_maintenance_event(
         applied_conn,
         event_id="nope",
+        workspace_id="ws",
         assigned_to="osino",
         claimed_at="2026-05-20T18:00:00+00:00",
     )

@@ -79,6 +79,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print()
         print(to_json(report))
+    # round-D: FAIL on zero cases. `cases_passed == cases_run` is trivially True when
+    # both are 0 (missing/corrupt fixtures -> load_default_cases() returned []), so the
+    # gate silently passed with NOTHING executed. A meaningful eval must run >= 1 case.
+    if report.cases_run < 1:
+        print("FAIL: run_evals executed ZERO cases -- fixtures missing/corrupt, not a pass.")
+        return 1
     return 0 if report.cases_passed == report.cases_run and not report.failures else 1
 
 

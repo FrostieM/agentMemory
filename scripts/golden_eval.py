@@ -95,7 +95,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.compare_baseline is not None:
-        baseline = json.loads(args.compare_baseline.read_text(encoding="utf-8"))
+        # round-D: fail gracefully (exit 1 + clear message) instead of a raw traceback
+        # when the committed baseline is missing/unreadable. FileNotFoundError is an
+        # OSError subclass, so the missing-file case is covered here too.
+        try:
+            baseline = json.loads(args.compare_baseline.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"FAIL: could not read baseline {args.compare_baseline}: {exc}")
+            return 1
         result = compare_metrics(
             report,
             baseline,

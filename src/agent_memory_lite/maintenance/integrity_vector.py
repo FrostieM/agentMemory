@@ -78,7 +78,14 @@ def vector_check(
         )
     try:
         vector_store.open()
-        vector_ids = set(vector_store.list_ids(NAMESPACE_CHUNKS, workspace_id=workspace_id))
+        # round-D: CLOSE the store on every path. It was opened but never closed on
+        # either the success or the error path, leaking the LanceDB/sqlite connection +
+        # file handles each integrity pass. vector_ids is a local set, so the store is
+        # done being used the moment list_ids returns.
+        try:
+            vector_ids = set(vector_store.list_ids(NAMESPACE_CHUNKS, workspace_id=workspace_id))
+        finally:
+            vector_store.close()
     except Exception as exc:
         return IntegrityCheck(
             status="unknown",

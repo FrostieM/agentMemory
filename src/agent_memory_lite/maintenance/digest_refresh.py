@@ -85,7 +85,9 @@ def _upsert_with_retry(
 ) -> bool:
     for attempt in range(max_retries + 1):
         try:
-            upsert_digest(conn, workspace_id=workspace_id, result=result)  # type: ignore[arg-type]
+            # commit=False: refresh_stale_digests owns the single commit at the end,
+            # so per-row commits do not fragment the (possibly brain-pass) transaction.
+            upsert_digest(conn, workspace_id=workspace_id, result=result, commit=False)  # type: ignore[arg-type]
             return True
         except sqlite3.OperationalError:
             if attempt >= max_retries:
@@ -102,12 +104,18 @@ def refresh_stale_digests(
     project_root: Path | None,
     limit: int = DEFAULT_REFRESH_LIMIT,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    commit: bool = True,
 ) -> DigestRefreshStats:
     """Re-verify the ``limit`` least-recently-checked digests; recompute the stale.
 
     ``project_root`` resolves project-relative digest paths to disk; when it is
     None (unknown source root) the pass is a no-op. Bounded, rotating, and
     failure-soft -- never raises.
+
+    round-D: ``commit`` defaults True (standalone digest-refresh callers own their
+    connection). The BRAIN PASS passes ``commit=False`` so this shares the pass's
+    single final commit instead of terminating the transaction mid-pass -- otherwise
+    a crash after this step but before the final commit lost the later steps' writes.
     """
     stats = DigestRefreshStats()
     if project_root is None or limit <= 0:
@@ -151,6 +159,7 @@ def refresh_stale_digests(
             stats.failed += 1
             _touch(conn, workspace_id, file_path, now)
 
-    with contextlib.suppress(sqlite3.Error):
-        conn.commit()
+    if commit:
+        with contextlib.suppress(sqlite3.Error):
+            conn.commit()
     return stats

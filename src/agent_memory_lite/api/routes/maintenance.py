@@ -93,6 +93,7 @@ def resolve_maintenance_event_route(
     event = resolve_maintenance_event(
         conn,
         event_id=body.event_id,
+        workspace_id=workspace_id,
         status=body.status,
         resolved_at=iso_now(),
     )
@@ -116,6 +117,7 @@ def claim_maintenance_event_route(
     event = claim_maintenance_event(
         conn,
         event_id=body.event_id,
+        workspace_id=workspace_id,
         assigned_to=body.assigned_to,
         claimed_at=iso_now(),
         action_notes=body.action_notes,
@@ -141,6 +143,7 @@ def dismiss_maintenance_event_route(
     event = dismiss_maintenance_event(
         conn,
         event_id=body.event_id,
+        workspace_id=workspace_id,
         dismissed_at=iso_now(),
         action_notes=body.action_notes,
     )
